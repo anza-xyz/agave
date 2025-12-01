@@ -21,6 +21,13 @@ use {
 /// As per the Alpenglow paper, a validator is allowed to vote notar fallback on at most 3 different block id for a given slot.
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
 
+/// How much accumulated stake must have voted before we can build the correcponding certificates.
+const FINALIZE_STAKE: f64 = 0.6;
+const FAST_FINALIZE_STAKE: f64 = 0.8;
+const NOTAR_STAKE: f64 = 0.6;
+const NOTAR_FALLBACK_STAKE: f64 = 0.6;
+const SKIP_STAKE: f64 = 0.6;
+
 /// Different types of errors that can happen when adding a vote to the pool.
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum AddVoteError {
@@ -295,16 +302,17 @@ impl VotePool {
     ) -> Option<Result<Certificate, BuildCertError>> {
         let total_stake = total_stake as f64;
         match &cert_type {
-            CertificateType::Finalize(_) => (self.finalize.stake as f64 / total_stake >= 0.6)
-                .then_some(build_cert(
+            CertificateType::Finalize(_) => {
+                (self.finalize.stake as f64 / total_stake >= FINALIZE_STAKE).then_some(build_cert(
                     cert_type,
                     &self.finalize.signature,
                     self.finalize.bitmap.clone(),
                     None,
-                )),
+                ))
+            }
             CertificateType::FinalizeFast(_, block_id) => {
                 self.notar.entries.get(block_id).and_then(|p| {
-                    (p.stake as f64 / total_stake >= 0.8).then_some(build_cert(
+                    (p.stake as f64 / total_stake >= FAST_FINALIZE_STAKE).then_some(build_cert(
                         cert_type,
                         &p.signature,
                         p.bitmap.clone(),
@@ -314,7 +322,7 @@ impl VotePool {
             }
             CertificateType::Notarize(_, block_id) => {
                 self.notar.entries.get(block_id).and_then(|p| {
-                    (p.stake as f64 / total_stake >= 0.6).then_some(build_cert(
+                    (p.stake as f64 / total_stake >= NOTAR_STAKE).then_some(build_cert(
                         cert_type,
                         &p.signature,
                         p.bitmap.clone(),
@@ -332,7 +340,7 @@ impl VotePool {
                     Some(p) => (p.stake, Some((&p.signature, &p.bitmap))),
                 };
                 let accumulated_stake = notar_stake.saturating_add(nf_stake);
-                (accumulated_stake as f64 / total_stake >= 0.6).then_some({
+                (accumulated_stake as f64 / total_stake >= NOTAR_FALLBACK_STAKE).then_some({
                     let (signature, bitmap) = match notar_sig_bitmap {
                         None => (&SignatureProjective::identity(), default_bitvec()),
                         Some((sig, bitmap)) => (sig, bitmap.clone()),
@@ -348,7 +356,7 @@ impl VotePool {
             CertificateType::Skip(_) => {
                 let accumulated_stake =
                     self.skip.stake.saturating_add(self.skip_fallback.stake) as f64;
-                (accumulated_stake / total_stake >= 0.6).then_some({
+                (accumulated_stake / total_stake >= SKIP_STAKE).then_some({
                     let fallback = (self.skip_fallback.stake != 0).then_some((
                         &self.skip_fallback.signature,
                         self.skip_fallback.bitmap.clone(),
