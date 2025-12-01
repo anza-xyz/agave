@@ -1,6 +1,7 @@
 use {
     crate::{
         spawn,
+        syscalls::SYSCALLS,
         toolchain::rust_target_triple,
         utils::{copy_file, create_directory, generate_keypair},
         Config,
@@ -8,7 +9,7 @@ use {
     log::{debug, error, info, warn},
     regex::Regex,
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         fs::{self, File},
         io::{BufRead, BufReader, BufWriter, Write},
         path::{Path, PathBuf},
@@ -257,16 +258,6 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
 // Check whether the built .so file contains undefined symbols that are
 // not known to the runtime and warn about them if any.
 fn check_undefined_symbols(config: &Config, program: &Path) {
-    let syscalls_txt = config.sbf_sdk.join("syscalls.txt");
-    let Ok(file) = File::open(syscalls_txt) else {
-        return;
-    };
-    let mut syscalls = HashSet::new();
-    for line_result in BufReader::new(file).lines() {
-        let line = line_result.unwrap();
-        let line = line.trim_end();
-        syscalls.insert(line.to_string());
-    }
     let entry =
         Regex::new(r"^ *[0-9]+: [0-9a-f]{16} +[0-9a-f]+ +NOTYPE +GLOBAL +DEFAULT +UND +(.+)")
             .unwrap();
@@ -293,7 +284,7 @@ fn check_undefined_symbols(config: &Config, program: &Path) {
         if entry.is_match(line) {
             let captures = entry.captures(line).unwrap();
             let symbol = captures[1].to_string();
-            if !syscalls.contains(&symbol) {
+            if !SYSCALLS.contains(&symbol.as_str()) {
                 unresolved_symbols.push(symbol);
             }
         }
