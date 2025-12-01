@@ -48,6 +48,18 @@ fn test_bump_version() {
         root_cargo_toml_content.contains(r#"b = { path = "b", version = "=1.2.4" }"#),
         "workspace.dependencies.crate-b should be bumped to 1.2.4"
     );
+    assert!(
+        root_cargo_toml_content.contains(r#"byte-slice-cast = "=1.2.3""#),
+        "non-workspace members' version should not be bumped"
+    );
+    assert!(
+        root_cargo_toml_content.contains(r#"cc = "1.2.3""#),
+        "non-workspace members' version should not be bumped"
+    );
+    assert!(
+        root_cargo_toml_content.contains(r#"scopeguard = "1.2.0""#),
+        "non-workspace members' version should not be bumped"
+    );
 
     // verify root/Cargo.lock
     let root_cargo_lock_content = fs::read_to_string(root_path.join("Cargo.lock")).unwrap();
