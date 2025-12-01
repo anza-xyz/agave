@@ -79,13 +79,19 @@ impl From<&PohRecorder> for DecisionMaker {
 
 #[derive(Debug)]
 pub(crate) struct DecisionMakerWrapper {
+    is_enabled: Arc<AtomicBool>,
     is_exited: Arc<AtomicBool>,
     decision_maker: DecisionMaker,
 }
 
 impl DecisionMakerWrapper {
-    pub(crate) fn new(is_exited: Arc<AtomicBool>, decision_maker: DecisionMaker) -> Self {
+    pub(crate) fn new(
+        is_enabled: Arc<AtomicBool>,
+        is_exited: Arc<AtomicBool>,
+        decision_maker: DecisionMaker,
+    ) -> Self {
         Self {
+            is_enabled,
             is_exited,
             decision_maker,
         }
@@ -96,6 +102,8 @@ impl BankingStageMonitor for DecisionMakerWrapper {
     fn status(&mut self) -> BankingStageStatus {
         if self.is_exited.load(Relaxed) {
             BankingStageStatus::Exited
+        } else if !self.is_enabled.load(Relaxed) {
+            BankingStageStatus::Disabled
         } else if matches!(
             self.decision_maker.make_consume_or_forward_decision(),
             BufferedPacketsDecision::Forward,
@@ -104,6 +112,10 @@ impl BankingStageMonitor for DecisionMakerWrapper {
         } else {
             BankingStageStatus::Active
         }
+    }
+
+    fn toggle_banking_packet_receiver(&mut self, enable: bool) {
+        self.is_enabled.store(enable, Relaxed);
     }
 }
 
