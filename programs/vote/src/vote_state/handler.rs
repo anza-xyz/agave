@@ -41,17 +41,7 @@ pub trait VoteStateHandle {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
-        verify: F,
-    ) -> Result<(), InstructionError>
-    where
-        F: Fn(Pubkey) -> Result<(), InstructionError>;
-
-    fn set_new_authorized_voter_with_bls<F>(
-        &mut self,
-        authorized_pubkey: &Pubkey,
-        bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-        current_epoch: Epoch,
-        target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
@@ -278,11 +268,16 @@ impl VoteStateHandle for VoteStateV3 {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
         F: Fn(Pubkey) -> Result<(), InstructionError>,
     {
+        if bls_pubkey.is_some() {
+            return Err(InstructionError::InvalidAccountData);
+        }
+
         let epoch_authorized_voter = self.get_and_update_authorized_voter(current_epoch)?;
         verify(epoch_authorized_voter)?;
 
@@ -331,21 +326,6 @@ impl VoteStateHandle for VoteStateV3 {
             .insert(target_epoch, *authorized_pubkey);
 
         Ok(())
-    }
-
-    fn set_new_authorized_voter_with_bls<F>(
-        &mut self,
-        _authorized_pubkey: &Pubkey,
-        _bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-        _current_epoch: Epoch,
-        _target_epoch: Epoch,
-        _verify: F,
-    ) -> Result<(), InstructionError>
-    where
-        F: Fn(Pubkey) -> Result<(), InstructionError>,
-    {
-        // Not supported in v3
-        Err(InstructionError::InvalidInstructionData)
     }
 
     fn get_and_update_authorized_voter(
@@ -484,6 +464,7 @@ impl VoteStateHandle for VoteStateV4 {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
@@ -506,37 +487,9 @@ impl VoteStateHandle for VoteStateV4 {
         self.authorized_voters
             .insert(target_epoch, *authorized_pubkey);
 
-        Ok(())
-    }
-
-    fn set_new_authorized_voter_with_bls<F>(
-        &mut self,
-        authorized_pubkey: &Pubkey,
-        bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-        current_epoch: Epoch,
-        target_epoch: Epoch,
-        verify: F,
-    ) -> Result<(), InstructionError>
-    where
-        F: Fn(Pubkey) -> Result<(), InstructionError>,
-    {
-        // Similar to the v3 implementation, but with no `prior_voters` field.
-
-        let epoch_authorized_voter = self.get_and_update_authorized_voter(current_epoch)?;
-        verify(epoch_authorized_voter)?;
-
-        // The offset in slots `n` on which the target_epoch
-        // (default value `DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET`) is
-        // calculated is the number of slots available from the
-        // first slot `S` of an epoch in which to set a new voter for
-        // the epoch at `S` + `n`
-        if self.authorized_voters.contains(target_epoch) {
-            return Err(VoteError::TooSoonToReauthorize.into());
+        if bls_pubkey.is_some() {
+            self.bls_pubkey_compressed = bls_pubkey.copied();
         }
-
-        self.authorized_voters
-            .insert(target_epoch, *authorized_pubkey);
-        self.bls_pubkey_compressed = Some(*bls_pubkey);
 
         Ok(())
     }
@@ -776,6 +729,7 @@ impl VoteStateHandle for VoteStateHandler {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
@@ -783,32 +737,16 @@ impl VoteStateHandle for VoteStateHandler {
     {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => {
+                if bls_pubkey.is_some() {
+                    return Err(InstructionError::InvalidAccountData);
+                }
                 v3.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
             }
-            TargetVoteState::V4(v4) => {
-                v4.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
-            }
-        }
-    }
-
-    fn set_new_authorized_voter_with_bls<F>(
-        &mut self,
-        authorized_pubkey: &Pubkey,
-        bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-        current_epoch: Epoch,
-        target_epoch: Epoch,
-        verify: F,
-    ) -> Result<(), InstructionError>
-    where
-        F: Fn(Pubkey) -> Result<(), InstructionError>,
-    {
-        match &mut self.target_state {
-            TargetVoteState::V3(_) => Err(InstructionError::InvalidAccountData),
-            TargetVoteState::V4(v4) => v4.set_new_authorized_voter_with_bls(
+            TargetVoteState::V4(v4) => v4.set_new_authorized_voter(
                 authorized_pubkey,
-                bls_pubkey,
                 current_epoch,
                 target_epoch,
+                bls_pubkey,
                 verify,
             ),
         }
@@ -1227,7 +1165,7 @@ mod tests {
         let new_voter = Pubkey::new_unique();
         // Set a new authorized voter
         vote_state
-            .set_new_authorized_voter(&new_voter, 0, epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter, 0, epoch_offset, None, |_| Ok(()))
             .unwrap();
 
         if let Some(prior_voters_last) = prior_voters_last_callback {
@@ -1239,19 +1177,19 @@ mod tests {
 
         // Trying to set authorized voter for same epoch again should fail
         assert_eq!(
-            vote_state.set_new_authorized_voter(&new_voter, 0, epoch_offset, |_| Ok(())),
+            vote_state.set_new_authorized_voter(&new_voter, 0, epoch_offset, None, |_| Ok(())),
             Err(VoteError::TooSoonToReauthorize.into())
         );
 
         // Setting the same authorized voter again should succeed
         vote_state
-            .set_new_authorized_voter(&new_voter, 2, 2 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter, 2, 2 + epoch_offset, None, |_| Ok(()))
             .unwrap();
 
         // Set a third and fourth authorized voter
         let new_voter2 = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_voter2, 3, 3 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter2, 3, 3 + epoch_offset, None, |_| Ok(()))
             .unwrap();
         if let Some(prior_voters_last) = prior_voters_last_callback {
             assert_eq!(
@@ -1262,7 +1200,7 @@ mod tests {
 
         let new_voter3 = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_voter3, 6, 6 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter3, 6, 6 + epoch_offset, None, |_| Ok(()))
             .unwrap();
         if let Some(prior_voters_last) = prior_voters_last_callback {
             assert_eq!(
@@ -1273,7 +1211,7 @@ mod tests {
 
         // Check can set back to original voter
         vote_state
-            .set_new_authorized_voter(&original_voter, 9, 9 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&original_voter, 9, 9 + epoch_offset, None, |_| Ok(()))
             .unwrap();
 
         // Run with these voters for a while, check the ranges of authorized
@@ -1350,7 +1288,7 @@ mod tests {
         // explicitly set before
         let new_voter = Pubkey::new_unique();
         assert_eq!(
-            vote_state.set_new_authorized_voter(&new_voter, 1, 1, |_| Ok(())),
+            vote_state.set_new_authorized_voter(&new_voter, 1, 1, None, |_| Ok(())),
             Err(VoteError::TooSoonToReauthorize.into())
         );
         assert_eq!(
@@ -1359,14 +1297,14 @@ mod tests {
         );
         // Set a new authorized voter for a future epoch
         assert_eq!(
-            vote_state.set_new_authorized_voter(&new_voter, 1, 2, |_| Ok(())),
+            vote_state.set_new_authorized_voter(&new_voter, 1, 2, None, |_| Ok(())),
             Ok(())
         );
         // Test that it's not possible to set a new authorized
         // voter within the same epoch, even if none has been
         // explicitly set before
         assert_eq!(
-            vote_state.set_new_authorized_voter(original_voter, 3, 3, |_| Ok(())),
+            vote_state.set_new_authorized_voter(original_voter, 3, 3, None, |_| Ok(())),
             Err(VoteError::TooSoonToReauthorize.into())
         );
         assert_eq!(
@@ -1536,7 +1474,7 @@ mod tests {
         // Set an authorized voter change at epoch 9.
         let new_authorized_voter = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_authorized_voter, 7, 9, |_| Ok(()))
+            .set_new_authorized_voter(&new_authorized_voter, 7, 9, None, |_| Ok(()))
             .unwrap();
 
         // Try to get the authorized voter for epoch 8, unchanged
@@ -1597,6 +1535,7 @@ mod tests {
                     &Pubkey::new_unique(),
                     i,
                     i + MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
+                    None,
                     |_| Ok(()),
                 )
                 .unwrap();
@@ -2381,7 +2320,7 @@ mod tests {
         let new_voter = Pubkey::new_unique();
         let bls_pubkey_compressed = [3u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
         vote_state
-            .set_new_authorized_voter_with_bls(&new_voter, &bls_pubkey_compressed, 0, 1, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter, 0, 1, Some(&bls_pubkey_compressed), |_| Ok(()))
             .unwrap();
         assert_eq!(vote_state.authorized_voters().len(), 2);
         assert_eq!(*vote_state.authorized_voters().last().unwrap().1, new_voter);
