@@ -752,6 +752,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
                     .leader_schedule_epoch
                     .checked_add(1)
                     .ok_or(InstructionError::InvalidAccountData)?,
+                None,
                 |epoch_authorized_voter| {
                     // current authorized withdrawer or authorized voter must say "yay"
                     if authorized_withdrawer_signer {
@@ -780,14 +781,14 @@ pub fn authorize<S: std::hash::BuildHasher>(
                 &args.bls_proof_of_possession,
             )?;
 
-            vote_state.set_new_authorized_voter_with_bls(
+            vote_state.set_new_authorized_voter(
                 authorized,
-                &args.bls_pubkey,
                 clock.epoch,
                 clock
                     .leader_schedule_epoch
                     .checked_add(1)
                     .ok_or(InstructionError::InvalidAccountData)?,
+                Some(&args.bls_pubkey),
                 |epoch_authorized_voter| {
                     // current authorized withdrawer or authorized voter must say "yay"
                     if authorized_withdrawer_signer {
@@ -1268,17 +1269,35 @@ mod tests {
         // Simulate prior epochs completed with credits and each setting a new authorized voter
         vote_state.increment_credits(0, 100);
         assert_eq!(
-            vote_state.set_new_authorized_voter(&solana_pubkey::new_rand(), 0, 1, |_pubkey| Ok(())),
+            vote_state.set_new_authorized_voter(
+                &solana_pubkey::new_rand(),
+                0,
+                1,
+                None,
+                |_pubkey| Ok(())
+            ),
             Ok(())
         );
         vote_state.increment_credits(1, 200);
         assert_eq!(
-            vote_state.set_new_authorized_voter(&solana_pubkey::new_rand(), 1, 2, |_pubkey| Ok(())),
+            vote_state.set_new_authorized_voter(
+                &solana_pubkey::new_rand(),
+                1,
+                2,
+                None,
+                |_pubkey| Ok(())
+            ),
             Ok(())
         );
         vote_state.increment_credits(2, 300);
         assert_eq!(
-            vote_state.set_new_authorized_voter(&solana_pubkey::new_rand(), 2, 3, |_pubkey| Ok(())),
+            vote_state.set_new_authorized_voter(
+                &solana_pubkey::new_rand(),
+                2,
+                3,
+                None,
+                |_pubkey| Ok(())
+            ),
             Ok(())
         );
 
