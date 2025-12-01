@@ -289,18 +289,22 @@ impl GeyserPluginManager {
         idx: usize,
     ) -> JsonRpcResult<()> {
         let mut current_plugin = Arc::get_mut(&mut plugin_ref);
-        let mut retries = 0;
-        const MAX_RETRIES: usize = 20_000; // 20,000 * 5ms = 100 second
-        while current_plugin.is_none() && retries < MAX_RETRIES {
+        let start = std::time::Instant::now();
+        while current_plugin.is_none() && start.elapsed() < std::time::Duration::from_secs(60) {
             std::thread::sleep(std::time::Duration::from_millis(5));
             current_plugin = Arc::get_mut(&mut plugin_ref);
-            retries += 1;
         }
         if current_plugin.is_none() {
-            error!("Failed to acquire mutable reference to plugin for unloading at idx {idx} after {} retries -- plugin unload WAS NOT EXPLICITLY CALLED", MAX_RETRIES);
+            error!(
+                "Failed to acquire mutable reference to plugin for unloading at idx {idx} after \
+                 60s -- plugin unload WAS NOT EXPLICITLY CALLED"
+            );
             return Err(jsonrpc_core::Error {
                 code: ErrorCode::InternalError,
-                message: format!("Failed to acquire mutable reference to plugin for unloading at idx {idx} after {} retries -- plugin unload WAS NOT EXPLICITLY CALLED", MAX_RETRIES),
+                message: format!(
+                    "Failed to acquire mutable reference to plugin for unloading at idx {idx} \
+                     after 60s -- plugin unload WAS NOT EXPLICITLY CALLED"
+                ),
                 data: None,
             });
         }
@@ -585,7 +589,7 @@ mod tests {
         };
         let (mut plugin, config) = dummy_plugin_and_library(test_plugin, DUMMY_CONFIG);
         plugin.on_load(config, false).unwrap();
-        assert_eq!(true, test_plugin_loaded.load(Ordering::Relaxed));
+        assert!(test_plugin_loaded.load(Ordering::Relaxed));
         let mut new_plugin_manager = (**plugin_manager.load()).clone();
         new_plugin_manager.plugins.push(Arc::new(plugin));
         assert_eq!(new_plugin_manager.plugins[0].name(), DUMMY_NAME);
@@ -605,7 +609,7 @@ mod tests {
         let reload_result =
             GeyserPluginManager::reload_plugin(&plugin_manager, DUMMY_NAME, TESTPLUGIN2_CONFIG);
         assert!(reload_result.is_ok());
-        assert_eq!(false, test_plugin_loaded.load(Ordering::Relaxed));
+        assert!(!test_plugin_loaded.load(Ordering::Relaxed));
 
         // The plugin is now replaced with ANOTHER_DUMMY_NAME
         let plugins = plugin_manager.load().list_plugins().unwrap();
