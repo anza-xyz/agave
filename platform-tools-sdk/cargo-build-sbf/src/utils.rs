@@ -1,12 +1,13 @@
 use {
     itertools::Itertools,
     log::{error, info},
+    solana_keypair::{write_keypair_file, Keypair},
     std::{
         env,
         ffi::OsStr,
         fs::File,
         io::{BufWriter, Write},
-        path::Path,
+        path::{Path, PathBuf},
         process::{exit, Command, Stdio},
     },
 };
@@ -59,4 +60,39 @@ where
         .iter()
         .map(|&c| c as char)
         .collect::<String>()
+}
+
+pub(crate) fn create_directory(path: &PathBuf) {
+    let _ = Command::new("mkdir")
+        .arg(path)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| {
+            error!("Failed create folder: {err}");
+            exit(1);
+        })
+        .wait();
+}
+
+pub(crate) fn copy_file(from: &Path, to: &Path) {
+    #[cfg(windows)]
+    let command = "copy";
+    #[cfg(not(windows))]
+    let command = "cp";
+    let _ = Command::new(command)
+        .args([from.as_os_str(), to.as_os_str()])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| {
+            error!("Failed to copy file: {err}");
+            exit(1);
+        })
+        .wait();
+}
+
+pub(crate) fn generate_keypair(path: &PathBuf) {
+    write_keypair_file(&Keypair::new(), path).unwrap_or_else(|err| {
+        error!("Unable to get create {}: {}", path.display(), err);
+        exit(1);
+    });
 }

@@ -412,7 +412,10 @@ fn main() {
                 .help("Disable remap of cwd prefix and preserve full path strings in binaries"),
         )
         .arg(Arg::new("debug").long("debug").takes_value(false).help(
-            "Enable debug symbols in a file available in target/deploy/<program-name>__debug__.so",
+            "Create debug objects at \
+             `target/deploy/debug`.\n`target/deploy/debug/program.debug.so` contains all debug \
+             information available.\n`target/deploy/debug/program.so` is a stripped version for \
+             execution in the VM.\nThese objects are not optimized for mainnet-beta deployment.",
         ))
         .arg(
             Arg::new("dump")
