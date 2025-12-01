@@ -39,15 +39,7 @@ else
   files="$(git ls-files :**Cargo.lock)"
 fi
 
-filtered_lock_files=()
-for file in $files; do
-  if [[ $file = *ci/xtask/tests/dummy-workspace* ]]; then
-    continue
-  fi
-  filtered_lock_files+=("$file")
-done
-
-for lock_file in "${filtered_lock_files[@]}"; do
+for lock_file in $files; do
   if [[ -n $CI ]]; then
     echo "--- [$lock_file]: cargo " "${shifted_args[@]}" "$@"
   fi
