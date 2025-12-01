@@ -31,7 +31,9 @@ async fn test_leader_updater_works() {
     let (test_validator, _) = TestValidatorGenesis::default().start_async().await;
     let tpu_address = *test_validator.tpu_quic();
 
-    let mut leader_updater = TestLeaderUpdater { address: tpu_address };
+    let mut leader_updater = TestLeaderUpdater {
+        address: tpu_address,
+    };
 
     let leaders = leader_updater.next_leaders(1);
     assert!(!leaders.is_empty());
@@ -48,7 +50,9 @@ async fn test_tpu_client_send_transaction() {
     let rpc_client = Arc::new(test_validator.get_async_rpc_client());
     let tpu_address = *test_validator.tpu_quic();
 
-    let leader_updater = TestLeaderUpdater { address: tpu_address };
+    let leader_updater = TestLeaderUpdater {
+        address: tpu_address,
+    };
 
     let bind_socket = sockets::bind_to_localhost_unique().unwrap();
 
