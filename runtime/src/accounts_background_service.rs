@@ -196,7 +196,6 @@ impl SnapshotRequestHandler {
                     .unwrap(); // SAFETY: We know len > 1
                 let snapshot_request = requests.swap_remove(max_idx);
                 let handled_request_slot = snapshot_request.snapshot_root_bank.slot();
-
                 // Re-enqueue any remaining requests for slots GREATER-THAN the one that will be handled
                 let num_re_enqueued_requests = requests
                     .into_iter()
