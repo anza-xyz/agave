@@ -16,6 +16,7 @@ use {
 #[derive(Debug, Default)]
 pub struct SendTransactionStats {
     pub successfully_sent: AtomicU64,
+    pub connection_successed_0rtt: AtomicU64,
     pub connect_error_cids_exhausted: AtomicU64,
     pub connect_error_invalid_remote_address: AtomicU64,
     pub connect_error_other: AtomicU64,
@@ -27,6 +28,7 @@ pub struct SendTransactionStats {
     pub connection_error_timed_out: AtomicU64,
     pub connection_error_transport_error: AtomicU64,
     pub connection_error_version_mismatch: AtomicU64,
+    pub connection_error_0rtt_failed: AtomicU64,
     pub write_error_closed_stream: AtomicU64,
     pub write_error_connection_lost: AtomicU64,
     pub write_error_stopped: AtomicU64,

@@ -1,7 +1,7 @@
 //! Utility code to handle quic networking.
 
 use {
-    crate::connection_workers_scheduler::BindTarget,
+    crate::connection_workers_scheduler::{BindTarget, ResumptionStrategy},
     quinn::{
         crypto::rustls::QuicClientConfig, default_runtime, ClientConfig, Connection, Endpoint,
         EndpointConfig, IdleTimeout, TransportConfig,
@@ -20,21 +20,33 @@ pub use {
     solana_tls_utils::QuicClientCertificate,
 };
 
-pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -> ClientConfig {
+pub(crate) fn create_client_config(
+    client_certificate: &QuicClientCertificate,
+    resumption: ResumptionStrategy,
+) -> ClientConfig {
     let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(
             vec![client_certificate.certificate.clone()],
             client_certificate.key.clone_key(),
         )
         .expect("Failed to set QUIC client certificates");
-    // this is also required to enable 0-RTT
-    crypto.enable_early_data = true;
 
-    // Resumption is storage of session tickets for 0-RTT connections.
+    let resumption = match resumption {
+        ResumptionStrategy::InMemory(num_sessions) => {
+            Some(Resumption::in_memory_sessions(num_sessions))
+        }
+        ResumptionStrategy::Disabled => None,
+        ResumptionStrategy::Custom(client_session_store) => {
+            Some(Resumption::store(client_session_store))
+        }
+    };
 
-    // TODO(klykov): this should be configured by user, now we use default which means in-memory
-    // storage.
-    crypto.resumption = Resumption::default();
+    if let Some(resumption) = resumption {
+        // required to enable 0-RTT
+        crypto.enable_early_data = true;
+        // Resumption is storage of session tickets for 0-RTT connections.
+        crypto.resumption = resumption;
+    }
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
 
     let transport_config = {
