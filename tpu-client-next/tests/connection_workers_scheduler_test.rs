@@ -405,6 +405,15 @@ async fn test_connection_pruned_and_reopened() {
         "Expected at least 1 connection error from pruning and retries. Stats: {stats:?}"
     );
 
+    assert_eq!(
+        stats.connection_error_0rtt_failed, 1,
+        "Expected that 0-RTT failed the first time we were trying to connect."
+    );
+    assert_eq!(
+        stats.connection_successed_0rtt, 1,
+        "Expected that 0-RTT succeeded when we reconnected after pruning."
+    );
+
     // Exit server
     cancel.cancel();
     server_handle.await.unwrap();

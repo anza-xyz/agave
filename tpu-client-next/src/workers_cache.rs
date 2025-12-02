@@ -517,9 +517,4 @@ mod tests {
             }
         );
     }
-
-    //TODO(klykov): add test for 0rtt if possible here.
-    // Use cases:
-    // * server rejects 0rtt, check that client sends normally txs.
-    // * server accepts 0rtt, check that client works as well.
 }

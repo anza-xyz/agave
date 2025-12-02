@@ -4,7 +4,7 @@
 use {
     super::SendTransactionStats,
     crate::{
-        logging::{debug, error, trace, warn},
+        logging::{debug, error, info, trace, warn},
         quic_networking::send_data_over_stream,
         send_transaction_stats::record_error,
         transaction_batch::TransactionBatch,
@@ -320,7 +320,10 @@ impl ConnectionWorker {
         let connecting = self.endpoint.connect(self.peer, &server_name);
         match connecting {
             Ok(connecting) => {
-                // try to do 0rtt connection if possible
+                // try to do 0rtt connection if possible. If `into_0rtt` returns Ok, it doesn't
+                // necessarily mean that 0rtt was accepted by server. If it is not accepted
+                // `zero_rtt_accepted` will resolve to false. In practice, we haven't seen
+                // `zero_rtt_accepted` resolved to false. For details, see `Connecting::into_0rtt` documentation.
                 let mut measure_connection = Measure::start("establish connection");
                 let (connection, zero_rtt_accepted) = match connecting.into_0rtt() {
                     Ok((connection, zero_rtt_accepted)) => {
@@ -331,6 +334,9 @@ impl ConnectionWorker {
                         debug!(
                             "0rtt connection has been rejected. Falling back to regular handshake."
                         );
+                        self.send_txs_stats
+                            .connection_error_0rtt_failed
+                            .fetch_add(1, Ordering::Relaxed);
                         (timeout(self.handshake_timeout, connecting).await, None)
                     }
                 };
@@ -349,6 +355,7 @@ impl ConnectionWorker {
                                 .connection_successed_0rtt
                                 .fetch_add(1, Ordering::Relaxed);
                         } else {
+                            info!("0-RTT was not accepted by server.");
                             stats
                                 .connection_error_0rtt_failed
                                 .fetch_add(1, Ordering::Relaxed);
