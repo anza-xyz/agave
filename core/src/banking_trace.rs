@@ -456,6 +456,14 @@ impl TracedSender {
         }
     }
 
+    fn current_sender(&self) -> &Sender<BankingPacketBatch> {
+        if self.is_unified.load(Ordering::Relaxed) {
+            &self.unified_sender
+        } else {
+            &self.sender
+        }
+    }
+
     pub fn send(&self, batch: BankingPacketBatch) -> Result<(), SendError<BankingPacketBatch>> {
         if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
             if !exit.load(Ordering::Relaxed) {
@@ -470,16 +478,11 @@ impl TracedSender {
                     })?;
             }
         }
-        let sender = if self.is_unified.load(Ordering::Relaxed) {
-            &self.unified_sender
-        } else {
-            &self.sender
-        };
-        sender.send(batch)
+        self.current_sender().send(batch)
     }
 
     pub fn len(&self) -> usize {
-        self.sender.len()
+        self.current_sender().len()
     }
 
     pub fn is_empty(&self) -> bool {
