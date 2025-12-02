@@ -54,6 +54,7 @@ fn generate_debug_objects(
     deploy_keypair: &Path,
     debug_keypair: &PathBuf,
     program_name: &str,
+    #[cfg(windows)] llvm_bin: &Path,
 ) -> PathBuf {
     // debug objects
     let program_debug = sbf_debug_dir.join(format!("{program_name}.debug.so"));
@@ -66,7 +67,7 @@ fn generate_debug_objects(
             [
                 "--only-keep-debug".as_ref(),
                 program_unstripped_so.as_os_str(),
-                program_so.as_os_str(),
+                program_debug_stripped.as_os_str(),
             ],
             config.generate_child_script_on_failure,
         );
@@ -105,6 +106,7 @@ fn generate_release_objects(
     deploy_keypair: &PathBuf,
     debug_keypair: &Path,
     program_name: &str,
+    #[cfg(windows)] llvm_bin: &Path,
 ) -> PathBuf {
     let program_so = sbf_out_dir.join(format!("{program_name}.so"));
 
@@ -187,6 +189,8 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 &deploy_keypair,
                 &debug_keypair,
                 &program_name,
+                #[cfg(windows)]
+                &llvm_bin,
             )
         } else {
             generate_release_objects(
@@ -196,6 +200,8 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 &deploy_keypair,
                 &debug_keypair,
                 &program_name,
+                #[cfg(windows)]
+                &llvm_bin,
             )
         };
 
