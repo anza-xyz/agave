@@ -84,7 +84,7 @@ agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-ed25519-dalek = { workspace = true }
+ed25519-zebra = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 rand0-7 = { workspace = true }

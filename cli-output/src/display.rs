@@ -744,9 +744,9 @@ mod test {
     };
 
     fn new_test_keypair() -> Keypair {
-        let secret = ed25519_dalek::SecretKey::from_bytes(&[0u8; 32]).unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        let keypair = ed25519_dalek::Keypair { secret, public };
+        let secret = ed25519_zebra::SecretKey::from_bytes(&[0u8; 32]).unwrap();
+        let public = ed25519_zebra::PublicKey::from(&secret);
+        let keypair = ed25519_zebra::Keypair { secret, public };
         Keypair::try_from(keypair.to_bytes().as_ref()).unwrap()
     }
 

@@ -25,7 +25,7 @@ use {
     ahash::AHashMap,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
-    ed25519_dalek::ed25519::signature::Signer as EdSigner,
+    ed25519_zebra::ed25519::signature::Signer as EdSigner,
     itertools::Itertools,
     rand::Rng,
     rayon::{iter::IntoParallelIterator, ThreadPool, ThreadPoolBuilder},
@@ -9213,19 +9213,19 @@ fn test_call_precomiled_program() {
     bank.process_transaction(&tx).unwrap();
 
     // ed25519
-    // Since ed25519_dalek is still using the old version of rand, this test
+    // Since ed25519_zebra is still using the old version of rand, this test
     // copies the `generate` implementation at:
-    // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
+    // https://docs.rs/ed25519-zebra/1.0.1/src/ed25519_zebra/secret.rs.html#167
     let privkey = {
         use rand::RngCore;
         let mut rng = rand::rng();
-        let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
+        let mut seed = [0u8; ed25519_zebra::SECRET_KEY_LENGTH];
         rng.fill_bytes(&mut seed);
         let secret =
-            ed25519_dalek::SecretKey::from_bytes(&seed[..ed25519_dalek::SECRET_KEY_LENGTH])
+            ed25519_zebra::SecretKey::from_bytes(&seed[..ed25519_zebra::SECRET_KEY_LENGTH])
                 .unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        ed25519_dalek::Keypair { secret, public }
+        let public = ed25519_zebra::PublicKey::from(&secret);
+        ed25519_zebra::Keypair { secret, public }
     };
     let message_arr = b"hello";
     let signature = privkey.sign(message_arr).to_bytes();

@@ -16,7 +16,7 @@ agave-unstable-api = []
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-ed25519-dalek = { workspace = true }
+ed25519-zebra = { workspace = true }
 rand = { workspace = true }
 solana-ed25519-program = { workspace = true }
 solana-instruction = { workspace = true }

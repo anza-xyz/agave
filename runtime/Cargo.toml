@@ -192,7 +192,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 agave-logger = { workspace = true }
 agave-transaction-view = { workspace = true }
-ed25519-dalek = { workspace = true }
+ed25519-zebra = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
 rand_chacha = { workspace = true }

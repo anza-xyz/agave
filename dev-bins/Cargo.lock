@@ -210,7 +210,7 @@ dependencies = [
  "agave-feature-set",
  "bincode",
  "digest 0.10.7",
- "ed25519-dalek 1.0.1",
+ "ed25519-zebra 1.0.1",
  "libsecp256k1",
  "openssl",
  "sha3",
@@ -2228,7 +2228,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ed25519-dalek"
+name = "ed25519-zebra"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c762bae6dcaf24c4c84667b8579785430908723d5c889f469d76a41d59cc7a9d"
@@ -2242,7 +2242,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ed25519-dalek"
+name = "ed25519-zebra"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
@@ -2257,13 +2257,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "ed25519-dalek-bip32"
+name = "ed25519-zebra-bip32"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b49a684b133c4980d7ee783936af771516011c8cd15f429dbda77245e282f03"
 dependencies = [
  "derivation-path",
- "ed25519-dalek 2.2.0",
+ "ed25519-zebra 2.2.0",
  "hmac 0.12.1",
  "sha2 0.10.9",
 ]
@@ -7630,8 +7630,8 @@ version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "952ed9074c12edd2060cb09c2a8c664303f4ab7f7056a407ac37dd1da7bdaa3e"
 dependencies = [
- "ed25519-dalek 2.2.0",
- "ed25519-dalek-bip32",
+ "ed25519-zebra 2.2.0",
+ "ed25519-zebra-bip32",
  "five8 0.2.1",
  "rand 0.8.5",
  "solana-derivation-path",
@@ -8979,7 +8979,7 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4bb8057cc0e9f7b5e89883d49de6f407df655bb6f3a71d0b7baf9986a2218fd9"
 dependencies = [
- "ed25519-dalek 2.2.0",
+ "ed25519-zebra 2.2.0",
  "five8 0.2.1",
  "rand 0.8.5",
  "serde",

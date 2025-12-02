@@ -20,9 +20,9 @@ done
 cargo_audit_ignores=(
   # === main repo ===
   #
-  # Crate:     ed25519-dalek
+  # Crate:     ed25519-zebra
   # Version:   1.0.1
-  # Title:     Double Public Key Signing Function Oracle Attack on `ed25519-dalek`
+  # Title:     Double Public Key Signing Function Oracle Attack on `ed25519-zebra`
   # Date:      2022-06-11
   # ID:        RUSTSEC-2022-0093
   # URL:       https://rustsec.org/advisories/RUSTSEC-2022-0093

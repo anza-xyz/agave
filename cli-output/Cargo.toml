@@ -52,7 +52,7 @@ solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }
 
 [dev-dependencies]
-ed25519-dalek = { workspace = true }
+ed25519-zebra = { workspace = true }
 solana-keypair = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction-context = { workspace = true }

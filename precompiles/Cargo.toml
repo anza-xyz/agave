@@ -21,7 +21,7 @@ agave-unstable-api = []
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 digest = { workspace = true }
-ed25519-dalek = { workspace = true }
+ed25519-zebra = { workspace = true }
 libsecp256k1 = { workspace = true, features = ["hmac"] }
 openssl = { workspace = true }
 sha3 = { workspace = true }
@@ -42,6 +42,13 @@ rand0-7 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
+
+
+# rand0_7's thread_rng implements CryptoRng from RandCore-0.5.1
+# ed25519-zebra requires CryptoRng from RandCore-0.6.4
+# temporarily adding this 
+# TODO: update rand0-7; remove this
+rand_chacha = "0.3.1"
 
 [lints]
 workspace = true
