@@ -1197,12 +1197,17 @@ pub fn create_v4_account_with_authorized(
 ) -> AccountSharedData {
     let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
 
-    let vote_state = handler::create_new_vote_state_v4_for_tests(
-        node_pubkey,
-        authorized_voter,
-        authorized_withdrawer,
-        bls_pubkey_compressed,
-        inflation_rewards_commission_bps,
+    let vote_state = VoteStateV4::new(
+        &VoteInitV2 {
+            node_pubkey: *node_pubkey,
+            authorized_voter: *authorized_voter,
+            authorized_withdrawer: *authorized_withdrawer,
+            authorized_voter_bls_pubkey: bls_pubkey_compressed
+                .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
+            inflation_rewards_commission_bps,
+            ..Default::default()
+        },
+        &Clock::default(),
     );
 
     VoteStateV4::serialize(
