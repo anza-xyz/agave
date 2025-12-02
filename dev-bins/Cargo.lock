@@ -7267,7 +7267,7 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-net-utils",
- "solana-packet 3.0.0",
+ "solana-packet 4.0.0",
  "solana-pubkey 4.0.0",
  "solana-signer",
  "solana-system-interface",
