@@ -863,8 +863,8 @@ impl VoteStateHandle for VoteStateHandler {
 
     fn has_bls_pubkey(&self) -> bool {
         match &self.target_state {
-            TargetVoteState::V3(_) => false,
-            TargetVoteState::V4(v4) => v4.bls_pubkey_compressed.is_some(),
+            TargetVoteState::V3(v3) => v3.has_bls_pubkey(),
+            TargetVoteState::V4(v4) => v4.has_bls_pubkey(),
         }
     }
 }
