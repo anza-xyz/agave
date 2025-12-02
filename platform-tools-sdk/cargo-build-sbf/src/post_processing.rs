@@ -136,7 +136,7 @@ fn generate_release_objects(
         }
     }
 
-    if deploy_keypair.exists() {
+    if debug_keypair.exists() {
         copy_file(debug_keypair, deploy_keypair);
     } else {
         generate_keypair(deploy_keypair);
