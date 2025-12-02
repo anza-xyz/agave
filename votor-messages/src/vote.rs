@@ -9,8 +9,11 @@ use {
 /// structures expected by the program
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "6NFC2nmHc5VdjYKn6cbiskj9cLyk7jsWErJinojzYQhX")
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        api_digest = "6NFC2nmHc5VdjYKn6cbiskj9cLyk7jsWErJinojzYQhX",
+        abi_digest = "42YgWB8k6nErZJWqmcxN4QoRBVoeTHTymgDS99HdDUfz"
+    )
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
@@ -24,6 +27,21 @@ pub enum Vote {
     NotarizeFallback(NotarizationFallbackVote),
     /// A skip fallback vote
     SkipFallback(SkipFallbackVote),
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<Vote>
+    for solana_frozen_abi::rand::distributions::Standard
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Vote {
+        match rng.r#gen_range(0..5) {
+            0 => Vote::Notarize(rng.r#gen()),
+            1 => Vote::Finalize(rng.r#gen()),
+            2 => Vote::Skip(rng.r#gen()),
+            3 => Vote::NotarizeFallback(rng.r#gen()),
+            _ => Vote::SkipFallback(rng.r#gen()),
+        }
+    }
 }
 
 impl Vote {
@@ -136,8 +154,11 @@ impl From<SkipFallbackVote> for Vote {
 /// A notarization vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m",
+        abi_digest = "AL14y9AbENos7pYdc6ji6RmcgKUcwQCb1YUfaCUveRtL"
+    )
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct NotarizationVote {
@@ -147,11 +168,26 @@ pub struct NotarizationVote {
     pub block_id: Hash,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<NotarizationVote>
+    for solana_frozen_abi::rand::distributions::Standard
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> NotarizationVote {
+        NotarizationVote {
+            slot: rng.r#gen(),
+            block_id: Hash::new_from_array(rng.r#gen()),
+        }
+    }
+}
+
 /// A finalization vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2",
+        abi_digest = "HXz8236KK4xi9WaHQxPpGyrsp3AjdBaCWMQiwVhcKv83"
+    )
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct FinalizationVote {
@@ -159,13 +195,25 @@ pub struct FinalizationVote {
     pub slot: Slot,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<FinalizationVote>
+    for solana_frozen_abi::rand::distributions::Standard
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> FinalizationVote {
+        FinalizationVote { slot: rng.r#gen() }
+    }
+}
+
 /// A skip vote
 /// Represents a range of slots to skip
 /// inclusive on both ends
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN",
+        abi_digest = "HXz8236KK4xi9WaHQxPpGyrsp3AjdBaCWMQiwVhcKv83"
+    )
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct SkipVote {
@@ -173,11 +221,23 @@ pub struct SkipVote {
     pub slot: Slot,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<SkipVote>
+    for solana_frozen_abi::rand::distributions::Standard
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> SkipVote {
+        SkipVote { slot: rng.r#gen() }
+    }
+}
+
 /// A notarization fallback vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz",
+        abi_digest = "AL14y9AbENos7pYdc6ji6RmcgKUcwQCb1YUfaCUveRtL"
+    )
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct NotarizationFallbackVote {
@@ -187,14 +247,41 @@ pub struct NotarizationFallbackVote {
     pub block_id: Hash,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<NotarizationFallbackVote>
+    for solana_frozen_abi::rand::distributions::Standard
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(
+        &self,
+        rng: &mut R,
+    ) -> NotarizationFallbackVote {
+        NotarizationFallbackVote {
+            slot: rng.r#gen(),
+            block_id: Hash::new_from_array(rng.r#gen()),
+        }
+    }
+}
+
 /// A skip fallback vote
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF",
+        abi_digest = "HXz8236KK4xi9WaHQxPpGyrsp3AjdBaCWMQiwVhcKv83"
+    )
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct SkipFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<SkipFallbackVote>
+    for solana_frozen_abi::rand::distributions::Standard
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> SkipFallbackVote {
+        SkipFallbackVote { slot: rng.r#gen() }
+    }
 }

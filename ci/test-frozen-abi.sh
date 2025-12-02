@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 #
 # Easily run the ABI tests for the entire repo or a subset
@@ -11,7 +12,9 @@ source "$here/rust-version.sh" nightly
 
 packages=$(cargo +"$rust_nightly" metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.features | has("frozen-abi")) | .name')
 for package in $packages; do
-  cmd="cargo +$rust_nightly test -p $package --features frozen-abi --lib -- test_abi_ --nocapture"
-  echo "--- $cmd"
-  $cmd
+  for test_name in test_api_digest test_abi_digest; do
+    cmd="cargo +$rust_nightly test -p $package --features frozen-abi --lib -- $test_name --nocapture"
+    echo "--- $cmd"
+    $cmd
+  done
 done
