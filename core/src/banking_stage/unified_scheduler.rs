@@ -115,8 +115,6 @@ pub(crate) fn ensure_banking_stage_setup(
                     )
                     .ok()?;
 
-                    // WARN: Ignoring deactivation slot here can lead to the production of invalid
-                    // blocks. Currently, this code is not used in prod.
                     let (loaded_addresses, deactivation_slot) =
                         resolve_addresses_with_deactivation(&tx, &bank).ok()?;
                     let tx = RuntimeTransaction::<SanitizedTransaction>::try_from(
