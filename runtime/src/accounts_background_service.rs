@@ -188,7 +188,6 @@ impl SnapshotRequestHandler {
                 Some((snapshot_request, 1, 0))
             }
             _ => {
-                // Find the highest priority request in O(n) time
                 let max_idx = requests
                     .iter()
                     .enumerate()
