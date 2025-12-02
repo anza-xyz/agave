@@ -406,11 +406,11 @@ async fn test_connection_pruned_and_reopened() {
     );
 
     assert_eq!(
-        stats.connection_error_0rtt_failed, 1,
+        stats.connection_succeeded_1rtt, 1,
         "Expected that 0-RTT failed the first time we were trying to connect."
     );
     assert_eq!(
-        stats.connection_successed_0rtt, 1,
+        stats.connection_succeeded_0rtt, 1,
         "Expected that 0-RTT succeeded when we reconnected after pruning."
     );
 
@@ -471,6 +471,7 @@ async fn test_staked_connection() {
         stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
+            connection_succeeded_1rtt: 1,
             ..Default::default()
         }
     );
@@ -522,6 +523,7 @@ async fn test_connection_throttling() {
         stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
+            connection_succeeded_1rtt: 1,
             ..Default::default()
         }
     );
@@ -628,6 +630,7 @@ async fn test_rate_limiting() {
         stats
             == SendTransactionStatsNonAtomic {
                 connection_error_timed_out: 1,
+                connection_succeeded_1rtt: 1,
                 ..Default::default()
             }
     );

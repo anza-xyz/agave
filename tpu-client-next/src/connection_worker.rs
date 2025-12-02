@@ -335,7 +335,7 @@ impl ConnectionWorker {
                             "0rtt connection has been rejected. Falling back to regular handshake."
                         );
                         self.send_txs_stats
-                            .connection_error_0rtt_failed
+                            .connection_succeeded_1rtt
                             .fetch_add(1, Ordering::Relaxed);
                         (timeout(self.handshake_timeout, connecting).await, None)
                     }
@@ -352,12 +352,12 @@ impl ConnectionWorker {
                     tokio::spawn(async move {
                         if zero_rtt_accepted.await {
                             stats
-                                .connection_successed_0rtt
+                                .connection_succeeded_0rtt
                                 .fetch_add(1, Ordering::Relaxed);
                         } else {
                             info!("0-RTT was not accepted by server.");
                             stats
-                                .connection_error_0rtt_failed
+                                .connection_succeeded_1rtt
                                 .fetch_add(1, Ordering::Relaxed);
                         }
                     });

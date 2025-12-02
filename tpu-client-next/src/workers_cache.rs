@@ -424,6 +424,7 @@ mod tests {
             stats.read_and_reset(),
             SendTransactionStatsNonAtomic {
                 connection_error_timed_out: 1,
+                connection_succeeded_1rtt: 1,
                 ..Default::default()
             }
         );
@@ -513,6 +514,7 @@ mod tests {
             stats.read_and_reset(),
             SendTransactionStatsNonAtomic {
                 connection_error_timed_out: 1,
+                connection_succeeded_1rtt: 1,
                 ..Default::default()
             }
         );

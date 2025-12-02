@@ -312,6 +312,7 @@ impl ConnectionWorkersScheduler {
 
         workers.shutdown().await;
 
+        //endpoint.wait_idle().await;
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop().await;
         if let Some(error) = last_error {
