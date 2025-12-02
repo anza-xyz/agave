@@ -194,7 +194,6 @@ impl SnapshotRequestHandler {
                     .max_by(|(_, a), (_, b)| cmp_requests_by_priority(a, b))
                     .map(|(idx, _)| idx)
                     .unwrap(); // SAFETY: We know len > 1
-
                 let snapshot_request = requests.swap_remove(max_idx);
                 let handled_request_slot = snapshot_request.snapshot_root_bank.slot();
 
