@@ -75,7 +75,7 @@ pub fn verify(
         // Question(ZZ): we may need to revisit this precompile?
         if feature_set.is_active(&ed25519_precompile_verify_strict::id()) {
             publickey
-                .verify(&signature, message)
+                .verify_heea(&signature, message)
                 .map_err(|_| PrecompileError::InvalidSignature)?;
         } else {
             publickey
