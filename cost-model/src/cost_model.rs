@@ -859,12 +859,14 @@ mod tests {
     /// until updated.
     ///
     /// When you see a compile error here:
-    /// 1. DO NOT add the new variant to
+    /// 1. DO NOT add a new allocating variant to
     ///    `calculate_account_data_size_on_deserialized_system_instruction`
     ///    without proper feature gating
-    /// 2. Add the variant to the exhaustive match below in the appropriate category
-    /// 3. Add a test case verifying it returns Failed until feature-gate-activated,
-    ///    as demonstrated with `CreateAccountAllowPrefund`
+    /// 2. Add the variant to the exhaustive match below
+    /// 3. If you are not yet implementing feature-gated behavior, add a match arm that
+    ///    verifies that the new allocating instruction returns `Failed`
+    /// 4. Once feature-gate-activated, modify the test so that the new allocating
+    ///    instruction returns `Some(space)` if feature is enabled, and `Failed` otherwise
     ///
     /// Adding a new allocating instruction without feature gating will cause consensus
     /// issues during block replay.
@@ -948,7 +950,19 @@ mod tests {
                 | SystemInstruction::TransferWithSeed { .. } => {
                     SystemProgramAccountAllocation::None
                 }
-                // New allocating instructions must return Failed until feature-gated.
+                // New allocating instructions must return `Failed` until feature-gated.
+                // For example:
+                //
+                // ```
+                // SystemInstruction::CreateAccountAllowPrefund { .. } => {
+                //     assert!(
+                //         matches!(result, SystemProgramAccountAllocation::Failed),
+                //         "CreateAccountAllowPrefund must return Failed until feature-gated, got \
+                //          {result:?}",
+                //     );
+                //     continue;
+                // }
+                // ```
                 SystemInstruction::CreateAccountAllowPrefund { .. } => {
                     assert!(
                         matches!(result, SystemProgramAccountAllocation::Failed),
@@ -956,7 +970,7 @@ mod tests {
                          {result:?}",
                     );
                     continue;
-                } // Do not add catch-all (_) pattern - compiler intentionally errors if new variants are added.
+                } // Do not add catch-all (_) pattern - compiler should error if uncovered variants are added.
             };
 
             assert_eq!(
