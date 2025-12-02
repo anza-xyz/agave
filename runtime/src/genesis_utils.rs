@@ -171,6 +171,14 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         vec![],
     );
 
+    // Only if vote state v4 is active at genesis should we create genesis vote accounts in the v4 format.
+    let should_create_v4_vote_account = genesis_config
+        .accounts
+        .get(&agave_feature_set::vote_state_v4::id())
+        .and_then(|acct| acct.deserialize_data::<Feature>().ok())
+        .map(|feature| feature.activated_at == Some(0))
+        .unwrap_or(false);
+
     let mut genesis_config_info = GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -195,14 +203,24 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         } else {
             None
         };
-        let vote_account = vote_state::create_v4_account_with_authorized(
-            &node_pubkey,
-            &vote_pubkey,
-            &vote_pubkey,
-            bls_pubkey_compressed,
-            0,
-            *stake,
-        );
+        let vote_account = if should_create_v4_vote_account {
+            vote_state::create_v4_account_with_authorized(
+                &node_pubkey,
+                &vote_pubkey,
+                &vote_pubkey,
+                bls_pubkey_compressed,
+                0,
+                *stake,
+            )
+        } else {
+            vote_state::create_account_with_authorized(
+                &node_pubkey,
+                &vote_pubkey,
+                &vote_pubkey,
+                0,
+                *stake,
+            )
+        };
         let stake_account = Account::from(stake_utils::create_stake_account(
             &stake_pubkey,
             &vote_pubkey,
