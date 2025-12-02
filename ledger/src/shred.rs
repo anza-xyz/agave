@@ -166,7 +166,7 @@ impl ShredFlags {
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
-    Bincode(#[from] bincode::Error),
+    WincodeRead(#[from] wincode::ReadError),
     #[error(transparent)]
     WincodeWrite(#[from] wincode::WriteError),
     #[error(transparent)]
@@ -255,7 +255,7 @@ enum ShredVariant {
 }
 
 /// A common header that is present in data and code shred headers
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct ShredCommonHeader {
     #[wincode(with = "Pod<_>")]
     signature: Signature,
@@ -267,7 +267,7 @@ struct ShredCommonHeader {
 }
 
 /// The data shred header has parent offset and flags
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct DataShredHeader {
     parent_offset: u16,
     #[wincode(with = "Pod<_>")]
@@ -276,7 +276,7 @@ struct DataShredHeader {
 }
 
 /// The coding shred header has FEC information
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct CodingShredHeader {
     num_data_shreds: u16,
     num_coding_shreds: u16,
