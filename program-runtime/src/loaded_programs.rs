@@ -1269,10 +1269,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let num_to_unload = sorted_candidates
             .len()
             .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
-        for (program, _last_modification_slot, entry) in
-            sorted_candidates.iter().take(num_to_unload)
+        for (program, last_modification_slot, entry) in sorted_candidates.iter().take(num_to_unload)
         {
-            self.unload_program_entry(program, entry);
+            self.unload_program_entry(*program, *last_modification_slot, entry);
         }
     }
 
@@ -1307,12 +1306,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             let (index1, usage_counter1) = random_index_and_usage_counter(&candidates, now);
             let (index2, usage_counter2) = random_index_and_usage_counter(&candidates, now);
 
-            let (id, _last_modification_slot, entry) = if usage_counter1 < usage_counter2 {
+            let (id, last_modification_slot, entry) = if usage_counter1 < usage_counter2 {
                 candidates.swap_remove(index1)
             } else {
                 candidates.swap_remove(index2)
             };
-            self.unload_program_entry(&id, &entry);
+            self.unload_program_entry(id, last_modification_slot, &entry);
         }
     }
 
@@ -1329,10 +1328,15 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     /// This function removes the given entry for the given program from the cache.
     /// The function expects that the program and entry exists in the cache. Otherwise it'll panic.
-    fn unload_program_entry(&mut self, program: &Pubkey, remove_entry: &Arc<ProgramCacheEntry>) {
+    fn unload_program_entry(
+        &mut self,
+        id: Pubkey,
+        _last_modification_slot: Slot,
+        remove_entry: &Arc<ProgramCacheEntry>,
+    ) {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
-                let second_level = entries.get_mut(program).expect("Cache lookup failed");
+                let second_level = entries.get_mut(&id).expect("Cache lookup failed");
                 let candidate = second_level
                     .iter_mut()
                     .find(|entry| entry == &remove_entry)
@@ -1347,7 +1351,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     }
                     self.stats
                         .evictions
-                        .entry(*program)
+                        .entry(id)
                         .and_modify(|c| *c = c.saturating_add(1))
                         .or_insert(1);
                     *candidate = Arc::new(unloaded);
@@ -2755,7 +2759,7 @@ mod tests {
             // Check that unload_program_entry() does nothing for this entry
             let program_id = Pubkey::new_unique();
             cache.assign_program(&envs, program_id, entry.deployment_slot, entry.clone());
-            cache.unload_program_entry(&program_id, &entry);
+            cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
             assert_eq!(cache.get_slot_versions_for_tests(&program_id).len(), 1);
             assert!(cache.stats.evictions.is_empty());
         }
@@ -2770,7 +2774,7 @@ mod tests {
         // Check that unload_program_entry() does its work
         let program_id = Pubkey::new_unique();
         cache.assign_program(&envs, program_id, entry.deployment_slot, entry.clone());
-        cache.unload_program_entry(&program_id, &entry);
+        cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
         assert!(cache.stats.evictions.contains_key(&program_id));
     }
 
