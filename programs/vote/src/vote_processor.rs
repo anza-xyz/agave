@@ -312,8 +312,8 @@ mod tests {
                 self,
                 handler::{VoteStateHandle, VoteStateHandler},
                 Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
-                VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate, VoteStateV3, VoteStateV4,
-                VoteStateVersions,
+                VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
+                VoteStateV4, VoteStateVersions,
             },
         },
         bincode::serialize,
@@ -702,13 +702,30 @@ mod tests {
             AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
-        let instruction_data = serialize(&VoteInstruction::InitializeAccount(VoteInit {
+        let initialize_account_v1_data = serialize(&VoteInstruction::InitializeAccount(VoteInit {
             node_pubkey,
             authorized_voter: vote_pubkey,
             authorized_withdrawer: vote_pubkey,
             commission: 0,
         }))
         .unwrap();
+        let (bls_pubkey, bls_proof_of_posession) = create_bls_pubkey_and_proof_of_possession(&id());
+        let initialize_account_v2_data =
+            serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
+                node_pubkey,
+                authorized_voter: vote_pubkey,
+                authorized_withdrawer: vote_pubkey,
+                authorized_voter_bls_pubkey: bls_pubkey,
+                authorized_voter_bls_proof_of_possession: bls_proof_of_posession,
+                ..Default::default()
+            }))
+            .unwrap();
+        let (instruction_data, bad_instruction_data) =
+            if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
+                (initialize_account_v2_data, initialize_account_v1_data)
+            } else {
+                (initialize_account_v1_data, initialize_account_v2_data)
+            };
         let mut instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,
@@ -732,24 +749,6 @@ mod tests {
             },
         ];
 
-        // init should pass unless BLS pubkey management and VoteStateV4 are both enabled
-        if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
-            process_instruction(
-                vote_state_v4_enabled,
-                bls_pubkey_management_in_vote_account_enabled,
-                &instruction_data,
-                vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::rent::id(), create_default_rent_account()),
-                    (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account.clone()),
-                ],
-                instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
-            );
-            return;
-        }
-
         let accounts = process_instruction(
             vote_state_v4_enabled,
             bls_pubkey_management_in_vote_account_enabled,
@@ -762,6 +761,21 @@ mod tests {
             ],
             instruction_accounts.clone(),
             Ok(()),
+        );
+
+        // processing incompatible instruction should fail
+        process_instruction(
+            vote_state_v4_enabled,
+            bls_pubkey_management_in_vote_account_enabled,
+            &bad_instruction_data,
+            vec![
+                (vote_pubkey, vote_account.clone()),
+                (sysvar::rent::id(), create_default_rent_account()),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (node_pubkey, node_account.clone()),
+            ],
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
         );
 
         // reinit should fail
@@ -2576,10 +2590,18 @@ mod tests {
                 is_writable: false,
             },
         ];
+        let authorize_type = if vote_state_v4_enabled && bls_pubkey_feature_enabled {
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession,
+            })
+        } else {
+            VoteAuthorize::Voter
+        };
         process_instruction(
             vote_state_v4_enabled,
             bls_pubkey_feature_enabled,
-            &serialize(&VoteInstruction::AuthorizeChecked(VoteAuthorize::Voter)).unwrap(),
+            &serialize(&VoteInstruction::AuthorizeChecked(authorize_type)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
