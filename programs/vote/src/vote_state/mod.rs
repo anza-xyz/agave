@@ -889,6 +889,7 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
     }
 }
 
+// TODO(sam): use custom payload for PoP once solana-bls-signatures v2.0.0 is published.
 fn verify_bls_proof_of_possession(
     vote_account_pubkey: &Pubkey,
     bls_pubkey_compressed_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
