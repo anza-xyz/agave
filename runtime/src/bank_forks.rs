@@ -334,14 +334,7 @@ impl BankForks {
         if let Some(scheduler_pool) = &self.scheduler_pool {
             scheduler_pool.toggle_block_production_mode(enable)
         } else {
-            // unified scheduler pool isn't installed to begin with
-            if enable {
-                // Should fail when enabling
-                false
-            } else {
-                // Should succeed when disabling
-                true
-            }
+            !enable
         }
     }
 

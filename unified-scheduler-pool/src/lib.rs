@@ -119,8 +119,7 @@ impl SupportedSchedulingMode {
     fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
         match (self, requested_mode) {
             (Self::Both, _requested) => true,
-            (Self::Either(ref supported), ref requested) if supported == requested => true,
-            _ => false,
+            (Self::Either(ref supported), ref requested) => supported == requested,
         }
     }
 
@@ -1109,13 +1108,7 @@ where
         if !self.block_production_supported() {
             info!("toggle_block_production_mode: unsupported: enable: {enable}");
             // block production isn't supported to begin with.
-            if enable {
-                // Fail always for enabling the unsupported mode.
-                return false;
-            } else {
-                // Succeed always for disabling the never enabled mode.
-                return true;
-            }
+            return !enable;
         }
 
         if enable {
