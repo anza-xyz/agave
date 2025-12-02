@@ -4,8 +4,8 @@ extern crate test;
 use {
     agave_feature_set::FeatureSet,
     agave_precompiles::ed25519::verify,
-    ed25519_zebra::ed25519::signature::Signer,
-    rand0_7::{thread_rng, Rng},
+    rand_chacha::rand_core::RngCore,
+    rand_chacha::{rand_core::SeedableRng, ChaCha20Rng},
     solana_ed25519_program::new_ed25519_instruction_with_signature,
     solana_instruction::Instruction,
     test::Bencher,
@@ -18,11 +18,11 @@ const IX_COUNT: u16 = 5120;
 fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
     (0..IX_COUNT)
         .map(|_| {
-            let mut rng = thread_rng();
-            let privkey = ed25519_zebra::Keypair::generate(&mut rng);
-            let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0, 255)).collect();
+            let mut rng = ChaCha20Rng::from_seed([0u8; 32]);
+            let privkey = ed25519_zebra::SigningKey::new(&mut rng);
+            let message: Vec<u8> = (0..message_length).map(|_| rng.next_u32() as u8).collect();
             let signature = privkey.sign(&message).to_bytes();
-            let pubkey = privkey.public.to_bytes();
+            let pubkey = privkey.verification_key().try_into().unwrap();
             new_ed25519_instruction_with_signature(&message, &signature, &pubkey)
         })
         .collect()
