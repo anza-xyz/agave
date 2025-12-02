@@ -79,7 +79,7 @@ use {
     wincode::{
         containers::Pod,
         io::{Reader, Writer},
-        SchemaRead, SchemaWrite,
+        SchemaRead, SchemaWrite, TypeMeta,
     },
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -685,6 +685,10 @@ impl TryFrom<u8> for ShredVariant {
 
 impl SchemaWrite for ShredVariant {
     type Src = Self;
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 1,
+        zero_copy: false,
+    };
 
     fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
         Ok(1)
@@ -692,25 +696,22 @@ impl SchemaWrite for ShredVariant {
 
     fn write(writer: &mut impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         let repr: u8 = (*src).into();
-        // Safety: u8 is a plain data type
-        unsafe { writer.write_t(&repr) }?;
-        Ok(())
+        u8::write(writer, &repr)
     }
 }
 
 impl<'a> SchemaRead<'a> for ShredVariant {
     type Dst = Self;
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 1,
+        zero_copy: false,
+    };
 
     fn read(
         reader: &mut impl Reader<'a>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let mut repr_uninit = MaybeUninit::<u8>::uninit();
-        // Safety: u8 will always be properly initialized by a 1-byte read
-        let repr = unsafe {
-            reader.copy_into_t(&mut repr_uninit)?;
-            repr_uninit.assume_init()
-        };
+        let repr = u8::get(reader)?;
         let value = Self::try_from(repr)
             .map_err(|_| wincode::ReadError::InvalidTagEncoding(repr as usize))?;
         dst.write(value);
