@@ -310,7 +310,7 @@ mod tests {
             },
             vote_state::{
                 self,
-                handler::{self, VoteStateHandle, VoteStateHandler},
+                handler::{VoteStateHandle, VoteStateHandler},
                 Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate, VoteStateV3, VoteStateV4,
                 VoteStateVersions,
@@ -621,7 +621,7 @@ mod tests {
         let lamports = Rent::default().minimum_balance(space);
 
         let mut vote_state = if vote_state_v4_enabled {
-            let v4 = handler::create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock);
+            let v4 = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
             VoteStateHandler::new_v4(v4)
         } else {
             let v3 = VoteStateV3::new(&vote_init, &clock);

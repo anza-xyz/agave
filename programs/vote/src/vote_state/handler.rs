@@ -275,6 +275,9 @@ impl VoteStateHandle for VoteStateV3 {
         F: Fn(Pubkey) -> Result<(), InstructionError>,
     {
         if bls_pubkey.is_some() {
+            // We should not be able to reach here because we only call this function
+            // when both Vote State V4 and BLS features are enabled.
+            // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
             return Err(InstructionError::InvalidAccountData);
         }
 
@@ -615,30 +618,6 @@ impl VoteStateHandle for VoteStateV4 {
     }
 }
 
-/// Default block revenue commission rate in basis points (100%) per SIMD-0185.
-const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
-
-/// Create a new VoteStateV4 from `VoteInit` with proper SIMD-0185 defaults.
-/// Note this is a temporary substitute for `VoteStateV4::new`.
-#[allow(clippy::arithmetic_side_effects)]
-pub(crate) fn create_new_vote_state_v4(
-    vote_pubkey: &Pubkey,
-    vote_init: &VoteInit,
-    clock: &Clock,
-) -> VoteStateV4 {
-    VoteStateV4 {
-        node_pubkey: vote_init.node_pubkey,
-        authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
-        authorized_withdrawer: vote_init.authorized_withdrawer,
-        inflation_rewards_commission_bps: (vote_init.commission as u16) * 100, // u16::MAX > u8::MAX * 100
-        // Per SIMD-0185, set default collectors and commission
-        inflation_rewards_collector: *vote_pubkey,
-        block_revenue_collector: vote_init.node_pubkey,
-        block_revenue_commission_bps: DEFAULT_BLOCK_REVENUE_COMMISSION_BPS,
-        ..VoteStateV4::default()
-    }
-}
-
 /// The target version to convert all deserialized vote state into.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoteStateTargetVersion {
@@ -881,7 +860,8 @@ impl VoteStateHandler {
                 VoteStateV3::new(vote_init, clock).set_vote_account_state(vote_account)
             }
             VoteStateTargetVersion::V4 => {
-                let vote_state = create_new_vote_state_v4(vote_account.get_key(), vote_init, clock);
+                let vote_state =
+                    VoteStateV4::new_with_defaults(vote_account.get_key(), vote_init, clock);
                 vote_state.set_vote_account_state(vote_account)
             }
         }
@@ -1069,6 +1049,9 @@ mod tests {
         test_case::test_case,
     };
 
+    /// Default block revenue commission rate in basis points (100%) per SIMD-0185.
+    const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
+
     fn mock_transaction_context(
         vote_pubkey: Pubkey,
         vote_account: AccountSharedData,
@@ -1240,7 +1223,7 @@ mod tests {
         );
 
         // Now try with v4. No `prior_voters` to check.
-        let mut vote_state = create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock);
+        let mut vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
 
         set_new_authorized_voter_and_assert(&mut vote_state, original_voter, epoch_offset, None);
     }
@@ -1297,7 +1280,7 @@ mod tests {
         assert_authorized_voter_is_locked_within_epoch(&mut vote_state, &original_voter);
 
         // Now v4.
-        let mut vote_state = create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock);
+        let mut vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         assert_authorized_voter_is_locked_within_epoch(&mut vote_state, &original_voter);
     }
 
@@ -1373,7 +1356,7 @@ mod tests {
     fn test_get_and_update_authorized_voter_v4() {
         let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = create_new_vote_state_v4(
+        let mut vote_state = VoteStateV4::new_with_defaults(
             &vote_pubkey,
             &VoteInit {
                 node_pubkey: original_voter,
@@ -2263,7 +2246,7 @@ mod tests {
     fn test_get_and_update_authorized_voter_v4_with_bls() {
         let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = create_new_vote_state_v4(
+        let mut vote_state = VoteStateV4::new_with_defaults(
             &vote_pubkey,
             &VoteInit {
                 node_pubkey: original_voter,
