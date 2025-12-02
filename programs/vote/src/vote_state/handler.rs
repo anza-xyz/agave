@@ -897,6 +897,9 @@ impl VoteStateHandler {
             let vote_state = VoteStateV4::new(vote_init, clock);
             vote_state.set_vote_account_state(vote_account)
         } else {
+            // We should not be able to reach here because we only call this function
+            // when both Vote State V4 and BLS features are enabled.
+            // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
             Err(InstructionError::InvalidInstructionData)
         }
     }
