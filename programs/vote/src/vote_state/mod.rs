@@ -971,9 +971,10 @@ pub fn withdraw<S: std::hash::BuildHasher>(
     Ok(())
 }
 
-/// Initialize the vote_state for a vote account
+/// Initialize the vote_state for a vote account using VoteInitV2
 /// Assumes that the account is being init as part of a account creation or balance transfer and
 /// that the transaction must be signed by the staker's keys
+/// It also verifies the BLS proof of possession for the authorized voter BLS pubkey
 pub fn initialize_account_v2<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
@@ -1001,7 +1002,7 @@ pub fn initialize_account_v2<S: std::hash::BuildHasher>(
     VoteStateHandler::init_vote_account_state_v2(vote_account, vote_init, clock, target_version)
 }
 
-/// Initialize the vote_state for a vote account using VoteInitV2
+/// Initialize the vote_state for a vote account
 /// Assumes that the account is being init as part of a account creation or balance transfer and
 /// that the transaction must be signed by the staker's keys
 pub fn initialize_account<S: std::hash::BuildHasher>(
