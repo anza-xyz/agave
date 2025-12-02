@@ -63,31 +63,17 @@ where
 }
 
 pub(crate) fn create_directory(path: &PathBuf) {
-    let _ = Command::new("mkdir")
-        .arg(path)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|err| {
-            error!("Failed create folder: {err}");
-            exit(1);
-        })
-        .wait();
+    std::fs::create_dir(path).unwrap_or_else(|err| {
+        error!("Failed create folder: {err}");
+        exit(1);
+    });
 }
 
 pub(crate) fn copy_file(from: &Path, to: &Path) {
-    #[cfg(windows)]
-    let command = "copy";
-    #[cfg(not(windows))]
-    let command = "cp";
-    let _ = Command::new(command)
-        .args([from.as_os_str(), to.as_os_str()])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|err| {
-            error!("Failed to copy file: {err}");
-            exit(1);
-        })
-        .wait();
+    std::fs::copy(from, to).unwrap_or_else(|err| {
+        error!("Failed to copy file: {err}");
+        exit(1);
+    });
 }
 
 pub(crate) fn generate_keypair(path: &PathBuf) {
