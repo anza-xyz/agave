@@ -72,7 +72,7 @@ solana-message = "=3.0.1"
 solana-native-token = "=3.0.0"
 solana-nonce = "=3.0.0"
 solana-offchain-message = { version = "=3.0.0", features = ["verify"] }
-solana-packet = "=3.0.0"
+solana-packet = "=4.0.0"
 solana-program-runtime = { workspace = true }
 solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-pubsub-client = { workspace = true }
