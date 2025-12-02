@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
@@ -177,6 +179,8 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
     Ok(())
 }
 
+/// A small grouping struct to temporarily hold banking packet channel senders and receivers with
+/// different source labels for the banking stage setup.
 pub struct Channels {
     pub non_vote_sender: BankingPacketSender,
     pub non_vote_receiver: BankingPacketReceiver,
@@ -187,20 +191,32 @@ pub struct Channels {
 }
 
 impl Channels {
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn unified_sender(&self) -> &BankingPacketSender {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn sender_for_unified_scheduler(&self) -> &BankingPacketSender {
+        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
+        // channel arbitrarily here for consistency with receiver_for_unified_scheduler().
+        //
+        // This method is only used internally by clone_is_unified_for_unified_scheduler() below or
+        // tests as a convenience method. So, while no apparent code-patch reaching here, banking
+        // packets can still be routed dynamically depending on the activation of unified scheduler
+        // as block production. That's because each TracedSender is passed to sources (i.e.
+        // non-vote, tpu-vote, gossip-vote) during the validator booting.
+        //
+        // So, while this method name is similar to receiver_for_unified_scheduler() due to being
+        // paired getters of the channel for unified scheduler, this method is used differently
+        // than receiver_for_unified_scheduler() below as hinted by different visibility under no
+        // DCOU: `private` v.s. `pub(crate)`.
         &self.non_vote_sender
     }
 
-    pub(crate) fn unified_receiver(&self) -> &BankingPacketReceiver {
+    pub(crate) fn receiver_for_unified_scheduler(&self) -> &BankingPacketReceiver {
+        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
+        // channel arbitrarily here for consistency with sender_for_unified_scheduler().
         &self.non_vote_receiver
     }
 
-    pub(crate) fn is_unified(&self) -> &Arc<AtomicBool> {
-        let is_unified = &self.non_vote_sender.is_unified;
-        assert!(Arc::ptr_eq(is_unified, &self.tpu_vote_sender.is_unified));
-        assert!(Arc::ptr_eq(is_unified, &self.gossip_vote_sender.is_unified));
-        is_unified
+    pub(crate) fn clone_is_unified_for_unified_scheduler(&self) -> Arc<AtomicBool> {
+        self.sender_for_unified_scheduler().is_unified.clone()
     }
 }
 
@@ -402,6 +418,19 @@ impl BankingTracer {
     }
 }
 
+/// A small wrapper around the sender of crossbeam channels to message banking packet batches.
+/// These channels are used by the banking stage to receive packets from multiple sources. The
+/// sources are labelled as non-vote, tpu-vote, and gossip-vote respectively. And, traced senders
+/// are separately constructed for each of these sources are all grouped under the `Channels`
+/// struct transiently during setup.
+///
+/// This wrapper exists to enable the banking trace functionality conditionally on creation.
+///
+/// Also, this wrapper can dynamically switch sending batches to an alternate channel, called the
+/// unified channel, depending on a flag. Both the actual crossbeam sender for the unified channel
+/// and the flag are expected to be shared among all of traced sender instances, which will be used
+/// by the trio of sources respectively. This routing functionality is needed for unified scheduler
+/// and its runtime switching.
 pub struct TracedSender {
     label: ChannelLabel,
     sender: Sender<BankingPacketBatch>,

@@ -74,7 +74,7 @@ pub(crate) fn ensure_banking_stage_setup(
     }
 
     let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-    let unified_receiver = channels.unified_receiver().clone();
+    let banking_packet_receiver = channels.receiver_for_unified_scheduler().clone();
 
     let (is_exited, decision_maker) = {
         let poh_recorder = poh_recorder.read().unwrap();
@@ -85,7 +85,7 @@ pub(crate) fn ensure_banking_stage_setup(
     };
 
     let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(
-        channels.is_unified().clone(),
+        channels.clone_is_unified_for_unified_scheduler(),
         is_exited,
         decision_maker.clone(),
     ));
@@ -156,7 +156,7 @@ pub(crate) fn ensure_banking_stage_setup(
 
     pool.register_banking_stage(
         Some(num_threads.get()),
-        unified_receiver,
+        banking_packet_receiver,
         banking_packet_handler,
         transaction_recorder,
         banking_stage_monitor,

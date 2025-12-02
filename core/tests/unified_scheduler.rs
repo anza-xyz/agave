@@ -274,7 +274,7 @@ fn test_scheduler_producing_blocks() {
 
     // Now, send transaction
     channels
-        .unified_sender()
+        .sender_for_unified_scheduler()
         .send(banking_packet_batch)
         .unwrap();
 
