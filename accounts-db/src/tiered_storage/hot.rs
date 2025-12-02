@@ -54,6 +54,7 @@ fn new_hot_footer() -> TieredStorageFooter {
         account_block_format: HOT_FORMAT.account_block_format,
         index_block_format: HOT_FORMAT.index_block_format,
         owners_block_format: HOT_FORMAT.owners_block_format,
+        owner_entry_size: std::mem::size_of::<Pubkey>() as u32,
         ..TieredStorageFooter::default()
     }
 }
@@ -814,6 +815,7 @@ impl HotStorageWriter {
         // writing footer
         footer.min_account_address = address_range.min;
         footer.max_account_address = address_range.max;
+        footer.hash = solana_hash::Hash::default();
         cursor += footer.write_footer_block(&mut self.storage)?;
 
         Ok(StoredAccountsInfo {
