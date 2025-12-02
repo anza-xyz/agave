@@ -832,10 +832,10 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature),
         );
 
-        let mut bad_bls_proof_of_possession = bls_proof_of_posession;
-        bad_bls_proof_of_possession[0] ^= 0xFF; // Corrupt the proof of possession
-                                                // Test that bad proof of possession fails initialization
+        // Test that bad proof of possession fails initialization
         if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
+            let mut bad_bls_proof_of_possession = bls_proof_of_posession;
+            bad_bls_proof_of_possession[0] ^= 0xFF; // Corrupt the proof of possession
             let instruction_with_bad_pop =
                 serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
                     node_pubkey,
@@ -846,6 +846,7 @@ mod tests {
                     ..Default::default()
                 }))
                 .unwrap();
+            instruction_accounts[3].is_signer = true;
             process_instruction(
                 vote_state_v4_enabled,
                 bls_pubkey_management_in_vote_account_enabled,
@@ -1356,7 +1357,7 @@ mod tests {
         if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
             let mut bad_bls_proof_of_possession = bls_proof_of_possession;
             bad_bls_proof_of_possession[0] ^= 0xFF; // Corrupt the proof of possession
-                                                    // Test that bad proof of possession fails authorization
+            // Test that bad proof of possession fails authorization
             let instruction_data = serialize(&VoteInstruction::Authorize(
                 authorized_voter_pubkey,
                 VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
@@ -1371,7 +1372,7 @@ mod tests {
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
+                Err(InstructionError::InvalidArgument),
             );
 
             // Test that if the account already has a BLS pubkey, VoteAuthorize::Voter
