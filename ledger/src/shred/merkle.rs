@@ -26,7 +26,6 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_perf::packet::deserialize_from_with_limit,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
@@ -510,7 +509,7 @@ impl<'a> ShredTrait<'a> for ShredData {
         }
         payload.truncate(Self::SIZE_OF_PAYLOAD);
         let (common_header, data_header): (ShredCommonHeader, _) =
-            deserialize_from_with_limit(&payload[..])?;
+            wincode::deserialize(&payload[..])?;
         if !matches!(common_header.shred_variant, ShredVariant::MerkleData { .. }) {
             return Err(Error::InvalidShredVariant);
         }
@@ -561,7 +560,7 @@ impl<'a> ShredTrait<'a> for ShredCode {
     {
         let mut payload = Payload::from(payload);
         let (common_header, coding_header): (ShredCommonHeader, _) =
-            deserialize_from_with_limit(&payload[..])?;
+            wincode::deserialize(&payload[..])?;
         if !matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. }) {
             return Err(Error::InvalidShredVariant);
         }
@@ -803,8 +802,7 @@ pub(super) fn recover(
                     let Shred::ShredData(shred) = shred else {
                         return Err(Error::InvalidRecoveredShred);
                     };
-                    let (common_header, data_header) =
-                        deserialize_from_with_limit(&shred.payload[..])?;
+                    let (common_header, data_header) = wincode::deserialize(&shred.payload[..])?;
                     if shred.common_header != common_header {
                         return Err(Error::InvalidRecoveredShred);
                     }
@@ -899,7 +897,10 @@ fn make_stub_shred(
         // For coding shreds {common,coding} headers are not part of the
         // erasure coded slice and need to be written to the payload here.
         let mut payload = vec![0u8; ShredCode::SIZE_OF_PAYLOAD];
-        bincode::serialize_into(&mut payload[..], &(&common_header, &coding_header))?;
+        wincode::serialize_into(
+            &mut payload.as_mut_slice(),
+            &(&common_header, &coding_header),
+        )?;
         Shred::ShredCode(ShredCode {
             common_header,
             coding_header,
@@ -1238,16 +1239,16 @@ fn finish_erasure_batch(
 ) -> Result<Hash, Error> {
     debug_assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
     // Write common and {data,coding} headers into shreds' payload.
-    fn write_headers(shred: &mut Shred) -> Result<(), bincode::Error> {
+    fn write_headers(shred: &mut Shred) -> Result<(), wincode::WriteError> {
         match shred {
-            Shred::ShredCode(shred) => bincode::serialize_into(
-                &mut shred.payload.as_mut()[..],
-                &(&shred.common_header, &shred.coding_header),
-            ),
-            Shred::ShredData(shred) => bincode::serialize_into(
-                &mut shred.payload.as_mut()[..],
-                &(&shred.common_header, &shred.data_header),
-            ),
+            Shred::ShredCode(shred) => {
+                let mut dst = &mut shred.payload.as_mut()[..];
+                wincode::serialize_into(&mut dst, &(&shred.common_header, &shred.coding_header))
+            }
+            Shred::ShredData(shred) => {
+                let mut dst = &mut shred.payload.as_mut()[..];
+                wincode::serialize_into(&mut dst, &(&shred.common_header, &shred.data_header))
+            }
         }
     }
     match thread_pool {
@@ -1494,7 +1495,8 @@ mod test {
                 ..data_header
             };
             let mut payload = vec![0u8; ShredData::SIZE_OF_PAYLOAD];
-            bincode::serialize_into(&mut payload[..], &(&common_header, &data_header)).unwrap();
+            wincode::serialize_into(&mut payload.as_mut_slice(), &(&common_header, &data_header))
+                .unwrap();
             rng.fill(&mut payload[ShredData::SIZE_OF_HEADERS..size]);
             let shred = ShredData {
                 common_header,
@@ -1528,7 +1530,12 @@ mod test {
                 ..coding_header
             };
             let mut payload = vec![0u8; ShredCode::SIZE_OF_PAYLOAD];
-            bincode::serialize_into(&mut payload[..], &(&common_header, &coding_header)).unwrap();
+            wincode::serialize_into(
+                &mut payload.as_mut_slice(),
+                &(&common_header, &coding_header),
+            )
+            .unwrap();
+
             payload[ShredCode::SIZE_OF_HEADERS..ShredCode::SIZE_OF_HEADERS + code.len()]
                 .copy_from_slice(&code);
             let shred = ShredCode {

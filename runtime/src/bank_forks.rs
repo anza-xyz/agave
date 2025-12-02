@@ -9,6 +9,8 @@ use {
         },
         snapshot_controller::SnapshotController,
     },
+    agave_feature_set,
+    agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
@@ -101,6 +103,10 @@ pub struct BankForks {
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
     dumped_slot_subscribers: Vec<DumpedSlotSubscription>,
+
+    /// The status tracker for the Alpenglow migration. Initialized via either
+    /// the genesis or snapshot bank and then updated via block replay.
+    migration_status: Arc<MigrationStatus>,
 }
 
 impl Index<u64> for BankForks {
@@ -140,6 +146,7 @@ impl BankForks {
         for parent in root_bank.proper_ancestors() {
             descendants.entry(parent).or_default().insert(root_slot);
         }
+        let migration_status = Arc::new(Self::initialize_migration_status(&root_bank));
 
         let bank_forks = Arc::new(RwLock::new(Self {
             root: Arc::new(AtomicSlot::new(root_slot)),
@@ -156,10 +163,24 @@ impl BankForks {
             highest_slot_at_startup: 0,
             scheduler_pool: None,
             dumped_slot_subscribers: vec![],
+            migration_status,
         }));
 
         root_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
         bank_forks
+    }
+
+    /// Based on the current feature flag activation and genesis certificate account in the root bank,
+    /// determine which phase of the migration we are in and initialize accordingly.
+    fn initialize_migration_status(root_bank: &Bank) -> MigrationStatus {
+        let epoch_schedule = root_bank.epoch_schedule();
+        let root_epoch = epoch_schedule.get_epoch(root_bank.slot());
+        let ff_activation_slot = root_bank
+            .feature_set
+            .activated_slot(&agave_feature_set::alpenglow::id());
+        let genesis_cert = root_bank.get_alpenglow_genesis_certificate();
+
+        MigrationStatus::initialize(root_epoch, ff_activation_slot, genesis_cert, epoch_schedule)
     }
 
     pub fn banks(&self) -> &HashMap<Slot, BankWithScheduler> {
@@ -168,6 +189,10 @@ impl BankForks {
 
     pub fn get_vote_only_mode_signal(&self) -> Arc<AtomicBool> {
         self.in_vote_only_mode.clone()
+    }
+
+    pub fn migration_status(&self) -> Arc<MigrationStatus> {
+        self.migration_status.clone()
     }
 
     pub fn len(&self) -> usize {

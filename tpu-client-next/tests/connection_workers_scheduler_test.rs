@@ -18,8 +18,7 @@ use {
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
-            StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::create_pinned_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
@@ -902,7 +901,7 @@ async fn test_client_builder() {
         });
 
     let (tx_sender, client) = builder
-        .build::<NonblockingBroadcaster>()
+        .build()
         .expect("Client should be built successfully.");
 
     // Setup sending txs

@@ -38,7 +38,9 @@ use {
         account_saver::collect_accounts_to_store,
         bank::{
             metrics::*,
-            partitioned_epoch_rewards::{EpochRewardStatus, VoteRewardsAccounts},
+            partitioned_epoch_rewards::{
+                CachedVoteAccounts, EpochRewardStatus, VoteRewardsAccounts,
+            },
         },
         bank_forks::BankForks,
         epoch_stakes::{NodeVoteAccounts, VersionedEpochStakes},
@@ -66,6 +68,9 @@ use {
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
+    },
+    agave_votor_messages::{
+        consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
     },
     ahash::AHashSet,
     dashmap::DashMap,
@@ -1598,12 +1603,39 @@ impl Bank {
             .new_warmup_cooldown_rate_epoch(&self.epoch_schedule)
     }
 
+    /// Get cached vote account state from the past few epochs so that some vote
+    /// state configuration changes are delayed before being used in reward
+    /// calculation.
+    fn get_cached_vote_accounts<'a>(
+        &'a self,
+        rewarded_epoch: Epoch,
+        distribution_epoch_vote_accounts: &'a VoteAccounts,
+    ) -> CachedVoteAccounts<'a> {
+        // Snapshot of vote account state from the beginning of the epoch prior to
+        // the rewarded epoch. This snapshot state is saved a full epoch before
+        // being used to prevent last minute commission rugs.
+        let snapshot_epoch_vote_accounts = self
+            .epoch_stakes(rewarded_epoch)
+            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
+
+        // Vote account state from the beginning of the rewarded epoch.
+        let rewarded_epoch_vote_accounts = self
+            .epoch_stakes(self.epoch())
+            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
+
+        CachedVoteAccounts {
+            snapshot_epoch_vote_accounts,
+            rewarded_epoch_vote_accounts,
+            distribution_epoch_vote_accounts,
+        }
+    }
+
     /// Returns updated stake history and vote accounts that includes new
     /// activated stake from the last epoch.
     fn compute_new_epoch_caches_and_rewards(
         &self,
         thread_pool: &ThreadPool,
-        parent_epoch: Epoch,
+        rewarded_epoch: Epoch,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         rewards_metrics: &mut RewardsMetrics,
     ) -> NewEpochBundle {
@@ -1619,13 +1651,15 @@ impl Bank {
                 self.new_warmup_cooldown_rate_epoch(),
                 &stake_delegations
             ));
+
         // Apply stake rewards and commission using new snapshots.
+        let cached_vote_accounts = self.get_cached_vote_accounts(rewarded_epoch, &vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) = measure_us!(self
             .calculate_rewards(
                 &stake_history,
                 stake_delegations,
-                &vote_accounts,
-                parent_epoch,
+                cached_vote_accounts,
+                rewarded_epoch,
                 reward_calc_tracer,
                 thread_pool,
                 rewards_metrics,
@@ -2772,6 +2806,21 @@ impl Bank {
         blockhash_queue
             .get_hash_age(blockhash)
             .map(|age| self.block_height + MAX_PROCESSING_AGE as u64 - age)
+    }
+
+    /// Query the alpenglow genesis certificate account.
+    /// All frozen alpenglow banks will have this account populated and TowerBFT banks will not.
+    ///
+    /// The same is true for alpenglow banks yet to be frozen except for the first alpenglow bank:
+    /// - The first alpenglow bank will contain a special marker that populates this account
+    /// - If `get_alpenglow_genesis_certificate` is called before the marker is processed by replay
+    ///   this account will be empty.
+    /// - If `get_alpenglow_genesis_certificate` is called after the marker is processed, we return the certificate
+    pub fn get_alpenglow_genesis_certificate(&self) -> Option<Certificate> {
+        self.get_account(&GENESIS_CERTIFICATE_ACCOUNT).map(|acct| {
+            acct.deserialize_data()
+                .expect("Programmer error deserializing genesis certificate")
+        })
     }
 
     pub fn confirmed_last_blockhash(&self) -> Hash {

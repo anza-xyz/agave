@@ -14,6 +14,7 @@ struct CertificateStats {
     notarize: u64,
     notarize_fallback: u64,
     skip: u64,
+    genesis: u64,
 }
 
 impl CertificateStats {
@@ -29,6 +30,7 @@ impl CertificateStats {
                 self.notarize_fallback = self.notarize_fallback.saturating_add(1)
             }
             CertificateType::Skip(_) => self.skip = self.skip.saturating_add(1),
+            CertificateType::Genesis(_, _) => self.genesis = self.genesis.saturating_add(1),
         }
     }
 
@@ -40,6 +42,7 @@ impl CertificateStats {
             notarize,
             notarize_fallback,
             skip,
+            genesis,
         } = *self;
         datapoint_info!(
             header,
@@ -48,6 +51,7 @@ impl CertificateStats {
             ("notarize", notarize, i64),
             ("notarize_fallback", notarize_fallback, i64),
             ("skip", skip, i64),
+            ("genesis", genesis, i64),
         )
     }
 }
@@ -60,6 +64,7 @@ struct VoteStats {
     skip: u64,
     notarize_fallback: u64,
     skip_fallback: u64,
+    genesis: u64,
 }
 
 impl VoteStats {
@@ -73,6 +78,7 @@ impl VoteStats {
             Vote::Skip(_) => self.skip = self.skip.saturating_add(1),
             Vote::SkipFallback(_) => self.skip_fallback = self.skip_fallback.saturating_add(1),
             Vote::Finalize(_) => self.finalize = self.finalize.saturating_add(1),
+            Vote::Genesis(_) => self.genesis = self.genesis.saturating_add(1),
         }
     }
 
@@ -84,6 +90,7 @@ impl VoteStats {
             notarize_fallback,
             skip,
             skip_fallback,
+            genesis,
         } = *self;
         datapoint_info!(
             "consensus_ingested_votes",
@@ -92,6 +99,7 @@ impl VoteStats {
             ("notarize_fallback", notarize_fallback, i64),
             ("skip", skip, i64),
             ("skip_fallback", skip_fallback, i64),
+            ("genesis", genesis, i64),
         )
     }
 }

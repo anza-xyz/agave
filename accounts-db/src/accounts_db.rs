@@ -5854,7 +5854,7 @@ impl AccountsDb {
     pub fn store_accounts_frozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
         self._store_accounts_frozen(
@@ -5871,7 +5871,7 @@ impl AccountsDb {
     fn _store_accounts_frozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         reclaim_handling: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
