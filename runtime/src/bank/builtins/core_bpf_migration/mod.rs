@@ -719,8 +719,10 @@ pub(crate) mod tests {
             let entries = program_cache.get_flattened_entries(true, true);
             let target_entry = entries
                 .iter()
-                .find(|(program_id, _)| program_id == &self.target_program_address)
-                .map(|(_, entry)| entry)
+                .find(|(program_id, _last_modification_slot, _entry)| {
+                    program_id == &self.target_program_address
+                })
+                .map(|(_program_id, _last_modification_slot, entry)| entry)
                 .unwrap();
 
             // The target program entry should be updated.
