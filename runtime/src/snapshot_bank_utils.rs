@@ -654,31 +654,8 @@ pub fn bank_to_full_snapshot_archive(
     archive_format: ArchiveFormat,
 ) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
-    let temp_bank_snapshots_dir = tempfile::tempdir_in(bank_snapshots_dir)?;
-    bank_to_full_snapshot_archive_with(
-        &temp_bank_snapshots_dir,
-        bank,
-        snapshot_version,
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
-        archive_format,
-        false, // we do not intend to fastboot, so skip flushing and hard linking the storages
-    )
-}
+    let bank_snapshots_dir = tempfile::tempdir_in(&bank_snapshots_dir)?;
 
-/// See bank_to_full_snapshot_archive() for documentation
-///
-/// This fn does *not* create a tmpdir inside `bank_snapshots_dir`
-/// (which is needed by a test)
-fn bank_to_full_snapshot_archive_with(
-    bank_snapshots_dir: impl AsRef<Path>,
-    bank: &Bank,
-    snapshot_version: SnapshotVersion,
-    full_snapshot_archives_dir: impl AsRef<Path>,
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-    archive_format: ArchiveFormat,
-    should_flush_and_hard_link_storages: bool,
-) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     assert!(bank.is_complete());
     // set accounts-db's latest full snapshot slot here to ensure zero lamport
     // accounts are handled properly.
@@ -716,7 +693,7 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_config.snapshot_version,
         snapshot_package.bank_snapshot_package,
         snapshot_storages.as_slice(),
-        should_flush_and_hard_link_storages,
+        false, // we do not intend to fastboot, so skip flushing and hard linking the storages
     )?;
 
     let snapshot_archive_info = snapshot_utils::archive_snapshot_package(
@@ -2497,28 +2474,19 @@ mod tests {
             ..snapshot_config
         };
 
-        let genesis_config = GenesisConfig::default();
-        let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-
-        // take some snapshots, and archive them
-        for _ in 0..snapshot_config
+        let num_snapshots_to_create = snapshot_config
             .maximum_full_snapshot_archives_to_retain
-            .get()
-        {
-            let slot = bank.slot() + 1;
-            bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
-            bank.fill_bank_with_ticks_for_tests();
-            bank_to_full_snapshot_archive_with(
-                &snapshot_config.bank_snapshots_dir,
-                &bank,
-                snapshot_config.snapshot_version,
-                &snapshot_config.full_snapshot_archives_dir,
-                &snapshot_config.incremental_snapshot_archives_dir,
-                snapshot_config.archive_format,
-                false,
-            )
-            .unwrap();
-        }
+            .get();
+
+        // take some snapshots, and archive them. Do not flush or hard link storages so that
+        // get highest loadable can be tested when the snapshot has not been marked loadable
+        let _bank = create_snapshot_dirs_for_tests(
+            &GenesisConfig::default(),
+            &snapshot_config.bank_snapshots_dir,
+            num_snapshots_to_create,
+            false,
+        );
+
         let highest_bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
 
         // 1. call get_highest_loadable() but bad snapshot dir, so returns None
