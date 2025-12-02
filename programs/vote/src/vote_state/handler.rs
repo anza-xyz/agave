@@ -639,43 +639,6 @@ pub(crate) fn create_new_vote_state_v4(
     }
 }
 
-/// Create a new VoteStateV4 from `VoteInitV2` per SIMD-0387.
-pub(crate) fn create_new_vote_state_v4_with_bls(
-    vote_init: &VoteInitV2,
-    clock: &Clock,
-) -> VoteStateV4 {
-    VoteStateV4 {
-        node_pubkey: vote_init.node_pubkey,
-        authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
-        authorized_withdrawer: vote_init.authorized_withdrawer,
-        inflation_rewards_commission_bps: vote_init.inflation_rewards_commission_bps,
-        // Per SIMD-0185, set default collectors and commission
-        inflation_rewards_collector: vote_init.inflation_rewards_collector,
-        block_revenue_collector: vote_init.block_revenue_collector,
-        block_revenue_commission_bps: vote_init.block_revenue_commission_bps,
-        bls_pubkey_compressed: Some(vote_init.authorized_voter_bls_pubkey),
-        ..VoteStateV4::default()
-    }
-}
-
-/// (Alpenglow) Create a test-only `VoteStateV4` with the provided values.
-pub(crate) fn create_new_vote_state_v4_for_tests(
-    node_pubkey: &Pubkey,
-    authorized_voter: &Pubkey,
-    authorized_withdrawer: &Pubkey,
-    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
-    inflation_rewards_commission_bps: u16,
-) -> VoteStateV4 {
-    VoteStateV4 {
-        node_pubkey: *node_pubkey,
-        authorized_voters: AuthorizedVoters::new(0, *authorized_voter),
-        authorized_withdrawer: *authorized_withdrawer,
-        bls_pubkey_compressed,
-        inflation_rewards_commission_bps,
-        ..VoteStateV4::default()
-    }
-}
-
 /// The target version to convert all deserialized vote state into.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoteStateTargetVersion {
@@ -931,7 +894,7 @@ impl VoteStateHandler {
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
         if let VoteStateTargetVersion::V4 = target_version {
-            let vote_state = create_new_vote_state_v4_with_bls(vote_init, clock);
+            let vote_state = VoteStateV4::new(vote_init, clock);
             vote_state.set_vote_account_state(vote_account)
         } else {
             Err(InstructionError::InvalidInstructionData)
@@ -2271,7 +2234,7 @@ mod tests {
     #[test]
     fn test_bls_pubkey_handling() {
         let bls_pubkey_compressed = [1u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
-        let vote_state_v4 = create_new_vote_state_v4_with_bls(
+        let vote_state_v4 = VoteStateV4::new(
             &VoteInitV2 {
                 node_pubkey: Pubkey::new_unique(),
                 authorized_voter: Pubkey::new_unique(),
