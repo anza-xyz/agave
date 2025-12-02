@@ -171,13 +171,13 @@ impl AccountStorage {
         AccountStorageIter::new(self)
     }
 
-    pub(crate) fn insert(&self, slot: Slot, store: Arc<AccountStorageEntry>) {
+    pub(crate) fn insert(&self, store: Arc<AccountStorageEntry>) {
         assert!(
             self.no_shrink_in_progress(),
             "shrink is in progress! slots: {:?}",
             self.shrink_in_progress_map.read().unwrap().keys(),
         );
-        assert!(self.map.insert(slot, store).is_none());
+        assert!(self.map.insert(store.slot, store).is_none());
     }
 
     /// called when shrinking begins on a slot and append vec.
@@ -653,7 +653,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .insert(0, sample.clone());
-        storage.insert(0, sample);
+        storage.insert(sample);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]

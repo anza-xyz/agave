@@ -4394,14 +4394,8 @@ impl AccountsDb {
         paths: &[PathBuf],
     ) -> Arc<AccountStorageEntry> {
         let store = self.create_store(slot, size, from, paths);
-        let store_for_index = store.clone();
-
-        self.insert_store(slot, store_for_index);
+        self.storage.insert(store.clone());
         store
-    }
-
-    fn insert_store(&self, slot: Slot, store: Arc<AccountStorageEntry>) {
-        self.storage.insert(slot, store)
     }
 
     pub fn enable_bank_drop_callback(&self) {
