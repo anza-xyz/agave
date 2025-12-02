@@ -18,7 +18,7 @@ use {
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, ResumptionStrategy, StakeIdentity,
         },
         leader_updater::create_pinned_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
@@ -68,6 +68,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
             send: 1,
             connect: 1,
         },
+        resumption: ResumptionStrategy::InMemory(16),
     }
 }
 

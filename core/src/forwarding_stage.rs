@@ -29,7 +29,7 @@ use {
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, ResumptionStrategy, StakeIdentity,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
@@ -631,6 +631,7 @@ impl TpuClientNextClient {
                 send: 1,
                 connect: 4,
             },
+            resumption: ResumptionStrategy::InMemory(1024),
         }
     }
 }

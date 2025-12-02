@@ -15,7 +15,6 @@ use {
     },
     async_trait::async_trait,
     quinn::{ClientConfig, Endpoint},
-    rustls::client::Resumption,
     solana_keypair::Keypair,
     std::{
         net::{SocketAddr, UdpSocket},
@@ -108,6 +107,7 @@ pub struct ConnectionWorkersSchedulerConfig {
 
 /// The [`ResumptionStrategy`] enum defines the strategy for handling session
 /// ticket storage for QUIC connections requiered to establish 0-RTT connections.
+#[derive(Debug, Clone)]
 pub enum ResumptionStrategy {
     /// In-memory session ticket storage for 0-RTT connections, with a specified sessions number.
     InMemory(usize),
@@ -240,7 +240,7 @@ impl ConnectionWorkersScheduler {
             cancel,
             stats,
         } = self;
-        let mut endpoint = setup_endpoint(bind, stake_identity, resumption)?;
+        let mut endpoint = setup_endpoint(bind, stake_identity, resumption.clone())?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
@@ -268,7 +268,7 @@ impl ConnectionWorkersScheduler {
                         continue;
                     };
 
-                    let client_config = build_client_config(update_identity_receiver.borrow_and_update().as_ref());
+                    let client_config = build_client_config(update_identity_receiver.borrow_and_update().as_ref(), resumption.clone());
                     endpoint.set_default_client_config(client_config);
                     // Flush workers since they are handling connections created
                     // with outdated certificate.

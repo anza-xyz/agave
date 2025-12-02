@@ -364,7 +364,7 @@ mod tests {
     use {
         crate::{
             connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
-            connection_workers_scheduler::BindTarget,
+            connection_workers_scheduler::{BindTarget, ResumptionStrategy},
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
             transaction_batch::TransactionBatch,
@@ -390,7 +390,7 @@ mod tests {
         let socket = bind_to_localhost_unique().unwrap();
         let client_config = create_client_config(
             &QuicClientCertificate::new(None),
-            ResumptionStrategy::Disabled,
+            ResumptionStrategy::InMemory(16),
         );
         create_client_endpoint(BindTarget::Socket(socket), client_config).unwrap()
     }
@@ -517,4 +517,9 @@ mod tests {
             }
         );
     }
+
+    //TODO(klykov): add test for 0rtt if possible here.
+    // Use cases:
+    // * server rejects 0rtt, check that client sends normally txs.
+    // * server accepts 0rtt, check that client works as well.
 }
