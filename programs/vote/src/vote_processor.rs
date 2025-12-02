@@ -1345,7 +1345,7 @@ mod tests {
 
         if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
             let mut bad_bls_proof_of_possession = bls_proof_of_possession;
-            bad_bls_proof_of_possession[0] ^= 0xFF; // Corrupt the proof of possession
+            bad_bls_proof_of_possession[0] ^= 0xFF;
             // Test that bad proof of possession fails authorization
             let instruction_data = serialize(&VoteInstruction::Authorize(
                 authorized_voter_pubkey,
