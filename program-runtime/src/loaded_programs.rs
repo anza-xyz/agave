@@ -1216,7 +1216,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         &self,
         include_program_runtime_v1: bool,
         _include_program_runtime_v2: bool,
-    ) -> Vec<(Pubkey, Arc<ProgramCacheEntry>)> {
+    ) -> Vec<(Pubkey, Slot, Arc<ProgramCacheEntry>)> {
         match &self.index {
             IndexImplementation::V1 { entries, .. } => entries
                 .iter()
@@ -1226,7 +1226,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         .filter_map(move |program| match program.program {
                             ProgramCacheEntryType::Loaded(_) => {
                                 if include_program_runtime_v1 {
-                                    Some((*id, program.clone()))
+                                    Some((*id, program.deployment_slot, program.clone()))
                                 } else {
                                     None
                                 }
@@ -1263,12 +1263,17 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// Unloads programs which were used infrequently
     pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
         let mut sorted_candidates = self.get_flattened_entries(true, true);
-        sorted_candidates
-            .sort_by_cached_key(|(_id, program)| program.tx_usage_counter.load(Ordering::Relaxed));
+        sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
+            program.tx_usage_counter.load(Ordering::Relaxed)
+        });
         let num_to_unload = sorted_candidates
             .len()
             .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
-        self.unload_program_entries(sorted_candidates.iter().take(num_to_unload));
+        for (program, _last_modification_slot, entry) in
+            sorted_candidates.iter().take(num_to_unload)
+        {
+            self.unload_program_entry(program, entry);
+        }
     }
 
     /// Evicts programs using 2's random selection, choosing the least used program out of the two entries.
@@ -1282,7 +1287,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             .len()
             .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
         fn random_index_and_usage_counter(
-            candidates: &[(Pubkey, Arc<ProgramCacheEntry>)],
+            candidates: &[(Pubkey, Slot, Arc<ProgramCacheEntry>)],
             now: Slot,
         ) -> (usize, u64) {
             let mut rng = rng();
@@ -1293,7 +1298,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             let usage_counter = candidates
                 .get(index)
                 .expect("Failed to get cached entry")
-                .1
+                .2
                 .decayed_usage_counter(now);
             (index, usage_counter)
         }
@@ -1302,12 +1307,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             let (index1, usage_counter1) = random_index_and_usage_counter(&candidates, now);
             let (index2, usage_counter2) = random_index_and_usage_counter(&candidates, now);
 
-            let (program, entry) = if usage_counter1 < usage_counter2 {
+            let (id, _last_modification_slot, entry) = if usage_counter1 < usage_counter2 {
                 candidates.swap_remove(index1)
             } else {
                 candidates.swap_remove(index2)
             };
-            self.unload_program_entry(&program, &entry);
+            self.unload_program_entry(&id, &entry);
         }
     }
 
@@ -1348,15 +1353,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     *candidate = Arc::new(unloaded);
                 }
             }
-        }
-    }
-
-    fn unload_program_entries<'a>(
-        &mut self,
-        remove: impl Iterator<Item = &'a (Pubkey, Arc<ProgramCacheEntry>)>,
-    ) {
-        for (program, entry) in remove {
-            self.unload_program_entry(program, entry);
         }
     }
 

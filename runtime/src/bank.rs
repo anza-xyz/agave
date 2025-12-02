@@ -1573,7 +1573,10 @@ impl Bank {
             epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
             epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
             epoch_boundary_preparation.programs_to_recompile = program_cache
-                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
+                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2)
+                .into_iter()
+                .map(|(id, _last_modification_slot, entry)| (id, entry))
+                .collect();
             epoch_boundary_preparation
                 .programs_to_recompile
                 .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
