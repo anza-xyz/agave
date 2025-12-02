@@ -725,6 +725,10 @@ mod external {
             }: AgaveSession,
         ) -> Vec<JoinHandle<()>> {
             info!("Spawning external scheduler");
+            // Togging unified scheduler into the disabled state should always be a safe and
+            // idempotent operation.
+            assert!(self.toggle_internal_unified(false));
+
             static_assertions::const_assert!(
                 agave_scheduling_utils::handshake::MAX_WORKERS
                     == BankingStage::max_num_workers().get()
