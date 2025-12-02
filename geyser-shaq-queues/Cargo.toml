@@ -1,0 +1,21 @@
+[package]
+name = "geyser-shaq-queues"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+geyser-shaq-bindings = { path = "../geyser-shaq-bindings" }
+rts-alloc = "0.2.0"
+shaq = "0.2.0"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[lints]
+workspace = true

@@ -409,6 +409,15 @@ fn main() {
         } else {
             (None, None)
         };
+
+    if let Some(shm_path) = matches.value_of("geyser_shm_path") {
+        info!(
+            "Initializing Geyser V2 with shared memory path: {}",
+            shm_path
+        );
+        agave_geyser_notifier::GeyserNotifier::init_global(shm_path.to_string())
+            .expect("Failed to initialize Geyser V2");
+    }
     admin_rpc_service::run(
         &ledger_path,
         admin_rpc_service::AdminRpcRequestMetadata {

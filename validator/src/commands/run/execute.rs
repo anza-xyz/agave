@@ -445,6 +445,15 @@ pub fn execute(
     } else {
         None
     };
+    // Initialize Geyser V2 if shared memory path is provided
+    if let Some(shm_path) = matches.value_of("geyser_shm_path") {
+        info!(
+            "Initializing Geyser V2 with shared memory path: {}",
+            shm_path
+        );
+        agave_geyser_notifier::GeyserNotifier::init_global(shm_path.to_string())
+            .map_err(|_| "Failed to initialize Geyser V2: path already initialized")?;
+    }
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
 

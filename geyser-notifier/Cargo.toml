@@ -1,0 +1,22 @@
+[package]
+name = "agave-geyser-notifier"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+agave-geyser-plugin-interface = { workspace = true }
+geyser-shaq-bindings = { path = "../geyser-shaq-bindings" }
+geyser-shaq-queues = { path = "../geyser-shaq-queues" }
+solana-signature = { workspace = true }
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+solana-pubkey = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true
