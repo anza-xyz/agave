@@ -1260,9 +1260,11 @@ mod tests {
             VoteStateTargetVersion::V3 => {
                 VoteStateHandler::new_v3(VoteStateV3::new(&vote_init, &clock))
             }
-            VoteStateTargetVersion::V4 => VoteStateHandler::new_v4(
-                handler::create_new_vote_state_v4(vote_pubkey, &vote_init, &clock),
-            ),
+            VoteStateTargetVersion::V4 => VoteStateHandler::new_v4(VoteStateV4::new_with_defaults(
+                vote_pubkey,
+                &vote_init,
+                &clock,
+            )),
         }
     }
 
