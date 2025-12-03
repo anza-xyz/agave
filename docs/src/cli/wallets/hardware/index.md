@@ -24,6 +24,7 @@ The Solana CLI supports the following hardware wallets:
 
 - [Ledger Nano S, Nano S Plus, and Nano X](./ledger.md)
 - [Trezor Model T, Safe 3, and Safe 5](./trezor.md)
+- [YubiKey 5 series (firmware 5.7+)](./yubikey.md)
 
 ## Specify a Keypair URL
 

@@ -6,6 +6,7 @@ use {
         ledger_error::LedgerError,
         locator::{Locator, LocatorError, Manufacturer},
         trezor::TrezorWallet,
+        yubikey::YubiKeyError,
     },
     log::*,
     parking_lot::RwLock,
@@ -60,6 +61,9 @@ pub enum RemoteWalletError {
     #[error("trezor error: {0}")]
     TrezorError(String),
 
+    #[error("yubikey error: {0}")]
+    YubiKeyError(String),
+
     #[error("remote wallet operation rejected by the user")]
     UserCancel,
 
@@ -83,6 +87,7 @@ impl From<RemoteWalletError> for SignerError {
             RemoteWalletError::InvalidInput(input) => SignerError::InvalidInput(input),
             RemoteWalletError::LedgerError(e) => SignerError::Protocol(e.to_string()),
             RemoteWalletError::TrezorError(e) => SignerError::Protocol(e),
+            RemoteWalletError::YubiKeyError(e) => SignerError::Protocol(e),
             RemoteWalletError::NoDeviceFound => SignerError::NoDeviceFound,
             RemoteWalletError::Protocol(e) => SignerError::Protocol(e.to_string()),
             RemoteWalletError::UserCancel => {
@@ -96,6 +101,18 @@ impl From<RemoteWalletError> for SignerError {
 impl From<TrezorClientError> for RemoteWalletError {
     fn from(err: TrezorClientError) -> RemoteWalletError {
         RemoteWalletError::TrezorError(err.to_string())
+    }
+}
+
+impl From<YubiKeyError> for RemoteWalletError {
+    fn from(err: YubiKeyError) -> RemoteWalletError {
+        match err {
+            YubiKeyError::TouchRequired => RemoteWalletError::UserCancel,
+            YubiKeyError::NoDeviceFound | YubiKeyError::DeviceNotFound(_) => {
+                RemoteWalletError::NoDeviceFound
+            }
+            _ => RemoteWalletError::YubiKeyError(err.to_string()),
+        }
     }
 }
 
@@ -169,6 +186,8 @@ impl RemoteWalletManager {
             let locator = Locator {
                 manufacturer: Manufacturer::Trezor,
                 pubkey,
+                yubikey_slot: None,
+                yubikey_serial: None,
             };
             let info = RemoteWalletInfo::parse_locator(locator);
             let path = info.get_pretty_path();
@@ -178,6 +197,41 @@ impl RemoteWalletManager {
                 wallet_type: RemoteWalletType::Trezor(Rc::new(wallet)),
             });
         }
+
+        // Detect YubiKeys via PCSC
+        if let Ok(ctx) = crate::yubikey::establish_context() {
+            if let Ok(readers) = crate::yubikey::list_yubikey_readers(&ctx) {
+                for reader_name in readers {
+                    match crate::yubikey::connect_yubikey(&ctx, &reader_name) {
+                        Ok(mut yubikey) => {
+                            let serial = yubikey.serial();
+                            let dev_info = crate::yubikey::PcscDeviceInfo {
+                                reader_name: reader_name.clone(),
+                                serial: Some(serial),
+                            };
+                            match yubikey.read_device(&dev_info) {
+                                Ok(info) => {
+                                    let path = format!("usb://yubikey?serial={}", serial);
+                                    trace!("Found YubiKey: {info:?}");
+                                    detected_devices.push(Device {
+                                        path,
+                                        info,
+                                        wallet_type: RemoteWalletType::YubiKey(Rc::new(yubikey)),
+                                    });
+                                }
+                                Err(err) => {
+                                    trace!("Error reading YubiKey: {err}");
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            trace!("Could not connect to YubiKey reader {reader_name}: {err}");
+                        }
+                    }
+                }
+            }
+        }
+
         let num_curr_devices = detected_devices.len();
         *self.devices.write() = detected_devices;
 
@@ -288,6 +342,7 @@ pub struct Device {
 pub enum RemoteWalletType {
     Ledger(Rc<LedgerWallet>),
     Trezor(Rc<TrezorWallet>),
+    YubiKey(Rc<crate::yubikey::YubiKeyWallet>),
 }
 
 /// Remote wallet information.
@@ -309,9 +364,16 @@ pub struct RemoteWalletInfo {
 
 impl RemoteWalletInfo {
     pub fn parse_locator(locator: Locator) -> Self {
+        // Convert yubikey_serial (u32) to string for matching
+        let serial = locator
+            .yubikey_serial
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         RemoteWalletInfo {
             manufacturer: locator.manufacturer,
             pubkey: locator.pubkey.unwrap_or_default(),
+            serial,
             ..RemoteWalletInfo::default()
         }
     }
@@ -325,6 +387,7 @@ impl RemoteWalletInfo {
             && (self.pubkey == other.pubkey
                 || self.pubkey == Pubkey::default()
                 || other.pubkey == Pubkey::default())
+            && (self.serial == other.serial || self.serial.is_empty() || other.serial.is_empty())
     }
 }
 
@@ -367,6 +430,8 @@ mod tests {
         let locator = Locator {
             manufacturer: Manufacturer::Ledger,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         let wallet_info = RemoteWalletInfo::parse_locator(locator);
         assert!(wallet_info.matches(&RemoteWalletInfo {
@@ -382,6 +447,8 @@ mod tests {
         let locator = Locator {
             manufacturer: Manufacturer::Ledger,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         let wallet_info = RemoteWalletInfo::parse_locator(locator);
         assert!(wallet_info.matches(&RemoteWalletInfo {
@@ -396,6 +463,8 @@ mod tests {
         let locator = Locator {
             manufacturer: Manufacturer::Trezor,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         let wallet_info = RemoteWalletInfo::parse_locator(locator);
         assert!(wallet_info.matches(&RemoteWalletInfo {
@@ -411,6 +480,8 @@ mod tests {
         let locator = Locator {
             manufacturer: Manufacturer::Trezor,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         let wallet_info = RemoteWalletInfo::parse_locator(locator);
         assert!(wallet_info.matches(&RemoteWalletInfo {
@@ -510,5 +581,61 @@ mod tests {
             remote_wallet_info.get_pretty_path(),
             format!("usb://trezor/{pubkey_str}")
         );
+    }
+
+    #[test]
+    fn test_serial_matching() {
+        use crate::yubikey::PivSlot;
+
+        // Test that parse_locator carries yubikey_serial
+        let locator = Locator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: Some(PivSlot::default()),
+            yubikey_serial: Some(12345678),
+        };
+        let wallet_info = RemoteWalletInfo::parse_locator(locator);
+        assert_eq!(wallet_info.serial, "12345678");
+
+        // Test serial matching: same serial should match
+        let device_info = RemoteWalletInfo {
+            manufacturer: Manufacturer::YubiKey,
+            serial: "12345678".to_string(),
+            ..RemoteWalletInfo::default()
+        };
+        assert!(wallet_info.matches(&device_info));
+
+        // Test serial matching: different serial should not match
+        let device_info = RemoteWalletInfo {
+            manufacturer: Manufacturer::YubiKey,
+            serial: "87654321".to_string(),
+            ..RemoteWalletInfo::default()
+        };
+        assert!(!wallet_info.matches(&device_info));
+
+        // Test serial matching: empty serial in locator matches any device
+        let locator_no_serial = Locator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
+        };
+        let wallet_info_no_serial = RemoteWalletInfo::parse_locator(locator_no_serial);
+        assert!(wallet_info_no_serial.serial.is_empty());
+
+        let device_info = RemoteWalletInfo {
+            manufacturer: Manufacturer::YubiKey,
+            serial: "12345678".to_string(),
+            ..RemoteWalletInfo::default()
+        };
+        assert!(wallet_info_no_serial.matches(&device_info));
+
+        // Test serial matching: device with empty serial matches any locator
+        let device_info_no_serial = RemoteWalletInfo {
+            manufacturer: Manufacturer::YubiKey,
+            serial: "".to_string(),
+            ..RemoteWalletInfo::default()
+        };
+        assert!(wallet_info.matches(&device_info_no_serial));
     }
 }

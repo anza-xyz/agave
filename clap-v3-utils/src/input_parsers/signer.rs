@@ -38,6 +38,44 @@ pub enum SignerSourceError {
     UnsupportedSource,
 }
 
+/// Filter out YubiKey-specific query parameters (slot, serial) from a URI query string.
+/// Returns None if the resulting query would be empty, otherwise returns the filtered query.
+fn filter_yubikey_query_params(
+    uri: &uriparse::URIReference<'_>,
+) -> Option<uriparse::Query<'static>> {
+    uri.query().and_then(|query| {
+        let query_str = query.as_str();
+        if query_str.is_empty() {
+            return None;
+        }
+        let filtered: Vec<_> = query_str
+            .split('&')
+            .filter(|param| {
+                let key = param.split('=').next().unwrap_or("");
+                // Remove YubiKey-specific params, keep everything else
+                key != "slot" && key != "serial"
+            })
+            .collect();
+        if filtered.is_empty() {
+            None
+        } else {
+            Some(
+                uriparse::Query::try_from(filtered.join("&").as_str())
+                    .unwrap()
+                    .into_owned(),
+            )
+        }
+    })
+}
+
+/// Parse derivation path from URI, filtering out YubiKey-specific query params
+fn derivation_path_from_uri_filtered(
+    mut uri: uriparse::URIReference<'_>,
+) -> Result<Option<DerivationPath>, DerivationPathError> {
+    _ = uri.set_query(filter_yubikey_query_params(&uri));
+    DerivationPath::from_uri_key_query(&uri)
+}
+
 #[derive(Clone)]
 pub enum SignerSourceKind {
     Prompt,
@@ -231,11 +269,17 @@ impl SignerSource {
                         SIGNER_SOURCE_FILEPATH => Ok(SignerSource::new(
                             SignerSourceKind::Filepath(uri.path().to_string()),
                         )),
-                        SIGNER_SOURCE_USB => Ok(SignerSource {
-                            kind: SignerSourceKind::Usb(RemoteWalletLocator::new_from_uri(&uri)?),
-                            derivation_path: DerivationPath::from_uri_key_query(&uri)?,
-                            legacy: false,
-                        }),
+                        SIGNER_SOURCE_USB => {
+                            // Locator parses YubiKey-specific query params (slot, serial)
+                            // Filter those out before parsing derivation path
+                            Ok(SignerSource {
+                                kind: SignerSourceKind::Usb(RemoteWalletLocator::new_from_uri(
+                                    &uri,
+                                )?),
+                                derivation_path: derivation_path_from_uri_filtered(uri)?,
+                                legacy: false,
+                            })
+                        }
                         SIGNER_SOURCE_STDIN => Ok(SignerSource::new(SignerSourceKind::Stdin)),
                         _ => {
                             #[cfg(target_family = "windows")]
@@ -535,7 +579,7 @@ mod tests {
         assert_matches::assert_matches,
         clap::{Arg, ArgAction, Command},
         solana_keypair::write_keypair_file,
-        solana_remote_wallet::locator::Manufacturer,
+        solana_remote_wallet::{locator::Manufacturer, yubikey::PivSlot},
         std::fs,
         tempfile::NamedTempFile,
     };
@@ -608,6 +652,8 @@ mod tests {
         let expected_locator = RemoteWalletLocator {
             manufacturer: Manufacturer::Ledger,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_matches!(SignerSource::parse(usb).unwrap(), SignerSource {
                 kind: SignerSourceKind::Usb(u),
@@ -618,6 +664,8 @@ mod tests {
         let expected_locator = RemoteWalletLocator {
             manufacturer: Manufacturer::Ledger,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         let expected_derivation_path = Some(DerivationPath::new_bip44(Some(0), Some(0)));
         assert_matches!(SignerSource::parse(usb).unwrap(), SignerSource {
@@ -655,6 +703,80 @@ mod tests {
                 derivation_path: None,
                 legacy: false,
             } if p == relative_path_str)
+        );
+
+        // YubiKey with slot and serial
+        let usb = "usb://yubikey?slot=9c&serial=12345678".to_string();
+        let expected_locator = RemoteWalletLocator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: Some(PivSlot::SIGNATURE),
+            yubikey_serial: Some(12345678),
+        };
+        assert_matches!(SignerSource::parse(usb).unwrap(), SignerSource {
+                kind: SignerSourceKind::Usb(u),
+                derivation_path: None,
+                legacy: false,
+            } if u == expected_locator);
+
+        // YubiKey with slot only (derivation path should be None, not parsed from slot)
+        let usb = "usb://yubikey?slot=9a".to_string();
+        let expected_locator = RemoteWalletLocator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: Some(PivSlot::AUTHENTICATION),
+            yubikey_serial: None,
+        };
+        assert_matches!(SignerSource::parse(usb).unwrap(), SignerSource {
+                kind: SignerSourceKind::Usb(u),
+                derivation_path: None,
+                legacy: false,
+            } if u == expected_locator);
+
+        // YubiKey with serial only
+        let usb = "usb://yubikey?serial=99999999".to_string();
+        let expected_locator = RemoteWalletLocator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: Some(99999999),
+        };
+        assert_matches!(SignerSource::parse(usb).unwrap(), SignerSource {
+                kind: SignerSourceKind::Usb(u),
+                derivation_path: None,
+                legacy: false,
+            } if u == expected_locator);
+
+        // YubiKey without query params
+        let usb = "usb://yubikey".to_string();
+        let expected_locator = RemoteWalletLocator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
+        };
+        assert_matches!(SignerSource::parse(usb).unwrap(), SignerSource {
+                kind: SignerSourceKind::Usb(u),
+                derivation_path: None,
+                legacy: false,
+            } if u == expected_locator);
+
+        // YubiKey with invalid slot should error
+        let usb = "usb://yubikey?slot=invalid".to_string();
+        assert_matches!(
+            SignerSource::parse(usb),
+            Err(SignerSourceError::RemoteWalletLocatorError(
+                RemoteWalletLocatorError::InvalidYubiKeySlot(s)
+            )) if s == "invalid"
+        );
+
+        // YubiKey with invalid serial should error
+        let usb = "usb://yubikey?serial=notanumber".to_string();
+        assert_matches!(
+            SignerSource::parse(usb),
+            Err(SignerSourceError::RemoteWalletLocatorError(
+                RemoteWalletLocatorError::InvalidYubiKeySerial(s)
+            )) if s == "notanumber"
         );
     }
 

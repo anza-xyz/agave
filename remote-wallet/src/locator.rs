@@ -1,4 +1,6 @@
 use {
+    crate::yubikey::PivSlot,
+    qstring::QString,
     solana_pubkey::{ParsePubkeyError, Pubkey},
     std::{
         convert::{Infallible, TryFrom, TryInto},
@@ -14,11 +16,13 @@ pub enum Manufacturer {
     Unknown,
     Ledger,
     Trezor,
+    YubiKey,
 }
 
 const MANUFACTURER_UNKNOWN: &str = "unknown";
 const MANUFACTURER_LEDGER: &str = "ledger";
 const MANUFACTURER_TREZOR: &str = "trezor";
+const MANUFACTURER_YUBIKEY: &str = "yubikey";
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("not a manufacturer")]
@@ -37,6 +41,7 @@ impl FromStr for Manufacturer {
         match s.as_str() {
             MANUFACTURER_LEDGER => Ok(Self::Ledger),
             MANUFACTURER_TREZOR => Ok(Self::Trezor),
+            MANUFACTURER_YUBIKEY => Ok(Self::YubiKey),
             _ => Err(ManufacturerError),
         }
     }
@@ -55,6 +60,7 @@ impl AsRef<str> for Manufacturer {
             Self::Unknown => MANUFACTURER_UNKNOWN,
             Self::Ledger => MANUFACTURER_LEDGER,
             Self::Trezor => MANUFACTURER_TREZOR,
+            Self::YubiKey => MANUFACTURER_YUBIKEY,
         }
     }
 }
@@ -76,6 +82,10 @@ pub enum LocatorError {
     UriReferenceError(#[from] URIReferenceError),
     #[error("unimplemented scheme")]
     UnimplementedScheme,
+    #[error("invalid YubiKey slot: {0}")]
+    InvalidYubiKeySlot(String),
+    #[error("invalid YubiKey serial: {0}")]
+    InvalidYubiKeySerial(String),
     #[error("infallible")]
     Infallible,
 }
@@ -90,6 +100,10 @@ impl From<Infallible> for LocatorError {
 pub struct Locator {
     pub manufacturer: Manufacturer,
     pub pubkey: Option<Pubkey>,
+    /// YubiKey PIV slot (only used when manufacturer is YubiKey)
+    pub yubikey_slot: Option<PivSlot>,
+    /// YubiKey serial number for device selection (only used when manufacturer is YubiKey)
+    pub yubikey_serial: Option<u32>,
 }
 
 impl std::fmt::Display for Locator {
@@ -105,6 +119,21 @@ impl std::fmt::Display for Locator {
             .unwrap()
             .try_path(path)
             .unwrap();
+
+        let query_string;
+        if self.manufacturer == Manufacturer::YubiKey {
+            let mut query_parts = Vec::new();
+            if let Some(serial) = self.yubikey_serial {
+                query_parts.push(format!("serial={}", serial));
+            }
+            if let Some(slot) = self.yubikey_slot {
+                query_parts.push(format!("slot={}", slot));
+            }
+            if !query_parts.is_empty() {
+                query_string = query_parts.join("&");
+                builder.try_query(Some(query_string.as_str())).unwrap();
+            }
+        }
 
         let uri = builder.build().unwrap();
         write!(f, "{uri}")
@@ -130,7 +159,48 @@ impl Locator {
                         None
                     }
                 });
-                Self::new_from_parts(host.as_str(), path)
+
+                let manufacturer: Manufacturer = host.as_str().try_into()?;
+
+                // Parse YubiKey-specific query params
+                let (yubikey_slot, yubikey_serial) = if manufacturer == Manufacturer::YubiKey {
+                    let query = uri.query().map(|q| QString::from(q.as_str()));
+
+                    let slot = query
+                        .as_ref()
+                        .and_then(|q| q.get("slot"))
+                        .map(|v| {
+                            PivSlot::from_str(v)
+                                .map_err(|_| LocatorError::InvalidYubiKeySlot(v.to_string()))
+                        })
+                        .transpose()?;
+
+                    let serial = query
+                        .as_ref()
+                        .and_then(|q| q.get("serial"))
+                        .map(|v| {
+                            v.parse::<u32>()
+                                .map_err(|_| LocatorError::InvalidYubiKeySerial(v.to_string()))
+                        })
+                        .transpose()?;
+
+                    (slot, serial)
+                } else {
+                    (None, None)
+                };
+
+                let pubkey = if let Some(path) = path {
+                    Some(Pubkey::from_str(path)?)
+                } else {
+                    None
+                };
+
+                Ok(Self {
+                    manufacturer,
+                    pubkey,
+                    yubikey_slot,
+                    yubikey_serial,
+                })
             }
             (Some(_scheme), Some(_host)) => Err(LocatorError::UnimplementedScheme),
             (None, Some(_host)) => Err(LocatorError::UnimplementedScheme),
@@ -157,6 +227,8 @@ impl Locator {
         Ok(Self {
             manufacturer,
             pubkey,
+            yubikey_slot: None,
+            yubikey_serial: None,
         })
     }
 }
@@ -192,6 +264,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_matches!(
             Locator::new_from_parts(manufacturer, None::<Pubkey>),
@@ -205,6 +279,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_matches!(
             Locator::new_from_parts(manufacturer, Some(pubkey)),
@@ -221,6 +297,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_matches!(
             Locator::new_from_parts(manufacturer, None::<Pubkey>),
@@ -234,6 +312,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_matches!(
             Locator::new_from_parts(manufacturer, Some(pubkey)),
@@ -275,6 +355,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -291,6 +373,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -307,6 +391,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -323,6 +409,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -373,6 +461,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -389,6 +479,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -405,6 +497,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -421,6 +515,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
 
@@ -468,6 +564,119 @@ mod tests {
             Locator::new_from_uri(&uri),
             Err(LocatorError::ManufacturerError(ManufacturerError))
         );
+
+        // YubiKey with slot and serial
+        // usb://yubikey?slot=9c&serial=12345678
+        let mut builder = URIReferenceBuilder::new();
+        builder
+            .try_scheme(Some("usb"))
+            .unwrap()
+            .try_authority(Some("yubikey"))
+            .unwrap()
+            .try_path("")
+            .unwrap()
+            .try_query(Some("slot=9c&serial=12345678"))
+            .unwrap();
+        let uri = builder.build().unwrap();
+        let expect = Locator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: Some(PivSlot::SIGNATURE),
+            yubikey_serial: Some(12345678),
+        };
+        assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
+
+        // usb://yubikey?slot=9a (slot only)
+        let mut builder = URIReferenceBuilder::new();
+        builder
+            .try_scheme(Some("usb"))
+            .unwrap()
+            .try_authority(Some("yubikey"))
+            .unwrap()
+            .try_path("")
+            .unwrap()
+            .try_query(Some("slot=9a"))
+            .unwrap();
+        let uri = builder.build().unwrap();
+        let expect = Locator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: Some(PivSlot::AUTHENTICATION),
+            yubikey_serial: None,
+        };
+        assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
+
+        // usb://yubikey?serial=99999999 (serial only)
+        let mut builder = URIReferenceBuilder::new();
+        builder
+            .try_scheme(Some("usb"))
+            .unwrap()
+            .try_authority(Some("yubikey"))
+            .unwrap()
+            .try_path("")
+            .unwrap()
+            .try_query(Some("serial=99999999"))
+            .unwrap();
+        let uri = builder.build().unwrap();
+        let expect = Locator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: Some(99999999),
+        };
+        assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
+
+        // usb://yubikey (no query params)
+        let mut builder = URIReferenceBuilder::new();
+        builder
+            .try_scheme(Some("usb"))
+            .unwrap()
+            .try_authority(Some("yubikey"))
+            .unwrap()
+            .try_path("")
+            .unwrap();
+        let uri = builder.build().unwrap();
+        let expect = Locator {
+            manufacturer: Manufacturer::YubiKey,
+            pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
+        };
+        assert_eq!(Locator::new_from_uri(&uri), Ok(expect));
+
+        // usb://yubikey?slot=invalid (invalid slot)
+        let mut builder = URIReferenceBuilder::new();
+        builder
+            .try_scheme(Some("usb"))
+            .unwrap()
+            .try_authority(Some("yubikey"))
+            .unwrap()
+            .try_path("")
+            .unwrap()
+            .try_query(Some("slot=invalid"))
+            .unwrap();
+        let uri = builder.build().unwrap();
+        assert_eq!(
+            Locator::new_from_uri(&uri),
+            Err(LocatorError::InvalidYubiKeySlot("invalid".to_string()))
+        );
+
+        // usb://yubikey?serial=notanumber (invalid serial)
+        let mut builder = URIReferenceBuilder::new();
+        builder
+            .try_scheme(Some("usb"))
+            .unwrap()
+            .try_authority(Some("yubikey"))
+            .unwrap()
+            .try_path("")
+            .unwrap()
+            .try_query(Some("serial=notanumber"))
+            .unwrap();
+        let uri = builder.build().unwrap();
+        assert_eq!(
+            Locator::new_from_uri(&uri),
+            Err(LocatorError::InvalidYubiKeySerial("notanumber".to_string()))
+        );
     }
 
     #[test]
@@ -482,6 +691,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
@@ -490,6 +701,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
@@ -498,6 +711,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
@@ -506,6 +721,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
@@ -532,6 +749,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
@@ -540,6 +759,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: Some(pubkey),
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
@@ -548,6 +769,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
@@ -556,6 +779,8 @@ mod tests {
         let expect = Locator {
             manufacturer,
             pubkey: None,
+            yubikey_slot: None,
+            yubikey_serial: None,
         };
         assert_eq!(Locator::new_from_path(path), Ok(expect));
 
