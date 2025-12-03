@@ -178,6 +178,8 @@ impl FeatureSet {
             create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
             bls_pubkey_management_in_vote_account: self
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
+            relax_post_exec_min_balance_check: self
+                .is_active(&relax_post_exec_min_balance_check::id()),
         }
     }
 }
@@ -1220,6 +1222,11 @@ pub mod bls_pubkey_management_in_vote_account {
     solana_pubkey::declare_id!("EGJLweNUVskAPEwpjvNB7JT6uUi6h4mFhowNYXVSrimG");
 }
 
+// SIMD-0392: Minimum balance check (feature gate only)
+pub mod relax_post_exec_min_balance_check {
+    solana_pubkey::declare_id!("todotodoQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2186,6 +2193,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             bls_pubkey_management_in_vote_account::id(),
             "SIMD-0387: BLS Pubkey Management in Vote Account",
+        ),
+        (
+            relax_post_exec_min_balance_check::id(),
+            "SIMD-0392: Relaxation of post-execution min_balance check",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
