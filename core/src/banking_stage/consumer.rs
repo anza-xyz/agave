@@ -5,6 +5,7 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
+    agave_feature_set::relax_post_exec_min_balance_check,
     itertools::Itertools,
     solana_clock::MAX_PROCESSING_AGE,
     solana_fee::FeeFeatures,
@@ -527,6 +528,8 @@ impl Consumer {
             error_counters,
             &bank.rent_collector().rent,
             fee,
+            bank.feature_set
+                .is_active(&relax_post_exec_min_balance_check::id()),
         )
     }
 }

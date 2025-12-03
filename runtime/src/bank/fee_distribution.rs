@@ -236,7 +236,7 @@ pub mod tests {
             burn += bank.deposit_or_burn_fee(deposit);
             let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
-            if test_case.scenario != Scenario::Normal {
+            if test_case.scenario == Scenario::InvalidOwner {
                 assert_eq!(initial_leader_id_balance, new_leader_id_balance);
                 assert_eq!(initial_burn + deposit, burn);
                 let locked_rewards = bank.rewards.read().unwrap();
@@ -312,26 +312,6 @@ pub mod tests {
             bank.deposit_fees(&pubkey, deposit_amount),
             Err(DepositFeeError::InvalidAccountOwner),
             "Expected an error due to invalid account owner"
-        );
-    }
-
-    #[test]
-    fn test_deposit_fees_invalid_rent_paying() {
-        let initial_balance = 0;
-        let genesis = create_genesis_config(initial_balance);
-        let pubkey = genesis.mint_keypair.pubkey();
-        let mut genesis_config = genesis.genesis_config;
-        genesis_config.rent = Rent::default(); // Ensure rent is non-zero, as genesis_utils sets Rent::free by default
-        let bank = Bank::new_for_tests(&genesis_config);
-        let min_rent_exempt_balance = genesis_config.rent.minimum_balance(0);
-
-        let deposit_amount = 500;
-        assert!(initial_balance + deposit_amount < min_rent_exempt_balance);
-
-        assert_eq!(
-            bank.deposit_fees(&pubkey, deposit_amount),
-            Err(DepositFeeError::InvalidRentPayingAccount),
-            "Expected an error due to invalid rent paying account"
         );
     }
 

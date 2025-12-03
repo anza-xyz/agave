@@ -33,7 +33,8 @@ pub(crate) fn new_pre_exec(
                     // balances; however they will never be loaded as writable
                     debug_assert!(!native_loader::check_id(account.owner()));
 
-                    // RentState::RentPaying is no longer allowed
+                    // RentState::RentPaying is no longer allowed so that state is impossible
+                    // for an existing account before execution.
                     let state = if account.lamports() == 0 {
                         RentState::Uninitialized
                     } else {

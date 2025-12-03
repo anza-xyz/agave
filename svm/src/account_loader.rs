@@ -5,7 +5,8 @@ use {
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
         rent_calculator::{
-            check_rent_state_with_account, get_account_rent_state, RENT_EXEMPT_RENT_EPOCH,
+            check_rent_state_with_account, get_account_rent_state, RentState,
+            RENT_EXEMPT_RENT_EPOCH,
         },
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
@@ -36,7 +37,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{transaction_accounts::KeyedAccountSharedData, IndexOfAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::num::NonZeroU32,
+    std::{cmp::min, num::NonZeroU32},
 };
 
 // Per SIMD-0186, all accounts are assigned a base size of 64 bytes to cover
@@ -350,6 +351,7 @@ pub fn validate_fee_payer(
     error_metrics: &mut TransactionErrorMetrics,
     rent: &Rent,
     fee: u64,
+    use_pre_exec_as_min_balance: bool,
 ) -> Result<()> {
     if payer_account.lamports() == 0 {
         error_metrics.account_not_found += 1;
@@ -377,11 +379,19 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state = get_account_rent_state(
-        payer_account.lamports(),
-        payer_account.data().len(),
-        rent.minimum_balance(payer_account.data().len()),
-    );
+    // because we confirmed the fee payer has a non-zero balance, we know
+    // the account is rent-exempt due to rent paying accounts being deprecated
+    let payer_pre_rent_state = RentState::RentExempt;
+    let min_post_exec_balance = if use_pre_exec_as_min_balance {
+        // SIMD-0392: pre-exec balance can also be used as the minimum balance
+        min(
+            payer_account.lamports(),
+            rent.minimum_balance(payer_account.data().len()),
+        )
+    } else {
+        rent.minimum_balance(payer_account.data().len())
+    };
+
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
@@ -389,7 +399,7 @@ pub fn validate_fee_payer(
     let payer_post_rent_state = get_account_rent_state(
         payer_account.lamports(),
         payer_account.data().len(),
-        rent.minimum_balance(payer_account.data().len()),
+        min_post_exec_balance,
     );
     check_rent_state_with_account(
         &payer_pre_rent_state,
@@ -1186,6 +1196,7 @@ mod tests {
             &mut TransactionErrorMetrics::default(),
             rent,
             test_parameter.fee,
+            false,
         );
 
         assert_eq!(result, test_parameter.expected_result);
