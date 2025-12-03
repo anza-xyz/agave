@@ -504,7 +504,7 @@ impl BLSSigVerifier {
             .fetch_add(verified_certs.len() as u64, Ordering::Relaxed);
 
         for cert in verified_certs {
-            // Send the BLS certificate message to certificate pool.
+            // Send the `ConsensusMessage` to the consensus pool.
             match self
                 .message_sender
                 .try_send(ConsensusMessage::Certificate(cert))
