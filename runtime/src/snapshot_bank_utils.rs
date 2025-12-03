@@ -2478,8 +2478,8 @@ mod tests {
             .maximum_full_snapshot_archives_to_retain
             .get();
 
-        // take some snapshots, and archive them. Do not flush or hard link storages so that
-        // get highest loadable can be tested when the snapshot has not been marked loadable
+        // Take some snapshots. Do not flush or hard link storages so that get highest loadable
+        // can be tested when the snapshot has not been marked loadable
         let _bank = create_snapshot_dirs_for_tests(
             &GenesisConfig::default(),
             &snapshot_config.bank_snapshots_dir,
