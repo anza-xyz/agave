@@ -111,8 +111,8 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             .open(path.clone())
         {
             Ok(f) => f,
-            _ => {
-                log::warn!("O_DIRECT open failed, falling back to normal read");
+            Err(e) => {
+                log::warn!("O_DIRECT open failed ({}), falling back to normal read", e);
                 OpenOptions::new()
                     .read(true)
                     .custom_flags(libc::O_NOATIME)
