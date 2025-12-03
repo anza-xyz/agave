@@ -62,6 +62,7 @@ use {
         FeatureSet,
     },
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
+    agave_reserved_account_keys::private_sysvars as private_sysvars_ids,
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_syscalls::{
@@ -1942,6 +1943,17 @@ impl Bank {
                 .expect("new rayon threadpool")
         });
 
+        // Initialize runtime-only fields from sysvars (persisted state), since we do not serialize them
+        if let Some(account) = bank.get_account(&private_sysvars_ids::RENT_CONTROLLER_INTEGRAL_ID) {
+            let val: i64 = bincode::deserialize(account.data()).unwrap_or(0);
+            bank.rent_controller_integral.store(val, Relaxed);
+        }
+        if let Some(account) = bank.get_account(&private_sysvars_ids::ACCOUNTS_NET_STATE_GROWTH_ID)
+        {
+            let val: i64 = bincode::deserialize(account.data()).unwrap_or(0);
+            bank.accounts_net_state_growth.store(val, Relaxed);
+        }
+
         datapoint_info!(
             "bank-new-from-fields",
             (
@@ -2234,6 +2246,24 @@ impl Bank {
         });
     }
 
+    fn update_net_state_growth_sysvar(&self, value: i64) {
+        self.update_sysvar_account(
+            &private_sysvars_ids::ACCOUNTS_NET_STATE_GROWTH_ID,
+            |account| {
+                let (lamports, rent_epoch) =
+                    self.inherit_specially_retained_account_fields(account);
+                let data = bincode::serialize(&value).expect("serialize private sysvar");
+                AccountSharedData::create(
+                    lamports,
+                    data,
+                    solana_sdk_ids::sysvar::id(),
+                    false,
+                    rent_epoch,
+                )
+            },
+        );
+    }
+
     fn update_slot_hashes(&self) {
         self.update_sysvar_account(&sysvar::slot_hashes::id(), |account| {
             let mut slot_hashes = account
@@ -2309,8 +2339,26 @@ impl Bank {
 
         self.rent_controller_integral
             .fetch_update(AcqRel, Acquire, |_| Some(new_i))
-            // SAFETY: unwrap() is safe since our update fn always returns `Some`
             .unwrap();
+        self.update_sysvar_account(
+            &private_sysvars_ids::RENT_CONTROLLER_INTEGRAL_ID,
+            |account| {
+                let (lamports, rent_epoch) =
+                    self.inherit_specially_retained_account_fields(account);
+                let data = bincode::serialize(&new_i).expect("serialize private sysvar");
+                AccountSharedData::create(
+                    lamports,
+                    data,
+                    solana_sdk_ids::sysvar::id(),
+                    false,
+                    rent_epoch,
+                )
+            },
+        );
+    }
+
+    fn load_rent_controller_integral(&self) -> i64 {
+        self.rent_controller_integral.load(Acquire)
     }
 
     fn update_rent(&mut self) {
@@ -2338,7 +2386,7 @@ impl Bank {
     fn compute_dynamic_rent(&self) -> solana_rent::Rent {
         let mut rent = self.rent_collector.rent.clone();
 
-        let i = self.rent_controller_integral.load(Acquire);
+        let i = self.load_rent_controller_integral();
         let factor = if i >= RENT_CTRL_H {
             RENT_CTRL_STEP_UP_FACTOR_PERCENT
         } else if i <= -RENT_CTRL_H {
@@ -2591,6 +2639,7 @@ impl Bank {
             // finish up any deferred changes to account state
             self.distribute_transaction_fee_details();
             self.update_slot_history();
+            self.update_net_state_growth_sysvar(self.load_accounts_net_state_growth());
             self.run_incinerator();
 
             // freeze is a one-way trip, idempotent

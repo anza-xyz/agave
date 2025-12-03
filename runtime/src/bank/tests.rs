@@ -9866,11 +9866,14 @@ fn test_drained_created_account() {
         recent_blockhash,
     );
 
+    let net_growth_before = bank.load_accounts_net_state_growth();
     let result = bank.process_transaction(&tx);
     assert!(result.is_ok());
     // account data is not stored because of zero balance even though its
     // data wasn't cleared
     assert!(bank.get_account(&created_keypair.pubkey()).is_none());
+    let net_growth_after = bank.load_accounts_net_state_growth();
+    assert_eq!(net_growth_before, net_growth_after);
 
     // Create and drain a large data size account
     let create_instruction = system_instruction::create_account(
@@ -9897,10 +9900,14 @@ fn test_drained_created_account() {
         recent_blockhash,
     );
 
+    let net_growth_before = bank.load_accounts_net_state_growth();
     let result = bank.process_transaction(&tx);
     assert!(result.is_ok());
     // account data is not stored because of zero balance
     assert!(bank.get_account(&created_keypair.pubkey()).is_none());
+    // check the accounts data size
+    let net_growth_after = bank.load_accounts_net_state_growth();
+    assert_eq!(net_growth_before, net_growth_after);
 }
 
 #[test]

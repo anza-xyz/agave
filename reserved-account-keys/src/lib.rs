@@ -24,6 +24,19 @@ use {
     std::collections::{HashMap, HashSet},
 };
 
+/// Private sysvars (not exposed to program runtime) used to persist internal bank fields
+/// TODO: move to sdk crates with other sysvars
+pub mod private_sysvars {
+    use solana_pubkey::Pubkey;
+
+    // Deterministic, reserved pubkeys for internal sysvars. These accounts are owned by the sysvar program.
+    // Note: These are not exposed to on-chain programs and are reserved/read-only via ReservedAccountKeys.
+    pub const ACCOUNTS_NET_STATE_GROWTH_ID: Pubkey =
+        Pubkey::from_str_const("SysvarAccountsNetStateGrowth111111111111111");
+    pub const RENT_CONTROLLER_INTEGRAL_ID: Pubkey =
+        Pubkey::from_str_const("SysvarRentContro11er1ntegra1111111111111111");
+}
+
 // ReservedAccountKeys is not serialized into or deserialized from bank
 // snapshots but the bank requires this trait to be implemented anyways.
 #[cfg(feature = "frozen-abi")]
@@ -186,6 +199,9 @@ static RESERVED_ACCOUNTS: std::sync::LazyLock<Vec<ReservedAccount>> =
             ReservedAccount::new_active(sysvar::slot_hashes::id()),
             ReservedAccount::new_active(sysvar::slot_history::id()),
             ReservedAccount::new_active(sysvar::stake_history::id()),
+            // private/internal sysvars (reserved to prevent tx write locks)
+            ReservedAccount::new_active(private_sysvars::ACCOUNTS_NET_STATE_GROWTH_ID),
+            ReservedAccount::new_active(private_sysvars::RENT_CONTROLLER_INTEGRAL_ID),
             // other
             ReservedAccount::new_active(native_loader::id()),
             ReservedAccount::new_active(sysvar::id()),

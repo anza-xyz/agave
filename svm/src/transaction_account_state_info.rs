@@ -141,7 +141,11 @@ pub(crate) fn get_account_state_growth_delta(
                     (RentState::RentExempt, RentState::Uninitialized) => {
                         -(pre.data_size as i64 + solana_rent::ACCOUNT_STORAGE_OVERHEAD as i64)
                     } // deleted
-                    _ => post.data_size as i64 - pre.data_size as i64,
+                    (RentState::Uninitialized, RentState::Uninitialized) => 0, // ephemeral account
+                    _ => {
+                        let delta = post.data_size as i64 - pre.data_size as i64;
+                        delta
+                    } // existing account realloc
                 }
             }
             _ => sum, // skip if either side is None
