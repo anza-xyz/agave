@@ -28,13 +28,13 @@ const BITS_PER_WORD: usize = std::mem::size_of::<Word>() * 8;
 #[serde(transparent)]
 pub struct BitVec<const NUM_BITS: usize> {
     #[serde(with = "serde_bytes")]
-    words: Vec<Word>,
+    words: Box<[Word]>,
 }
 
 impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
     fn default() -> Self {
         Self {
-            words: vec![0; Self::NUM_WORDS],
+            words: vec![0; Self::NUM_WORDS].into_boxed_slice(),
         }
     }
 }
@@ -58,7 +58,9 @@ impl<'de, const NUM_BITS: usize> Deserialize<'de> for BitVec<NUM_BITS> {
         words.extend_from_slice(bytes);
         words.resize(Self::NUM_WORDS, 0);
 
-        Ok(Self { words })
+        Ok(Self {
+            words: words.into_boxed_slice(),
+        })
     }
 }
 
