@@ -188,7 +188,15 @@ impl InternalVotePool {
                 .collect(),
             Vote::Skip(_) => self.skip.values().cloned().collect(),
             Vote::SkipFallback(_) => self.skip_fallback.values().cloned().collect(),
-            Vote::Genesis(_) => self.genesis.values().cloned().collect(),
+            Vote::Genesis(genesis) => self
+                .genesis
+                .values()
+                .filter(|vote| {
+                    // unwrap should be safe as we should only store genesis votes here
+                    vote.vote.block_id().unwrap() == &genesis.block_id
+                })
+                .cloned()
+                .collect(),
         }
     }
 }
