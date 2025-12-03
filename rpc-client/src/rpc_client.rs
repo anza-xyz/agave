@@ -43,6 +43,7 @@ use {
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration},
 };
 
@@ -1689,6 +1690,80 @@ impl RpcClient {
         commitment_config: CommitmentConfig,
     ) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_block_height_with_commitment(commitment_config))
+    }
+
+    /// Returns the commitment information for a particular block.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getBlockCommitment`] RPC method.
+    ///
+    /// [`getBlockCommitment`]: https://solana.com/docs/rpc/http/getblockcommitment
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let commitment = rpc_client.get_block_commitment(5)?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_block_commitment(
+        &self,
+        slot: Slot,
+    ) -> ClientResult<RpcBlockCommitment<[u64; MAX_LOCKOUT_HISTORY + 1]>> {
+        self.invoke((self.rpc_client.as_ref()).get_block_commitment(slot))
+    }
+
+    /// Returns the leader of the current slot using the configured [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let leader = rpc_client.get_slot_leader()?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_slot_leader(&self) -> ClientResult<Pubkey> {
+        self.invoke((self.rpc_client.as_ref()).get_slot_leader())
+    }
+
+    /// Returns the leader of the current slot using the provided [commitment level][cl].
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    pub fn get_slot_leader_with_commitment(
+        &self,
+        commitment_config: CommitmentConfig,
+    ) -> ClientResult<Pubkey> {
+        self.invoke((self.rpc_client.as_ref()).get_slot_leader_with_commitment(commitment_config))
+    }
+
+    /// Returns the leader of the current slot using the provided [`RpcContextConfig`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getSlotLeader`] RPC method.
+    ///
+    /// [`getSlotLeader`]: https://solana.com/docs/rpc/http/getslotleader
+    pub fn get_slot_leader_with_config(&self, config: RpcContextConfig) -> ClientResult<Pubkey> {
+        self.invoke((self.rpc_client.as_ref()).get_slot_leader_with_config(config))
     }
 
     /// Returns the slot leaders for a given slot range.
@@ -4019,6 +4094,38 @@ mod tests {
                 .unwrap();
             assert_eq!(expected_minimum_delegation, actual_minimum_delegation);
         }
+    }
+
+    #[test]
+    fn test_get_slot_leader_variants() {
+        let expected_leader: Pubkey = PUBKEY.parse().unwrap();
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let leader = rpc_client.get_slot_leader().unwrap();
+        assert_eq!(leader, expected_leader);
+
+        let leader_with_commitment = rpc_client
+            .get_slot_leader_with_commitment(CommitmentConfig::processed())
+            .unwrap();
+        assert_eq!(leader_with_commitment, expected_leader);
+
+        let leader_with_config = rpc_client
+            .get_slot_leader_with_config(RpcContextConfig {
+                commitment: Some(CommitmentConfig::confirmed()),
+                min_context_slot: Some(1),
+            })
+            .unwrap();
+        assert_eq!(leader_with_config, expected_leader);
+    }
+
+    #[test]
+    fn test_get_block_commitment() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+        let commitment = rpc_client.get_block_commitment(5).unwrap();
+
+        assert_eq!(commitment.total_stake, 42);
+        let slots = commitment.commitment.expect("commitment available");
+        assert_eq!(slots.len(), MAX_LOCKOUT_HISTORY + 1);
     }
 
     #[test]
