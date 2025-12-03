@@ -232,11 +232,9 @@ impl BLSSigVerifier {
 
             match message {
                 ConsensusMessage::Vote(vote_message) => {
-                    if let Some((pubkey, bls_pubkey)) = self.preprocess_vote(
-                        vote_message.clone(),
-                        root_bank,
-                        consensus_metrics_to_send,
-                    ) {
+                    if let Some((pubkey, bls_pubkey)) =
+                        self.preprocess_vote(&vote_message, root_bank, consensus_metrics_to_send)
+                    {
                         votes_to_verify.push(VoteToVerify {
                             vote_message,
                             bls_pubkey,
