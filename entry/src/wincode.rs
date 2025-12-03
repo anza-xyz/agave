@@ -145,7 +145,7 @@ impl SchemaRead<'_> for VersionedMsg {
             }
         }
 
-        impl<'a> Drop for LegacyMessageDropGuard<'a> {
+        impl Drop for LegacyMessageDropGuard<'_> {
             // Fields are initialized in order, matching the serialized format.
             //
             // 0 -> header
