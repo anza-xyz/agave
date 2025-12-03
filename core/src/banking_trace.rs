@@ -340,24 +340,6 @@ impl BankingTracer {
         let unified_sender = unified_sender.unwrap_or_else(|| sender.clone());
         let is_unified = is_unified.unwrap_or_default();
 
-        Self::channel_inner(
-            label,
-            active_tracer,
-            sender,
-            unified_sender,
-            is_unified,
-            receiver,
-        )
-    }
-
-    fn channel_inner(
-        label: ChannelLabel,
-        active_tracer: Option<ActiveTracer>,
-        sender: Sender<BankingPacketBatch>,
-        unified_sender: Sender<BankingPacketBatch>,
-        is_unified: Arc<AtomicBool>,
-        receiver: BankingPacketReceiver,
-    ) -> (TracedSender, Receiver<BankingPacketBatch>) {
         (
             TracedSender::new(label, sender, unified_sender, is_unified, active_tracer),
             receiver,
