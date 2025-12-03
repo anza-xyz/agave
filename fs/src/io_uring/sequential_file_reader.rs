@@ -2,9 +2,10 @@
 
 use {
     super::{
-        memory::{FixedIoBuffer, LargeBuffer},
+        memory::{FixedIoBuffer, PageAlignedMemory},
         IO_PRIO_BE_HIGHEST,
     },
+    crate::io_uring::memory::new_large_buffer,
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -38,11 +39,11 @@ pub struct SequentialFileReader<B> {
     _backing_buffer: B,
 }
 
-impl SequentialFileReader<LargeBuffer> {
+impl SequentialFileReader<PageAlignedMemory> {
     /// Create a new `SequentialFileReader` for the given `path` using internally allocated
     /// buffer of specified `buf_size` and default read size.
-    pub fn with_capacity(buf_size: usize, path: impl AsRef<Path>) -> io::Result<Self> {
-        Self::with_buffer(path, LargeBuffer::new(buf_size), DEFAULT_READ_SIZE)
+    pub fn with_capacity(buf_size: usize, path: impl AsRef<Path> + Clone) -> io::Result<Self> {
+        Self::with_buffer(path, new_large_buffer(buf_size), DEFAULT_READ_SIZE)
     }
 }
 
@@ -62,7 +63,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
     /// `buffer` is the internal buffer used for reading. It must be at least `read_capacity` long.
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
     pub fn with_buffer(
-        path: impl AsRef<Path>,
+        path: impl AsRef<Path> + Clone,
         mut buffer: B,
         read_capacity: usize,
     ) -> io::Result<Self> {
@@ -95,7 +96,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
     fn with_buffer_and_ring(
         mut backing_buffer: B,
         ring: IoUring,
-        path: impl AsRef<Path>,
+        path: impl AsRef<Path> + Clone,
         read_capacity: usize,
     ) -> io::Result<Self> {
         let buffer = backing_buffer.as_mut();
@@ -103,10 +104,21 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         let read_aligned_buf_len = buffer.len() / read_capacity * read_capacity;
         let buffer = &mut buffer[..read_aligned_buf_len];
 
-        let file = OpenOptions::new()
+        log::info!("attempting to open with O_DIRECT");
+        let file = match OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOATIME)
-            .open(path)?;
+            .custom_flags(libc::O_DIRECT | libc::O_NOATIME)
+            .open(path.clone())
+        {
+            Ok(f) => f,
+            _ => {
+                log::warn!("O_DIRECT open failed, falling back to normal read");
+                OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOATIME)
+                    .open(path.clone())?
+            }
+        };
         // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
         // dropped before `backing_buffer` is dropped.
         let buffers = unsafe { FixedIoBuffer::split_buffer_chunks(buffer, read_capacity) }

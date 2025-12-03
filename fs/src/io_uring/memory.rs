@@ -14,53 +14,20 @@ use {
 // and chunk it in slices of up to 1G each.
 const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
-pub enum LargeBuffer {
-    Vec(Vec<u8>),
-    HugeTable(PageAlignedMemory),
-}
-
-impl Deref for LargeBuffer {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_slice(),
-            Self::HugeTable(mem) => mem.deref(),
+/// Allocate memory buffer optimized for io_uring operations, i.e.
+/// using HugeTable when it is available on the host.
+pub fn new_large_buffer(size: usize) -> PageAlignedMemory {
+    log::info!("trying to allocate LargeBuffer of size {}", size);
+    if size > PageAlignedMemory::page_size() {
+        let size = size.next_power_of_two();
+        if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
+            log::info!("obtained hugetable io_uring buffer (len={size})");
+            return alloc;
         }
     }
-}
-
-impl DerefMut for LargeBuffer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_mut_slice(),
-            Self::HugeTable(mem) => mem.deref_mut(),
-        }
-    }
-}
-
-impl AsMut<[u8]> for LargeBuffer {
-    fn as_mut(&mut self) -> &mut [u8] {
-        match self {
-            Self::Vec(vec) => vec.as_mut_slice(),
-            LargeBuffer::HugeTable(mem) => mem,
-        }
-    }
-}
-
-impl LargeBuffer {
-    /// Allocate memory buffer optimized for io_uring operations, i.e.
-    /// using HugeTable when it is available on the host.
-    pub fn new(size: usize) -> Self {
-        if size > PageAlignedMemory::page_size() {
-            let size = size.next_power_of_two();
-            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
-                log::info!("obtained hugetable io_uring buffer (len={size})");
-                return Self::HugeTable(alloc);
-            }
-        }
-        Self::Vec(vec![0; size])
-    }
+    let alloc = PageAlignedMemory::alloc_regular(size).unwrap();
+    log::info!("obtained io_uring buffer (len={size})");
+    return alloc;
 }
 
 #[derive(Debug)]
@@ -101,6 +68,30 @@ impl PageAlignedMemory {
         })
     }
 
+    fn alloc_regular(memory_size: usize) -> Result<Self, AllocError> {
+        // Safety:
+        // doing an ANONYMOUS alloc. addr=NULL is ok, fd is not used.
+        let ptr = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                memory_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+
+        if std::ptr::eq(ptr, libc::MAP_FAILED) {
+            return Err(AllocError);
+        }
+
+        Ok(Self {
+            ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError)?,
+            len: memory_size,
+        })
+    }
+
     fn page_size() -> usize {
         // Safety: just a libc wrapper
         unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
@@ -128,6 +119,12 @@ impl Deref for PageAlignedMemory {
 impl DerefMut for PageAlignedMemory {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl AsMut<[u8]> for PageAlignedMemory {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self
     }
 }
 
