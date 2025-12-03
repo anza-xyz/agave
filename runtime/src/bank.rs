@@ -2638,9 +2638,9 @@ impl Bank {
         }
 
         // After storing genesis accounts, the bank stakes cache will be warmed
-        // up and can be used to set the validator id to the highest staked
+        // up and can be used to set the leader id to the highest staked
         // node. If no staked nodes exist, allow fallback to an unstaked test
-        // validator id during tests.
+        // leader id during tests.
         let leader_id = self.stakes_cache.stakes().highest_staked_node().copied();
         #[cfg(feature = "dev-context-only-utils")]
         let leader_id = leader_id.or(leader_id_for_tests);
