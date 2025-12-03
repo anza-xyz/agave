@@ -100,6 +100,45 @@ pub(crate) fn new_post_exec(
         .collect()
 }
 
+// Legacy post-exec account state info calculation. Deprecated by SIMD-0392.
+pub(crate) fn new_post_exec_legacy(
+    transaction_context: &TransactionContext,
+    message: &impl SVMMessage,
+    rent: &Rent,
+) -> Vec<TransactionAccountStateInfo> {
+    (0..message.account_keys().len())
+        .map(|i| {
+            let rent_state = if message.is_writable(i) {
+                let state = if let Ok(account) = transaction_context
+                    .accounts()
+                    .try_borrow(i as IndexOfAccount)
+                {
+                    Some(get_account_rent_state(
+                        account.lamports(),
+                        account.data().len(),
+                        rent.minimum_balance(account.data().len()),
+                    ))
+                } else {
+                    None
+                };
+                debug_assert!(
+                    state.is_some(),
+                    "message and transaction context out of sync, fatal"
+                );
+                state
+            } else {
+                None
+            };
+
+            rent_state.map(|rent_state| WritableTransactionAccountStateInfo {
+                rent_state,
+                balance: 0,
+                data_size: 0,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn verify_changes(
     pre_state_infos: &[TransactionAccountStateInfo],
     post_state_infos: &[TransactionAccountStateInfo],
