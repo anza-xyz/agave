@@ -4,13 +4,12 @@ use {
     crate::{
         file_io::FileCreator,
         io_uring::{
-            memory::{FixedIoBuffer, LargeBuffer},
-            IO_PRIO_BE_HIGHEST,
+            IO_PRIO_BE_HIGHEST, memory::{FixedIoBuffer, PageAlignedMemory, new_large_buffer}
         },
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
-    io_uring::{opcode, squeue, types, IoUring},
+    io_uring::{IoUring, opcode, squeue, types},
     libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_TRUNC, O_WRONLY},
     smallvec::SmallVec,
     std::{
@@ -52,14 +51,14 @@ const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::fro
 
 /// Multiple files creator with `io_uring` queue for open -> write -> close
 /// operations.
-pub struct IoUringFileCreator<'a, B = LargeBuffer> {
+pub struct IoUringFileCreator<'a, B = PageAlignedMemory> {
     ring: Ring<FileCreatorState<'a>, FileCreatorOp>,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `ring`
     /// (should get dropped last)
     _backing_buffer: B,
 }
 
-impl<'a> IoUringFileCreator<'a, LargeBuffer> {
+impl<'a> IoUringFileCreator<'a, PageAlignedMemory> {
     /// Create a new `IoUringFileCreator` using internally allocated buffer of specified
     /// `buf_size` and default write size.
     pub fn with_buffer_capacity<F: FnMut(PathBuf) + 'a>(
@@ -67,7 +66,7 @@ impl<'a> IoUringFileCreator<'a, LargeBuffer> {
         file_complete: F,
     ) -> io::Result<Self> {
         Self::with_buffer(
-            LargeBuffer::new(buf_size),
+            new_large_buffer(buf_size),
             DEFAULT_WRITE_SIZE,
             file_complete,
         )
