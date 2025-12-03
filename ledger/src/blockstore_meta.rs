@@ -7,10 +7,7 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    std::{
-        collections::BTreeSet,
-        ops::{Range, RangeBounds},
-    },
+    std::ops::{Range, RangeBounds},
 };
 
 bitflags! {
@@ -49,34 +46,18 @@ impl Default for ConnectedFlags {
     }
 }
 
-/// Legacy completed data indexes type; de/serialization is inefficient for a BTreeSet.
-///
-/// Replaced by [`CompletedDataIndexesV2`].
-pub type CompletedDataIndexesV1 = BTreeSet<u32>;
 /// A fixed size BitVec offers fast lookup and fast de/serialization.
-///
-/// Supersedes [`CompletedDataIndexesV1`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct CompletedDataIndexesV2 {
     index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
 }
 
-// API for CompletedDataIndexesV2 that mirrors BTreeSet<u32> to make migration easier.
-// This allows CompletedDataIndexesV2 to be a drop-in replacement for CompletedDataIndexesV1.
+// API for CompletedDataIndexesV2 that mirrors BTreeSet<u32>.
 impl CompletedDataIndexesV2 {
     #[inline]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
         self.index.iter_ones().map(|i| i as u32)
-    }
-
-    /// Only needed for V1 / V2 test compatibility.
-    ///
-    /// TODO: Remove once the migration is complete.
-    #[cfg(test)]
-    #[inline]
-    pub fn into_iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
-        self.iter()
     }
 
     #[inline]
@@ -109,18 +90,6 @@ impl FromIterator<u32> for CompletedDataIndexesV2 {
     fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
         let index = iter.into_iter().map(|i| i as usize).collect();
         CompletedDataIndexesV2 { index }
-    }
-}
-
-impl From<CompletedDataIndexesV2> for CompletedDataIndexesV1 {
-    fn from(value: CompletedDataIndexesV2) -> Self {
-        value.iter().collect()
-    }
-}
-
-impl From<CompletedDataIndexesV1> for CompletedDataIndexesV2 {
-    fn from(value: CompletedDataIndexesV1) -> Self {
-        value.into_iter().collect()
     }
 }
 
@@ -158,65 +127,10 @@ pub struct SlotMetaBase<T> {
     pub completed_data_indexes: T,
 }
 
-pub type SlotMetaV1 = SlotMetaBase<CompletedDataIndexesV1>;
 pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexesV2>;
 
-impl From<SlotMetaV1> for SlotMetaV2 {
-    fn from(value: SlotMetaV1) -> Self {
-        SlotMetaV2 {
-            slot: value.slot,
-            consumed: value.consumed,
-            received: value.received,
-            first_shred_timestamp: value.first_shred_timestamp,
-            last_index: value.last_index,
-            parent_slot: value.parent_slot,
-            next_slots: value.next_slots,
-            connected_flags: value.connected_flags,
-            completed_data_indexes: value.completed_data_indexes.into(),
-        }
-    }
-}
-
-impl From<SlotMetaV2> for SlotMetaV1 {
-    fn from(value: SlotMetaV2) -> Self {
-        SlotMetaV1 {
-            slot: value.slot,
-            consumed: value.consumed,
-            received: value.received,
-            first_shred_timestamp: value.first_shred_timestamp,
-            last_index: value.last_index,
-            parent_slot: value.parent_slot,
-            next_slots: value.next_slots,
-            connected_flags: value.connected_flags,
-            completed_data_indexes: value.completed_data_indexes.into(),
-        }
-    }
-}
-
-// We need to maintain both formats during migration,
-// as both formats will need to be supported when reading
-// from rocksdb until the migration is complete.
-//
-// Swap these types to migrate to the new format.
-//
-// For example, to enable the new format,
-//
-// ```
-// pub type SlotMeta = SlotMetaV2;
-// pub type CompletedDataIndexes = CompletedDataIndexesV2;
-// pub type SlotMetaFallback = SlotMetaV1;
-// ```
-//
-// To enable the old format,
-//
-// ```
-// pub type SlotMeta = SlotMetaV1;
-// pub type CompletedDataIndexes = CompletedDataIndexesV1;
-// pub type SlotMetaFallback = SlotMetaV2;
-// ```
 pub type SlotMeta = SlotMetaV2;
 pub type CompletedDataIndexes = CompletedDataIndexesV2;
-pub type SlotMetaFallback = SlotMetaV1;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
@@ -241,51 +155,12 @@ mod serde_compat {
 
 pub type Index = IndexV2;
 pub type ShredIndex = ShredIndexV2;
-/// We currently support falling back to the previous format for migration purposes.
-///
-/// See https://github.com/anza-xyz/agave/issues/3570.
-pub type IndexFallback = IndexV1;
-pub type ShredIndexFallback = ShredIndexV1;
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-/// Index recording presence/absence of shreds
-pub struct IndexV1 {
-    pub slot: Slot,
-    data: ShredIndexV1,
-    coding: ShredIndexV1,
-}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct IndexV2 {
     pub slot: Slot,
     data: ShredIndexV2,
     coding: ShredIndexV2,
-}
-
-impl From<IndexV2> for IndexV1 {
-    fn from(index: IndexV2) -> Self {
-        IndexV1 {
-            slot: index.slot,
-            data: index.data.into(),
-            coding: index.coding.into(),
-        }
-    }
-}
-
-impl From<IndexV1> for IndexV2 {
-    fn from(index: IndexV1) -> Self {
-        IndexV2 {
-            slot: index.slot,
-            data: index.data.into(),
-            coding: index.coding.into(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ShredIndexV1 {
-    /// Map representing presence/absence of shreds
-    index: BTreeSet<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -419,75 +294,10 @@ impl Index {
     }
 }
 
-#[cfg(test)]
-#[allow(unused)]
-impl IndexFallback {
-    pub(crate) fn new(slot: Slot) -> Self {
-        Self {
-            slot,
-            data: ShredIndexFallback::default(),
-            coding: ShredIndexFallback::default(),
-        }
-    }
-
-    pub fn data(&self) -> &ShredIndexFallback {
-        &self.data
-    }
-    pub fn coding(&self) -> &ShredIndexFallback {
-        &self.coding
-    }
-
-    pub(crate) fn data_mut(&mut self) -> &mut ShredIndexFallback {
-        &mut self.data
-    }
-    pub(crate) fn coding_mut(&mut self) -> &mut ShredIndexFallback {
-        &mut self.coding
-    }
-}
-
-/// Superseded by [`ShredIndexV2`].
+/// A bitvec (`Box<[u8]>`) of shred indices, where each u8 represents 8 shred indices.
 ///
-/// TODO: Remove this once new [`ShredIndexV2`] is fully rolled out
-/// and no longer relies on it for fallback.
-#[cfg(test)]
-#[allow(unused)]
-impl ShredIndexV1 {
-    pub fn num_shreds(&self) -> usize {
-        self.index.len()
-    }
-
-    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = &u64>
-    where
-        R: RangeBounds<u64>,
-    {
-        self.index.range(bounds)
-    }
-
-    pub(crate) fn contains(&self, index: u64) -> bool {
-        self.index.contains(&index)
-    }
-
-    pub(crate) fn insert(&mut self, index: u64) {
-        self.index.insert(index);
-    }
-
-    fn remove(&mut self, index: u64) {
-        self.index.remove(&index);
-    }
-}
-
-/// A bitvec (`Vec<u8>`) of shred indices, where each u8 represents 8 shred indices.
-///
-/// The current implementation of [`ShredIndex`] utilizes a [`BTreeSet`] to store
-/// shred indices. While [`BTreeSet`] remains efficient as operations are amortized
-/// over time, the overhead of the B-tree structure becomes significant when frequently
-/// serialized and deserialized. In particular:
-/// - **Tree Traversal**: Serialization requires walking the non-contiguous tree structure.
-/// - **Reconstruction**: Deserialization involves rebuilding the tree in bulk,
-///   including dynamic memory allocations and re-balancing nodes.
-///
-/// In contrast, our bit vec implementation provides:
-/// - **Contiguous Memory**: All bits are stored in a contiguous array of u64 words,
+/// Bit vec implementation provides:
+/// - **Contiguous Memory**: All bits are stored in a contiguous array of words,
 ///   allowing direct indexing and efficient memory access patterns.
 /// - **Direct Range Access**: Can load only the specific words that overlap with a
 ///   requested range, avoiding unnecessary traversal.
@@ -533,10 +343,6 @@ impl ShredIndexV2 {
             .iter_ones()
             .map(|idx| idx as u64)
     }
-
-    fn iter(&self) -> impl Iterator<Item = u64> + '_ {
-        self.range(0..MAX_DATA_SHREDS_PER_SLOT as u64)
-    }
 }
 
 impl FromIterator<u64> for ShredIndexV2 {
@@ -546,28 +352,6 @@ impl FromIterator<u64> for ShredIndexV2 {
             index.insert(idx);
         }
         index
-    }
-}
-
-impl FromIterator<u64> for ShredIndexV1 {
-    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
-        ShredIndexV1 {
-            index: iter.into_iter().collect(),
-        }
-    }
-}
-
-impl From<ShredIndexV1> for ShredIndexV2 {
-    fn from(value: ShredIndexV1) -> Self {
-        value.index.into_iter().collect()
-    }
-}
-
-impl From<ShredIndexV2> for ShredIndexV1 {
-    fn from(value: ShredIndexV2) -> Self {
-        ShredIndexV1 {
-            index: value.iter().collect(),
-        }
     }
 }
 
@@ -887,7 +671,6 @@ impl OptimisticSlotMetaVersioned {
 mod test {
     use {
         super::*,
-        bincode::Options,
         proptest::prelude::*,
         rand::{prelude::IndexedRandom as _, rng},
     };
@@ -969,84 +752,6 @@ mod test {
     }
 
     proptest! {
-        #[test]
-        fn shred_index_legacy_compat(
-            shreds in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
-            range in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64)
-        ) {
-            let mut legacy = ShredIndexV1::default();
-            let mut v2 = ShredIndexV2::default();
-
-            for i in shreds {
-                v2.insert(i);
-                legacy.insert(i);
-            }
-
-            for &i in legacy.index.iter() {
-                assert!(v2.contains(i));
-            }
-
-            assert_eq!(v2.num_shreds(), legacy.num_shreds());
-
-            assert_eq!(
-                v2.range(range.clone()).sum::<u64>(),
-                legacy.range(range).sum::<u64>()
-            );
-
-            assert_eq!(ShredIndexV2::from(legacy.clone()), v2.clone());
-            assert_eq!(ShredIndexV1::from(v2), legacy);
-        }
-
-        /// Property: [`Index`] cannot be deserialized from [`IndexV2`].
-        ///
-        /// # Failure cases
-        /// 1. Empty [`IndexV2`]
-        ///     - [`ShredIndex`] deserialization should fail due to trailing bytes of `num_shreds`.
-        /// 2. Non-empty [`IndexV2`]
-        ///     - Encoded length of [`ShredIndexV2::index`] (`Vec<u8>`) will be relative to a sequence of `u8`,
-        ///       resulting in not enough bytes when deserialized into sequence of `u64`.
-        #[test]
-        fn test_legacy_collision(
-            coding_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
-            data_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
-            slot in 0..u64::MAX
-        ) {
-            let index = IndexV2 {
-                coding: coding_indices.into_iter().collect(),
-                data: data_indices.into_iter().collect(),
-                slot,
-            };
-            let config = bincode::DefaultOptions::new().with_fixint_encoding().reject_trailing_bytes();
-            let legacy = config.deserialize::<IndexV1>(&config.serialize(&index).unwrap());
-            prop_assert!(legacy.is_err());
-        }
-
-        /// Property: [`IndexV2`] cannot be deserialized from [`Index`].
-        ///
-        /// # Failure cases
-        /// 1. Empty [`Index`]
-        ///     - [`ShredIndexV2`] deserialization should fail due to missing `num_shreds` (not enough bytes).
-        /// 2. Non-empty [`Index`]
-        ///     - Encoded length of [`ShredIndex::index`] (`BTreeSet<u64>`) will be relative to a sequence of `u64`,
-        ///       resulting in trailing bytes when deserialized into sequence of `u8`.
-        #[test]
-        fn test_legacy_collision_inverse(
-            coding_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
-            data_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
-            slot in 0..u64::MAX
-        ) {
-            let index = IndexV1 {
-                coding: coding_indices.into_iter().collect(),
-                data: data_indices.into_iter().collect(),
-                slot,
-            };
-            let config = bincode::DefaultOptions::new()
-                .with_fixint_encoding()
-                .reject_trailing_bytes();
-            let v2 = config.deserialize::<IndexV2>(&config.serialize(&index).unwrap());
-            prop_assert!(v2.is_err());
-        }
-
         // Property: range queries should return correct indices
         #[test]
         fn range_query_correctness(

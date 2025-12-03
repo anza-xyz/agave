@@ -5222,10 +5222,10 @@ pub mod tests {
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
-            shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
+            shred::max_ticks_per_n_shreds,
         },
         assert_matches::assert_matches,
-        bincode::{serialize, Options},
+        bincode::serialize,
         crossbeam_channel::unbounded,
         rand::{rng, seq::SliceRandom},
         solana_account_decoder::parse_token::UiTokenAmount,
@@ -5683,36 +5683,6 @@ pub mod tests {
     fn test_insert_slots() {
         test_insert_data_shreds_slots(false);
         test_insert_data_shreds_slots(true);
-    }
-
-    #[test]
-    fn test_index_fallback_deserialize() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let mut rng = rand::rng();
-        let slot = rng.random_range(0..100);
-        let bincode = bincode::DefaultOptions::new()
-            .reject_trailing_bytes()
-            .with_fixint_encoding();
-
-        let data = 0..rng.random_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
-        let coding = 0..rng.random_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
-        let mut fallback = IndexFallback::new(slot);
-        for (d, c) in data.clone().zip(coding.clone()) {
-            fallback.data_mut().insert(d);
-            fallback.coding_mut().insert(c);
-        }
-
-        blockstore
-            .index_cf
-            .put_bytes(slot, &bincode.serialize(&fallback).unwrap())
-            .unwrap();
-
-        let current = blockstore.index_cf.get(slot).unwrap().unwrap();
-        for (d, c) in data.zip(coding) {
-            assert!(current.data().contains(d));
-            assert!(current.coding().contains(c));
-        }
     }
 
     #[test]
@@ -7741,7 +7711,7 @@ pub mod tests {
         // range:
         // [start_index, completed_data_end_indexes[j]] ==
         // [completed_data_end_indexes[i], completed_data_end_indexes[j]],
-        let completed_data_end_indexes: Vec<_> = completed_data_end_indexes.into_iter().collect();
+        let completed_data_end_indexes: Vec<_> = completed_data_end_indexes.iter().collect();
         for i in 0..completed_data_end_indexes.len() {
             for j in i..completed_data_end_indexes.len() {
                 let start_index = completed_data_end_indexes[i];
@@ -10331,7 +10301,7 @@ pub mod tests {
                 &mut completed_data_indexes
             )
             .eq(std::iter::once(i..i + 1)));
-            assert!(completed_data_indexes.clone().into_iter().eq(0..=i));
+            assert!(completed_data_indexes.clone().iter().eq(0..=i));
         }
     }
 
@@ -10359,7 +10329,7 @@ pub mod tests {
             update_completed_data_indexes(true, 3, &shred_index, &mut completed_data_indexes)
                 .eq([])
         );
-        assert!(completed_data_indexes.clone().into_iter().eq([3]));
+        assert!(completed_data_indexes.clone().iter().eq([3]));
 
         // Inserting data complete shred 1 now confirms the range of shreds [2, 3]
         // is part of the same data set
@@ -10368,7 +10338,7 @@ pub mod tests {
             update_completed_data_indexes(true, 1, &shred_index, &mut completed_data_indexes)
                 .eq(std::iter::once(2..4))
         );
-        assert!(completed_data_indexes.clone().into_iter().eq([1, 3]));
+        assert!(completed_data_indexes.clone().iter().eq([1, 3]));
 
         // Inserting data complete shred 0 now confirms the range of shreds [0]
         // is part of the same data set
@@ -10377,7 +10347,7 @@ pub mod tests {
             update_completed_data_indexes(true, 0, &shred_index, &mut completed_data_indexes)
                 .eq([0..1, 1..2])
         );
-        assert!(completed_data_indexes.clone().into_iter().eq([0, 1, 3]));
+        assert!(completed_data_indexes.clone().iter().eq([0, 1, 3]));
     }
 
     #[test]
