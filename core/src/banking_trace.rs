@@ -439,6 +439,40 @@ impl TracedSender {
     }
 
     fn current_sender(&self) -> &Sender<BankingPacketBatch> {
+        // Batches fed into `self.sender` could be indefinitely buffered in the channels except the
+        // traced sender used by the non-vote channel, if those batches are sent within the small
+        // time window of the case of block production method switching from the central scheduler
+        // to the unified scheduler (this doesn't happen in the opposite direction and any
+        // switching cases among central and external schedulers).
+        //
+        // That's because the newly running unified scheduler doesn't consume batches from the
+        // tpu-vote and gossip-vote channels. It does only from the unified (= actually non-vote)
+        // channel, which is now used by tpu-vote and gossip-vote traced senders _around same
+        // time_. This sender-side and receiver-side switching isn't synchronized to avoid any
+        // significant overhead (i.e. per batch locking). Also, the transition code doesn't try to
+        // ensure to empty those batches during switching, which is constrained to the best effort
+        // basis due to the lack of such synchronization. Thus, this omission is intentional not to
+        // introduce the DOS attack vector in switching by tx saturation from a remote attacker.
+        //
+        // However, this particularly lenient behavior won't pose any significant problem in
+        // practice. That's because any block production method is generally assumed to
+        // aggressively try to empty those channels continuously, regardless the awareness of any
+        // imminent leader slots according to the current leader schedule. Otherwise, low-staked
+        // validator nodes would be vulnerable to remotely-controllable unbounded memory growth
+        // during normal operation even with no switching whatsoever.
+        //
+        // Also, block production switching isn't a frequent operation and it can only be triggered
+        // by privileged validator operators. Reasonably, they won't do this during their leader
+        // slots, even if they're unaware of this implementation compromise.
+        //
+        // As a extra comment, those possibly quite old txes in the unconsumed batches should
+        // safely be discarded by the central scheduler, because it should be resilient against any
+        // untrusted input by nature, should the block production method be switched back to the
+        // central scheduler.
+        //
+        // All in all, the bottom line of the effective incurred overhead for supporting unified
+        // scheduler block production switching is a good and old atomic bool relaxed load per
+        // batch, whose cache line won't be invalidated at all, practically speaking.
         if self.is_unified.load(Ordering::Relaxed) {
             &self.unified_sender
         } else {
