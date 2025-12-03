@@ -769,7 +769,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     agave_logger::setup();
     const FASTBOOT_SNAPSHOT_INTERVAL_SLOTS: Slot = 4;
     // Queue a few fastboot snapshots to make sure the newest one is processed during teardown
-    const LAST_SLOT: Slot = FASTBOOT_SNAPSHOT_INTERVAL_SLOTS * 4 + 1;
+    const LAST_SLOT: Slot = FASTBOOT_SNAPSHOT_INTERVAL_SLOTS * 4;
 
     // Test injects snapshots at specific slots, so disable automatic snapshots
     let snapshot_test_config =
@@ -810,35 +810,28 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
     for slot in 1..=LAST_SLOT {
         // Make a new bank and process some transactions
-        {
-            let parent_bank = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = bank_forks
-                .write()
-                .unwrap()
-                .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
-                .clone_without_scheduler();
+        let parent_bank = bank_forks.read().unwrap().get(slot - 1).unwrap();
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
+            .clone_without_scheduler();
 
-            let key = solana_pubkey::new_rand();
-            let tx = system_transaction::transfer(mint_keypair, &key, 1, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+        let key = solana_pubkey::new_rand();
+        let tx = system_transaction::transfer(mint_keypair, &key, 1, bank.last_blockhash());
+        assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            let key = solana_pubkey::new_rand();
-            let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+        let key = solana_pubkey::new_rand();
+        let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
+        assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            bank.fill_bank_with_ticks_for_tests();
-        }
+        bank.fill_bank_with_ticks_for_tests();
 
         // Inject a fastboot snapshot at a specific slot
         if slot % FASTBOOT_SNAPSHOT_INTERVAL_SLOTS == 0 {
-            bank_forks
-                .write()
-                .unwrap()
-                .set_root(slot, Some(&snapshot_controller), None);
-
-            let bank = bank_forks.read().unwrap().get(slot).unwrap();
-            bank.force_flush_accounts_cache();
             bank.squash();
+
+            bank.force_flush_accounts_cache();
             let snapshot_package = SnapshotPackage::new(
                 SnapshotKind::Fastboot,
                 &bank,
@@ -870,7 +863,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         assert!(bank_snapshots.is_empty());
     }
 
-    // Stop the background services, ignore any errors
+    // Stop the background services
     exit.store(true, Ordering::Relaxed);
     let packager_exit_result = snapshot_packager_service.join();
     assert!(packager_exit_result.is_ok());
@@ -882,7 +875,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     .unwrap();
 
     let bank_constructed = snapshot_bank_utils::bank_from_snapshot_dir(
-        &[snapshot_test_config.accounts_dir.clone()],
+        &[snapshot_test_config.accounts_dir],
         &bank_snapshot,
         &snapshot_test_config.genesis_config_info.genesis_config,
         &RuntimeConfig::default(),
@@ -899,7 +892,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     let last_fastboot_snapshot_slot =
         (LAST_SLOT / FASTBOOT_SNAPSHOT_INTERVAL_SLOTS) * FASTBOOT_SNAPSHOT_INTERVAL_SLOTS;
 
-    assert!(bank_constructed.slot() == last_fastboot_snapshot_slot);
+    assert_eq!(bank_constructed.slot(), last_fastboot_snapshot_slot);
     assert_eq!(
         &bank_constructed,
         bank_forks

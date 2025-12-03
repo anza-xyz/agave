@@ -89,7 +89,7 @@ impl SnapshotPackagerService {
                         // With exit backpressure, we will delay flushing snapshot storages
                         // until we receive a graceful exit request.
                         // Save the snapshot storages here, so we can flush later (as needed).
-                        // For fastboot snapshots, the bank snapshot is saved and
+                        // For fastboot snapshot packages, the bank snapshot is saved and
                         // the rest of the snapshotting process is skipped
                         if snapshot_kind == SnapshotKind::Fastboot {
                             teardown_state = Some(TeardownState {
@@ -100,7 +100,7 @@ impl SnapshotPackagerService {
 
                             let handling_time = measure_handling.end_as_us();
                             datapoint_info!(
-                                "snapshot_packager_service_fastboot",
+                                "snapshot_packager_service",
                                 ("enqueued_time_us", enqueued_time.as_micros(), i64),
                                 ("handling_time_us", handling_time, i64),
                             );
@@ -221,8 +221,6 @@ impl SnapshotPackagerService {
 
     /// Performs final operations before gracefully shutting down
     fn teardown(state: TeardownState, snapshot_config: &SnapshotConfig) {
-        let start = Instant::now();
-
         let TeardownState {
             snapshot_slot,
             snapshot_storages,
@@ -230,6 +228,8 @@ impl SnapshotPackagerService {
         } = state;
 
         if let Some(bank_snapshot_package) = bank_snapshot_package {
+            info!("Serializing bank snapshot...");
+            let start = Instant::now();
             let result = snapshot_utils::serialize_snapshot(
                 &snapshot_config.bank_snapshots_dir,
                 snapshot_config.snapshot_version,
@@ -237,7 +237,6 @@ impl SnapshotPackagerService {
                 snapshot_storages.as_slice(),
                 false,
             );
-
             if let Err(err) = result {
                 warn!(
                     "Failed to serialize bank '{}': {err}",
@@ -247,7 +246,11 @@ impl SnapshotPackagerService {
                 // the mark_bank_snapshot_as_loadable file, so return early.
                 return;
             }
+            info!("Serializing bank snapshot... Done in {:?}", start.elapsed());
         }
+
+        info!("Flushing account storages...");
+        let start = Instant::now();
         for storage in &snapshot_storages {
             let result = storage.flush();
             if let Err(err) = result {
@@ -314,7 +317,10 @@ struct TeardownState {
     snapshot_slot: Slot,
     /// The storages of the latest snapshot
     snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-    /// The bank snapshot package of the latest snapshot. Stored if the last snapshot
-    /// handled a fastboot snapshot.
+    /// For fastboot snapshots archiving is not required so serialization of the bank snapshot
+    /// can be deferred until teardown. In this case `bank_snapshot_package` will be `Some` and
+    /// during teardown the bank snapshot will be serialized to storage. For other snapshot types
+    /// `bank_snapshot_package` will be `None` because the serialization would have already occurred
+    /// when the snapshot archive was written.
     bank_snapshot_package: Option<BankSnapshotPackage>,
 }
