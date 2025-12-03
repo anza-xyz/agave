@@ -42,7 +42,7 @@ use {
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
-        io::{self, BufReader, BufWriter, Read, Write},
+        io::{self, BufReader, Read, Write},
         path::{Path, PathBuf},
         result::Result,
         sync::{
@@ -598,7 +598,7 @@ where
 
 #[cfg(test)]
 pub(crate) fn bank_to_stream<W>(
-    stream: &mut BufWriter<W>,
+    stream: &mut io::BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
 ) -> Result<(), Error>
@@ -615,17 +615,14 @@ where
 }
 
 /// Serializes bank snapshot into `stream` with bincode
-pub fn serialize_bank_snapshot_into<W>(
-    stream: &mut BufWriter<W>,
+pub fn serialize_bank_snapshot_into(
+    stream: &mut dyn Write,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
     write_version: u64,
-) -> Result<(), Error>
-where
-    W: Write,
-{
+) -> Result<(), Error> {
     let mut serializer = bincode::Serializer::new(
         stream,
         bincode::DefaultOptions::new().with_fixint_encoding(),

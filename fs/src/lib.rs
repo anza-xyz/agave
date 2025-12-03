@@ -16,6 +16,7 @@
 #![warn(unsafe_op_in_unsafe_fn)]
 
 pub mod buffered_reader;
+pub mod buffered_writer;
 pub mod dirs;
 pub mod file_io;
 mod io_uring;
