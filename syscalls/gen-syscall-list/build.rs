@@ -32,10 +32,11 @@ fn main() {
         build_sbf_syscalls_path.display(),
     );
 
-    let old_num_syscalls = File::open(&syscalls_txt_path)
+    let old_num_syscalls = File::open(&build_sbf_syscalls_path)
         .map(|file| {
             let reader = BufReader::new(file);
-            reader.lines().count()
+            // The rust file contains two extra lines to make a proper rust array
+            reader.lines().count().saturating_sub(2)
         })
         .unwrap_or(0);
 
