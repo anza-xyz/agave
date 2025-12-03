@@ -105,10 +105,10 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         let buffer = &mut buffer[..read_aligned_buf_len];
 
         log::info!("attempting to open with O_DIRECT");
-        // read_capacity must be greater than 4096 for us to use O_DIRECT because O_DIRECT
-        // requires alignment to the file system block size, which is typically 4096 bytes.
+        // read_capacity must be greater than 4096 and a multiple of 4096 for us to use O_DIRECT because O_DIRECT
+        // requires buffers to be aligned to the file system block size, which is typically 4096 bytes.
         let file = match (
-            read_capacity > 4096,
+            read_capacity > 4096 && read_capacity % 4096 == 0,
             OpenOptions::new()
                 .read(true)
                 .custom_flags(libc::O_DIRECT | libc::O_NOATIME)
