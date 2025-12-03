@@ -2980,7 +2980,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3045,7 +3045,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if 1.0.4",
  "rustix 1.1.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6415,7 +6415,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6493,7 +6493,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6961,6 +6961,26 @@ checksum = "2d9a8db61a44e2b663f169a08206a789bcbd22ba32011e14951562848e7b9c98"
 dependencies = [
  "assoc",
  "bitvec",
+ "generator",
+ "hex",
+ "owo-colors",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "rand_pcg",
+ "scoped-tls",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "shuttle"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ab17edba38d63047f46780cf7360acf7467fec2c048928689a5c1dd1c2b4e31"
+dependencies = [
+ "assoc",
+ "bitvec",
+ "cfg-if 1.0.4",
  "generator",
  "hex",
  "owo-colors",
@@ -9515,7 +9535,7 @@ dependencies = [
  "pcap-file",
  "rand 0.9.2",
  "serde",
- "shuttle",
+ "shuttle 0.8.1",
  "socket2 0.6.1",
  "solana-net-utils",
  "solana-serde",
@@ -9670,7 +9690,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.9.2",
- "shuttle",
+ "shuttle 0.8.1",
  "solana-clock",
  "solana-entry",
  "solana-hash 3.1.0",
@@ -10443,7 +10463,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "shuttle",
+ "shuttle 0.8.1",
  "solana-account",
  "solana-account-info",
  "solana-accounts-db",
@@ -10593,7 +10613,7 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "rustc-demangle",
- "shuttle",
+ "shuttle 0.7.1",
  "thiserror 2.0.17",
  "winapi",
 ]
@@ -11040,7 +11060,7 @@ dependencies = [
  "qualifier_attr",
  "rand 0.7.3",
  "serde",
- "shuttle",
+ "shuttle 0.8.1",
  "solana-account",
  "solana-bpf-loader-program",
  "solana-clock",
@@ -11191,7 +11211,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "futures 0.3.31",
  "rand 0.9.2",
- "shuttle",
+ "shuttle 0.8.1",
 ]
 
 [[package]]
@@ -12665,7 +12685,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
