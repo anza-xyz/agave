@@ -4,12 +4,13 @@ use {
     crate::{
         file_io::FileCreator,
         io_uring::{
-            IO_PRIO_BE_HIGHEST, memory::{FixedIoBuffer, PageAlignedMemory, new_large_buffer}
+            memory::{new_large_buffer, FixedIoBuffer, PageAlignedMemory},
+            IO_PRIO_BE_HIGHEST,
         },
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
-    io_uring::{IoUring, opcode, squeue, types},
+    io_uring::{opcode, squeue, types, IoUring},
     libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_TRUNC, O_WRONLY},
     smallvec::SmallVec,
     std::{
