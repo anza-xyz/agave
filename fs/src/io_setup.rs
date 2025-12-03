@@ -1,7 +1,7 @@
-use std::{io, sync::Arc};
+use std::{io, sync::Arc, time::Duration};
 
 #[cfg(target_os = "linux")]
-const SQPOLL_IDLE_WAIT_TIME: u32 = 50;
+const SQPOLL_IDLE_WAIT_TIME: Duration = Duration::from_millis(50);
 
 /// State used by IO utilities for managing shared resources and configuration during setup.
 ///
@@ -42,7 +42,7 @@ impl IoSetupState {
         if let Some(io_uring_backend) = &self.inner.shared_sqpoll_io_uring {
             builder
                 .setup_attach_wq(io_uring_backend.as_raw_fd())
-                .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME);
+                .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME.as_millis() as u32);
         }
         builder
     }
@@ -66,7 +66,7 @@ impl IoSetupStateInner {
         #[cfg(target_os = "linux")]
         {
             let sqpoll_io_uring = io_uring::IoUring::builder()
-                .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME)
+                .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME.as_millis() as u32)
                 .build(1)?;
             Ok(Self {
                 shared_sqpoll_io_uring: Some(sqpoll_io_uring),
