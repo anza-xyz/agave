@@ -63,7 +63,7 @@ where
 }
 
 pub(crate) fn create_directory(path: &PathBuf) {
-    std::fs::create_dir(path).unwrap_or_else(|err| {
+    std::fs::create_dir_all(path).unwrap_or_else(|err| {
         error!("Failed create folder: {err}");
         exit(1);
     });
@@ -78,7 +78,7 @@ pub(crate) fn copy_file(from: &Path, to: &Path) {
 
 pub(crate) fn generate_keypair(path: &PathBuf) {
     write_keypair_file(&Keypair::new(), path).unwrap_or_else(|err| {
-        error!("Unable to get create {}: {}", path.display(), err);
+        error!("Unable to create {}: {err}", path.display());
         exit(1);
     });
 }

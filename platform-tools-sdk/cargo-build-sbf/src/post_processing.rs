@@ -36,12 +36,12 @@ fn file_older_or_missing(prerequisite_file: &Path, target_file: &Path) -> bool {
     }
 }
 
-fn create_folders(deploy_folder: &PathBuf, debug_folder: &PathBuf) {
+fn create_folders(config: &Config, deploy_folder: &PathBuf, debug_folder: &PathBuf) {
     if !deploy_folder.exists() {
         create_directory(deploy_folder);
     }
 
-    if !debug_folder.exists() {
+    if config.debug && !debug_folder.exists() {
         create_directory(debug_folder);
     }
 }
@@ -92,7 +92,7 @@ fn generate_debug_objects(
 
     if deploy_keypair.exists() {
         copy_file(deploy_keypair, debug_keypair);
-    } else {
+    } else if !debug_keypair.exists() {
         generate_keypair(debug_keypair);
     }
 
@@ -138,7 +138,7 @@ fn generate_release_objects(
 
     if debug_keypair.exists() {
         copy_file(debug_keypair, deploy_keypair);
-    } else {
+    } else if !deploy_keypair.exists() {
         generate_keypair(deploy_keypair);
     }
 
@@ -154,7 +154,7 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
     let target_triple = rust_target_triple(config);
     let sbf_debug_dir = sbf_out_dir.join("debug");
 
-    create_folders(&sbf_out_dir, &sbf_debug_dir);
+    create_folders(config, &sbf_out_dir, &sbf_debug_dir);
 
     let target_build_directory = if config.debug {
         target_directory.join(&target_triple).join("debug")
