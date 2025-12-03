@@ -2209,8 +2209,8 @@ fn test_bank_pay_to_self() {
 
 fn new_from_parent(parent: Arc<Bank>) -> Bank {
     let slot = parent.slot() + 1;
-    let collector_id = Pubkey::default();
-    Bank::new_from_parent(parent, &collector_id, slot)
+    let leader_id = Pubkey::default();
+    Bank::new_from_parent(parent, &leader_id, slot)
 }
 
 fn new_from_parent_with_fork_next_slot(parent: Arc<Bank>, fork: &RwLock<BankForks>) -> Arc<Bank> {
@@ -2526,13 +2526,13 @@ fn test_hash_internal_state_error() {
 
 #[test]
 fn test_bank_hash_internal_state_squash() {
-    let collector_id = Pubkey::default();
+    let leader_id = Pubkey::default();
     let bank0 = Arc::new(Bank::new_for_tests(&create_genesis_config(10).0));
     let hash0 = bank0.hash_internal_state();
     // save hash0 because new_from_parent
     // updates sysvar entries
 
-    let bank1 = Bank::new_from_parent(bank0, &collector_id, 1);
+    let bank1 = Bank::new_from_parent(bank0, &leader_id, 1);
 
     // no delta in bank1, hashes should always update
     assert_ne!(hash0, bank1.hash_internal_state());

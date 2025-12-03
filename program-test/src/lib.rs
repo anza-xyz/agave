@@ -912,7 +912,7 @@ impl ProgramTest {
         let bank = {
             let bank = Arc::new(bank);
             bank.fill_bank_with_ticks_for_tests();
-            let bank = Bank::new_from_parent(bank.clone(), bank.collector_id(), bank.slot() + 1);
+            let bank = Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
             debug!("Bank slot: {}", bank.slot());
             bank
         };

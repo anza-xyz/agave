@@ -470,7 +470,7 @@ impl PohRecorder {
     fn clear_bank(&mut self, set_shared_state: bool) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
-                bank.collector_id(),
+                bank.leader_id(),
                 bank.slot(),
                 &bank,
                 Some(&self.blockstore),
@@ -823,7 +823,7 @@ impl PohRecorder {
     }
 
     fn start_slot_was_mine(&self, my_pubkey: &Pubkey) -> bool {
-        self.start_bank.collector_id() == my_pubkey
+        self.start_bank.leader_id() == my_pubkey
     }
 
     // Active descendants of the last reset bank that are smaller than the
@@ -2050,7 +2050,7 @@ mod tests {
         );
         // Check that if prev slot was mine, grace ticks are ignored
         assert_eq!(
-            poh_recorder.reached_leader_slot(bank1.collector_id()),
+            poh_recorder.reached_leader_slot(bank1.leader_id()),
             PohLeaderStatus::Reached {
                 poh_slot: 3,
                 parent_slot: 1

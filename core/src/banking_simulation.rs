@@ -498,7 +498,7 @@ impl SimulatorLoop {
                 // new()-ing of its child bank
                 self.retracer
                     .hash_event(bank.slot(), &bank.last_blockhash(), &bank.hash());
-                if *bank.collector_id() == self.simulated_leader {
+                if *bank.leader_id() == self.simulated_leader {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
                 self.retransmit_slots_sender.send(bank.slot()).unwrap();

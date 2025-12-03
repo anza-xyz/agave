@@ -965,7 +965,7 @@ impl JsonRpcRequestProcessor {
 
     fn get_slot_leader(&self, config: RpcContextConfig) -> Result<String> {
         let bank = self.get_bank_with_config(config)?;
-        Ok(bank.collector_id().to_string())
+        Ok(bank.leader_id().to_string())
     }
 
     fn get_slot_leaders(
@@ -4791,7 +4791,7 @@ pub mod tests {
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
             let bank = bank_forks.read().unwrap().working_bank();
 
-            let leader_pubkey = *bank.collector_id();
+            let leader_pubkey = *bank.leader_id();
             let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
             let exit = Arc::new(AtomicBool::new(false));
             let validator_exit = create_validator_exit(exit);
@@ -4979,7 +4979,7 @@ pub mod tests {
             let mut parent_bank = self.bank_forks.read().unwrap().working_bank();
             for (i, root) in roots.iter().enumerate() {
                 let new_bank =
-                    Bank::new_from_parent(parent_bank.clone(), parent_bank.collector_id(), *root);
+                    Bank::new_from_parent(parent_bank.clone(), parent_bank.leader_id(), *root);
                 parent_bank = self
                     .bank_forks
                     .write()
@@ -4998,7 +4998,7 @@ pub mod tests {
             self.blockstore.set_roots(roots.iter()).unwrap();
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
-                parent_bank.collector_id(),
+                parent_bank.leader_id(),
                 roots.iter().max().unwrap() + 1,
             );
             self.bank_forks.write().unwrap().insert(new_bank);
@@ -5070,7 +5070,7 @@ pub mod tests {
         }
 
         fn leader_pubkey(&self) -> Pubkey {
-            *self.working_bank().collector_id()
+            *self.working_bank().leader_id()
         }
     }
 

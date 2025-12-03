@@ -5240,7 +5240,7 @@ pub mod tests {
         const HASHES_PER_TICK: u64 = 10;
         const TICKS_PER_SLOT: u64 = 2;
 
-        let collector_id = Pubkey::new_unique();
+        let leader_id = Pubkey::new_unique();
 
         let GenesisConfigInfo {
             mut genesis_config,
@@ -5266,7 +5266,7 @@ pub mod tests {
         assert_eq!(slot_0_bank.get_hash_age(&genesis_hash), Some(1));
         assert_eq!(slot_0_bank.get_hash_age(&slot_0_hash), Some(0));
 
-        let new_bank = Bank::new_from_parent(slot_0_bank, &collector_id, 2);
+        let new_bank = Bank::new_from_parent(slot_0_bank, &leader_id, 2);
         let slot_2_bank = bank_forks
             .write()
             .unwrap()
