@@ -401,10 +401,11 @@ impl BankingTracer {
 }
 
 /// A small wrapper around the sender of crossbeam channels to message banking packet batches.
-/// These channels are used by the banking stage to receive packets from multiple sources. The
-/// sources are labelled as non-vote, tpu-vote, and gossip-vote respectively. And, traced senders
-/// are separately constructed for each of these sources are all grouped under the `Channels`
-/// struct transiently during setup.
+///
+/// The underlying channels are used by the banking stage to receive packets from multiple sources.
+/// The sources are labelled as non-vote, tpu-vote, and gossip-vote respectively. As such, traced
+/// senders are separately constructed for each of these sources, then all are grouped under the
+/// `Channels` struct transiently during setup.
 ///
 /// This wrapper exists to enable the banking trace functionality conditionally on creation.
 ///
