@@ -16,18 +16,23 @@ const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
 /// Allocate memory buffer optimized for io_uring operations, i.e.
 /// using HugeTable when it is available on the host.
-pub fn new_large_buffer(size: usize) -> PageAlignedMemory {
+pub fn new_large_buffer(size: usize) -> std::io::Result<PageAlignedMemory> {
     log::info!("trying to allocate page-aligned buffer of size {}", size);
     if size > PageAlignedMemory::page_size() {
         let size = size.next_power_of_two();
-        if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
+        if let Ok(alloc) = PageAlignedMemory::alloc(size, true) {
             log::info!("obtained hugetable io_uring buffer (len={size})");
-            return alloc;
+            return Ok(alloc);
         }
     }
-    let alloc = PageAlignedMemory::alloc_regular(size).unwrap();
+    let alloc = PageAlignedMemory::alloc(size, false).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("allocating large buffer failed with {:?}", e),
+        )
+    })?;
     log::info!("obtained io_uring buffer (len={size})");
-    alloc
+    Ok(alloc)
 }
 
 #[derive(Debug)]
@@ -39,11 +44,15 @@ pub struct PageAlignedMemory {
 }
 
 impl PageAlignedMemory {
-    fn alloc_huge_table(memory_size: usize) -> Result<Self, AllocError> {
+    fn alloc(memory_size: usize, use_huge_page: bool) -> Result<Self, AllocError> {
         let page_size = Self::page_size();
         debug_assert!(memory_size.is_power_of_two());
         debug_assert!(page_size.is_power_of_two());
-        let aligned_size = memory_size.next_multiple_of(page_size);
+        let aligned_size = if use_huge_page {
+            memory_size.next_multiple_of(page_size)
+        } else {
+            memory_size
+        };
 
         // Safety:
         // doing an ANONYMOUS alloc. addr=NULL is ok, fd is not used.
@@ -52,7 +61,9 @@ impl PageAlignedMemory {
                 ptr::null_mut(),
                 aligned_size,
                 libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB,
+                libc::MAP_PRIVATE
+                    | libc::MAP_ANONYMOUS
+                    | if use_huge_page { libc::MAP_HUGETLB } else { 0 },
                 -1,
                 0,
             )
@@ -65,30 +76,6 @@ impl PageAlignedMemory {
         Ok(Self {
             ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError)?,
             len: aligned_size,
-        })
-    }
-
-    fn alloc_regular(memory_size: usize) -> Result<Self, AllocError> {
-        // Safety:
-        // doing an ANONYMOUS alloc. addr=NULL is ok, fd is not used.
-        let ptr = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                memory_size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-
-        if std::ptr::eq(ptr, libc::MAP_FAILED) {
-            return Err(AllocError);
-        }
-
-        Ok(Self {
-            ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError)?,
-            len: memory_size,
         })
     }
 

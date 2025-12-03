@@ -67,7 +67,7 @@ impl<'a> IoUringFileCreator<'a, PageAlignedMemory> {
         file_complete: F,
     ) -> io::Result<Self> {
         Self::with_buffer(
-            new_large_buffer(buf_size),
+            new_large_buffer(buf_size)?,
             DEFAULT_WRITE_SIZE,
             file_complete,
         )

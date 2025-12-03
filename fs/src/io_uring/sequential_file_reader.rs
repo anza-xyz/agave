@@ -43,7 +43,7 @@ impl SequentialFileReader<PageAlignedMemory> {
     /// Create a new `SequentialFileReader` for the given `path` using internally allocated
     /// buffer of specified `buf_size` and default read size.
     pub fn with_capacity(buf_size: usize, path: impl AsRef<Path> + Clone) -> io::Result<Self> {
-        Self::with_buffer(path, new_large_buffer(buf_size), DEFAULT_READ_SIZE)
+        Self::with_buffer(path, new_large_buffer(buf_size)?, DEFAULT_READ_SIZE)
     }
 }
 
@@ -105,18 +105,24 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         let buffer = &mut buffer[..read_aligned_buf_len];
 
         log::info!("attempting to open with O_DIRECT");
-        let file = match OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECT | libc::O_NOATIME)
-            .open(path.clone())
-        {
-            Ok(f) => f,
-            Err(e) => {
-                log::warn!("O_DIRECT open failed ({}), falling back to normal read", e);
+        // read_capacity must be greater than 4096 for us to use O_DIRECT because O_DIRECT
+        // requires alignment to the file system block size, which is typically 4096 bytes.
+        let file = match (
+            read_capacity > 4096,
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECT | libc::O_NOATIME)
+                .open(path.clone()),
+        ) {
+            (true, Ok(f)) => f,
+            (_, res) => {
+                if let Err(e) = res {
+                    log::warn!("O_DIRECT open failed ({}), falling back to normal read", e);
+                }
                 OpenOptions::new()
                     .read(true)
                     .custom_flags(libc::O_NOATIME)
-                    .open(path.clone())?
+                    .open(path)?
             }
         };
         // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
