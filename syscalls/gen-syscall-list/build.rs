@@ -32,10 +32,12 @@ fn main() {
         build_sbf_syscalls_path.display(),
     );
 
-    let old_num_syscalls = {
-        let reader = BufReader::new(File::open(&syscalls_txt_path).expect("Unable to open file"));
-        reader.lines().count()
-    };
+    let old_num_syscalls = File::open(&syscalls_txt_path)
+        .map(|file| {
+            let reader = BufReader::new(file);
+            reader.lines().count()
+        })
+        .unwrap_or(0);
 
     let mut file = match File::open(&syscalls_rs_path) {
         Ok(x) => x,
