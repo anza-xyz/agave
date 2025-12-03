@@ -680,8 +680,10 @@ fn process_extend_lookup_table(
         Some(&config.signers[0].pubkey()),
     ));
 
-<<<<<<< HEAD
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
+    tx.try_sign(
+        &[config.signers[0], authority_signer, payer_signer],
+        blockhash,
+    )?;
     let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
         &tx,
         config.commitment,
@@ -691,23 +693,6 @@ fn process_extend_lookup_table(
             ..RpcSendTransactionConfig::default()
         },
     );
-=======
-    tx.try_sign(
-        &[config.signers[0], authority_signer, payer_signer],
-        blockhash,
-    )?;
-    let result = rpc_client
-        .send_and_confirm_transaction_with_spinner_and_config(
-            &tx,
-            config.commitment,
-            RpcSendTransactionConfig {
-                skip_preflight: false,
-                preflight_commitment: Some(config.commitment.commitment),
-                ..RpcSendTransactionConfig::default()
-            },
-        )
-        .await;
->>>>>>> e31fd7ede (fix(cli): include payer signature when extending lookup tables (#9370))
     match result {
         Err(err) => Err(format!("Extend failed: {err}").into()),
         Ok(signature) => Ok(config.output_format.formatted_string(&CliSignature {
