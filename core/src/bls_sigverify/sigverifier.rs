@@ -167,7 +167,7 @@ impl BLSSigVerifier {
     // Uppon success, returns the vote account pubkey and BLS pubkey.
     fn preprocess_vote(
         &mut self,
-        vote_message: VoteMessage,
+        vote_message: &VoteMessage,
         root_bank: &Bank,
         consensus_metrics_to_send: &mut Vec<ConsensusMetricsEvent>,
     ) -> Option<(Pubkey, BlsPubkey)> {
