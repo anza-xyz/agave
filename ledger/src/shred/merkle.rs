@@ -214,6 +214,26 @@ impl ShredData {
             None => Err(proof_size),
         }
     }
+
+    pub(super) fn last_in_slot(&self) -> bool {
+        self.data_header
+            .flags
+            .contains(ShredFlags::LAST_SHRED_IN_SLOT)
+    }
+
+    pub(super) fn data_complete(&self) -> bool {
+        self.data_header
+            .flags
+            .contains(ShredFlags::DATA_COMPLETE_SHRED)
+    }
+
+    pub(super) fn reference_tick(&self) -> u8 {
+        (self.data_header.flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits()
+    }
+
+    pub(super) fn bytes_to_store(&self) -> &[u8] {
+        &self.payload
+    }
 }
 
 impl ShredCode {

@@ -50,9 +50,12 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
+pub(crate) use self::{
+    merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload,
+    shred_data::resize_stored_shred,
+};
 use {
-    self::traits::Shred as _,
+    self::traits::{Shred as _, ShredData as _},
     crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
@@ -76,9 +79,8 @@ use {
 };
 pub use {
     self::{
-        merkle::ShredCode,
+        merkle::{ShredCode, ShredData},
         payload::Payload,
-        shred_data::ShredData,
         stats::{ProcessShredsStats, ShredFetchStats},
     },
     crate::shredder::{ReedSolomonCache, Shredder},
@@ -87,7 +89,7 @@ pub use {
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
 mod common;
-pub(crate) mod merkle;
+pub mod merkle;
 mod merkle_tree;
 mod payload;
 mod shred_code;
@@ -286,7 +288,7 @@ struct CodingShredHeader {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shred {
     ShredCode(ShredCode),
-    ShredData(ShredData),
+    ShredData(merkle::ShredData),
 }
 
 /// Tuple which uniquely identifies a shred should it exists.
@@ -425,7 +427,7 @@ impl Shred {
             }
             ShredVariant::MerkleData { .. } => {
                 let shred = merkle::ShredData::from_payload(shred)?;
-                Self::from(ShredData::from(shred))
+                Self::ShredData(shred)
             }
         })
     }
@@ -581,7 +583,7 @@ impl Shred {
     fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
         match self {
             Self::ShredCode(shred) => shred.retransmitter_signature_offset(),
-            Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),
+            Self::ShredData(shred) => shred.retransmitter_signature_offset(),
         }
     }
 }
@@ -592,17 +594,11 @@ impl From<ShredCode> for Shred {
     }
 }
 
-impl From<ShredData> for Shred {
-    fn from(shred: ShredData) -> Self {
-        Self::ShredData(shred)
-    }
-}
-
 impl From<merkle::Shred> for Shred {
     fn from(shred: merkle::Shred) -> Self {
         match shred {
             merkle::Shred::ShredCode(shred) => Self::ShredCode(shred),
-            merkle::Shred::ShredData(shred) => Self::ShredData(ShredData::Merkle(shred)),
+            merkle::Shred::ShredData(shred) => Self::ShredData(shred),
         }
     }
 }
@@ -613,7 +609,7 @@ impl TryFrom<Shred> for merkle::Shred {
     fn try_from(shred: Shred) -> Result<Self, Self::Error> {
         match shred {
             Shred::ShredCode(shred) => Ok(Self::ShredCode(shred)),
-            Shred::ShredData(ShredData::Merkle(shred)) => Ok(Self::ShredData(shred)),
+            Shred::ShredData(shred) => Ok(Self::ShredData(shred)),
         }
     }
 }
