@@ -1,11 +1,16 @@
-use std::{io, sync::Arc, time::Duration};
+use std::{io, sync::Arc};
+#[cfg(target_os = "linux")]
+use std::{
+    os::fd::{AsFd as _, AsRawFd as _, BorrowedFd},
+    time::Duration,
+};
 
 #[cfg(target_os = "linux")]
 const SQPOLL_IDLE_WAIT_TIME: Duration = Duration::from_millis(50);
 
 /// State used by IO utilities for managing shared resources and configuration during setup.
 ///
-/// This may include io_uring file descriptors, lockable memory budget to register in kernel,
+/// This may include io_uring file descriptors, flag whether to register memory buffers in kernel,
 /// and other resources that need to be accessed by multiple functions performing IO operations
 /// such that they can efficiently cooperate with each other.
 ///
@@ -24,7 +29,8 @@ impl IoSetupState {
     /// Enables shared io-uring worker pool and sqpoll based kernel thread.
     ///
     /// The sqpoll thread will drain submission queues from all io-uring instances created
-    /// through builder obtained from `create_io_uring_builder()` after this call.
+    /// through builder obtained from `create_io_uring_builder()` with FD obtained from
+    /// `shared_sqpoll_fd()` after this call.
     pub fn with_shared_sqpoll(self) -> io::Result<Self> {
         let inner = Arc::into_inner(self.inner)
             .expect("shared_sqpoll must be enabled before cloning IoSetupState");
@@ -33,18 +39,12 @@ impl IoSetupState {
         })
     }
 
-    /// Return new io-uring builder that is attached shared worker pool (if configured).
     #[cfg(target_os = "linux")]
-    pub fn create_io_uring_builder(&self) -> io_uring::Builder {
-        use std::os::fd::AsRawFd;
-
-        let mut builder = io_uring::IoUring::builder();
-        if let Some(io_uring_backend) = &self.inner.shared_sqpoll_io_uring {
-            builder
-                .setup_attach_wq(io_uring_backend.as_raw_fd())
-                .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME.as_millis() as u32);
-        }
-        builder
+    pub(crate) fn shared_sqpoll_fd(&self) -> Option<BorrowedFd<'_>> {
+        self.inner
+            .shared_sqpoll_io_uring
+            .as_ref()
+            .map(|uring| uring.as_fd())
     }
 }
 
@@ -79,6 +79,18 @@ impl IoSetupStateInner {
     }
 }
 
+/// Return new io-uring builder that is attached to shared worker pool (if provided).
+#[cfg(target_os = "linux")]
+pub fn io_uring_builder_with(shared_sqpoll_fd: Option<BorrowedFd>) -> io_uring::Builder {
+    let mut builder = io_uring::IoUring::builder();
+    if let Some(fd) = shared_sqpoll_fd {
+        builder
+            .setup_attach_wq(fd.as_raw_fd())
+            .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME.as_millis() as u32);
+    }
+    builder
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use {
@@ -99,19 +111,23 @@ mod tests {
 
     #[test]
     fn test_shared_sqpoll_read_and_create() {
-        let io_setup = IoSetupState::default().with_shared_sqpoll().unwrap();
+        let io_setup = &IoSetupState::default().with_shared_sqpoll().unwrap();
 
         let read_bytes = RwLock::new(vec![]);
         let read_bytes_ref = &read_bytes;
-        let mut file_creator =
-            IoUringFileCreator::with_buffer_capacity(1 << 20, io_setup.clone(), move |path| {
+        let mut file_creator = IoUringFileCreator::with_buffer_capacity(
+            1 << 20,
+            io_setup.shared_sqpoll_fd(),
+            move |path| {
                 let mut reader =
-                    SequentialFileReader::with_capacity(1 << 20, path, io_setup.clone()).unwrap();
+                    SequentialFileReader::with_capacity(1 << 20, path, io_setup.shared_sqpoll_fd())
+                        .unwrap();
                 reader
                     .read_to_end(read_bytes_ref.write().unwrap().as_mut())
                     .unwrap();
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_handle = Arc::new(File::open(temp_dir.path()).unwrap());

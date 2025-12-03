@@ -154,8 +154,11 @@ pub fn file_creator<'a>(
         use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
 
         if buf_size >= DEFAULT_WRITE_SIZE {
-            let io_uring_creator =
-                IoUringFileCreator::with_buffer_capacity(buf_size, io_setup, file_complete)?;
+            let io_uring_creator = IoUringFileCreator::with_buffer_capacity(
+                buf_size,
+                io_setup.shared_sqpoll_fd(),
+                file_complete,
+            )?;
             return Ok(Box::new(io_uring_creator));
         }
     }

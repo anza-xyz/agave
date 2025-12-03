@@ -5,7 +5,7 @@ use {
         memory::{FixedIoBuffer, LargeBuffer},
         IO_PRIO_BE_HIGHEST,
     },
-    crate::io_setup::IoSetupState,
+    crate::io_setup,
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -13,7 +13,7 @@ use {
         io::{self, BufRead, Cursor, Read},
         mem,
         os::{
-            fd::{AsRawFd, RawFd},
+            fd::{AsRawFd, BorrowedFd, RawFd},
             unix::fs::OpenOptionsExt,
         },
         path::Path,
@@ -45,13 +45,13 @@ impl SequentialFileReader<LargeBuffer> {
     pub fn with_capacity(
         buf_size: usize,
         path: impl AsRef<Path>,
-        io_setup: IoSetupState,
+        shared_sqpoll_fd: Option<BorrowedFd>,
     ) -> io::Result<Self> {
         Self::with_buffer(
             path,
             LargeBuffer::new(buf_size),
             DEFAULT_READ_SIZE,
-            io_setup,
+            shared_sqpoll_fd,
         )
     }
 }
@@ -75,7 +75,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         path: impl AsRef<Path>,
         mut buffer: B,
         read_capacity: usize,
-        io_setup: IoSetupState,
+        shared_sqpoll_fd: Option<BorrowedFd>,
     ) -> io::Result<Self> {
         let buf_capacity = buffer.as_mut().len();
 
@@ -90,8 +90,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         let ring_squeue_size = (max_inflight_ops / 2).max(1);
 
         // agave io_uring uses cqsize to define state slab size, so cqsize == max inflight ops
-        let ring = io_setup
-            .create_io_uring_builder()
+        let ring = io_setup::io_uring_builder_with(shared_sqpoll_fd)
             .setup_cqsize(max_inflight_ops)
             .build(ring_squeue_size)?;
 
@@ -436,13 +435,8 @@ mod tests {
         io::Write::write_all(&mut temp_file, &pattern[..file_size % pattern.len()]).unwrap();
 
         let buf = vec![0; backing_buffer_size];
-        let mut reader = SequentialFileReader::with_buffer(
-            temp_file.path(),
-            buf,
-            read_capacity,
-            IoSetupState::default(),
-        )
-        .unwrap();
+        let mut reader =
+            SequentialFileReader::with_buffer(temp_file.path(), buf, read_capacity, None).unwrap();
 
         // Read contents from the reader and verify length
         let mut all_read_data = Vec::new();

@@ -400,7 +400,7 @@ pub fn large_file_buf_reader(
         use crate::io_uring::sequential_file_reader::{SequentialFileReader, DEFAULT_READ_SIZE};
 
         let buf_size = buf_size.max(DEFAULT_READ_SIZE);
-        SequentialFileReader::with_capacity(buf_size, path, io_setup)
+        SequentialFileReader::with_capacity(buf_size, path, io_setup.shared_sqpoll_fd())
     }
     #[cfg(not(target_os = "linux"))]
     {
