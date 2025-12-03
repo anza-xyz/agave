@@ -4968,48 +4968,33 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        async_trait::async_trait,
-        serde_json::{json, Value},
-        std::sync::{Arc, Mutex},
-    };
+    use super::*;
 
-    struct RecordingSender {
-        last: Arc<Mutex<Option<RpcRequest>>>,
-    }
-
-    #[async_trait]
-    impl RpcSender for RecordingSender {
-        async fn send(&self, request: RpcRequest, _params: Value) -> ClientResult<Value> {
-            *self.last.lock().unwrap() = Some(request);
-            Ok(json!([]))
-        }
-
-        fn get_transport_stats(&self) -> RpcTransportStats {
-            RpcTransportStats::default()
-        }
-
-        fn url(&self) -> String {
-            "test".to_string()
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio::test]
     async fn test_get_token_accounts_by_delegate_uses_correct_rpc_method() {
-        let last = Arc::new(Mutex::new(None));
-        let sender = RecordingSender {
-            last: Arc::clone(&last),
+        let delegate = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let pubkey = Pubkey::new_unique();
+        let account = mock_encoded_account(&pubkey);
+        let keyed_account = RpcKeyedAccount {
+            pubkey: pubkey.to_string(),
+            account,
         };
-        let client = RpcClient::new_sender(
-            sender,
-            RpcClientConfig::with_commitment(CommitmentConfig::default()),
-        );
 
-        let delegate = solana_pubkey::new_rand();
-        let mint = solana_pubkey::new_rand();
+        let get_account_request = RpcRequest::GetTokenAccountsByDelegate;
+        let get_account_response = serde_json::to_value(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None,
+            },
+            value: { [keyed_account.clone()] },
+        })
+        .unwrap();
 
-        let _ = client
+        let mut mocks = crate::mock_sender::Mocks::default();
+        mocks.insert(get_account_request, get_account_response);
+        let client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
+        let resp = client
             .get_token_accounts_by_delegate_with_commitment(
                 &delegate,
                 TokenAccountsFilter::Mint(mint),
@@ -5017,10 +5002,6 @@ mod tests {
             )
             .await
             .unwrap();
-
-        assert_eq!(
-            *last.lock().unwrap(),
-            Some(RpcRequest::GetTokenAccountsByDelegate)
-        );
+        assert_eq!(&resp.value, &[keyed_account]);
     }
 }
