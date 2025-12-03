@@ -7031,44 +7031,6 @@ fn test_block_limits() {
     );
 }
 
-#[test]
-fn test_program_replacement() {
-    let mut bank = create_simple_test_bank(0);
-
-    // Setup original program account
-    let old_address = Pubkey::new_unique();
-    let new_address = Pubkey::new_unique();
-    bank.store_account_and_update_capitalization(
-        &old_address,
-        &AccountSharedData::from(Account {
-            lamports: 100,
-            ..Account::default()
-        }),
-    );
-    assert_eq!(bank.get_balance(&old_address), 100);
-
-    // Setup new program account
-    let new_program_account = AccountSharedData::from(Account {
-        lamports: 123,
-        ..Account::default()
-    });
-    bank.store_account_and_update_capitalization(&new_address, &new_program_account);
-    assert_eq!(bank.get_balance(&new_address), 123);
-
-    let original_capitalization = bank.capitalization();
-
-    bank.replace_program_account(&old_address, &new_address, "bank-apply_program_replacement");
-
-    // New program account is now empty
-    assert_eq!(bank.get_balance(&new_address), 0);
-
-    // Old program account holds the new program account
-    assert_eq!(bank.get_account(&old_address), Some(new_program_account));
-
-    // Lamports in the old token account were burnt
-    assert_eq!(bank.capitalization(), original_capitalization - 100);
-}
-
 fn min_rent_exempt_balance_for_sysvars(bank: &Bank, sysvar_ids: &[Pubkey]) -> u64 {
     sysvar_ids
         .iter()

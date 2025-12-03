@@ -5696,43 +5696,6 @@ impl Bank {
         }
     }
 
-    /// Use to replace programs by feature activation
-    #[allow(dead_code)]
-    fn replace_program_account(
-        &mut self,
-        old_address: &Pubkey,
-        new_address: &Pubkey,
-        datapoint_name: &'static str,
-    ) {
-        if let Some(old_account) = self.get_account_with_fixed_root(old_address) {
-            if let Some(new_account) = self.get_account_with_fixed_root(new_address) {
-                datapoint_info!(datapoint_name, ("slot", self.slot, i64));
-
-                // Burn lamports in the old account
-                self.capitalization
-                    .fetch_sub(old_account.lamports(), Relaxed);
-
-                // Transfer new account to old account
-                self.store_account(old_address, &new_account);
-
-                // Clear new account
-                self.store_account(new_address, &AccountSharedData::default());
-
-                // Unload a program from the bank's cache
-                self.transaction_processor
-                    .global_program_cache
-                    .write()
-                    .unwrap()
-                    .remove_programs([*old_address].into_iter());
-
-                self.calculate_and_update_accounts_data_size_delta_off_chain(
-                    old_account.data().len(),
-                    new_account.data().len(),
-                );
-            }
-        }
-    }
-
     /// Calculates the accounts data size of all accounts
     ///
     /// Panics if total overflows a u64.
