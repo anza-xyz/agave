@@ -2136,6 +2136,69 @@ fn process_bank_0(
     Ok(())
 }
 
+/// Clean up a failed slot and restart processing from the given genesis slot
+///
+/// `first_alpenglow_bank` is removed from runtime caches, and its dead status is reset
+/// `pending_slots` is the current child blocks left to be processed. We clear and update
+/// this with the children of `genesis_slot` instead.
+fn cleanup_and_populate_pending_from_alpenglow_genesis(
+    first_alpenglow_bank: &BankWithScheduler,
+    genesis_slot: Slot,
+    bank_forks: &RwLock<BankForks>,
+    blockstore: &Blockstore,
+    leader_schedule_cache: &LeaderScheduleCache,
+    pending_slots: &mut Vec<(SlotMeta, Bank, Hash)>,
+    opts: &ProcessOptions,
+    migration_status: &MigrationStatus,
+) -> result::Result<(), BlockstoreProcessorError> {
+    // `first_alpenglow_bank` was processed as a TowerBFT bank. Reset it.
+    let first_alpenglow_slot = first_alpenglow_bank.slot();
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    root_bank
+        .remove_unrooted_slots(&[(first_alpenglow_bank.slot(), first_alpenglow_bank.bank_id())]);
+    root_bank.clear_slot_signatures(first_alpenglow_bank.slot());
+    root_bank.prune_program_cache_by_deployment_slot(first_alpenglow_bank.slot());
+
+    if blockstore.is_dead(first_alpenglow_slot) {
+        if blockstore.is_primary_access() {
+            blockstore.remove_dead_slot(first_alpenglow_slot).unwrap();
+        } else {
+            info!(
+                "First alpenglow slot {first_alpenglow_slot} won't be cleared from dead due to \
+                 being read-only blockstore access"
+            )
+        }
+    }
+
+    let genesis_slot_meta = blockstore
+        .meta(genesis_slot)
+        .map_err(|err| {
+            error!("Failed to load meta for slot {genesis_slot}: {err:?}");
+            BlockstoreProcessorError::FailedToLoadMeta
+        })?
+        .unwrap();
+
+    warn!(
+        "{}: load_frozen_forks() restart processing from {genesis_slot} treating further blocks \
+         as Alpenglow banks",
+        migration_status.my_pubkey()
+    );
+    // Clear current child bank frontier
+    pending_slots.clear();
+    // And queue up children of genesis instead
+    process_next_slots(
+        &bank_forks.read().unwrap().get(genesis_slot).unwrap(),
+        &genesis_slot_meta,
+        blockstore,
+        leader_schedule_cache,
+        pending_slots,
+        opts,
+        migration_status,
+    )?;
+
+    Ok(())
+}
+
 // Given a bank, add its children to the pending slots queue if those children slots are
 // complete
 fn process_next_slots(
@@ -2239,8 +2302,8 @@ fn load_frozen_forks(
     let mut root = bank_forks.read().unwrap().root();
     let max_root = std::cmp::max(root, blockstore_max_root);
     info!(
-        "load_frozen_forks() latest root from blockstore: {blockstore_max_root}, max_root: \
-         {max_root}",
+        "load_frozen_forks() bank forks root: {root}, latest root from blockstore: \
+         {blockstore_max_root}, max_root: {max_root}",
     );
 
     // The total number of slots processed
@@ -2323,8 +2386,37 @@ fn load_frozen_forks(
             ) {
                 assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
                 if opts.abort_on_invalid_block {
-                    Err(error)?
+                    return Err(error);
                 }
+
+                // If this block was the first alpenglow block and advanced the migration phase, we can enable alpenglow.
+                //
+                // Note: since this code is all startup code we don't have to worry about shutting down `PohService` or any
+                // in flight activity of `ReplayStage`. This bank must have failed to freeze as it is an Alpenglow block
+                // being verified as a TowerBFT one.
+                //
+                // We are safe to cleanly transition to alpenglow here
+                if migration_status.is_ready_to_enable() {
+                    debug_assert!(matches!(
+                        error,
+                        BlockstoreProcessorError::InvalidBlock(BlockError::TooFewTicks),
+                    ));
+                    let genesis_slot = migration_status.enable_alpenglow_during_startup();
+
+                    // We need to clear pending_slots as it might contain Alpenglow blocks initialized as TowerBFT banks.
+                    // Clear and populate pending slots from alpenglow genesis
+                    cleanup_and_populate_pending_from_alpenglow_genesis(
+                        &bank,
+                        genesis_slot,
+                        bank_forks,
+                        blockstore,
+                        leader_schedule_cache,
+                        &mut pending_slots,
+                        opts,
+                        &migration_status,
+                    )?;
+                }
+
                 continue;
             }
             async_verification = progress.take_async_verification();
@@ -2388,7 +2480,11 @@ fn load_frozen_forks(
                 } else {
                     None
                 }
-            };
+            }.filter(|new_root_bank| {
+                // In the case that we've restarted while the migrationary period is going on but before alpenglow
+                // is enabled, don't root blocks past the migration slot
+                migration_status.should_root_during_startup(new_root_bank.slot())
+            });
             m.stop();
             voting_us += m.as_us();
 
@@ -2416,6 +2512,19 @@ fn load_frozen_forks(
                 all_banks.retain(|_, bank| bank.ancestors.contains_key(&root));
                 m.stop();
                 root_retain_us += m.as_us();
+
+                // If this root bank activated the feature flag, update migration status
+                if migration_status.is_pre_feature_activation() {
+                    if let Some(slot) = bank_forks
+                        .read()
+                        .unwrap()
+                        .root_bank()
+                        .feature_set
+                        .activated_slot(&agave_feature_set::alpenglow::id())
+                    {
+                        migration_status.record_feature_activation(slot);
+                    }
+                }
             }
 
             slots_processed += 1;
