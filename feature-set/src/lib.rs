@@ -172,6 +172,8 @@ impl FeatureSet {
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
             custom_commission_collector: self.is_active(&custom_commission_collector::id()),
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
+            relax_post_exec_min_balance_check: self
+                .is_active(&relax_post_exec_min_balance_check::id()),
         }
     }
 }
@@ -1287,6 +1289,10 @@ pub mod stop_use_static_simple_vote_tx_cost {
     solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
 }
 
+pub mod relax_post_exec_min_balance_check {
+    solana_pubkey::declare_id!("todotodoQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2297,6 +2303,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             stop_use_static_simple_vote_tx_cost::id(),
             "stop use static SimpleVote transaction cost, issue #10227",
+        ),
+        (
+            relax_post_exec_min_balance_check::id(),
+            "SIMD-0392: Relaxation of post-execution min_balance check",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
