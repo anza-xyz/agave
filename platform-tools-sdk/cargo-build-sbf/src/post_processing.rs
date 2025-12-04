@@ -46,7 +46,12 @@ fn create_folders(config: &Config, deploy_folder: &PathBuf, debug_folder: &PathB
     }
 }
 
-fn strip_object(config: &Config, unstripped: &Path, stripped: &Path) {
+fn strip_object(
+    config: &Config,
+    unstripped: &Path,
+    stripped: &Path,
+    #[cfg(windows)] llvm_bin: &Path,
+) {
     #[cfg(windows)]
     let output = spawn(
         &llvm_bin.join("llvm-objcopy"),
@@ -87,7 +92,13 @@ fn generate_debug_objects(
     let program_debug_stripped = sbf_debug_dir.join(finalized_program);
 
     if file_older_or_missing(program_unstripped_so, &program_debug_stripped) {
-        strip_object(config, program_unstripped_so, &program_debug_stripped);
+        strip_object(
+            config,
+            program_unstripped_so,
+            &program_debug_stripped,
+            #[cfg(windows)]
+            llvm_bin,
+        );
     }
 
     if file_older_or_missing(program_unstripped_so, &program_debug) {
@@ -117,7 +128,13 @@ fn generate_release_objects(
     let program_so = sbf_out_dir.join(format!("{program_name}.so"));
 
     if file_older_or_missing(program_unstripped_so, &program_so) {
-        strip_object(config, program_unstripped_so, &program_so);
+        strip_object(
+            config,
+            program_unstripped_so,
+            &program_so,
+            #[cfg(windows)]
+            llvm_bin,
+        );
     }
 
     if !deploy_keypair.exists() {
