@@ -309,7 +309,7 @@ mod tests {
                 vote_switch, withdraw, CreateVoteAccountConfig, VoteInstruction,
             },
             vote_state::{
-                self,
+                self, generate_pop_message,
                 handler::{VoteStateHandle, VoteStateHandler},
                 Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
