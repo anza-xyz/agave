@@ -4139,9 +4139,16 @@ impl Bank {
         };
 
         self.store_account(pubkey, new_account);
+
+        // If the new account has zero lamports, that means it is being closed.
+        let new_account_data_size = if new_account.lamports() == 0 {
+            0
+        } else {
+            new_account.data().len()
+        };
         self.calculate_and_update_accounts_data_size_delta_off_chain(
             old_account_data_size,
-            new_account.data().len(),
+            new_account_data_size,
         );
     }
 

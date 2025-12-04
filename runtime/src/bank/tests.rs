@@ -554,6 +554,47 @@ fn test_store_account_and_update_capitalization_unchanged() {
     assert_eq!(account, bank.get_account(&pubkey).unwrap());
 }
 
+/// Ensure that store_account_and_update_capitalization() correctly updates accounts_data_size
+#[test]
+fn test_store_account_and_update_capitalization_accounts_data_size() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(100 * LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+
+    let data_size = 123;
+    let mut account = AccountSharedData::new(LAMPORTS_PER_SOL, data_size, &system_program::id());
+    let address = Pubkey::new_unique();
+
+    // test 1: store a new account
+    let accounts_data_size_pre = bank.load_accounts_data_size();
+    bank.store_account_and_update_capitalization(&address, &account);
+    let accounts_data_size_post = bank.load_accounts_data_size();
+    assert_eq!(
+        accounts_data_size_pre + data_size as u64,
+        accounts_data_size_post,
+    );
+
+    // test 2: change the account's data
+    let data_size_delta = 42;
+    account.set_data(vec![0; data_size + data_size_delta]);
+    let accounts_data_size_pre = bank.load_accounts_data_size();
+    bank.store_account_and_update_capitalization(&address, &account);
+    let accounts_data_size_post = bank.load_accounts_data_size();
+    assert_eq!(
+        accounts_data_size_pre + data_size_delta as u64,
+        accounts_data_size_post,
+    );
+
+    // test 3: close the account
+    account.set_lamports(0);
+    let accounts_data_size_pre = bank.load_accounts_data_size();
+    bank.store_account_and_update_capitalization(&address, &account);
+    let accounts_data_size_post = bank.load_accounts_data_size();
+    assert_eq!(
+        accounts_data_size_pre - (data_size + data_size_delta) as u64,
+        accounts_data_size_post,
+    );
+}
+
 pub(in crate::bank) fn new_from_parent_next_epoch(
     parent: Arc<Bank>,
     bank_forks: &RwLock<BankForks>,
