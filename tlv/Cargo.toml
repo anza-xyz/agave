@@ -20,13 +20,13 @@ chacha20poly1305 = { version = "0.10.1" }
 poly1305 = "0.8.0"
 thiserror = { workspace = true }
 wincode = { workspace = true, features = ["derive"] }
+solana-short-vec = { workspace = true }
 
 [dev-dependencies]
 bencher = { workspace = true }
 bincode = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_with = { workspace = true, features = ["macros"] }
-solana-short-vec = { workspace = true }
 [lints]
 workspace = true
 

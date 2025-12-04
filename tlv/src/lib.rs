@@ -3,6 +3,7 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
+mod short_u16;
 mod tlv_record;
 pub use tlv_record::{TlvDecodeError, TlvEncodeError, TlvRecord};
 use wincode::io::Cursor;
