@@ -4,6 +4,7 @@ pub mod dir_remover;
 pub mod file_creator;
 pub mod memory;
 pub mod sequential_file_reader;
+pub(crate) mod sqpoll;
 
 // Based on Linux <uapi/linux/ioprio.h>
 const IO_PRIO_CLASS_SHIFT: u16 = 13;

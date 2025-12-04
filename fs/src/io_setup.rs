@@ -1,12 +1,9 @@
 use std::{io, sync::Arc};
 #[cfg(target_os = "linux")]
-use std::{
-    os::fd::{AsFd as _, AsRawFd as _, BorrowedFd},
-    time::Duration,
+use {
+    crate::io_uring::sqpoll::SharedSqPoll,
+    std::os::fd::{AsFd as _, BorrowedFd},
 };
-
-#[cfg(target_os = "linux")]
-const SQPOLL_IDLE_WAIT_TIME: Duration = Duration::from_millis(50);
 
 /// State used by IO utilities for managing shared resources and configuration during setup.
 ///
@@ -41,10 +38,7 @@ impl IoSetupState {
 
     #[cfg(target_os = "linux")]
     pub(crate) fn shared_sqpoll_fd(&self) -> Option<BorrowedFd<'_>> {
-        self.inner
-            .shared_sqpoll_io_uring
-            .as_ref()
-            .map(|uring| uring.as_fd())
+        self.inner.shared_sqpoll.as_ref().map(|s| s.as_fd())
     }
 }
 
@@ -58,37 +52,16 @@ impl Default for IoSetupState {
 #[derive(Default)]
 struct IoSetupStateInner {
     #[cfg(target_os = "linux")]
-    shared_sqpoll_io_uring: Option<io_uring::IoUring>,
+    shared_sqpoll: Option<SharedSqPoll>,
 }
 
 impl IoSetupStateInner {
     pub fn with_shared_sqpoll(self) -> io::Result<Self> {
-        #[cfg(target_os = "linux")]
-        {
-            let sqpoll_io_uring = io_uring::IoUring::builder()
-                .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME.as_millis() as u32)
-                .build(1)?;
-            Ok(Self {
-                shared_sqpoll_io_uring: Some(sqpoll_io_uring),
-            })
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            Ok(Self {})
-        }
+        Ok(Self {
+            #[cfg(target_os = "linux")]
+            shared_sqpoll: Some(SharedSqPoll::new()?),
+        })
     }
-}
-
-/// Return new io-uring builder that is attached to shared worker pool (if provided).
-#[cfg(target_os = "linux")]
-pub fn io_uring_builder_with(shared_sqpoll_fd: Option<BorrowedFd>) -> io_uring::Builder {
-    let mut builder = io_uring::IoUring::builder();
-    if let Some(fd) = shared_sqpoll_fd {
-        builder
-            .setup_attach_wq(fd.as_raw_fd())
-            .setup_sqpoll(SQPOLL_IDLE_WAIT_TIME.as_millis() as u32);
-    }
-    builder
 }
 
 #[cfg(all(test, target_os = "linux"))]

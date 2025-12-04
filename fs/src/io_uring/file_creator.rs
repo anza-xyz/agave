@@ -3,10 +3,9 @@
 use {
     crate::{
         file_io::FileCreator,
-        io_setup,
         io_uring::{
             memory::{FixedIoBuffer, LargeBuffer},
-            IO_PRIO_BE_HIGHEST,
+            sqpoll, IO_PRIO_BE_HIGHEST,
         },
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
@@ -95,7 +94,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         // but also amortizes number of `submit` syscalls made).
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
 
-        let ring = io_setup::io_uring_builder_with(shared_sqpoll_fd).build(ring_qsize)?;
+        let ring = sqpoll::io_uring_builder_with(shared_sqpoll_fd).build(ring_qsize)?;
         // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
         // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
         ring.submitter()

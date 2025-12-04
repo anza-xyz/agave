@@ -5,7 +5,7 @@ use {
         memory::{FixedIoBuffer, LargeBuffer},
         IO_PRIO_BE_HIGHEST,
     },
-    crate::io_setup,
+    crate::io_uring::sqpoll,
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -90,7 +90,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         let ring_squeue_size = (max_inflight_ops / 2).max(1);
 
         // agave io_uring uses cqsize to define state slab size, so cqsize == max inflight ops
-        let ring = io_setup::io_uring_builder_with(shared_sqpoll_fd)
+        let ring = sqpoll::io_uring_builder_with(shared_sqpoll_fd)
             .setup_cqsize(max_inflight_ops)
             .build(ring_squeue_size)?;
 
