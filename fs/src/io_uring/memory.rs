@@ -201,15 +201,18 @@ impl IoBufferChunk {
         registered_buffer: bool,
     ) -> impl Iterator<Item = Self> + use<'_> {
         assert!(
-            (buffer.len() / FIXED_BUFFER_LEN as usize) <= u16::MAX as usize,
-            "buffer too large to register in io_uring"
+            chunk_size <= FIXED_BUFFER_LEN,
+            "chunk size {chunk_size} is too large"
+        );
+        assert!(
+            (buffer.len() / chunk_size as usize) <= u16::MAX as usize,
+            "buffer too large (yields too many chunks at size={chunk_size})"
         );
         let buf_start = buffer.as_ptr().addr();
-
         buffer
             .chunks_exact_mut(chunk_size as usize)
             .map(move |buf| {
-                let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN as usize;
+                let io_buf_index = (buf.as_ptr().addr() - buf_start) / FIXED_BUFFER_LEN as usize;
                 Self {
                     ptr: buf.as_mut_ptr(),
                     size: buf.len() as IoSize,

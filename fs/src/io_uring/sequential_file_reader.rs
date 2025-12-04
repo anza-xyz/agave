@@ -602,6 +602,7 @@ impl FileState {
     }
 }
 
+/// Tracks usage stages of single `IoBufferChunk` as it goes through io-uring operation
 #[derive(Debug)]
 enum ReadBufState {
     /// The buffer is pending submission to read queue (on initialization and
@@ -628,11 +629,13 @@ impl ReadBufState {
     }
 
     #[inline]
-    fn slice(&self, start_pos: u32, end_pos: u32) -> &[u8] {
+    fn slice(&self, start_pos: IoSize, end_pos: IoSize) -> &[u8] {
         match self {
             Self::Full { buf, eof_pos } => {
                 debug_assert!(eof_pos.unwrap_or(buf.len()) >= end_pos);
                 let limit = (end_pos - start_pos) as usize;
+                // Safety: `limit` is at most `buf.len() - start_pos` (as asserted for `end_pos`),
+                // so the slice is valid given buffer's validity
                 unsafe { slice::from_raw_parts(buf.as_ptr().add(start_pos as usize), limit) }
             }
             Self::Uninit(_) | Self::Reading => {
@@ -697,15 +700,13 @@ impl RingOp<BuffersState> for ReadOp {
         // Safety: we assert that the buffer is large enough to hold the read.
         let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset as usize) };
 
-        let offset = *file_offset;
-
         let entry = match buf.io_buf_index() {
             Some(io_buf_index) => opcode::ReadFixed::new(*fd, buf_ptr, *read_len, io_buf_index)
-                .offset(offset)
+                .offset(*file_offset)
                 .ioprio(IO_PRIO_BE_HIGHEST)
                 .build(),
             None => opcode::Read::new(*fd, buf_ptr, *read_len)
-                .offset(offset)
+                .offset(*file_offset)
                 .ioprio(IO_PRIO_BE_HIGHEST)
                 .build(),
         };
