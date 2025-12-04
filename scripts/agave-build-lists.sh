@@ -52,6 +52,7 @@ DCOU_TAINTED_PACKAGES=(
   solana-bench-tps
   solana-dos
   solana-local-cluster
+  solana-svm-test-harness
   solana-transaction-dos
   solana-vortexor
 )

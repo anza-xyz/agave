@@ -457,3 +457,197 @@ pub fn execute_transaction(
 
     Some(txn_result)
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::fixture::{
+            proto::{
+                AcctState as ProtoAcctState, CompiledInstruction as ProtoCompiledInstruction,
+                MessageHeader as ProtoMessageHeader, SanitizedTransaction as ProtoSanitizedTx,
+                SlotContext as ProtoSlotContext, TransactionMessage as ProtoTransactionMessage,
+                TxnContext as ProtoTxnContext,
+            },
+            txn_context::TxnContext,
+        },
+        solana_hash::Hash,
+        solana_pubkey::Pubkey,
+        solana_sdk_ids::native_loader,
+        solana_signature::Signature,
+        solana_sysvar_id::SysvarId,
+    };
+
+    fn get_clock_sysvar_account() -> ProtoAcctState {
+        let clock = solana_clock::Clock {
+            slot: 20,
+            epoch_start_timestamp: 1720556855,
+            epoch: 0,
+            leader_schedule_epoch: 1,
+            unix_timestamp: 1720556855,
+        };
+        ProtoAcctState {
+            address: solana_clock::Clock::id().to_bytes().to_vec(),
+            lamports: 1,
+            data: bincode::serialize(&clock).unwrap(),
+            executable: false,
+            owner: native_loader::id().to_bytes().to_vec(),
+        }
+    }
+
+    fn get_epoch_schedule_sysvar_account() -> ProtoAcctState {
+        let epoch_schedule = EpochSchedule {
+            slots_per_epoch: 432000,
+            leader_schedule_slot_offset: 432000,
+            warmup: true,
+            first_normal_epoch: 14,
+            first_normal_slot: 524256,
+        };
+        ProtoAcctState {
+            address: solana_epoch_schedule::EpochSchedule::id()
+                .to_bytes()
+                .to_vec(),
+            lamports: 1,
+            data: bincode::serialize(&epoch_schedule).unwrap(),
+            executable: false,
+            owner: native_loader::id().to_bytes().to_vec(),
+        }
+    }
+
+    fn get_rent_sysvar_account() -> ProtoAcctState {
+        let rent = Rent {
+            lamports_per_byte_year: 3480,
+            exemption_threshold: 2.0,
+            burn_percent: 50,
+        };
+        ProtoAcctState {
+            address: solana_rent::Rent::id().to_bytes().to_vec(),
+            lamports: 1,
+            data: bincode::serialize(&rent).unwrap(),
+            executable: false,
+            owner: native_loader::id().to_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn test_system_transfer() {
+        let clock_sysvar = get_clock_sysvar_account();
+        let epoch_schedule = get_epoch_schedule_sysvar_account();
+        let rent_sysvar = get_rent_sysvar_account();
+
+        let fee_payer = Pubkey::new_unique();
+        let fee_payer_data = ProtoAcctState {
+            address: fee_payer.to_bytes().to_vec(),
+            lamports: 10_000_000,
+            data: vec![],
+            executable: false,
+            owner: vec![0; 32],
+        };
+
+        let recipient = Pubkey::new_unique();
+        let recipient_data = ProtoAcctState {
+            address: recipient.to_bytes().to_vec(),
+            lamports: 890_880,
+            data: vec![],
+            executable: false,
+            owner: vec![0; 32],
+        };
+
+        let header = ProtoMessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 1,
+        };
+
+        let transfer_amount: u64 = 1000;
+        let mut instr_data = vec![2, 0, 0, 0];
+        instr_data.extend_from_slice(&transfer_amount.to_le_bytes());
+
+        let instr = ProtoCompiledInstruction {
+            program_id_index: 2,
+            accounts: vec![0, 1],
+            data: instr_data,
+        };
+
+        let blockhash = Hash::new_unique();
+        let blockhash_queue = vec![blockhash.to_bytes().to_vec()];
+
+        let message = ProtoTransactionMessage {
+            is_legacy: true,
+            header: Some(header),
+            account_keys: vec![
+                fee_payer.to_bytes().to_vec(),
+                recipient.to_bytes().to_vec(),
+                vec![0; 32],
+            ],
+            recent_blockhash: blockhash.to_bytes().to_vec(),
+            instructions: vec![instr],
+            address_table_lookups: vec![],
+        };
+
+        let tx = ProtoSanitizedTx {
+            message: Some(message),
+            message_hash: Hash::new_unique().to_bytes().to_vec(),
+            signatures: vec![Signature::default().as_ref().to_vec()],
+        };
+
+        let slot_ctx = ProtoSlotContext {
+            slot: 20,
+            block_height: 0,
+            poh: vec![],
+            parent_bank_hash: vec![],
+            parent_lthash: vec![],
+            prev_slot: 0,
+            prev_lps: 0,
+            prev_epoch_capitalization: 0,
+            fee_rate_governor: None,
+            parent_signature_count: 0,
+        };
+
+        let proto_context = ProtoTxnContext {
+            tx: Some(tx),
+            account_shared_data: vec![
+                fee_payer_data,
+                recipient_data,
+                clock_sysvar,
+                epoch_schedule,
+                rent_sysvar,
+            ],
+            blockhash_queue: blockhash_queue.clone(),
+            epoch_ctx: None,
+            slot_ctx: Some(slot_ctx),
+        };
+
+        let txn_context = TxnContext::try_from(proto_context.clone()).unwrap();
+        let result = execute_transaction(txn_context, &proto_context);
+
+        assert!(result.is_some());
+        let txn_result = result.unwrap();
+        assert!(txn_result.executed);
+        assert!(txn_result.is_ok);
+
+        if let Some(state) = &txn_result.resulting_state {
+            let fee_payer_result = state
+                .acct_states
+                .iter()
+                .find(|(k, _)| *k == fee_payer)
+                .map(|(_, v)| v);
+            assert!(fee_payer_result.is_some());
+            let fee_payer_account = fee_payer_result.unwrap();
+            assert!(fee_payer_account.lamports < 10_000_000 - transfer_amount);
+
+            let recipient_result = state
+                .acct_states
+                .iter()
+                .find(|(k, _)| *k == recipient)
+                .map(|(_, v)| v);
+            assert!(recipient_result.is_some());
+            assert_eq!(
+                recipient_result.unwrap().lamports,
+                890_880 + transfer_amount
+            );
+        } else {
+            panic!("Expected resulting state");
+        }
+    }
+}

@@ -22,6 +22,7 @@ required-features = ["fuzz"]
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 dummy-for-ci-check = ["fuzz"]
 fuzz = ["dep:clap", "dep:prost", "dep:prost-build", "dep:protosol"]
 
@@ -35,6 +36,7 @@ bincode = { workspace = true }
 clap = { version = "4.5.2", features = ["derive"], optional = true }
 prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
+serde = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-builtins = { workspace = true }
@@ -51,8 +53,7 @@ solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true, features = ["sysvar"] }
-solana-runtime = { workspace = true }
-serde = { workspace = true }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-stable-layout = { workspace = true }
