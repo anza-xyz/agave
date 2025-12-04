@@ -466,7 +466,7 @@ impl TracedSender {
         // by privileged validator operators. Reasonably, they won't do this during their leader
         // slots, even if they're unaware of this implementation compromise.
         //
-        // As a extra comment, those possibly quite old txes in the unconsumed batches should
+        // As an extra comment, those possibly quite old txes in the unconsumed batches should
         // safely be discarded by the central scheduler, because it should be resilient against any
         // untrusted input by nature, should the block production method be switched back to the
         // central scheduler.
