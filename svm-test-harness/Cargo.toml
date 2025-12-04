@@ -15,6 +15,11 @@ name = "test_exec_instr"
 path = "bin/test_exec_instr.rs"
 required-features = ["fuzz"]
 
+[[bin]]
+name = "test_exec_txn"
+path = "bin/test_exec_txn.rs"
+required-features = ["fuzz"]
+
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
