@@ -160,7 +160,7 @@ impl Tvu {
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
         log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         banking_tracer: Arc<BankingTracer>,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
@@ -344,7 +344,7 @@ impl Tvu {
             vote_tracker,
             cluster_slots,
             log_messages_bytes_limit,
-            prioritization_fee_cache: prioritization_fee_cache.clone(),
+            prioritization_fee_cache,
             banking_tracer,
             snapshot_controller,
         };
@@ -535,7 +535,6 @@ pub mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (_, gossip_confirmed_slots_receiver) = unbounded();
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let wen_restart_repair_slots = if enable_wen_restart {
@@ -602,7 +601,7 @@ pub mod tests {
             None,
             None, // snapshot_controller
             None,
-            &ignored_prioritization_fee_cache,
+            None,
             BankingTracer::new_disabled(),
             turbine_quic_endpoint_sender,
             turbine_quic_endpoint_receiver,

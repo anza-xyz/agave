@@ -123,20 +123,52 @@ proofs.
   - Mathematical description and proof of security:
     [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/ciphertext_ciphertext_equality.pdf)
 
+#### Range proofs
+
+- `VerifyBatchedRangeProofU64`:
+
+  - Verifies that a Pedersen commitment contains an unsigned 64-bit value.
+
+- `VerifyBatchedRangeProofU128`:
+
+  - Verifies that a Pedersen commitment contains an unsigned 128-bit value.
+
+- `VerifyBatchedRangeProofU256`:
+
+  - Verifies that a Pedersen commitment contains an unsigned 256-bit value.
+
 #### Ciphertext Validity proofs
 
-- `VerifyGroupedCiphertextValidity`:
+- `VerifyGroupedCiphertext2HandlesValidity`:
 
-  - The grouped ciphertext validity proof certifies that a grouped ElGamal
-    cipehrtext is well-formed
-    - Mathematical description and proof of security:
-      [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/ciphertext_validity.pdf)
+  - Verifies that a grouped ElGamal ciphertext with 2 handles is well-formed.
+  - Mathematical description and proof of security:
+    [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/ciphertext_validity.pdf)
 
-#### Percentage with Cap proof
+- `VerifyBatchedGroupedCiphertext2HandlesValidity`:
 
-- `PercentageWithCap`:
+  - Verifies, in batch, that grouped ElGamal ciphertexts with 2 handles are well-formed.
 
-  - The percentage with cap proof certifies that percentage relation useful
-    for fee calcluations
-    - Mathematical description and proof of security:
-      [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/percentage_with_cap.pdf)
+- `VerifyGroupedCiphertext3HandlesValidity`:
+
+  - Verifies that a grouped ElGamal ciphertext with 3 handles is well-formed.
+  - Mathematical description and proof of security:
+    [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/ciphertext_validity.pdf)
+
+- `VerifyBatchedGroupedCiphertext3HandlesValidity`:
+
+  - Verifies, in batch, that grouped ElGamal ciphertexts with 3 handles are well-formed.
+
+#### VerifyPercentageWithCap
+
+- `VerifyPercentageWithCap`:
+
+  - Verifies the percentage-with-cap relation used for fee calculations.
+  - Mathematical description and proof of security:
+    [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/percentage_with_cap.pdf)
+
+#### Administrative
+
+- `CloseContextState`:
+
+  - Closes a proof context state account created by a previous verification and returns lamports to the destination account.

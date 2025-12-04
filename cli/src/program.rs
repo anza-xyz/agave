@@ -16,7 +16,7 @@ use {
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
-    solana_account::{state_traits::StateMut, Account},
+    solana_account::state_traits::StateMut,
     solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         self,
@@ -1987,7 +1987,7 @@ async fn get_buffers(
 
     let mut buffers = vec![];
     for (address, ui_account) in results.iter() {
-        let account: Account = ui_account.decode().expect(
+        let account = ui_account.to_account().expect(
             "It should be impossible at this point for the account data not to be decodable. \
              Ensure that the account was fetched using a binary encoding.",
         );
@@ -2040,7 +2040,7 @@ async fn get_programs(
 
     let mut programs = vec![];
     for (programdata_address, programdata_ui_account) in results.iter() {
-        let programdata_account: Account = programdata_ui_account.decode().expect(
+        let programdata_account = programdata_ui_account.to_account().expect(
             "It should be impossible at this point for the account data not to be decodable. \
              Ensure that the account was fetched using a binary encoding.",
         );

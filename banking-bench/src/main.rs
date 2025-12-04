@@ -5,7 +5,7 @@ use {
     clap::{crate_description, crate_name, Arg, ArgEnum, Command},
     crossbeam_channel::{unbounded, Receiver},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::*,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_core::{
@@ -29,9 +29,7 @@ use {
     solana_perf::packet::{to_packet_batches, PacketBatch},
     solana_poh::poh_recorder::{create_test_recorder, PohRecorder, WorkingBankEntry},
     solana_pubkey::{self as pubkey, Pubkey},
-    solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-    },
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
@@ -139,7 +137,7 @@ fn make_accounts_txs(
                 hash,
                 compute_unit_price,
             );
-            let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+            let sig: [u8; 64] = std::array::from_fn(|_| rng().random::<u8>());
             new.message.account_keys[0] = pubkey::new_rand();
             new.message.account_keys[1] = match contention {
                 WriteLockContention::None => pubkey::new_rand(),
@@ -225,7 +223,7 @@ impl PacketsPerIteration {
     fn refresh_blockhash(&mut self, new_blockhash: Hash) {
         for tx in self.transactions.iter_mut() {
             tx.message.recent_blockhash = new_blockhash;
-            let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+            let sig: [u8; 64] = std::array::from_fn(|_| rng().random::<u8>());
             tx.signatures[0] = Signature::from(sig);
         }
         self.packet_batches = to_packet_batches(&self.transactions, self.packets_per_batch);
@@ -393,7 +391,7 @@ fn main() {
                     genesis_config.hash(),
                 );
                 // Ignore any pesky duplicate signature errors in the case we are using single-payer
-                let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+                let sig: [u8; 64] = std::array::from_fn(|_| rng().random::<u8>());
                 fund.signatures = vec![Signature::from(sig)];
                 bank.process_transaction(&fund).unwrap();
             });
@@ -451,7 +449,6 @@ fn main() {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         )))
         .unwrap();
-    let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let Channels {
         non_vote_sender,
         non_vote_receiver,
@@ -476,7 +473,7 @@ fn main() {
         replay_vote_sender,
         None,
         bank_forks.clone(),
-        prioritization_fee_cache,
+        None,
     );
 
     // This is so that the signal_receiver does not go out of scope after the closure.

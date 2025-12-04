@@ -37,13 +37,13 @@ impl FeeDistribution {
 }
 
 impl Bank {
-    // Distribute collected transaction fees for this slot to collector_id (= current leader).
+    // Distribute collected transaction fees for this slot to leader_id (= current leader).
     //
     // Each validator is incentivized to process more transactions to earn more transaction fees.
     // Transaction fees are rewarded for the computing resource utilization cost, directly
     // proportional to their actual processing power.
     //
-    // collector_id is rotated according to stake-weighted leader schedule. So the opportunity of
+    // leader_id is rotated according to stake-weighted leader schedule. So the opportunity of
     // earning transaction fees are fairly distributed by stake. And missing the opportunity
     // (not producing a block as a leader) earns nothing. So, being online is incentivized as a
     // form of transaction fees as well.
@@ -114,10 +114,10 @@ impl Bank {
             return 0;
         }
 
-        match self.deposit_fees(&self.collector_id, deposit) {
+        match self.deposit_fees(&self.leader_id, deposit) {
             Ok(post_balance) => {
                 self.rewards.write().unwrap().push((
-                    self.collector_id,
+                    self.leader_id,
                     RewardInfo {
                         reward_type: RewardType::Fee,
                         lamports: deposit as i64,
@@ -130,7 +130,7 @@ impl Bank {
             Err(err) => {
                 debug!(
                     "Burned {} lamport tx fee instead of sending to {} due to {}",
-                    deposit, self.collector_id, err
+                    deposit, self.leader_id, err
                 );
                 datapoint_warn!(
                     "bank-burned_fee",
@@ -235,26 +235,26 @@ pub mod tests {
                 // ensure that account balance + collected fees will make it rent-paying
                 let initial_balance = 100;
                 let account = AccountSharedData::new(initial_balance, 0, &system_program::id());
-                bank.store_account(bank.collector_id(), &account);
+                bank.store_account(bank.leader_id(), &account);
                 assert!(initial_balance + deposit < min_rent_exempt_balance);
             } else if test_case.scenario == Scenario::InvalidOwner {
                 // ensure that account owner is invalid and fee distribution will fail
                 let account =
                     AccountSharedData::new(min_rent_exempt_balance, 0, &Pubkey::new_unique());
-                bank.store_account(bank.collector_id(), &account);
+                bank.store_account(bank.leader_id(), &account);
             } else {
                 let account =
                     AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
-                bank.store_account(bank.collector_id(), &account);
+                bank.store_account(bank.leader_id(), &account);
             }
 
             let initial_burn = burn;
-            let initial_collector_id_balance = bank.get_balance(bank.collector_id());
+            let initial_leader_id_balance = bank.get_balance(bank.leader_id());
             burn += bank.deposit_or_burn_fee(deposit);
-            let new_collector_id_balance = bank.get_balance(bank.collector_id());
+            let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
             if test_case.scenario != Scenario::Normal {
-                assert_eq!(initial_collector_id_balance, new_collector_id_balance);
+                assert_eq!(initial_leader_id_balance, new_leader_id_balance);
                 assert_eq!(initial_burn + deposit, burn);
                 let locked_rewards = bank.rewards.read().unwrap();
                 assert!(
@@ -262,10 +262,7 @@ pub mod tests {
                     "There should be no rewards distributed"
                 );
             } else {
-                assert_eq!(
-                    initial_collector_id_balance + deposit,
-                    new_collector_id_balance
-                );
+                assert_eq!(initial_leader_id_balance + deposit, new_leader_id_balance);
 
                 assert_eq!(initial_burn, burn);
 
@@ -369,13 +366,13 @@ pub mod tests {
         let expected_rewards = transaction_fee - expected_burn + priority_fee;
 
         let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
+        let initial_leader_id_balance = bank.get_balance(bank.leader_id());
         bank.distribute_transaction_fee_details();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
+        let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
         assert_eq!(
-            initial_collector_id_balance + expected_rewards,
-            new_collector_id_balance
+            initial_leader_id_balance + expected_rewards,
+            new_leader_id_balance
         );
         assert_eq!(
             initial_capitalization - expected_burn,
@@ -410,11 +407,11 @@ pub mod tests {
         );
 
         let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
+        let initial_leader_id_balance = bank.get_balance(bank.leader_id());
         bank.distribute_transaction_fee_details();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
+        let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
-        assert_eq!(initial_collector_id_balance, new_collector_id_balance);
+        assert_eq!(initial_leader_id_balance, new_leader_id_balance);
         assert_eq!(initial_capitalization, bank.capitalization());
         let locked_rewards = bank.rewards.read().unwrap();
         assert!(
@@ -436,14 +433,14 @@ pub mod tests {
 
         // ensure that account balance will overflow and fee distribution will fail
         let account = AccountSharedData::new(u64::MAX, 0, &system_program::id());
-        bank.store_account(bank.collector_id(), &account);
+        bank.store_account(bank.leader_id(), &account);
 
         let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
+        let initial_leader_id_balance = bank.get_balance(bank.leader_id());
         bank.distribute_transaction_fee_details();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
+        let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
-        assert_eq!(initial_collector_id_balance, new_collector_id_balance);
+        assert_eq!(initial_leader_id_balance, new_leader_id_balance);
         assert_eq!(
             initial_capitalization - transaction_fee - priority_fee,
             bank.capitalization()

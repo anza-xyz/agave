@@ -86,7 +86,7 @@ fn bench_sigs_hashmap(b: &mut Bencher) {
 }
 
 fn bench_add_hash(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let hash_values: Vec<_> = std::iter::repeat_with(Hash::new_unique)
         .take(1200)
         .collect();
@@ -96,7 +96,7 @@ fn bench_add_hash(b: &mut Bencher) {
         for hash_value in &hash_values {
             bloom.add(hash_value);
         }
-        let index = rng.gen_range(0..hash_values.len());
+        let index = rng.random_range(0..hash_values.len());
         if !bloom.contains(&hash_values[index]) {
             fail += 1;
         }
@@ -105,7 +105,7 @@ fn bench_add_hash(b: &mut Bencher) {
 }
 
 fn bench_add_hash_atomic(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let hash_values: Vec<_> = std::iter::repeat_with(Hash::new_unique)
         .take(1200)
         .collect();
@@ -119,7 +119,7 @@ fn bench_add_hash_atomic(b: &mut Bencher) {
         for hash_value in &hash_values {
             bloom.add(hash_value);
         }
-        let index = rng.gen_range(0..hash_values.len());
+        let index = rng.random_range(0..hash_values.len());
         if !bloom.contains(&hash_values[index]) {
             fail += 1;
         }

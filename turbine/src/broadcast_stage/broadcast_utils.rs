@@ -52,8 +52,13 @@ fn keep_coalescing_entries(
         process_stats.coalesce_exited_hit_max += 1;
         return false;
     }
-    let bytes_to_fill_erasure_batch = get_data_shred_bytes_per_batch_typical()
-        - (serialized_batch_byte_count % get_data_shred_bytes_per_batch_typical());
+    let typical = get_data_shred_bytes_per_batch_typical();
+    let remaining_bytes = serialized_batch_byte_count % typical;
+    let bytes_to_fill_erasure_batch = if remaining_bytes == 0 {
+        0
+    } else {
+        typical - remaining_bytes
+    };
     if bytes_to_fill_erasure_batch < get_target_batch_pad_bytes() {
         // We're close enough to tightly packing erasure batches. Just send it.
         process_stats.coalesce_exited_tightly_packed += 1;
@@ -216,6 +221,9 @@ mod tests {
         (genesis_config, bank0, tx)
     }
 
+    const LAST_TICK_HEIGHT: u64 = 1;
+    const MAX_TICK_HEIGHT: u64 = 10;
+
     #[test]
     fn test_recv_slot_entries_1() {
         let (genesis_config, bank0, tx) = setup_test();
@@ -288,5 +296,87 @@ mod tests {
         assert_eq!(bank_slot, bank2.slot());
         assert_eq!(last_tick_height, expected_last_height);
         assert_eq!(res_entries, vec![last_entry]);
+    }
+
+    #[test]
+    fn test_keep_coalescing_exact_boundary_exits() {
+        let typical = get_data_shred_bytes_per_batch_typical();
+        let mut stats = ProcessShredsStats::default();
+        let serialized = typical * 2; // exact boundary
+        let max_batch = typical * 4; // still below max
+        let keep = keep_coalescing_entries(
+            LAST_TICK_HEIGHT,
+            MAX_TICK_HEIGHT,
+            serialized,
+            max_batch,
+            &mut stats,
+        );
+        assert!(!keep);
+        assert_eq!(stats.coalesce_exited_tightly_packed, 1);
+    }
+
+    #[test]
+    fn test_keep_coalescing_near_boundary_exits() {
+        let typical = get_data_shred_bytes_per_batch_typical();
+        let pad = get_target_batch_pad_bytes();
+        assert!(pad > 0);
+        let mut stats = ProcessShredsStats::default();
+        // bytes_to_fill = pad - 1 -> ensure early exit
+        let rem = typical - (pad - 1);
+        let serialized = typical * 3 + rem;
+        let keep = keep_coalescing_entries(
+            LAST_TICK_HEIGHT,
+            MAX_TICK_HEIGHT,
+            serialized,
+            typical * 10,
+            &mut stats,
+        );
+        assert!(!keep);
+        assert_eq!(stats.coalesce_exited_tightly_packed, 1);
+    }
+
+    #[test]
+    fn test_keep_coalescing_not_close_enough_continues() {
+        let typical = get_data_shred_bytes_per_batch_typical();
+        let pad = get_target_batch_pad_bytes();
+        let mut stats = ProcessShredsStats::default();
+        // bytes_to_fill = pad -> should continue
+        let rem = typical - pad;
+        let serialized = typical + rem;
+        let keep = keep_coalescing_entries(
+            LAST_TICK_HEIGHT,
+            MAX_TICK_HEIGHT,
+            serialized,
+            typical * 10,
+            &mut stats,
+        );
+        assert!(keep);
+        assert_eq!(stats.coalesce_exited_tightly_packed, 0);
+    }
+
+    #[test]
+    fn test_keep_coalescing_hit_max() {
+        let typical = get_data_shred_bytes_per_batch_typical();
+        let mut stats = ProcessShredsStats::default();
+        let serialized = typical * 4;
+        let max_batch = typical * 4; // >= triggers hit_max
+        let keep = keep_coalescing_entries(
+            LAST_TICK_HEIGHT,
+            MAX_TICK_HEIGHT,
+            serialized,
+            max_batch,
+            &mut stats,
+        );
+        assert!(!keep);
+        assert_eq!(stats.coalesce_exited_hit_max, 1);
+    }
+
+    #[test]
+    fn test_keep_coalescing_slot_ended() {
+        let mut stats = ProcessShredsStats::default();
+        let keep =
+            keep_coalescing_entries(MAX_TICK_HEIGHT, MAX_TICK_HEIGHT, 0, 1_000_000, &mut stats);
+        assert!(!keep);
+        assert_eq!(stats.coalesce_exited_slot_ended, 1);
     }
 }

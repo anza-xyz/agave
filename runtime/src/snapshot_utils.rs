@@ -8,7 +8,7 @@ use {
             SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
             SnapshotStreams,
         },
-        snapshot_package::{BankSnapshotPackage, SnapshotPackage},
+        snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
@@ -26,8 +26,8 @@ use {
             SnapshotArchiveInfoGetter,
         },
         snapshot_config::SnapshotConfig,
-        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotKind,
-        SnapshotVersion,
+        snapshot_hash::SnapshotHash,
+        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
     log::*,
@@ -435,37 +435,20 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
     }
 }
 
-/// Serializes and archives a snapshot package
-pub fn serialize_and_archive_snapshot_package(
-    snapshot_package: SnapshotPackage,
+/// Creates an archive based on the bank snapshot and snapshot storages
+pub fn archive_snapshot_package(
+    snapshot_archive_kind: SnapshotArchiveKind,
+    snapshot_slot: Slot,
+    snapshot_hash: SnapshotHash,
+    bank_snapshot_dir: impl AsRef<Path>,
+    mut snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     snapshot_config: &SnapshotConfig,
-    should_flush_and_hard_link_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
-    let SnapshotPackage {
-        snapshot_kind,
-        slot: snapshot_slot,
-        block_height: _,
-        hash: snapshot_hash,
-        mut snapshot_storages,
-        bank_snapshot_package,
-        enqueued: _,
-    } = snapshot_package;
-
-    let bank_snapshot_info = serialize_snapshot(
-        &snapshot_config.bank_snapshots_dir,
-        snapshot_config.snapshot_version,
-        bank_snapshot_package,
-        &snapshot_storages,
-        should_flush_and_hard_link_storages,
-    )?;
-
-    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind;
-
     let snapshot_archive_path = match snapshot_archive_kind {
         SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
             &snapshot_config.full_snapshot_archives_dir,
-            snapshot_package.slot,
-            &snapshot_package.hash,
+            snapshot_slot,
+            &snapshot_hash,
             snapshot_config.archive_format,
         ),
         SnapshotArchiveKind::Incremental(incremental_snapshot_base_slot) => {
@@ -475,8 +458,8 @@ pub fn serialize_and_archive_snapshot_package(
             snapshot_paths::build_incremental_snapshot_archive_path(
                 &snapshot_config.incremental_snapshot_archives_dir,
                 incremental_snapshot_base_slot,
-                snapshot_package.slot,
-                &snapshot_package.hash,
+                snapshot_slot,
+                &snapshot_hash,
                 snapshot_config.archive_format,
             )
         }
@@ -487,7 +470,7 @@ pub fn serialize_and_archive_snapshot_package(
         snapshot_slot,
         snapshot_hash,
         snapshot_storages.as_slice(),
-        &bank_snapshot_info.snapshot_dir,
+        &bank_snapshot_dir,
         snapshot_archive_path,
         snapshot_config.archive_format,
     )?;
@@ -496,7 +479,7 @@ pub fn serialize_and_archive_snapshot_package(
 }
 
 /// Serializes a snapshot into `bank_snapshots_dir`
-fn serialize_snapshot(
+pub fn serialize_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     snapshot_version: SnapshotVersion,
     bank_snapshot_package: BankSnapshotPackage,

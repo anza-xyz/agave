@@ -5,10 +5,13 @@ use {
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
+        route::Router,
+        route_monitor::RouteMonitor,
         tx_loop::tx_loop,
     },
+    arc_swap::ArcSwap,
     crossbeam_channel::TryRecvError,
-    std::{sync::Arc, thread::Builder, time::Duration},
+    std::{thread::Builder, time::Duration},
 };
 use {
     crossbeam_channel::{Sender, TrySendError},
@@ -16,9 +19,13 @@ use {
     std::{
         error::Error,
         net::{Ipv4Addr, SocketAddr},
+        sync::{atomic::AtomicBool, Arc},
         thread,
     },
 };
+
+#[cfg(target_os = "linux")]
+const ROUTE_MONITOR_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug)]
 pub struct XdpConfig {
@@ -113,6 +120,7 @@ impl XdpRetransmitter {
         _config: XdpConfig,
         _src_port: u16,
         _src_ip: Option<Ipv4Addr>,
+        _exit: Arc<AtomicBool>,
     ) -> Result<(Self, XdpSender), Box<dyn Error>> {
         Err("XDP is only supported on Linux".into())
     }
@@ -122,6 +130,7 @@ impl XdpRetransmitter {
         config: XdpConfig,
         src_port: u16,
         src_ip: Option<Ipv4Addr>,
+        exit: Arc<AtomicBool>,
     ) -> Result<(Self, XdpSender), Box<dyn Error>> {
         use caps::{
             CapSet,
@@ -156,7 +165,16 @@ impl XdpRetransmitter {
             .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
+        // Use ArcSwap for lock-free updates of the routing table
+        let atomic_router = Arc::new(ArcSwap::from_pointee(Router::new()?));
+        let monitor_handle = RouteMonitor::start(
+            Arc::clone(&atomic_router),
+            exit.clone(),
+            ROUTE_MONITOR_UPDATE_INTERVAL,
+        );
+
         let mut threads = vec![];
+        threads.push(monitor_handle);
 
         let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(
@@ -189,6 +207,7 @@ impl XdpRetransmitter {
         {
             let dev = Arc::clone(&dev);
             let drop_sender = drop_sender.clone();
+            let atomic_router = Arc::clone(&atomic_router);
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
@@ -201,9 +220,12 @@ impl XdpRetransmitter {
                             None,
                             src_ip,
                             src_port,
-                            None,
                             receiver,
                             drop_sender,
+                            move |ip| {
+                                let r = atomic_router.load();
+                                r.route(*ip).ok()
+                            },
                         )
                     })
                     .unwrap(),

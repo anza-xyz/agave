@@ -7,9 +7,9 @@ use {
     solana_message::{self, legacy, v0, MESSAGE_VERSION_PREFIX},
     solana_signature::Signature,
     solana_transaction::versioned,
-    std::mem::MaybeUninit,
+    std::mem::{self, MaybeUninit},
     wincode::{
-        containers::{self, Elem, Pod},
+        containers::{self, Pod},
         error::invalid_tag_encoding,
         io::{Reader, Writer},
         len::ShortU16Len,
@@ -29,8 +29,8 @@ struct MessageHeader {
 #[wincode(from = "solana_transaction::CompiledInstruction")]
 struct CompiledInstruction {
     program_id_index: u8,
-    accounts: containers::Vec<Pod<u8>, ShortU16Len>,
-    data: containers::Vec<Pod<u8>, ShortU16Len>,
+    accounts: containers::Vec<u8, ShortU16Len>,
+    data: containers::Vec<u8, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -39,26 +39,25 @@ struct LegacyMessage {
     header: MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<Elem<CompiledInstruction>, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::MessageAddressTableLookup")]
 struct MessageAddressTableLookup {
     account_key: Pod<Address>,
-    writable_indexes: containers::Vec<Pod<u8>, ShortU16Len>,
-    readonly_indexes: containers::Vec<Pod<u8>, ShortU16Len>,
+    writable_indexes: containers::Vec<u8, ShortU16Len>,
+    readonly_indexes: containers::Vec<u8, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::Message")]
 struct V0Message {
-    #[wincode(with = "Pod<_>")]
-    header: solana_message::MessageHeader,
+    header: MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<Elem<CompiledInstruction>, ShortU16Len>,
-    address_table_lookups: containers::Vec<Elem<MessageAddressTableLookup>, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
+    address_table_lookups: containers::Vec<MessageAddressTableLookup, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -83,7 +82,7 @@ impl SchemaWrite for VersionedMsg {
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
             solana_message::VersionedMessage::Legacy(message) => {
                 LegacyMessage::write(writer, message)
@@ -96,10 +95,10 @@ impl SchemaWrite for VersionedMsg {
     }
 }
 
-impl SchemaRead<'_> for VersionedMsg {
+impl<'de> SchemaRead<'de> for VersionedMsg {
     type Dst = solana_message::VersionedMessage;
 
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // From `solana_message`:
         //
         // If the first bit is set, the remaining 7 bits will be used to determine
@@ -120,6 +119,81 @@ impl SchemaRead<'_> for VersionedMsg {
             };
         }
 
+        /// A guard that ensures the [`legacy::Message`] is properly dropped on error or panic.
+        ///
+        /// Fields will be dropped in reverse initialization order.
+        ///
+        /// This is necessary in particular for [`legacy::Message`] as it contains heap allocated fields.
+        /// Namely, `account_keys` and `instructions`, which are `Vec<Address>` and `Vec<CompiledInstruction>`,
+        /// respectively. These will leak if not dropped on error or panic.
+        struct LegacyMessageDropGuard<'a> {
+            inner: &'a mut MaybeUninit<legacy::Message>,
+            field_init_count: u8,
+        }
+
+        impl<'a> LegacyMessageDropGuard<'a> {
+            const fn new(inner: &'a mut MaybeUninit<legacy::Message>) -> Self {
+                Self {
+                    inner,
+                    field_init_count: 0,
+                }
+            }
+
+            const fn inc_init_count(&mut self) {
+                self.field_init_count += 1;
+            }
+        }
+
+        impl<'a> Drop for LegacyMessageDropGuard<'a> {
+            // Fields are initialized in order, matching the serialized format.
+            //
+            // 0 -> header
+            // 1 -> account_keys
+            // 2 -> recent_blockhash
+            // 3 -> instructions
+            //
+            // We drop in reverse order to match Rust's drop semantics.
+            fn drop(&mut self) {
+                use core::ptr;
+
+                // No fields have been initialized.
+                if self.field_init_count == 0 {
+                    return;
+                }
+
+                if self.field_init_count == 4 {
+                    // SAFETY: All fields have been initialized, safe to drop the entire message.
+                    unsafe { self.inner.assume_init_drop() };
+                    return;
+                }
+
+                let msg_ptr = self.inner.as_mut_ptr();
+
+                // We don't technically have to worry about recent_blockhash, since it's on the stack,
+                // but we do it for completeness.
+                if self.field_init_count == 3 {
+                    // SAFETY: Recent blockhash is initialized, safe to drop it.
+                    unsafe {
+                        ptr::drop_in_place(&raw mut (*msg_ptr).recent_blockhash);
+                    }
+                }
+                if self.field_init_count >= 2 {
+                    // SAFETY: Account keys are initialized, safe to drop.
+                    unsafe {
+                        ptr::drop_in_place(&raw mut (*msg_ptr).account_keys);
+                    }
+                }
+                // Similarly to recent_blockhash, we don't technically have to worry about header,
+                // but we do it for completeness.
+                if self.field_init_count >= 1 {
+                    // SAFETY: Header is initialized, safe to drop it.
+                    unsafe {
+                        ptr::drop_in_place(&raw mut (*msg_ptr).header);
+                    }
+                }
+            }
+        }
+
         let mut msg = MaybeUninit::<legacy::Message>::uninit();
         // We've already read the variant byte which, in the legacy case, represents
         // the `num_required_signatures` field.
@@ -127,14 +201,29 @@ impl SchemaRead<'_> for VersionedMsg {
         // as calling `LegacyMessage::read` will miss the first field.
         let header_uninit = LegacyMessage::uninit_header_mut(&mut msg);
 
+        // We don't need to worry about a drop guard for the header,
+        // as it's comprised entirely of `u8`s on the stack.
         MessageHeader::write_uninit_num_required_signatures(variant, header_uninit);
         MessageHeader::read_num_readonly_signed_accounts(reader, header_uninit)?;
         MessageHeader::read_num_readonly_unsigned_accounts(reader, header_uninit)?;
 
-        LegacyMessage::read_account_keys(reader, &mut msg)?;
-        LegacyMessage::read_recent_blockhash(reader, &mut msg)?;
-        LegacyMessage::read_instructions(reader, &mut msg)?;
+        let mut guard = LegacyMessageDropGuard::new(&mut msg);
+        // 1. Header is initialized.
+        guard.inc_init_count();
+        LegacyMessage::read_account_keys(reader, guard.inner)?;
+        // 2. Account keys are initialized.
+        guard.inc_init_count();
+        LegacyMessage::read_recent_blockhash(reader, guard.inner)?;
+        // 3. Recent blockhash is initialized.
+        guard.inc_init_count();
+        LegacyMessage::read_instructions(reader, guard.inner)?;
+        // 4. Instructions are initialized.
+        guard.inc_init_count();
 
+        // All fields are initialized, safe to drop the the guard.
+        mem::forget(guard);
+
+        // SAFETY: All fields are initialized, safe to assume initialized.
         let msg = unsafe { msg.assume_init() };
         dst.write(solana_message::VersionedMessage::Legacy(msg));
 

@@ -500,8 +500,8 @@ impl GenerateIndexTimings {
         datapoint_info!(
             "generate_index",
             ("overall_us", self.total_time_us, i64),
+            ("index_time_us", self.index_time, i64),
             // we cannot accurately measure index insertion time because of many threads and lock contention
-            ("total_us", self.index_time, i64),
             ("insertion_time_us", self.insertion_time_us, i64),
             (
                 "storage_size_storages_us",
@@ -4394,14 +4394,8 @@ impl AccountsDb {
         paths: &[PathBuf],
     ) -> Arc<AccountStorageEntry> {
         let store = self.create_store(slot, size, from, paths);
-        let store_for_index = store.clone();
-
-        self.insert_store(slot, store_for_index);
+        self.storage.insert(store.clone());
         store
-    }
-
-    fn insert_store(&self, slot: Slot, store: Arc<AccountStorageEntry>) {
-        self.storage.insert(slot, store)
     }
 
     pub fn enable_bank_drop_callback(&self) {
@@ -5616,10 +5610,7 @@ impl AccountsDb {
     }
 
     fn remove_dead_slots_metadata<'a>(&'a self, dead_slots_iter: impl Iterator<Item = &'a Slot>) {
-        let mut measure = Measure::start("remove_dead_slots_metadata-ms");
         self.clean_dead_slots_from_accounts_index(dead_slots_iter);
-        measure.stop();
-        inc_new_counter_info!("remove_dead_slots_metadata-ms", measure.as_ms() as usize);
     }
 
     /// lookup each pubkey in 'pubkeys' and unref it in the accounts index
@@ -5857,7 +5848,7 @@ impl AccountsDb {
     pub fn store_accounts_frozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
         self._store_accounts_frozen(
@@ -5874,7 +5865,7 @@ impl AccountsDb {
     fn _store_accounts_frozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         reclaim_handling: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {

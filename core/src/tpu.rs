@@ -157,7 +157,7 @@ impl Tpu {
         tpu_quic_server_config: SwQosQuicStreamerConfig,
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
@@ -346,7 +346,7 @@ impl Tpu {
             replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
-            prioritization_fee_cache.clone(),
+            prioritization_fee_cache,
         );
 
         #[cfg(unix)]

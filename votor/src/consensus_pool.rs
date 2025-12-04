@@ -126,22 +126,15 @@ impl ConsensusPool {
             highest_finalized_slot: None,
             highest_finalized_with_notarize: None,
             parent_ready_tracker,
-            stats: ConsensusPoolStats::new(),
+            stats: ConsensusPoolStats::default(),
             slot_stake_counters_map: BTreeMap::new(),
         }
     }
 
-    /// For a new vote `slot` , `vote_type` checks if any
-    /// of the related certificates are newly complete.
-    /// For each newly constructed certificate
-    /// - Insert it into `self.certificates`
-    /// - Potentially update `self.highest_finalized_slot`,
-    /// - If we have a new highest finalized slot, return it
-    /// - update any newly created events
-    fn update_certificates(
+    /// Builds new [`Certificate`]s that depend on votes of type [`Vote`] if enough stake has voted for them.
+    fn build_certs(
         &mut self,
         vote: &Vote,
-        events: &mut Vec<VotorEvent>,
         total_stake: Stake,
     ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
         let Some(vote_pool) = self.vote_pools.get(&vote.slot()) else {
@@ -162,18 +155,14 @@ impl ConsensusPool {
                 Some(Err(err)) => return Err(err.into()),
             }
         }
-        for cert in &new_certificates_to_send {
-            self.insert_certificate(cert.cert_type, cert.clone(), events);
-        }
         Ok(new_certificates_to_send)
     }
 
-    fn insert_certificate(
-        &mut self,
-        cert_type: CertificateType,
-        cert: Arc<Certificate>,
-        events: &mut Vec<VotorEvent>,
-    ) {
+    /// Inserts a new [`Certificate`].
+    ///
+    /// Based on the type of certificate being inserted, updates [`self.parent_ready_tracker`] and other metadata on self.
+    fn insert_certificate(&mut self, cert: Arc<Certificate>, events: &mut Vec<VotorEvent>) {
+        let cert_type = cert.cert_type;
         trace!(
             "{}: Inserting certificate {:?}",
             self.cluster_info.id(),
@@ -230,6 +219,7 @@ impl ConsensusPool {
                     self.highest_finalized_with_notarize = Some((slot, true));
                 }
             }
+            CertificateType::Genesis(_slot, _block_id) => {}
         }
     }
 
@@ -338,7 +328,11 @@ impl ConsensusPool {
             },
         }
         self.stats.incr_ingested_vote(&vote);
-        self.update_certificates(&vote, events, total_stake)
+        self.build_certs(&vote, total_stake).inspect(|certs| {
+            for cert in certs {
+                self.insert_certificate(cert.clone(), events)
+            }
+        })
     }
 
     fn add_certificate(
@@ -347,21 +341,19 @@ impl ConsensusPool {
         cert: Certificate,
         events: &mut Vec<VotorEvent>,
     ) -> Result<Vec<Arc<Certificate>>, AddCertError> {
-        let cert_type = cert.cert_type;
+        let cert_type = &cert.cert_type;
         self.stats.incoming_certs = self.stats.incoming_certs.saturating_add(1);
         if cert_type.slot() < root_slot {
             self.stats.out_of_range_certs = self.stats.out_of_range_certs.saturating_add(1);
             return Err(AddCertError::UnrootedSlot);
         }
-        if self.completed_certificates.contains_key(&cert_type) {
+        if self.completed_certificates.contains_key(cert_type) {
             self.stats.exist_certs = self.stats.exist_certs.saturating_add(1);
             return Ok(vec![]);
         }
+        self.stats.incr_cert_type(cert_type, false);
         let cert = Arc::new(cert);
-        self.insert_certificate(cert_type, cert.clone(), events);
-
-        self.stats.incr_cert_type(&cert_type, false);
-
+        self.insert_certificate(cert.clone(), events);
         Ok(vec![cert])
     }
 
@@ -488,7 +480,8 @@ impl ConsensusPool {
                 | CertificateType::FinalizeFast(s, _)
                 | CertificateType::Notarize(s, _)
                 | CertificateType::NotarizeFallback(s, _)
-                | CertificateType::Skip(s) => s >= &root_slot,
+                | CertificateType::Skip(s)
+                | CertificateType::Genesis(s, _) => s >= &root_slot,
             });
         self.vote_pools = self.vote_pools.split_off(&root_slot);
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
@@ -651,6 +644,7 @@ mod tests {
             Vote::Skip(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
             Vote::SkipFallback(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
             Vote::Finalize(vote) => assert_eq!(pool.highest_finalized_slot(), vote.slot),
+            Vote::Genesis(_) => {}
         }
     }
 
@@ -971,6 +965,7 @@ mod tests {
             Vote::NotarizeFallback(_) => |pool: &ConsensusPool| pool.highest_notarized_slot(),
             Vote::Skip(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::SkipFallback(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
+            Vote::Genesis(_) => |_pool: &ConsensusPool| 0,
         };
         let bank = bank_forks.read().unwrap().root_bank();
         pool.add_message(

@@ -2588,7 +2588,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store1_slot, Arc::clone(&store1));
+    db.storage.insert(Arc::clone(&store1));
     store1.alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
@@ -2601,7 +2601,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store2_slot, Arc::clone(&store2));
+    db.storage.insert(Arc::clone(&store2));
     store2
         .alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
@@ -2616,7 +2616,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store3_slot, Arc::clone(&store3));
+    db.storage.insert(Arc::clone(&store3));
     store3
         .alive_bytes
         .store(store_file_size as usize, Ordering::Release);
@@ -2655,7 +2655,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store1_slot, Arc::clone(&store1));
+    db.storage.insert(Arc::clone(&store1));
     store1.alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
@@ -2668,7 +2668,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store2_slot, Arc::clone(&store2));
+    db.storage.insert(Arc::clone(&store2));
     store2
         .alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
@@ -2683,7 +2683,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store3_slot, Arc::clone(&store3));
+    db.storage.insert(Arc::clone(&store3));
     store3
         .alive_bytes
         .store(store_file_size as usize, Ordering::Release);
@@ -2719,7 +2719,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store1_slot, Arc::clone(&store1));
+    db.storage.insert(Arc::clone(&store1));
     store1
         .alive_bytes
         .store(store_file_size as usize / 4, Ordering::Release);
@@ -2734,7 +2734,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store2_slot, Arc::clone(&store2));
+    db.storage.insert(Arc::clone(&store2));
     store2
         .alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
@@ -6305,7 +6305,7 @@ fn test_handle_dropped_roots_for_ancient() {
 }
 
 fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
-    db.storage.insert(append_vec.slot(), append_vec);
+    db.storage.insert(append_vec);
 }
 
 #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]

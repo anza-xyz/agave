@@ -44,38 +44,58 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
     ) -> Result<Self> {
-        let message_hash = match message_hash {
-            MessageHash::Precomputed(hash) => hash,
-            MessageHash::Compute => VersionedMessage::hash_raw_message(transaction.message_data()),
-        };
-        let is_simple_vote_tx =
-            is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(&transaction));
-
-        let InstructionMeta {
-            precompile_signature_details,
-            instruction_data_len,
-        } = InstructionMeta::try_new(transaction.program_instructions_iter())?;
-
-        let signature_details = TransactionSignatureDetails::new(
-            u64::from(transaction.num_required_signatures()),
-            precompile_signature_details.num_secp256k1_instruction_signatures,
-            precompile_signature_details.num_ed25519_instruction_signatures,
-            precompile_signature_details.num_secp256r1_instruction_signatures,
-        );
-        let compute_budget_instruction_details =
-            ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
-
-        Ok(Self {
-            transaction,
-            meta: TransactionMeta {
-                message_hash,
-                is_simple_vote_transaction: is_simple_vote_tx,
-                signature_details,
-                compute_budget_instruction_details,
-                instruction_data_len,
-            },
-        })
+        from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx)
+            .map(|meta| RuntimeTransaction { transaction, meta })
     }
+}
+
+impl<'a, D: TransactionData> RuntimeTransaction<&'a SanitizedTransactionView<D>> {
+    pub fn try_new(
+        transaction: &'a SanitizedTransactionView<D>,
+        message_hash: MessageHash,
+        is_simple_vote_tx: Option<bool>,
+    ) -> Result<Self> {
+        from_sanitized_transaction_view(transaction, message_hash, is_simple_vote_tx)
+            .map(|meta| RuntimeTransaction { transaction, meta })
+    }
+}
+
+fn from_sanitized_transaction_view<D>(
+    transaction: &SanitizedTransactionView<D>,
+    message_hash: MessageHash,
+    is_simple_vote_tx: Option<bool>,
+) -> Result<TransactionMeta>
+where
+    D: TransactionData,
+{
+    let message_hash = match message_hash {
+        MessageHash::Precomputed(hash) => hash,
+        MessageHash::Compute => VersionedMessage::hash_raw_message(transaction.message_data()),
+    };
+    let is_simple_vote_tx =
+        is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(transaction));
+
+    let InstructionMeta {
+        precompile_signature_details,
+        instruction_data_len,
+    } = InstructionMeta::try_new(transaction.program_instructions_iter())?;
+
+    let signature_details = TransactionSignatureDetails::new(
+        u64::from(transaction.num_required_signatures()),
+        precompile_signature_details.num_secp256k1_instruction_signatures,
+        precompile_signature_details.num_ed25519_instruction_signatures,
+        precompile_signature_details.num_secp256r1_instruction_signatures,
+    );
+    let compute_budget_instruction_details =
+        ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
+
+    Ok(TransactionMeta {
+        message_hash,
+        is_simple_vote_transaction: is_simple_vote_tx,
+        signature_details,
+        compute_budget_instruction_details,
+        instruction_data_len,
+    })
 }
 
 impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {

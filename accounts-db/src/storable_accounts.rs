@@ -367,7 +367,7 @@ pub mod tests {
             accounts_file::AccountsFileProvider,
         },
         rand::Rng,
-        solana_account::{accounts_equal, AccountSharedData, WritableAccount},
+        solana_account::{accounts_equal, AccountSharedData},
         std::sync::Arc,
     };
 
@@ -547,9 +547,9 @@ pub mod tests {
                     let mut raw4 = Vec::new();
                     for entry in 0..entries {
                         let pk = Pubkey::from([entry; 32]);
-                        let account = AccountSharedData::create(
+                        let account = AccountSharedData::create_from_existing_shared_data(
                             (entry as u64) * starting_slot,
-                            Vec::default(),
+                            Arc::new(Vec::default()),
                             Pubkey::default(),
                             false,
                             0,
@@ -667,7 +667,7 @@ pub mod tests {
             db.storage_access(),
         );
         let storage = Arc::new(data);
-        db.storage.insert(slot, storage.clone());
+        db.storage.insert(storage.clone());
         storage
     }
 
@@ -678,9 +678,9 @@ pub mod tests {
             let mut raw2 = Vec::new();
             for entry in 0..entries {
                 let pk = Pubkey::from([entry; 32]);
-                let account = AccountSharedData::create(
+                let account = AccountSharedData::create_from_existing_shared_data(
                     entry as u64,
-                    Vec::default(),
+                    Arc::new(Vec::default()),
                     Pubkey::default(),
                     false,
                     0,

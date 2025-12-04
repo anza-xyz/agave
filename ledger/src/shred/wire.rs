@@ -543,7 +543,7 @@ mod tests {
             let shred_common_header = shred.common_header();
             assert_eq!(
                 get_common_header_bytes(bytes).unwrap(),
-                bincode::serialize(shred_common_header).unwrap(),
+                wincode::serialize(shred_common_header).unwrap(),
             );
             assert_eq!(get_signature(bytes).unwrap(), shred_common_header.signature,);
             assert_eq!(
@@ -645,7 +645,6 @@ mod tests {
                 assert_eq!(get_data_size(bytes).unwrap(), shred_data_header.size);
                 assert_eq!(get_data(bytes).unwrap(), shred.data().unwrap());
                 assert_eq!(get_reference_tick(bytes).unwrap(), {
-                    let shred = shred::shred_data::ShredData::Merkle(shred.clone());
                     shred.reference_tick()
                 });
             }

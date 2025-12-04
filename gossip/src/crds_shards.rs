@@ -37,12 +37,11 @@ impl CrdsShards {
     /// Returns indices of all crds values which the first 'mask_bits' of their
     /// hash value is equal to 'mask'.
     pub fn find(&self, mask: u64, mask_bits: u32) -> impl Iterator<Item = usize> + '_ {
-        let ones = (!0u64).checked_shr(mask_bits).unwrap_or(0);
-        let mask = mask | ones;
+        let mask = CrdsFilter::canonical_mask(mask, mask_bits);
         match self.shard_bits.cmp(&mask_bits) {
             Ordering::Less => {
-                let pred = move |(&index, hash)| {
-                    if hash | ones == mask {
+                let pred = move |(&index, &hash): (&usize, &u64)| {
+                    if CrdsFilter::hash_matches_mask_prefix(mask, mask_bits, hash) {
                         Some(index)
                     } else {
                         None

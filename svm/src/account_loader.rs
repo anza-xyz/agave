@@ -36,7 +36,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{transaction_accounts::KeyedAccountSharedData, IndexOfAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::num::{NonZeroU32, Saturating},
+    std::num::NonZeroU32,
 };
 
 // Per SIMD-0186, all accounts are assigned a base size of 64 bytes to cover
@@ -161,6 +161,7 @@ pub struct FeesOnlyTransaction {
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     loaded_accounts: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
+    #[allow(unused)]
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
 
@@ -200,12 +201,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         account_key: &Pubkey,
         is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
-        let base_account_size = if self.feature_set.formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         let account = self.load_account(account_key);
 
         // Inspect prior to collecting rent, since rent collection can modify
@@ -226,7 +221,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         );
 
         account.map(|account| LoadedTransactionAccount {
-            loaded_size: base_account_size.saturating_add(account.data().len()),
+            loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE.saturating_add(account.data().len()),
             account,
         })
     }
@@ -308,8 +303,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 // Program loaders and parsers require a type that impls TransactionProcessingCallback,
 // because they are used in both SVM and by Bank. We impl it, with the consequence
 // that if we fall back to accounts-db, we cannot store the state for future loads.
-// In general, most accounts we load this way should already be in our accounts store.
-// Once SIMD-0186 is implemented, 100% of accounts will be.
+// In practice, all accounts we load this way will already be in our accounts store.
 impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         // The returned last-modification-slot is a dummy value for now,
@@ -477,38 +471,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     error_metrics: &mut TransactionErrorMetrics,
     rent: &Rent,
 ) -> Result<LoadedTransactionAccounts> {
-    if account_loader
-        .feature_set
-        .formalize_loaded_transaction_data_size
-    {
-        load_transaction_accounts_simd186(
-            account_loader,
-            message,
-            loaded_fee_payer_account,
-            loaded_accounts_bytes_limit,
-            error_metrics,
-            rent,
-        )
-    } else {
-        load_transaction_accounts_old(
-            account_loader,
-            message,
-            loaded_fee_payer_account,
-            loaded_accounts_bytes_limit,
-            error_metrics,
-            rent,
-        )
-    }
-}
-
-fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
-    message: &impl SVMMessage,
-    loaded_fee_payer_account: LoadedTransactionAccount,
-    loaded_accounts_bytes_limit: NonZeroU32,
-    error_metrics: &mut TransactionErrorMetrics,
-    rent: &Rent,
-) -> Result<LoadedTransactionAccounts> {
     let account_keys = message.account_keys();
     let mut additional_loaded_accounts: AHashSet<Pubkey> = AHashSet::new();
 
@@ -617,97 +579,6 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
     Ok(loaded_transaction_accounts)
 }
 
-fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
-    message: &impl SVMMessage,
-    loaded_fee_payer_account: LoadedTransactionAccount,
-    loaded_accounts_bytes_limit: NonZeroU32,
-    error_metrics: &mut TransactionErrorMetrics,
-    rent: &Rent,
-) -> Result<LoadedTransactionAccounts> {
-    let account_keys = message.account_keys();
-    let mut accounts = Vec::with_capacity(account_keys.len());
-    let mut validated_loaders = AHashSet::with_capacity(PROGRAM_OWNERS.len());
-    let mut accumulated_accounts_data_size: Saturating<u32> = Saturating(0);
-
-    let mut collect_loaded_account = |key: &Pubkey, loaded_account| -> Result<()> {
-        let LoadedTransactionAccount {
-            account,
-            loaded_size,
-        } = loaded_account;
-
-        accumulate_and_check_loaded_account_data_size(
-            &mut accumulated_accounts_data_size,
-            loaded_size,
-            loaded_accounts_bytes_limit,
-            error_metrics,
-        )?;
-
-        accounts.push((*key, account));
-        Ok(())
-    };
-
-    // Since the fee payer is always the first account, collect it first.
-    // We can use it directly because it was already loaded during validation.
-    collect_loaded_account(message.fee_payer(), loaded_fee_payer_account)?;
-
-    // Attempt to load and collect remaining non-fee payer accounts
-    for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
-        let loaded_account =
-            load_transaction_account(account_loader, message, account_key, account_index, rent);
-        collect_loaded_account(account_key, loaded_account)?;
-    }
-
-    let program_indices = message
-        .program_instructions_iter()
-        .map(|(program_id, instruction)| {
-            if native_loader::check_id(program_id) {
-                // Just as with an empty vector, trying to borrow the program account will fail
-                // with a u16::MAX
-                return Ok(u16::MAX as IndexOfAccount);
-            }
-
-            let program_index = instruction.program_id_index as usize;
-
-            let Some(program_account) = account_loader.load_account(program_id) else {
-                error_metrics.account_not_found += 1;
-                return Err(TransactionError::ProgramAccountNotFound);
-            };
-
-            let owner_id = program_account.owner();
-            if native_loader::check_id(owner_id) {
-                return Ok(program_index as IndexOfAccount);
-            }
-
-            if !validated_loaders.contains(owner_id) {
-                if let Some(owner_account) = account_loader.load_account(owner_id) {
-                    if !native_loader::check_id(owner_account.owner()) {
-                        error_metrics.invalid_program_for_execution += 1;
-                        return Err(TransactionError::InvalidProgramForExecution);
-                    }
-                    accumulate_and_check_loaded_account_data_size(
-                        &mut accumulated_accounts_data_size,
-                        owner_account.data().len(),
-                        loaded_accounts_bytes_limit,
-                        error_metrics,
-                    )?;
-                    validated_loaders.insert(*owner_id);
-                } else {
-                    error_metrics.account_not_found += 1;
-                    return Err(TransactionError::ProgramAccountNotFound);
-                }
-            }
-            Ok(program_index as IndexOfAccount)
-        })
-        .collect::<Result<Vec<IndexOfAccount>>>()?;
-
-    Ok(LoadedTransactionAccounts {
-        accounts,
-        program_indices,
-        loaded_accounts_data_size: accumulated_accounts_data_size.0,
-    })
-}
-
 fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
@@ -740,29 +611,6 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     };
 
     loaded_account
-}
-
-/// Accumulate loaded account data size into `accumulated_accounts_data_size`.
-/// Returns TransactionErr::MaxLoadedAccountsDataSizeExceeded if
-/// `accumulated_accounts_data_size` exceeds
-/// `requested_loaded_accounts_data_size_limit`.
-fn accumulate_and_check_loaded_account_data_size(
-    accumulated_loaded_accounts_data_size: &mut Saturating<u32>,
-    account_data_size: usize,
-    requested_loaded_accounts_data_size_limit: NonZeroU32,
-    error_metrics: &mut TransactionErrorMetrics,
-) -> Result<()> {
-    let Ok(account_data_size) = u32::try_from(account_data_size) else {
-        error_metrics.max_loaded_accounts_data_size_exceeded += 1;
-        return Err(TransactionError::MaxLoadedAccountsDataSizeExceeded);
-    };
-    *accumulated_loaded_accounts_data_size += account_data_size;
-    if accumulated_loaded_accounts_data_size.0 > requested_loaded_accounts_data_size_limit.get() {
-        error_metrics.max_loaded_accounts_data_size_exceeded += 1;
-        Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
-    } else {
-        Ok(())
-    }
 }
 
 fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
@@ -835,11 +683,8 @@ mod tests {
             borrow::Cow,
             cell::RefCell,
             collections::{HashMap, HashSet},
-            fs::File,
-            io::Read,
             sync::Arc,
         },
-        test_case::test_case,
     };
 
     #[derive(Clone)]
@@ -937,9 +782,8 @@ mod tests {
         SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_accounts_unknown_program_id(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_load_accounts_unknown_program_id() {
         let mut accounts: Vec<KeyedAccountSharedData> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -962,9 +806,7 @@ mod tests {
             instructions,
         );
 
-        let mut feature_set = SVMFeatureSet::all_enabled();
-        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
-
+        let feature_set = SVMFeatureSet::all_enabled();
         let load_results = load_accounts_with_features_and_rent(
             tx,
             &accounts,
@@ -983,9 +825,8 @@ mod tests {
         ));
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_accounts_no_loaders(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_load_accounts_no_loaders() {
         let mut accounts: Vec<KeyedAccountSharedData> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1010,9 +851,7 @@ mod tests {
             instructions,
         );
 
-        let mut feature_set = SVMFeatureSet::all_enabled();
-        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
-
+        let feature_set = SVMFeatureSet::all_enabled();
         let loaded_accounts = load_accounts_with_features_and_rent(
             tx,
             &accounts,
@@ -1022,18 +861,7 @@ mod tests {
         );
 
         match &loaded_accounts {
-            TransactionLoadResult::Loaded(loaded_transaction)
-                if !formalize_loaded_transaction_data_size =>
-            {
-                assert_eq!(error_metrics.account_not_found.0, 0);
-                assert_eq!(loaded_transaction.accounts.len(), 3);
-                assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
-                assert_eq!(loaded_transaction.program_indices.len(), 1);
-                assert_eq!(loaded_transaction.program_indices[0], u16::MAX);
-            }
-            TransactionLoadResult::FeesOnly(fees_only_tx)
-                if formalize_loaded_transaction_data_size =>
-            {
+            TransactionLoadResult::FeesOnly(fees_only_tx) => {
                 assert_eq!(error_metrics.account_not_found.0, 1);
                 assert_eq!(
                     fees_only_tx.load_error,
@@ -1044,9 +872,8 @@ mod tests {
         }
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_accounts_bad_owner(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_load_accounts_bad_owner() {
         let mut accounts: Vec<KeyedAccountSharedData> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1070,9 +897,7 @@ mod tests {
             instructions,
         );
 
-        let mut feature_set = SVMFeatureSet::all_enabled();
-        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
-
+        let feature_set = SVMFeatureSet::all_enabled();
         let load_results = load_accounts_with_features_and_rent(
             tx,
             &accounts,
@@ -1081,30 +906,18 @@ mod tests {
             feature_set,
         );
 
-        if formalize_loaded_transaction_data_size {
-            assert_eq!(error_metrics.invalid_program_for_execution.0, 1);
-            assert!(matches!(
-                load_results,
-                TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                    load_error: TransactionError::InvalidProgramForExecution,
-                    ..
-                }),
-            ));
-        } else {
-            assert_eq!(error_metrics.account_not_found.0, 1);
-            assert!(matches!(
-                load_results,
-                TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                    load_error: TransactionError::ProgramAccountNotFound,
-                    ..
-                }),
-            ));
-        }
+        assert_eq!(error_metrics.invalid_program_for_execution.0, 1);
+        assert!(matches!(
+            load_results,
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::InvalidProgramForExecution,
+                ..
+            }),
+        ));
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_accounts_not_executable(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_load_accounts_not_executable() {
         let mut accounts: Vec<KeyedAccountSharedData> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1127,9 +940,7 @@ mod tests {
             instructions,
         );
 
-        let mut feature_set = SVMFeatureSet::all_enabled();
-        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
-
+        let feature_set = SVMFeatureSet::all_enabled();
         let load_results = load_accounts_with_features_and_rent(
             tx,
             &accounts,
@@ -1152,9 +963,8 @@ mod tests {
         }
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_accounts_multiple_loaders(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_load_accounts_multiple_loaders() {
         let mut accounts: Vec<KeyedAccountSharedData> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1191,9 +1001,7 @@ mod tests {
             instructions,
         );
 
-        let mut feature_set = SVMFeatureSet::all_enabled();
-        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
-
+        let feature_set = SVMFeatureSet::all_enabled();
         let loaded_accounts = load_accounts_with_features_and_rent(
             tx,
             &accounts,
@@ -1317,27 +1125,27 @@ mod tests {
     }
 
     #[test]
-    fn test_accumulate_and_check_loaded_account_data_size() {
+    fn test_increase_calculated_data_size() {
         let mut error_metrics = TransactionErrorMetrics::default();
-        let mut accumulated_data_size: Saturating<u32> = Saturating(0);
+        let mut acc = LoadedTransactionAccounts {
+            accounts: vec![],
+            program_indices: vec![],
+            loaded_accounts_data_size: 0,
+        };
+
         let data_size: usize = 123;
         let requested_data_size_limit = NonZeroU32::new(data_size as u32).unwrap();
 
         // OK - loaded data size is up to limit
-        assert!(accumulate_and_check_loaded_account_data_size(
-            &mut accumulated_data_size,
-            data_size,
-            requested_data_size_limit,
-            &mut error_metrics
-        )
-        .is_ok());
-        assert_eq!(data_size as u32, accumulated_data_size.0);
+        assert!(acc
+            .increase_calculated_data_size(data_size, requested_data_size_limit, &mut error_metrics)
+            .is_ok());
+        assert_eq!(data_size as u32, acc.loaded_accounts_data_size);
 
         // fail - loading more data that would exceed limit
         let another_byte: usize = 1;
         assert_eq!(
-            accumulate_and_check_loaded_account_data_size(
-                &mut accumulated_data_size,
+            acc.increase_calculated_data_size(
                 another_byte,
                 requested_data_size_limit,
                 &mut error_metrics
@@ -1542,9 +1350,8 @@ mod tests {
         );
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_transaction_accounts_native_loader(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_load_transaction_accounts_native_loader() {
         let key1 = Keypair::new();
         let message = Message {
             account_keys: vec![key1.pubkey(), native_loader::id()],
@@ -1559,8 +1366,6 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
-        mock_bank.feature_set.formalize_loaded_transaction_data_size =
-            formalize_loaded_transaction_data_size;
         mock_bank
             .accounts_map
             .insert(native_loader::id(), AccountSharedData::default());
@@ -1579,46 +1384,22 @@ mod tests {
             false,
         );
 
-        let base_account_size = if formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
-                loaded_size: base_account_size,
+                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &Rent::default(),
         );
 
-        if formalize_loaded_transaction_data_size {
-            assert_eq!(
-                result.unwrap_err(),
-                TransactionError::ProgramAccountNotFound,
-            );
-        } else {
-            let loaded_accounts_data_size = base_account_size as u32 * 2;
-            assert_eq!(
-                result.unwrap(),
-                LoadedTransactionAccounts {
-                    accounts: vec![
-                        (key1.pubkey(), fee_payer_account),
-                        (
-                            native_loader::id(),
-                            mock_bank.accounts_map[&native_loader::id()].clone()
-                        )
-                    ],
-                    program_indices: vec![u16::MAX],
-                    loaded_accounts_data_size,
-                }
-            );
-        }
+        assert_eq!(
+            result.unwrap_err(),
+            TransactionError::ProgramAccountNotFound
+        );
     }
 
     #[test]
@@ -1708,11 +1489,8 @@ mod tests {
         );
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_transaction_accounts_native_loader_owner(
-        formalize_loaded_transaction_data_size: bool,
-    ) {
+    #[test]
+    fn test_load_transaction_accounts_native_loader_owner() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -1729,8 +1507,6 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
-        mock_bank.feature_set.formalize_loaded_transaction_data_size =
-            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(native_loader::id());
         account_data.set_lamports(1);
@@ -1752,25 +1528,19 @@ mod tests {
             false,
         );
 
-        let base_account_size = if formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
-                loaded_size: base_account_size,
+                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &Rent::default(),
         );
 
-        let loaded_accounts_data_size = base_account_size as u32 * 2;
+        let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
         assert_eq!(
             result.unwrap(),
@@ -1889,11 +1659,8 @@ mod tests {
         );
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_transaction_accounts_program_success_complete(
-        formalize_loaded_transaction_data_size: bool,
-    ) {
+    #[test]
+    fn test_load_transaction_accounts_program_success_complete() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -1910,8 +1677,6 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
-        mock_bank.feature_set.formalize_loaded_transaction_data_size =
-            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
         account_data.set_executable(true);
@@ -1941,25 +1706,19 @@ mod tests {
             false,
         );
 
-        let base_account_size = if formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
-                loaded_size: base_account_size,
+                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &Rent::default(),
         );
 
-        let loaded_accounts_data_size = base_account_size as u32 * 2;
+        let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
         assert_eq!(
             result.unwrap(),
@@ -1977,11 +1736,8 @@ mod tests {
         );
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_transaction_accounts_program_builtin_saturating_add(
-        formalize_loaded_transaction_data_size: bool,
-    ) {
+    #[test]
+    fn test_load_transaction_accounts_program_builtin_saturating_add() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -2006,8 +1762,6 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
-        mock_bank.feature_set.formalize_loaded_transaction_data_size =
-            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
         account_data.set_executable(true);
@@ -2037,25 +1791,19 @@ mod tests {
             false,
         );
 
-        let base_account_size = if formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
-                loaded_size: base_account_size,
+                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &Rent::default(),
         );
 
-        let loaded_accounts_data_size = base_account_size as u32 * 2;
+        let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
         let mut account_data = AccountSharedData::default();
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
@@ -2132,9 +1880,8 @@ mod tests {
         );
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_load_accounts_success(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_load_accounts_success() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -2159,8 +1906,6 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
-        mock_bank.feature_set.formalize_loaded_transaction_data_size =
-            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
         account_data.set_executable(true);
@@ -2190,16 +1935,10 @@ mod tests {
             false,
         );
 
-        let base_account_size = if formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         let validation_result = Ok(ValidatedTransactionDetails {
             loaded_fee_payer_account: LoadedTransactionAccount {
                 account: fee_payer_account,
-                loaded_size: base_account_size,
+                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
             },
             ..ValidatedTransactionDetails::default()
         });
@@ -2212,7 +1951,7 @@ mod tests {
             &Rent::default(),
         );
 
-        let loaded_accounts_data_size = base_account_size as u32 * 2;
+        let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
         let mut account_data = AccountSharedData::default();
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
@@ -2420,273 +2159,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_transaction_accounts_data_sizes() {
-        let mut mock_bank = TestCallbacks::default();
-        mock_bank.feature_set.formalize_loaded_transaction_data_size = false;
-
-        let loader_v2 = bpf_loader::id();
-        let loader_v3 = bpf_loader_upgradeable::id();
-        let program1_keypair = Keypair::new();
-        let program1 = program1_keypair.pubkey();
-        let program2 = Pubkey::new_unique();
-        let programdata2 = Pubkey::new_unique();
-        use solana_account::state_traits::StateMut;
-
-        let program2_size = std::mem::size_of::<UpgradeableLoaderState>() as u32;
-        let mut program2_account = AccountSharedData::default();
-        program2_account.set_owner(loader_v3);
-        program2_account.set_lamports(LAMPORTS_PER_SOL);
-        program2_account.set_executable(true);
-        program2_account.set_data(vec![0; program2_size as usize]);
-        program2_account
-            .set_state(&UpgradeableLoaderState::Program {
-                programdata_address: programdata2,
-            })
-            .unwrap();
-        mock_bank.accounts_map.insert(program2, program2_account);
-        let mut programdata2_account = AccountSharedData::default();
-        programdata2_account.set_owner(loader_v3);
-        programdata2_account.set_lamports(LAMPORTS_PER_SOL);
-        programdata2_account.set_data(vec![0; program2_size as usize]);
-        programdata2_account
-            .set_state(&UpgradeableLoaderState::ProgramData {
-                slot: 0,
-                upgrade_authority_address: None,
-            })
-            .unwrap();
-        let mut programdata = programdata2_account.data().to_vec();
-        let mut file =
-            File::open("tests/example-programs/hello-solana/hello_solana_program.so").unwrap();
-        file.read_to_end(&mut programdata).unwrap();
-        let programdata2_size = programdata.len() as u32;
-        programdata2_account.set_data(programdata);
-        mock_bank
-            .accounts_map
-            .insert(programdata2, programdata2_account);
-
-        let mut next_size = 1;
-        let mut make_account = |pubkey, owner, executable| {
-            let size = next_size;
-            let account = AccountSharedData::create(
-                LAMPORTS_PER_SOL,
-                vec![0; size],
-                owner,
-                executable,
-                u64::MAX,
-            );
-
-            mock_bank.accounts_map.insert(pubkey, account.clone());
-
-            // accounts are counted at most twice
-            // by multiplying account size by 4, we ensure all totals are unique
-            next_size *= 4;
-
-            (size as u32, account)
-        };
-
-        let fee_payer_keypair = Keypair::new();
-        let fee_payer = fee_payer_keypair.pubkey();
-        let (fee_payer_size, fee_payer_account) =
-            make_account(fee_payer, system_program::id(), false);
-
-        let account1 = Pubkey::new_unique();
-        let (account1_size, _) = make_account(account1, program1, false);
-
-        let account2 = Pubkey::new_unique();
-        let (account2_size, _) = make_account(account2, program2, false);
-
-        let (native_loader_size, _) = make_account(native_loader::id(), native_loader::id(), true);
-        let (bpf_loader_size, _) = make_account(loader_v2, native_loader::id(), true);
-        let (upgradeable_loader_size, _) = make_account(loader_v3, native_loader::id(), true);
-
-        let (program1_size, _) = make_account(program1, loader_v2, true);
-
-        let mut program_accounts = HashMap::new();
-        program_accounts.insert(program1, (&loader_v2, 0));
-        program_accounts.insert(program2, (&loader_v3, 0));
-        let test_transaction_data_size = |transaction, expected_size| {
-            let mut account_loader = AccountLoader::new_with_loaded_accounts_capacity(
-                None,
-                &mock_bank,
-                &mock_bank.feature_set,
-                0,
-            );
-
-            let loaded_transaction_accounts = load_transaction_accounts(
-                &mut account_loader,
-                &transaction,
-                LoadedTransactionAccount {
-                    account: fee_payer_account.clone(),
-                    loaded_size: fee_payer_size as usize,
-                },
-                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
-                &mut TransactionErrorMetrics::default(),
-                &Rent::default(),
-            )
-            .unwrap();
-
-            assert_eq!(
-                loaded_transaction_accounts.loaded_accounts_data_size,
-                expected_size
-            );
-        };
-
-        let test_data_size = |instructions: Vec<_>, expected_size| {
-            let transaction = SanitizedTransaction::from_transaction_for_tests(
-                Transaction::new_signed_with_payer(
-                    &instructions,
-                    Some(&fee_payer),
-                    &[&fee_payer_keypair],
-                    Hash::default(),
-                ),
-            );
-
-            test_transaction_data_size(transaction, expected_size)
-        };
-
-        for account_meta in [AccountMeta::new, AccountMeta::new_readonly] {
-            // one program plus loader
-            let ixns = vec![Instruction::new_with_bytes(program1, &[], vec![])];
-            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
-
-            // two programs, two loaders, two accounts
-            let ixns = vec![
-                Instruction::new_with_bytes(program1, &[], vec![account_meta(account1, false)]),
-                Instruction::new_with_bytes(program2, &[], vec![account_meta(account2, false)]),
-            ];
-            test_data_size(
-                ixns,
-                account1_size
-                    + account2_size
-                    + program1_size
-                    + program2_size
-                    + bpf_loader_size
-                    + upgradeable_loader_size
-                    + fee_payer_size,
-            );
-
-            // program and loader counted once
-            let ixns = vec![
-                Instruction::new_with_bytes(program2, &[], vec![]),
-                Instruction::new_with_bytes(program2, &[], vec![]),
-            ];
-            test_data_size(
-                ixns,
-                program2_size + upgradeable_loader_size + fee_payer_size,
-            );
-
-            // native loader not counted if loader
-            let ixns = vec![Instruction::new_with_bytes(bpf_loader::id(), &[], vec![])];
-            test_data_size(ixns, bpf_loader_size + fee_payer_size);
-
-            // native loader counted if instruction
-            let ixns = vec![Instruction::new_with_bytes(
-                bpf_loader::id(),
-                &[],
-                vec![account_meta(native_loader::id(), false)],
-            )];
-            test_data_size(ixns, bpf_loader_size + native_loader_size + fee_payer_size);
-
-            // native loader counted if invoked
-            let ixns = vec![Instruction::new_with_bytes(
-                native_loader::id(),
-                &[],
-                vec![],
-            )];
-            test_data_size(ixns, native_loader_size + fee_payer_size);
-
-            // native loader counted once if invoked and instruction
-            let ixns = vec![Instruction::new_with_bytes(
-                native_loader::id(),
-                &[],
-                vec![account_meta(native_loader::id(), false)],
-            )];
-            test_data_size(ixns, native_loader_size + fee_payer_size);
-
-            // loader counted twice if included in instruction
-            let ixns = vec![Instruction::new_with_bytes(
-                program2,
-                &[],
-                vec![account_meta(bpf_loader_upgradeable::id(), false)],
-            )];
-            test_data_size(
-                ixns,
-                upgradeable_loader_size * 2 + program2_size + fee_payer_size,
-            );
-
-            // loader counted twice even if included first
-            let ixns = vec![
-                Instruction::new_with_bytes(bpf_loader_upgradeable::id(), &[], vec![]),
-                Instruction::new_with_bytes(program2, &[], vec![]),
-            ];
-            test_data_size(
-                ixns,
-                upgradeable_loader_size * 2 + program2_size + fee_payer_size,
-            );
-
-            // cover that case with multiple loaders to be sure
-            let ixns = vec![
-                Instruction::new_with_bytes(
-                    program1,
-                    &[],
-                    vec![
-                        account_meta(bpf_loader::id(), false),
-                        account_meta(bpf_loader_upgradeable::id(), false),
-                    ],
-                ),
-                Instruction::new_with_bytes(program2, &[], vec![account_meta(account1, false)]),
-                Instruction::new_with_bytes(
-                    bpf_loader_upgradeable::id(),
-                    &[],
-                    vec![account_meta(account1, false)],
-                ),
-            ];
-            test_data_size(
-                ixns,
-                account1_size
-                    + program1_size
-                    + program2_size
-                    + bpf_loader_size * 2
-                    + upgradeable_loader_size * 2
-                    + fee_payer_size,
-            );
-
-            // fee-payer counted once
-            let ixns = vec![Instruction::new_with_bytes(
-                program1,
-                &[],
-                vec![account_meta(fee_payer, false)],
-            )];
-            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
-
-            // programdata as instruction account counts it once
-            let ixns = vec![Instruction::new_with_bytes(
-                program2,
-                &[],
-                vec![account_meta(programdata2, false)],
-            )];
-            test_data_size(
-                ixns,
-                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
-            );
-
-            // program and programdata as instruction accounts behaves the same
-            let ixns = vec![Instruction::new_with_bytes(
-                program2,
-                &[],
-                vec![
-                    account_meta(program2, false),
-                    account_meta(programdata2, false),
-                ],
-            )];
-            test_data_size(
-                ixns,
-                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
-            );
-        }
-    }
-
-    #[test]
     fn test_account_loader_wrappers() {
         let fee_payer = Pubkey::new_unique();
         let mut fee_payer_account = AccountSharedData::default();
@@ -2783,15 +2255,15 @@ mod tests {
     // note all magic numbers (how many accounts, how many instructions, how big to size buffers) are arbitrary
     // other than trying not to swamp programs with blank accounts and keep transaction size below the 64mb limit
     #[test]
-    fn test_load_transaction_accounts_data_sizes_simd186() {
+    fn test_load_transaction_accounts_data_sizes() {
         let mut rng = rand0_7::thread_rng();
         let mut mock_bank = TestCallbacks::default();
 
         // arbitrary accounts
         for _ in 0..128 {
-            let account = AccountSharedData::create(
+            let account = AccountSharedData::create_from_existing_shared_data(
                 1,
-                vec![0; rng.gen_range(0, 128)],
+                Arc::new(vec![0; rng.gen_range(0, 128)]),
                 Pubkey::new_unique(),
                 rng.gen(),
                 u64::MAX,
@@ -2803,9 +2275,9 @@ mod tests {
         let mut fee_payers = vec![];
         for _ in 0..8 {
             let fee_payer = Pubkey::new_unique();
-            let account = AccountSharedData::create(
+            let account = AccountSharedData::create_from_existing_shared_data(
                 LAMPORTS_PER_SOL,
-                vec![0; rng.gen_range(0, 32)],
+                Arc::new(vec![0; rng.gen_range(0, 32)]),
                 system_program::id(),
                 rng.gen(),
                 u64::MAX,
@@ -2820,9 +2292,9 @@ mod tests {
         for loader in PROGRAM_OWNERS {
             for _ in 0..16 {
                 let program_id = Pubkey::new_unique();
-                let mut account = AccountSharedData::create(
+                let mut account = AccountSharedData::create_from_existing_shared_data(
                     1,
-                    vec![0; rng.gen_range(0, 512)],
+                    Arc::new(vec![0; rng.gen_range(0, 512)]),
                     *loader,
                     rng.gen(),
                     u64::MAX,
@@ -2838,13 +2310,14 @@ mod tests {
                     let has_programdata = rng.gen();
 
                     if has_programdata {
-                        let programdata_account = AccountSharedData::create(
-                            1,
-                            vec![0; rng.gen_range(0, 512)],
-                            *loader,
-                            rng.gen(),
-                            u64::MAX,
-                        );
+                        let programdata_account =
+                            AccountSharedData::create_from_existing_shared_data(
+                                1,
+                                Arc::new(vec![0; rng.gen_range(0, 512)]),
+                                *loader,
+                                rng.gen(),
+                                u64::MAX,
+                            );
                         programdata_tracker.insert(
                             program_id,
                             (programdata_address, programdata_account.data().len()),

@@ -12,7 +12,7 @@
 use std::marker::PhantomData;
 
 #[repr(C)]
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VmSlice<T> {
     ptr: u64,
     len: u64,
@@ -38,6 +38,11 @@ impl<T> VmSlice<T> {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    pub fn end(&self) -> u64 {
+        self.ptr()
+            .saturating_add(self.len().saturating_mul(size_of::<T>() as u64))
     }
 
     /// # Safety

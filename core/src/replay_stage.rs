@@ -287,7 +287,7 @@ pub struct ReplayStageConfig {
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub log_messages_bytes_limit: Option<usize>,
-    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
 }
@@ -801,7 +801,7 @@ impl ReplayStage {
                     log_messages_bytes_limit,
                     &replay_mode,
                     &replay_tx_thread_pool,
-                    &prioritization_fee_cache,
+                    prioritization_fee_cache.as_deref(),
                     &mut purge_repair_slot_counter,
                     &poh_recorder,
                     first_alpenglow_slot,
@@ -2299,7 +2299,7 @@ impl ReplayStage {
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
@@ -2950,7 +2950,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         active_bank_slots: &[Slot],
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         // Make mutable shared structures thread safe.
         let progress = RwLock::new(progress);
@@ -3018,7 +3018,7 @@ impl ReplayStage {
                     let replay_progress = bank_progress.replay_progress.clone();
                     drop(progress_lock);
 
-                    if bank.collector_id() != my_pubkey {
+                    if bank.leader_id() != my_pubkey {
                         let mut replay_blockstore_time =
                             Measure::start("replay_blockstore_into_bank");
                         let blockstore_result = Self::replay_blockstore_into_bank(
@@ -3063,7 +3063,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         bank_slot: Slot,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> ReplaySlotFromBlockstore {
         let mut replay_result = ReplaySlotFromBlockstore {
             is_slot_dead: false,
@@ -3106,7 +3106,7 @@ impl ReplayStage {
                 )
             });
 
-            if bank.collector_id() != my_pubkey {
+            if bank.leader_id() != my_pubkey {
                 let mut replay_blockstore_time = Measure::start("replay_blockstore_into_bank");
                 let blockstore_result = Self::replay_blockstore_into_bank(
                     &bank,
@@ -3263,7 +3263,7 @@ impl ReplayStage {
                     }
                 }
 
-                let is_leader_block = bank.collector_id() == my_pubkey;
+                let is_leader_block = bank.leader_id() == my_pubkey;
                 let block_id = if !is_leader_block {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
                     // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
@@ -3485,7 +3485,7 @@ impl ReplayStage {
         log_messages_bytes_limit: Option<usize>,
         replay_mode: &ForkReplayMode,
         replay_tx_thread_pool: &ThreadPool,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         poh_recorder: &RwLock<PohRecorder>,
         first_alpenglow_slot: Option<Slot>,
@@ -4626,10 +4626,8 @@ pub(crate) mod tests {
             1,
             ForkProgress::new_from_bank(
                 &bank1,
-                bank1.collector_id(),
-                validator_node_to_vote_keys
-                    .get(bank1.collector_id())
-                    .unwrap(),
+                bank1.leader_id(),
+                validator_node_to_vote_keys.get(bank1.leader_id()).unwrap(),
                 Some(0),
                 0,
                 0,
@@ -5184,7 +5182,7 @@ pub(crate) mod tests {
                 None,
                 &replay_vote_sender,
                 None,
-                &PrioritizationFeeCache::new(0u64),
+                None,
             );
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
             let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -6606,10 +6604,8 @@ pub(crate) mod tests {
                 3,
                 ForkProgress::new_from_bank(
                     &bank3,
-                    bank3.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank3.collector_id())
-                        .unwrap(),
+                    bank3.leader_id(),
+                    validator_node_to_vote_keys.get(bank3.leader_id()).unwrap(),
                     Some(1),
                     0,
                     0,
@@ -6636,10 +6632,8 @@ pub(crate) mod tests {
                 5,
                 ForkProgress::new_from_bank(
                     &bank5,
-                    bank5.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank5.collector_id())
-                        .unwrap(),
+                    bank5.leader_id(),
+                    validator_node_to_vote_keys.get(bank5.leader_id()).unwrap(),
                     Some(3),
                     0,
                     0,
@@ -6667,10 +6661,8 @@ pub(crate) mod tests {
                 6,
                 ForkProgress::new_from_bank(
                     &bank6,
-                    bank6.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank6.collector_id())
-                        .unwrap(),
+                    bank6.leader_id(),
+                    validator_node_to_vote_keys.get(bank6.leader_id()).unwrap(),
                     Some(5),
                     0,
                     0,
@@ -7729,14 +7721,7 @@ pub(crate) mod tests {
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         progress.insert(
             bank0.slot(),
-            ForkProgress::new_from_bank(
-                &bank0,
-                bank0.collector_id(),
-                &Pubkey::default(),
-                None,
-                0,
-                0,
-            ),
+            ForkProgress::new_from_bank(&bank0, bank0.leader_id(), &Pubkey::default(), None, 0, 0),
         );
 
         let (voting_sender, voting_receiver) = unbounded();
@@ -7751,14 +7736,7 @@ pub(crate) mod tests {
         bank1.fill_bank_with_ticks_for_tests();
         progress.insert(
             bank1.slot(),
-            ForkProgress::new_from_bank(
-                &bank1,
-                bank1.collector_id(),
-                &Pubkey::default(),
-                None,
-                0,
-                0,
-            ),
+            ForkProgress::new_from_bank(&bank1, bank1.leader_id(), &Pubkey::default(), None, 0, 0),
         );
         tower.record_bank_vote(&bank0);
         ReplayStage::push_vote(
@@ -7823,14 +7801,7 @@ pub(crate) mod tests {
         bank2.freeze();
         progress.insert(
             bank2.slot(),
-            ForkProgress::new_from_bank(
-                &bank2,
-                bank2.collector_id(),
-                &Pubkey::default(),
-                None,
-                0,
-                0,
-            ),
+            ForkProgress::new_from_bank(&bank2, bank2.leader_id(), &Pubkey::default(), None, 0, 0),
         );
         for refresh_bank in &[bank1.clone(), bank2.clone()] {
             progress
@@ -7970,7 +7941,7 @@ pub(crate) mod tests {
             expired_bank.slot(),
             ForkProgress::new_from_bank(
                 &expired_bank,
-                expired_bank.collector_id(),
+                expired_bank.leader_id(),
                 &Pubkey::default(),
                 None,
                 0,
@@ -8441,10 +8412,8 @@ pub(crate) mod tests {
             1,
             ForkProgress::new_from_bank(
                 &bank1,
-                bank1.collector_id(),
-                validator_node_to_vote_keys
-                    .get(bank1.collector_id())
-                    .unwrap(),
+                bank1.leader_id(),
+                validator_node_to_vote_keys.get(bank1.leader_id()).unwrap(),
                 Some(0),
                 0,
                 0,
@@ -8622,10 +8591,8 @@ pub(crate) mod tests {
                 i,
                 ForkProgress::new_from_bank(
                     &bank,
-                    bank.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank.collector_id())
-                        .unwrap(),
+                    bank.leader_id(),
+                    validator_node_to_vote_keys.get(bank.leader_id()).unwrap(),
                     Some(0),
                     0,
                     0,
@@ -8711,9 +8678,9 @@ pub(crate) mod tests {
             slot_to_dump,
             ForkProgress::new_from_bank(
                 &bank_to_dump,
-                bank_to_dump.collector_id(),
+                bank_to_dump.leader_id(),
                 validator_node_to_vote_keys
-                    .get(bank_to_dump.collector_id())
+                    .get(bank_to_dump.leader_id())
                     .unwrap(),
                 Some(0),
                 0,
@@ -9901,7 +9868,7 @@ pub(crate) mod tests {
             poh_slot,
             ForkProgress::new_from_bank(
                 &poh_bank,
-                poh_bank.collector_id(),
+                poh_bank.leader_id(),
                 &Pubkey::new_unique(),
                 Some(0),
                 0,
@@ -9948,7 +9915,7 @@ pub(crate) mod tests {
             first_alpenglow_slot,
             ForkProgress::new_from_bank(
                 &ag_bank,
-                ag_bank.collector_id(),
+                ag_bank.leader_id(),
                 &Pubkey::new_unique(),
                 Some(0),
                 0,

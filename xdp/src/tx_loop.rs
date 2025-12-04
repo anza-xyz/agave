@@ -8,7 +8,7 @@ use {
             write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
             UDP_HEADER_SIZE,
         },
-        route::Router,
+        route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
@@ -27,7 +27,7 @@ use {
 };
 
 #[allow(clippy::too_many_arguments)]
-pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
+pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
     cpu_id: usize,
     dev: &NetworkDevice,
     queue_id: QueueId,
@@ -35,9 +35,9 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     src_mac: Option<MacAddress>,
     src_ip: Option<Ipv4Addr>,
     src_port: u16,
-    dest_mac: Option<MacAddress>,
     receiver: Receiver<(A, T)>,
     drop_sender: Sender<(A, T)>,
+    route_fn: R,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -107,9 +107,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         mut completion,
     } = tx;
     let mut ring = ring.unwrap();
-
-    // get the routing table from netlink
-    let router = Router::new().expect("failed to create router");
 
     // we don't need higher caps anymore
     for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
@@ -200,16 +197,20 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     panic!("IPv6 not supported");
                 };
 
-                let dest_mac = if let Some(mac) = dest_mac {
-                    mac
-                } else {
-                    let next_hop = router.route(addr.ip()).unwrap();
+                let dest_mac = {
+                    let ip = addr.ip();
+                    let Some(next_hop) = route_fn(&ip) else {
+                        log::warn!("dropping packet: no route for peer {addr}");
+                        batched_packets -= 1;
+                        umem.release(frame.offset());
+                        continue;
+                    };
 
                     // we need the MAC address to send the packet
                     let Some(dest_mac) = next_hop.mac_addr else {
                         log::warn!(
-                            "dropping packet: turbine peer {addr} must be routed through {} which \
-                             has no known MAC address",
+                            "dropping packet: peer {addr} must be routed through {} which has no \
+                             known MAC address",
                             next_hop.ip_addr
                         );
                         batched_packets -= 1;

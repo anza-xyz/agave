@@ -399,7 +399,7 @@ impl BankingStage {
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -956,7 +956,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1020,7 +1020,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
         trace!("sending bank");
         drop(non_vote_sender);
@@ -1094,7 +1094,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
 
         // good tx, and no verify
@@ -1246,7 +1246,7 @@ mod tests {
                 replay_vote_sender,
                 None,
                 bank_forks,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
             );
 
             // wait for banking_stage to eat the packets
@@ -1399,7 +1399,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

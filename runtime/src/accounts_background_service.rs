@@ -188,11 +188,13 @@ impl SnapshotRequestHandler {
                 Some((snapshot_request, 1, 0))
             }
             _ => {
-                requests.select_nth_unstable_by(requests_len - 1, cmp_requests_by_priority);
-
-                // SAFETY: We know the len is > 1, so `pop` will return `Some`
-                let snapshot_request = requests.pop().unwrap();
-
+                let max_idx = requests
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| cmp_requests_by_priority(a, b))
+                    .map(|(idx, _)| idx)
+                    .unwrap(); // SAFETY: We know len > 1
+                let snapshot_request = requests.swap_remove(max_idx);
                 let handled_request_slot = snapshot_request.snapshot_root_bank.slot();
                 // re-enqueue any remaining requests for slots GREATER-THAN the one that will be handled
                 let num_re_enqueued_requests = requests

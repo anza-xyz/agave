@@ -1,19 +1,11 @@
-#[allow(deprecated)]
-// Reason: This deprecated function internally creates a
-// PinnedLeaderUpdater. This structure we want to move to tests as soon as
-// we can remove create_leader_updater function.
-use solana_tpu_client_next::leader_updater::create_leader_updater;
 use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
-    solana_cli_config::ConfigInput,
-    solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
     solana_net_utils::sockets::{
         bind_to, localhost_port_range_for_tests, unique_port_range_for_tests,
     },
     solana_pubkey::Pubkey,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::{
@@ -26,9 +18,9 @@ use {
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
-            StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
+        leader_updater::create_pinned_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
         ClientBuilder, ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
@@ -88,22 +80,11 @@ async fn setup_connection_worker_scheduler(
     watch::Sender<Option<StakeIdentity>>,
     CancellationToken,
 ) {
-    let json_rpc_url = "http://127.0.0.1:8899";
-    let (_, websocket_url) = ConfigInput::compute_websocket_url_setting("", "", json_rpc_url, "");
-
-    let rpc_client = Arc::new(RpcClient::new_with_commitment(
-        json_rpc_url.to_string(),
-        CommitmentConfig::confirmed(),
-    ));
-
     let config = test_config(stake_identity);
 
     // Setup sending txs
     let cancel = CancellationToken::new();
-    #[allow(deprecated)]
-    let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(tpu_address))
-        .await
-        .expect("Leader updates was successfully created");
+    let leader_updater = create_pinned_leader_updater(tpu_address);
 
     let (update_identity_sender, update_identity_receiver) = watch::channel(None);
     let scheduler = ConnectionWorkersScheduler::new(
@@ -894,17 +875,8 @@ async fn test_client_builder() {
     let socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
         .expect("Should be able to open UdpSocket for tests.");
 
-    let json_rpc_url = "http://127.0.0.1:8899";
-    let (_, websocket_url) = ConfigInput::compute_websocket_url_setting("", "", json_rpc_url, "");
+    let leader_updater = create_pinned_leader_updater(server_address);
 
-    let rpc_client = Arc::new(RpcClient::new_with_commitment(
-        json_rpc_url.to_string(),
-        CommitmentConfig::confirmed(),
-    ));
-    #[allow(deprecated)]
-    let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(server_address))
-        .await
-        .unwrap();
     let builder = ClientBuilder::new(leader_updater)
         .cancel_token(cancel.child_token())
         .bind_socket(socket)
@@ -929,7 +901,7 @@ async fn test_client_builder() {
         });
 
     let (tx_sender, client) = builder
-        .build::<NonblockingBroadcaster>()
+        .build()
         .expect("Client should be built successfully.");
 
     // Setup sending txs

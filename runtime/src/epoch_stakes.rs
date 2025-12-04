@@ -14,13 +14,20 @@ use {
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
 pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
 
+/// Container to store a mapping from validator [`BLSPubkey`] to rank.
+///
+/// A validator with a smaller rank has a higher stake.
+/// Container also supports lookups from rank to [`(Pubkey, BLSPubkey)`].
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BLSPubkeyToRankMap {
+    /// Mapping from validator [`BLSPubkey`] to rank.
     rank_map: HashMap<BLSPubkey, u16>,
-    //TODO(wen): We can make SortedPubkeys a Vec<BLSPubkey> after we remove ed25519
-    // pubkey from certificate pool.
+    /// Mapping from rank to validator [`(Pubkey, BLSPubkey)`].
+    //
+    // TODO(wen): We can make sorted_pubkeys a Vec<BLSPubkey> after we remove ed25519
+    // pubkey from the consensus pool.
     sorted_pubkeys: Vec<(Pubkey, BLSPubkey)>,
 }
 
@@ -89,6 +96,7 @@ pub struct NodeVoteAccounts {
 pub enum VersionedEpochStakes {
     Current {
         stakes: SerdeStakesToStakeFormat,
+        /// Total stake in Lamports
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
@@ -132,6 +140,7 @@ impl VersionedEpochStakes {
         }
     }
 
+    /// Returns the total stake in Lamports.
     pub fn total_stake(&self) -> u64 {
         match self {
             Self::Current { total_stake, .. } => *total_stake,
@@ -187,6 +196,7 @@ impl VersionedEpochStakes {
         }
     }
 
+    /// Returns the stake in Lamports for the given vote_account.
     pub fn vote_account_stake(&self, vote_account: &Pubkey) -> u64 {
         self.stakes()
             .vote_accounts()

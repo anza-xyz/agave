@@ -13,6 +13,7 @@ pub enum VoteType {
     NotarizeFallback,
     Skip,
     SkipFallback,
+    Genesis,
 }
 
 impl VoteType {
@@ -23,6 +24,7 @@ impl VoteType {
             Vote::Skip(_) => VoteType::Skip,
             Vote::SkipFallback(_) => VoteType::SkipFallback,
             Vote::Finalize(_) => VoteType::Finalize,
+            Vote::Genesis(_) => VoteType::Genesis,
         }
     }
 
@@ -48,6 +50,7 @@ pub fn vote_to_certificate_ids(vote: &Vote) -> Vec<CertificateType> {
         Vote::Finalize(vote) => vec![CertificateType::Finalize(vote.slot)],
         Vote::Skip(vote) => vec![CertificateType::Skip(vote.slot)],
         Vote::SkipFallback(vote) => vec![CertificateType::Skip(vote.slot)],
+        Vote::Genesis(vote) => vec![CertificateType::Genesis(vote.slot, vote.block_id)],
     }
 }
 

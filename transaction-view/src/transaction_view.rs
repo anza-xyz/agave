@@ -301,6 +301,52 @@ impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
     }
 }
 
+impl<D: TransactionData> SVMStaticMessage for &TransactionView<true, D> {
+    fn num_transaction_signatures(&self) -> u64 {
+        <TransactionView<true, D> as SVMStaticMessage>::num_transaction_signatures(self)
+    }
+
+    fn num_write_locks(&self) -> u64 {
+        <TransactionView<true, D> as SVMStaticMessage>::num_write_locks(self)
+    }
+
+    fn recent_blockhash(&self) -> &Hash {
+        <TransactionView<true, D> as SVMStaticMessage>::recent_blockhash(self)
+    }
+
+    fn num_instructions(&self) -> usize {
+        <TransactionView<true, D> as SVMStaticMessage>::num_instructions(self)
+    }
+
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
+        <TransactionView<true, D> as SVMStaticMessage>::instructions_iter(self)
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        <TransactionView<true, D> as SVMStaticMessage>::program_instructions_iter(self)
+    }
+
+    fn static_account_keys(&self) -> &[Pubkey] {
+        <TransactionView<true, D> as SVMStaticMessage>::static_account_keys(self)
+    }
+
+    fn fee_payer(&self) -> &Pubkey {
+        <TransactionView<true, D> as SVMStaticMessage>::fee_payer(self)
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        <TransactionView<true, D> as SVMStaticMessage>::num_lookup_tables(self)
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
+        <TransactionView<true, D> as SVMStaticMessage>::message_address_table_lookups(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {

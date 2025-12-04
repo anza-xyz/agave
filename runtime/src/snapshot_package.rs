@@ -18,7 +18,6 @@ pub use compare::*;
 pub struct SnapshotPackage {
     pub snapshot_kind: SnapshotKind,
     pub slot: Slot,
-    pub block_height: Slot,
     pub hash: SnapshotHash,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     pub bank_snapshot_package: BankSnapshotPackage,
@@ -64,7 +63,6 @@ impl SnapshotPackage {
         Self {
             snapshot_kind,
             slot,
-            block_height: bank.block_height(),
             hash,
             bank_snapshot_package,
             snapshot_storages,
@@ -88,7 +86,6 @@ impl SnapshotPackage {
         Self {
             snapshot_kind: SnapshotKind::Archive(SnapshotArchiveKind::Full),
             slot: Slot::default(),
-            block_height: Slot::default(),
             hash: SnapshotHash(Hash::default()),
             snapshot_storages: Vec::default(),
             bank_snapshot_package,
@@ -102,7 +99,6 @@ impl std::fmt::Debug for SnapshotPackage {
         f.debug_struct("SnapshotPackage")
             .field("kind", &self.snapshot_kind)
             .field("slot", &self.slot)
-            .field("block_height", &self.block_height)
             .finish_non_exhaustive()
     }
 }

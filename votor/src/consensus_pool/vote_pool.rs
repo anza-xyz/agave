@@ -7,6 +7,7 @@ use {
     crate::common::Stake,
     agave_votor_messages::{
         consensus_message::{Certificate, CertificateType, VoteMessage},
+        migration::GENESIS_VOTE_THRESHOLD,
         vote::Vote,
     },
     bitvec::prelude::*,
@@ -200,18 +201,18 @@ impl NotarFallbackPartial {
     }
 }
 
-/// Partial certificate for notar votes.
+/// Partial certificate for vote types where voters may vote at most once and different voters may vote for different block ids.
 ///
-/// Not using [`PartialCertificate`] directly as different validator may vote notar for different block ids and honest validators should not vote notar for more than one block in in a given slot.
+/// Not using [`PartialCertificate`] directly as different validator may vote for different block ids and honest validators should not vote for more than one block in in a given slot.
 #[derive(Default)]
-struct NotarPartial {
+struct SingleBlockIdPartial {
     /// Different votes may vote for different block ids, store per block id entries.
     entries: BTreeMap<Hash, PartialCertificate>,
     /// Stores which voters have voted already.
     voted: BTreeSet<Pubkey>,
 }
 
-impl NotarPartial {
+impl SingleBlockIdPartial {
     /// Adds vote checking for duplicate and invalid votes, returning accumulated stake for the block id on success.
     fn add_vote(
         &mut self,
@@ -234,6 +235,26 @@ impl NotarPartial {
             Err(AddVoteError::Invalid)
         }
     }
+
+    /// Builds a certificate if enough voters voted for the given block id to meet the given threshold.
+    ///
+    /// Does not validate if the cert_type matches.
+    fn build_cert(
+        &self,
+        cert_type: CertificateType,
+        total_stake: f64,
+        threshold: f64,
+        block_id: &Hash,
+    ) -> Option<Result<Certificate, BuildCertError>> {
+        self.entries.get(block_id).and_then(|p| {
+            (p.stake as f64 / total_stake >= threshold).then_some(build_cert(
+                cert_type,
+                &p.signature,
+                p.bitmap.clone(),
+                None,
+            ))
+        })
+    }
 }
 
 /// Container to store per slot votes.
@@ -242,8 +263,9 @@ pub(super) struct VotePool {
     skip: PartialCertificate,
     skip_fallback: PartialCertificate,
     finalize: PartialCertificate,
-    notar: NotarPartial,
+    notar: SingleBlockIdPartial,
     notar_fallback: NotarFallbackPartial,
+    genesis: SingleBlockIdPartial,
 }
 
 impl VotePool {
@@ -291,6 +313,7 @@ impl VotePool {
                 }
                 self.finalize.add_vote(voter, stake, vote)
             }
+            Vote::Genesis(genesis) => self.genesis.add_vote(voter, stake, genesis.block_id, vote),
         }
     }
 
@@ -321,14 +344,8 @@ impl VotePool {
                 })
             }
             CertificateType::Notarize(_, block_id) => {
-                self.notar.entries.get(block_id).and_then(|p| {
-                    (p.stake as f64 / total_stake >= NOTAR_STAKE).then_some(build_cert(
-                        cert_type,
-                        &p.signature,
-                        p.bitmap.clone(),
-                        None,
-                    ))
-                })
+                self.notar
+                    .build_cert(cert_type, total_stake, NOTAR_STAKE, block_id)
             }
             CertificateType::NotarizeFallback(_, block_id) => {
                 let (notar_stake, notar_sig_bitmap) = match self.notar.entries.get(block_id) {
@@ -368,6 +385,10 @@ impl VotePool {
                         fallback,
                     )
                 })
+            }
+            CertificateType::Genesis(_, block_id) => {
+                self.genesis
+                    .build_cert(cert_type, total_stake, GENESIS_VOTE_THRESHOLD, block_id)
             }
         }
     }

@@ -88,6 +88,24 @@ impl TokenBucket {
         }
     }
 
+    /// Returns time in microseconds until `num_tokens` worth of new
+    /// tokens can be consumed.
+    ///
+    /// Calculation is performed assuming no demand for smaller
+    /// batches of tokens (actual time may be longer).
+    /// Returns None if num_tokens > bucket capacity.
+    #[inline]
+    pub fn us_to_have_tokens(&self, num_tokens: u64) -> Option<u64> {
+        if num_tokens > self.max_tokens {
+            return None;
+        }
+
+        match num_tokens.checked_sub(self.current_tokens()) {
+            Some(missing) => Some((missing as f64 / self.new_tokens_per_us) as u64),
+            None => Some(0),
+        }
+    }
+
     /// Retrieves monotonic time since bucket creation.
     fn time_us(&self) -> u64 {
         cfg_if! {
@@ -348,7 +366,7 @@ pub mod test {
     };
 
     #[test]
-    fn test_token_bucket() {
+    fn test_token_bucket_basics() {
         let tb = TokenBucket::new(100, 100, 1000.0);
         assert_eq!(tb.current_tokens(), 100);
         tb.consume_tokens(50).expect("Bucket is initially full");
@@ -370,6 +388,25 @@ pub mod test {
         thread::sleep(Duration::from_millis(120));
         assert_eq!(tb.current_tokens(), 100, "Bucket should not overfill");
     }
+
+    #[test]
+    fn test_token_bucket_us_to_have_tokens() {
+        let tb = TokenBucket::new(1000, 1000, 1000.0);
+        assert_eq!(tb.current_tokens(), 1000);
+        tb.consume_tokens(1000).expect("Bucket is initially full");
+        assert!(
+            tb.current_tokens() < 100,
+            "Shoult not have many tokens left in bucket"
+        );
+
+        let t = tb
+            .us_to_have_tokens(500)
+            .expect("500 < bucket capacity (1000)")
+            / 1000; // convert to ms
+        assert!(t > 100, "time to fill should be ~ 500ms (got {t})");
+        assert!(t <= 500, "time to fill should be less than 500ms (got {t})");
+    }
+
     #[test]
     fn test_keyed_rate_limiter() {
         let prototype_bucket = TokenBucket::new(100, 100, 1000.0);
