@@ -8601,13 +8601,13 @@ dependencies = [
 
 [[package]]
 name = "solana-epoch-rewards-hasher"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e507099d0c2c5d7870c9b1848281ea67bbeee80d171ca85003ee5767994c9c38"
+checksum = "1ee8beac9bff4db9225e57d532d169b0be5e447f1e6601a2f50f27a01bf5518f"
 dependencies = [
  "siphasher 0.3.11",
- "solana-hash 3.1.0",
- "solana-pubkey 3.0.0",
+ "solana-address 2.0.0",
+ "solana-hash 4.0.1",
 ]
 
 [[package]]
