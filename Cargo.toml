@@ -449,7 +449,7 @@ solana-ed25519-program = "3.0.0"
 solana-entry = { path = "entry", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-epoch-info = "3.1.0"
 solana-epoch-rewards = "3.0.0"
-solana-epoch-rewards-hasher = "3.0.0"
+solana-epoch-rewards-hasher = "3.1.0"
 solana-epoch-schedule = "3.0.0"
 solana-example-mocks = "3.0.0"
 solana-faucet = { path = "faucet", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
