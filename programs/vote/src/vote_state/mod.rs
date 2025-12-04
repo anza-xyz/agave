@@ -897,13 +897,28 @@ pub(crate) fn generate_pop_message(
     vote_account_pubkey: &Pubkey,
     bls_pubkey_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
 ) -> [u8; POP_MESSAGE_SIZE] {
+    const LABEL_LEN: usize = 9;
+    const PUBKEY_LEN: usize = size_of::<Pubkey>();
+    const BLS_LEN: usize = BLS_PUBLIC_KEY_COMPRESSED_SIZE;
+
+    const LABEL_START: usize = 0;
+    const LABEL_END: usize = LABEL_START + LABEL_LEN;
+
+    const PUBKEY_START: usize = LABEL_END;
+    const PUBKEY_END: usize = PUBKEY_START + PUBKEY_LEN;
+
+    const BLS_START: usize = PUBKEY_END;
+    const BLS_END: usize = BLS_START + BLS_LEN;
+
+    // Make sure POP_MESSAGE_SIZE matches the layout at compile time
+    const _: () = assert!(BLS_END == POP_MESSAGE_SIZE);
+
     let mut message = [0u8; POP_MESSAGE_SIZE];
-    let mut offset = 0;
-    message[offset..offset + 9].copy_from_slice(b"ALPENGLOW");
-    offset += 9;
-    message[offset..offset + size_of::<Pubkey>()].copy_from_slice(vote_account_pubkey.as_ref());
-    offset += size_of::<Pubkey>();
-    message[offset..offset + BLS_PUBLIC_KEY_COMPRESSED_SIZE].copy_from_slice(bls_pubkey_bytes);
+
+    message[LABEL_START..LABEL_END].copy_from_slice(b"ALPENGLOW");
+    message[PUBKEY_START..PUBKEY_END].copy_from_slice(vote_account_pubkey.as_ref());
+    message[BLS_START..BLS_END].copy_from_slice(bls_pubkey_bytes);
+
     message
 }
 

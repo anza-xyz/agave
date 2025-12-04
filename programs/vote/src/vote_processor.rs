@@ -1364,7 +1364,7 @@ mod tests {
     ) {
         let bls_keypair = BLSKeypair::new();
         let bls_pubkey_compressed: BLSPubkeyCompressed = bls_keypair.public.try_into().unwrap();
-        let message: Vec<u8> = generate_pop_message(vote_account_pubkey, &bls_pubkey_compressed.0);
+        let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_compressed.0);
         let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
         let proof_of_possession: BLSProofOfPossession = proof_of_possession.into();
         let proof_of_possession_compressed: BLSProofOfPossessionCompressed =
