@@ -448,25 +448,24 @@ impl BankingStage {
     }
 
     async fn run(mut self, initial_args: BankingControlMsg) -> std::thread::Result<()> {
-        self.spawn_scheduler(initial_args);
+        assert!(self.spawn_scheduler(initial_args));
 
         loop {
             tokio::select! {
                 biased;
 
                 _ = self.banking_shutdown_signal.cancelled() => break,
-                Some(args) = self.banking_control_receiver.recv() => self.cycle_threads(args).await,
+                Some(args) = self.banking_control_receiver.recv() => {
+                    if !self.cycle_threads(args).await {
+                        assert!(self.cycle_threads_fallback().await);
+                    }
+                },
                 Some((name, res)) = self.threads.next() => {
                     match res.unwrap() {
                         Ok(()) => error!("Banking worker exited unexpectedly; name={name}"),
                         Err(err) => error!("Banking worker exited with error; name={name}; err={err:?}"),
                     };
-
-                    self.cycle_threads(BankingControlMsg::Internal {
-                        block_production_method: BlockProductionMethod::default(),
-                        num_workers: BankingStage::default_num_workers(),
-                        config: SchedulerConfig::default(),
-                    }).await;
+                    assert!(self.cycle_threads_fallback().await);
                 },
             }
         }
@@ -480,7 +479,7 @@ impl BankingStage {
         Ok(())
     }
 
-    async fn cycle_threads(&mut self, args: BankingControlMsg) {
+    async fn cycle_threads(&mut self, args: BankingControlMsg) -> bool {
         // Shutdown all current threads.
         self.worker_exit_signal.store(true, Ordering::Relaxed);
         while let Some((name, res)) = self.threads.next().await {
@@ -494,11 +493,22 @@ impl BankingStage {
         self.worker_exit_signal.store(false, Ordering::Relaxed);
 
         // Spawn the requested threads.
-        self.spawn_scheduler(args);
+        self.spawn_scheduler(args)
     }
 
-    fn spawn_scheduler(&mut self, args: BankingControlMsg) {
-        let threads = match args {
+    async fn cycle_threads_fallback(&mut self) -> bool {
+        error!("Spawning the default block production method as a fallback...");
+
+        self.cycle_threads(BankingControlMsg::Internal {
+            block_production_method: BlockProductionMethod::default(),
+            num_workers: BankingStage::default_num_workers(),
+            config: SchedulerConfig::default(),
+        })
+        .await
+    }
+
+    fn spawn_scheduler(&mut self, args: BankingControlMsg) -> bool {
+        let Ok(threads) = (match args {
             BankingControlMsg::Internal {
                 block_production_method,
                 num_workers,
@@ -514,6 +524,8 @@ impl BankingStage {
             },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
+        }) else {
+            return false;
         };
 
         self.threads.extend(threads.into_iter().map(|handle| {
@@ -523,6 +535,7 @@ impl BankingStage {
         }));
 
         info!("Scheduler spawned");
+        true
     }
 
     fn spawn_internal_central(
@@ -530,7 +543,7 @@ impl BankingStage {
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
-    ) -> Vec<JoinHandle<()>> {
+    ) -> Result<Vec<JoinHandle<()>>, ()> {
         info!("Spawning internal central scheduler");
         // Togging unified scheduler into the disabled state should always be a safe and idempotent
         // operation.
@@ -639,16 +652,18 @@ impl BankingStage {
             spawn_scheduler!(scheduler);
         }
 
-        threads
+        Ok(threads)
     }
 
-    fn spawn_internal_unified(&self) -> Vec<JoinHandle<()>> {
+    fn spawn_internal_unified(&self) -> Result<Vec<JoinHandle<()>>, ()> {
         info!("Spawning internal unified scheduler");
-        if !self.toggle_internal_unified(true) {
+        if self.toggle_internal_unified(true) {
+            // All unified scheduler threads are managed by itself. So, return none here.
+            Ok(vec![])
+        } else {
             error!("Spawning unified scheduler failed");
+            Err(())
         }
-        // All unified scheduler threads are managed by itself. So, return none here.
-        vec![]
     }
 
     fn toggle_internal_unified(&self, enable: bool) -> bool {
@@ -723,7 +738,7 @@ mod external {
                 progress_tracker,
                 workers,
             }: AgaveSession,
-        ) -> Vec<JoinHandle<()>> {
+        ) -> Result<Vec<JoinHandle<()>>, ()> {
             info!("Spawning external scheduler");
             // Toggling unified scheduler into the disabled state should always be a safe and
             // idempotent operation.
@@ -814,7 +829,7 @@ mod external {
                 ticks_per_slot,
             ));
 
-            threads
+            Ok(threads)
         }
     }
 }
