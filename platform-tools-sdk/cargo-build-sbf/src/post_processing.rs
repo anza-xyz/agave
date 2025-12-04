@@ -90,10 +90,12 @@ fn generate_debug_objects(
         copy_file(program_unstripped_so, &program_debug);
     }
 
-    if deploy_keypair.exists() {
-        copy_file(deploy_keypair, debug_keypair);
-    } else if !debug_keypair.exists() {
-        generate_keypair(debug_keypair);
+    if !debug_keypair.exists() {
+        if deploy_keypair.exists() {
+            copy_file(deploy_keypair, debug_keypair);
+        } else {
+            generate_keypair(debug_keypair);
+        }
     }
 
     program_debug_stripped
@@ -136,10 +138,12 @@ fn generate_release_objects(
         }
     }
 
-    if debug_keypair.exists() {
-        copy_file(debug_keypair, deploy_keypair);
-    } else if !deploy_keypair.exists() {
-        generate_keypair(deploy_keypair);
+    if !deploy_keypair.exists() {
+        if debug_keypair.exists() {
+            copy_file(debug_keypair, deploy_keypair);
+        } else {
+            generate_keypair(deploy_keypair);
+        }
     }
 
     program_so
