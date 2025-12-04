@@ -48,7 +48,7 @@ solana-fee-calculator = "=3.0.0"
 solana-genesis-config = "=3.0.0"
 solana-genesis-utils = { workspace = true }
 solana-inflation = "=3.0.0"
-solana-keypair = "=3.0.1"
+solana-keypair = "=3.1.0"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
 solana-native-token = "=3.0.0"
