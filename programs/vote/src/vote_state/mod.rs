@@ -889,6 +889,24 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
     }
 }
 
+// The message size is fixed: 
+// "ALPENGLOW" (9) + Vote Pubkey (32) + BLS Pubkey (48) = 89 bytes
+const POP_MESSAGE_SIZE: usize = 9 + size_of::<Pubkey>() + BLS_PUBLIC_KEY_COMPRESSED_SIZE;
+
+fn generate_pop_message(
+    vote_account_pubkey: &Pubkey,
+    bls_pubkey_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+) -> [u8; POP_MESSAGE_SIZE] {
+    let mut message = [0u8; POP_MESSAGE_SIZE];
+    let mut offset = 0;
+    message[offset..offset + 9].copy_from_slice(b"ALPENGLOW");
+    offset += 9;
+    message[offset..offset + size_of::<Pubkey>()].copy_from_slice(vote_account_pubkey.as_ref());
+    offset += size_of::<Pubkey>();
+    message[offset..offset + BLS_PUBLIC_KEY_COMPRESSED_SIZE].copy_from_slice(bls_pubkey_bytes);
+    message
+}
+
 // TODO(sam): use custom payload for PoP once solana-bls-signatures v2.0.0 is published.
 fn verify_bls_proof_of_possession(
     vote_account_pubkey: &Pubkey,
@@ -903,9 +921,7 @@ fn verify_bls_proof_of_possession(
     let bls_proof_of_possession =
         BLSProofOfPossession::try_from(bls_proof_of_possession_compressed)
             .map_err(|_| InstructionError::InvalidArgument)?;
-    let mut message: Vec<u8> = b"ALPENGLOW".to_vec();
-    message.extend_from_slice(vote_account_pubkey.as_ref());
-    message.extend_from_slice(bls_pubkey_compressed_bytes);
+    let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
     bls_proof_of_possession
         .verify(&bls_pubkey, Some(&message))
         .map_err(|_| InstructionError::InvalidArgument)?;
@@ -4029,5 +4045,27 @@ mod tests {
             VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
         assert_eq!(vote_state.bls_pubkey_compressed, Some(bls_pubkey));
         assert!(vote_state.has_bls_pubkey());
+
+        // Test replay attack, can't use someone else's BLS pubkey and PoP
+        let (others_bls_pubkey, others_bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&Pubkey::new_unique());
+        let new_node_pubkey = solana_pubkey::new_rand();
+        let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_node_pubkey]
+            .into_iter()
+            .collect();
+        assert_eq!(authorize(
+                &mut borrowed_account,
+                VoteStateTargetVersion::V4,
+                &new_node_pubkey,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: others_bls_pubkey,
+                    bls_proof_of_possession: others_bls_proof_of_possession
+                }),
+                &signers,
+                &clock,
+                true,
+            ),
+            Err(InstructionError::InvalidArgument),
+        );
     }
 }
