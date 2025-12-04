@@ -401,6 +401,7 @@ impl Shred {
 
     dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
@@ -423,7 +424,7 @@ impl Shred {
         Ok(match layout::get_shred_variant(shred.as_ref())? {
             ShredVariant::MerkleCode { .. } => {
                 let shred = merkle::ShredCode::from_payload(shred)?;
-                Self::from(shred)
+                Self::ShredCode(shred)
             }
             ShredVariant::MerkleData { .. } => {
                 let shred = merkle::ShredData::from_payload(shred)?;
@@ -578,19 +579,6 @@ impl Shred {
                 .unwrap_or_else(|| shred.payload())
         }
         get_payload(self) != get_payload(other)
-    }
-
-    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
-        match self {
-            Self::ShredCode(shred) => shred.retransmitter_signature_offset(),
-            Self::ShredData(shred) => shred.retransmitter_signature_offset(),
-        }
-    }
-}
-
-impl From<ShredCode> for Shred {
-    fn from(shred: ShredCode) -> Self {
-        Self::ShredCode(shred)
     }
 }
 
