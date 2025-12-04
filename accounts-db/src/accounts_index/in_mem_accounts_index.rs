@@ -937,12 +937,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     },
                     &mut rng,
                 );
+            } else if v.dirty() {
+                candidates_to_flush.push(*k);
             } else {
-                if v.dirty() {
-                    candidates_to_flush.push(*k);
-                } else {
-                    candidates_to_evict.push(*k);
-                }
+                candidates_to_evict.push(*k);
             }
         }
 
