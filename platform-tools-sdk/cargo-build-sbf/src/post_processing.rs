@@ -46,6 +46,32 @@ fn create_folders(config: &Config, deploy_folder: &PathBuf, debug_folder: &PathB
     }
 }
 
+fn strip_object(config: &Config, unstripped: &Path, stripped: &Path) {
+    #[cfg(windows)]
+    let output = spawn(
+        &llvm_bin.join("llvm-objcopy"),
+        [
+            "--strip-all".as_ref(),
+            unstripped.as_os_str(),
+            stripped.as_os_str(),
+        ],
+        config.generate_child_script_on_failure,
+    );
+    #[cfg(not(windows))]
+    let output = spawn(
+        &config.sbf_sdk.join("scripts").join("strip.sh"),
+        [
+            unstripped.as_os_str(),
+            stripped.as_os_str(),
+            "--strip-all".as_ref(),
+        ],
+        config.generate_child_script_on_failure,
+    );
+    if config.verbose {
+        debug!("{output}");
+    }
+}
+
 fn generate_debug_objects(
     config: &Config,
     sbf_debug_dir: &Path,
@@ -57,33 +83,11 @@ fn generate_debug_objects(
     #[cfg(windows)] llvm_bin: &Path,
 ) -> PathBuf {
     // debug objects
-    let program_debug = sbf_debug_dir.join(format!("{program_name}.debug.so"));
+    let program_debug = sbf_debug_dir.join(format!("{program_name}.so.debug"));
     let program_debug_stripped = sbf_debug_dir.join(finalized_program);
 
     if file_older_or_missing(program_unstripped_so, &program_debug_stripped) {
-        #[cfg(windows)]
-        let output = spawn(
-            &llvm_bin.join("llvm-objcopy"),
-            [
-                "--only-keep-debug".as_ref(),
-                program_unstripped_so.as_os_str(),
-                program_debug_stripped.as_os_str(),
-            ],
-            config.generate_child_script_on_failure,
-        );
-        #[cfg(not(windows))]
-        let output = spawn(
-            &config.sbf_sdk.join("scripts").join("strip.sh"),
-            [
-                program_unstripped_so.as_os_str(),
-                program_debug_stripped.as_os_str(),
-                "--only-keep-debug".as_ref(),
-            ],
-            config.generate_child_script_on_failure,
-        );
-        if config.verbose {
-            debug!("{output}");
-        }
+        strip_object(config, program_unstripped_so, &program_debug_stripped);
     }
 
     if file_older_or_missing(program_unstripped_so, &program_debug) {
@@ -113,29 +117,7 @@ fn generate_release_objects(
     let program_so = sbf_out_dir.join(format!("{program_name}.so"));
 
     if file_older_or_missing(program_unstripped_so, &program_so) {
-        #[cfg(windows)]
-        let output = spawn(
-            &llvm_bin.join("llvm-objcopy"),
-            [
-                "--strip-all".as_ref(),
-                program_unstripped_so.as_os_str(),
-                program_so.as_os_str(),
-            ],
-            config.generate_child_script_on_failure,
-        );
-        #[cfg(not(windows))]
-        let output = spawn(
-            &config.sbf_sdk.join("scripts").join("strip.sh"),
-            [
-                program_unstripped_so.as_os_str(),
-                program_so.as_os_str(),
-                "--strip-all".as_ref(),
-            ],
-            config.generate_child_script_on_failure,
-        );
-        if config.verbose {
-            debug!("{output}");
-        }
+        strip_object(config, program_unstripped_so, &program_so);
     }
 
     if !deploy_keypair.exists() {

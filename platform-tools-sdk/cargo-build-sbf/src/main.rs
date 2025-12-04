@@ -413,7 +413,7 @@ fn main() {
         )
         .arg(Arg::new("debug").long("debug").takes_value(false).help(
             "Create debug objects at \
-             `target/deploy/debug`.\n`target/deploy/debug/program.debug.so` contains all debug \
+             `target/deploy/debug`.\n`target/deploy/debug/program.so.debug` contains all debug \
              information available.\n`target/deploy/debug/program.so` is a stripped version for \
              execution in the VM.\nThese objects are not optimized for mainnet-beta deployment.",
         ))
