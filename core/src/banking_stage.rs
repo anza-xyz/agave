@@ -725,7 +725,7 @@ mod external {
             }: AgaveSession,
         ) -> Vec<JoinHandle<()>> {
             info!("Spawning external scheduler");
-            // Togging unified scheduler into the disabled state should always be a safe and
+            // Toggling unified scheduler into the disabled state should always be a safe and
             // idempotent operation.
             assert!(self.toggle_internal_unified(false));
 
