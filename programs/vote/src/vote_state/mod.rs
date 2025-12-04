@@ -889,11 +889,11 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
     }
 }
 
-// The message size is fixed: 
+// The message size is fixed:
 // "ALPENGLOW" (9) + Vote Pubkey (32) + BLS Pubkey (48) = 89 bytes
 const POP_MESSAGE_SIZE: usize = 9 + size_of::<Pubkey>() + BLS_PUBLIC_KEY_COMPRESSED_SIZE;
 
-fn generate_pop_message(
+pub(crate) fn generate_pop_message(
     vote_account_pubkey: &Pubkey,
     bls_pubkey_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
 ) -> [u8; POP_MESSAGE_SIZE] {
@@ -3970,9 +3970,7 @@ mod tests {
     ) {
         let bls_keypair = BLSKeypair::new();
         let bls_pubkey_compressed: BLSPubkeyCompressed = bls_keypair.public.try_into().unwrap();
-        let mut message: Vec<u8> = b"ALPENGLOW".to_vec();
-        message.extend_from_slice(vote_account_pubkey.as_ref());
-        message.extend_from_slice(&bls_pubkey_compressed.0);
+        let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_compressed.0);
         let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
         let proof_of_possession: BLSProofOfPossession = proof_of_possession.into();
         let proof_of_possession_compressed: BLSProofOfPossessionCompressed =
@@ -4053,7 +4051,8 @@ mod tests {
         let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_node_pubkey]
             .into_iter()
             .collect();
-        assert_eq!(authorize(
+        assert_eq!(
+            authorize(
                 &mut borrowed_account,
                 VoteStateTargetVersion::V4,
                 &new_node_pubkey,

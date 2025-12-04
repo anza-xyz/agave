@@ -733,40 +733,40 @@ mod tests {
         if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
             // If both features are enabled, the old instruction should be rejected
             process_instruction(
-                        vote_state_v4_enabled,
-                        bls_pubkey_management_in_vote_account_enabled,
-                        &instruction_data,
-                        vec![
-                            (vote_pubkey, vote_account.clone()),
-                            (sysvar::rent::id(), create_default_rent_account()),
-                            (sysvar::clock::id(), create_default_clock_account()),
-                            (node_pubkey, node_account.clone()),
-                        ],
-                        instruction_accounts.clone(),
-                        Err(InstructionError::InvalidInstructionData),
-                    );
+                vote_state_v4_enabled,
+                bls_pubkey_management_in_vote_account_enabled,
+                &instruction_data,
+                vec![
+                    (vote_pubkey, vote_account.clone()),
+                    (sysvar::rent::id(), create_default_rent_account()),
+                    (sysvar::clock::id(), create_default_clock_account()),
+                    (node_pubkey, node_account.clone()),
+                ],
+                instruction_accounts.clone(),
+                Err(InstructionError::InvalidInstructionData),
+            );
             return;
         } else {
             // If either feature is disabled, the new instruction should be rejected
-            let bad_instruction_data = serialize(&VoteInstruction::InitializeAccountV2(
-                VoteInitV2 {
+            let bad_instruction_data =
+                serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
                     node_pubkey,
                     authorized_voter: vote_pubkey,
                     authorized_withdrawer: vote_pubkey,
                     ..Default::default()
-                },
-            )).unwrap();
+                }))
+                .unwrap();
             process_instruction(
                 vote_state_v4_enabled,
                 bls_pubkey_management_in_vote_account_enabled,
                 &bad_instruction_data,
                 vec![
-                (vote_pubkey, vote_account.clone()),
-                (sysvar::rent::id(), create_default_rent_account()),
-                (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
-            ],
-            instruction_accounts.clone(),
+                    (vote_pubkey, vote_account.clone()),
+                    (sysvar::rent::id(), create_default_rent_account()),
+                    (sysvar::clock::id(), create_default_clock_account()),
+                    (node_pubkey, node_account.clone()),
+                ],
+                instruction_accounts.clone(),
                 Err(InstructionError::InvalidInstructionData),
             );
         }
@@ -837,7 +837,7 @@ mod tests {
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
         );
-}
+    }
 
     #[test_matrix([false, true], [false, true])]
     fn test_initialize_vote_account_v2(
@@ -849,7 +849,8 @@ mod tests {
             AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
-        let (bls_pubkey, bls_proof_of_possession) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let (bls_pubkey, bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
         let instruction_data = serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
             node_pubkey,
             authorized_voter: vote_pubkey,
@@ -893,18 +894,18 @@ mod tests {
             }))
             .unwrap();
             process_instruction(
-                        vote_state_v4_enabled,
-                        bls_pubkey_management_in_vote_account_enabled,
-                        &bad_instruction_data,
-                        vec![
-                            (vote_pubkey, vote_account.clone()),
-                            (sysvar::rent::id(), create_default_rent_account()),
-                            (sysvar::clock::id(), create_default_clock_account()),
-                            (node_pubkey, node_account.clone()),
-                        ],
-                        instruction_accounts.clone(),
-                        Err(InstructionError::InvalidInstructionData),
-                    );
+                vote_state_v4_enabled,
+                bls_pubkey_management_in_vote_account_enabled,
+                &bad_instruction_data,
+                vec![
+                    (vote_pubkey, vote_account.clone()),
+                    (sysvar::rent::id(), create_default_rent_account()),
+                    (sysvar::clock::id(), create_default_clock_account()),
+                    (node_pubkey, node_account.clone()),
+                ],
+                instruction_accounts.clone(),
+                Err(InstructionError::InvalidInstructionData),
+            );
         } else {
             // If either feature is disabled, the new instruction should be rejected
             process_instruction(
@@ -912,12 +913,12 @@ mod tests {
                 bls_pubkey_management_in_vote_account_enabled,
                 &instruction_data,
                 vec![
-                (vote_pubkey, vote_account.clone()),
-                (sysvar::rent::id(), create_default_rent_account()),
-                (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
-            ],
-            instruction_accounts.clone(),
+                    (vote_pubkey, vote_account.clone()),
+                    (sysvar::rent::id(), create_default_rent_account()),
+                    (sysvar::clock::id(), create_default_clock_account()),
+                    (node_pubkey, node_account.clone()),
+                ],
+                instruction_accounts.clone(),
                 Err(InstructionError::InvalidInstructionData),
             );
             return;
@@ -989,26 +990,26 @@ mod tests {
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
         );
-}
+    }
 
-#[test]
-fn test_initialize_vote_account_v2_bad_proof_of_possession() {
+    #[test]
+    fn test_initialize_vote_account_v2_bad_proof_of_possession() {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account =
-            AccountSharedData::new(100, VoteStateV4::size_of(), &id());
+        let vote_account = AccountSharedData::new(100, VoteStateV4::size_of(), &id());
         let node_pubkey = solana_pubkey::new_rand();
-                let node_account = AccountSharedData::default();
+        let node_account = AccountSharedData::default();
         let instruction_with_bad_pop =
             serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
                 node_pubkey,
                 authorized_voter: vote_pubkey,
                 authorized_withdrawer: vote_pubkey,
                 authorized_voter_bls_pubkey: [1u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-                authorized_voter_bls_proof_of_possession: [2u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+                authorized_voter_bls_proof_of_possession: [2u8;
+                    BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
                 ..Default::default()
             }))
             .unwrap();
-            let instruction_accounts = vec![
+        let instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,
                 is_signer: false,
@@ -1363,9 +1364,7 @@ fn test_initialize_vote_account_v2_bad_proof_of_possession() {
     ) {
         let bls_keypair = BLSKeypair::new();
         let bls_pubkey_compressed: BLSPubkeyCompressed = bls_keypair.public.try_into().unwrap();
-        let mut message: Vec<u8> = b"ALPENGLOW".to_vec();
-        message.extend_from_slice(vote_account_pubkey.as_ref());
-        message.extend_from_slice(&bls_pubkey_compressed.0);
+        let message: Vec<u8> = generate_pop_message(vote_account_pubkey, &bls_pubkey_compressed.0);
         let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
         let proof_of_possession: BLSProofOfPossession = proof_of_possession.into();
         let proof_of_possession_compressed: BLSProofOfPossessionCompressed =
