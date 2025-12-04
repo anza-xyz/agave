@@ -1,7 +1,5 @@
 //! Transaction message utilities.
 
-#![cfg(feature = "fuzz")]
-
 use {
     crate::fixture::proto::{
         CompiledInstruction as ProtoCompiledInstruction,
@@ -58,8 +56,8 @@ impl From<&ProtoMessageAddressTableLookup> for MessageAddressTableLookup {
 }
 
 pub fn build_versioned_message(value: &ProtoTransactionMessage) -> VersionedMessage {
-    let header = if let Some(value_header) = value.header {
-        MessageHeader::from(&value_header)
+    let header = if let Some(ref value_header) = value.header {
+        MessageHeader::from(value_header)
     } else {
         MessageHeader {
             num_required_signatures: 1,

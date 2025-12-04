@@ -1,10 +1,6 @@
 //! Transaction result (output).
 
-use {
-    solana_account::Account, solana_pubkey::Pubkey,
-    solana_svm::transaction_processing_result::TransactionProcessingResultExtensions,
-    solana_transaction_error::TransactionError,
-};
+use {solana_account::Account, solana_pubkey::Pubkey, solana_transaction_error::TransactionError};
 
 /// Fee details for a transaction.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,8 +65,8 @@ pub fn transaction_error_to_err_nums(error: &TransactionError) -> (u32, u32, u32
 
 #[cfg(feature = "fuzz")]
 use super::proto::{
-    AcctState as ProtoAcctState, FeeDetails as ProtoFeeDetails,
-    ResultingState as ProtoResultingState, TxnResult as ProtoTxnResult,
+    FeeDetails as ProtoFeeDetails, ResultingState as ProtoResultingState,
+    TxnResult as ProtoTxnResult,
 };
 
 #[cfg(feature = "fuzz")]
