@@ -70,7 +70,7 @@ impl TryFrom<ProtoTxnContext> for TxnContext {
                 .map(|hash_bytes| {
                     let hash_array: [u8; 32] = hash_bytes
                         .try_into()
-                        .map_err(|e| FixtureError::InvalidHashBytes(e))?;
+                        .map_err(FixtureError::InvalidHashBytes)?;
                     Ok(Hash::new_from_array(hash_array))
                 })
                 .collect::<Result<Vec<_>, FixtureError>>()?

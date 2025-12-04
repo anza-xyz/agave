@@ -11,3 +11,6 @@ pub mod fuzz;
 
 #[cfg(feature = "fuzz")]
 pub mod message;
+
+#[cfg(feature = "fuzz")]
+pub mod txn;
