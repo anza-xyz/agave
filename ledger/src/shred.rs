@@ -453,15 +453,6 @@ impl Shred {
         self.common_header().index
     }
 
-    // Possibly trimmed payload;
-    // Should only be used when storing shreds to blockstore.
-    pub(crate) fn bytes_to_store(&self) -> &[u8] {
-        match self {
-            Self::ShredCode(shred) => shred.payload(),
-            Self::ShredData(shred) => shred.bytes_to_store(),
-        }
-    }
-
     pub fn fec_set_index(&self) -> u32 {
         self.common_header().fec_set_index
     }
@@ -1800,7 +1791,6 @@ mod tests {
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
@@ -1850,7 +1840,6 @@ mod tests {
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()

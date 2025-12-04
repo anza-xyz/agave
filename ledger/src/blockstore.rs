@@ -2234,11 +2234,8 @@ impl Blockstore {
 
         // Commit step: commit all changes to the mutable structures at once, or none at all.
         // We don't want only a subset of these changes going through.
-        self.data_shred_cf.put_bytes_in_batch(
-            write_batch,
-            (slot, index),
-            shred.bytes_to_store(),
-        )?;
+        self.data_shred_cf
+            .put_bytes_in_batch(write_batch, (slot, index), shred.payload())?;
         data_index.insert(index);
         let newly_completed_data_sets = update_slot_meta(
             last_in_slot,
