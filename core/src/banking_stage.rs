@@ -589,12 +589,13 @@ impl BankingStage {
         macro_rules! spawn_scheduler {
             ($scheduler:ident) => {
                 let exit = exit.clone();
+                let shutdown_signal = self.banking_shutdown_signal.clone();
                 let bank_forks = self.bank_forks.clone();
                 threads.push(
                     Builder::new()
                         .name("solBnkTxSched".to_string())
                         .spawn(move || {
-                            let scheduler_controller = SchedulerController::new(
+                            let mut scheduler_controller = SchedulerController::new(
                                 exit,
                                 scheduler_config,
                                 decision_maker,
@@ -605,8 +606,13 @@ impl BankingStage {
                             );
 
                             match scheduler_controller.run() {
-                                Ok(_) => {}
-                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
+                                Ok(_) => info!("Scheduler exiting without error"),
+                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {
+                                    info!("Upstream disconnected, shutting down banking");
+
+                                    shutdown_signal.cancel();
+                                    drop(scheduler_controller);
+                                }
                                 Err(SchedulerError::DisconnectedSendChannel(_)) => {
                                     warn!("Unexpected worker disconnect from scheduler")
                                 }
@@ -650,12 +656,14 @@ impl BankingStage {
         let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
 
         let worker_exit_signal = self.worker_exit_signal.clone();
+        let shutdown_signal = self.banking_shutdown_signal.clone();
         let bank_forks = self.bank_forks.clone();
         Builder::new()
             .name("solBanknStgVote".to_string())
             .spawn(move || {
                 VoteWorker::new(
                     worker_exit_signal,
+                    shutdown_signal,
                     decision_maker,
                     tpu_receiver,
                     gossip_receiver,
