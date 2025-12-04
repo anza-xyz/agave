@@ -175,6 +175,7 @@ impl FeatureSet {
             fix_alt_bn128_pairing_length_check: self
                 .is_active(&fix_alt_bn128_pairing_length_check::id()),
             alt_bn128_little_endian: self.is_active(&alt_bn128_little_endian::id()),
+            create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
         }
     }
 }
@@ -1157,6 +1158,10 @@ pub mod provide_instruction_data_offset_in_vm_r2 {
     solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
 }
 
+pub mod create_account_allow_prefund {
+    solana_pubkey::declare_id!("8nZKHnryahsWXSvECnrm3rYsWbirpSQgjZAJCr7LzWsb");
+}
+
 pub mod static_instruction_limit {
     solana_pubkey::declare_id!("64ixypL1HPu8WtJhNSMb9mSgfFaJvsANuRkTbHyuLfnx");
 }
@@ -2125,6 +2130,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             provide_instruction_data_offset_in_vm_r2::id(),
             "SIMD-0321: Provide instruction data offset in VM r2",
+        ),
+        (
+            create_account_allow_prefund::id(),
+            "SIMD-0312: Enable CreateAccountAllowPrefund system program instruction",
         ),
         (
             static_instruction_limit::id(),
