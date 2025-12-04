@@ -25,37 +25,6 @@ use {
     },
 };
 
-#[derive(Clone, Copy)]
-struct CandidateSelection {
-    key: Pubkey,
-    dirty: bool,
-}
-
-struct ReservoirState {
-    samples: Vec<CandidateSelection>,
-    seen: usize,
-    max_samples: usize,
-}
-
-impl ReservoirState {
-    fn select(&mut self, candidate: CandidateSelection, rng: &mut impl Rng) {
-        if self.max_samples == 0 {
-            return;
-        }
-
-        self.seen += 1;
-        if self.samples.len() < self.max_samples {
-            self.samples.push(candidate);
-            return;
-        }
-
-        let idx = rng.random_range(0..self.seen);
-        if idx < self.max_samples {
-            self.samples[idx] = candidate;
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct StartupStats {
     pub copy_data_us: AtomicU64,
@@ -968,13 +937,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     },
                     &mut rng,
                 );
-                continue;
-            }
-
-            if v.dirty() {
-                candidates_to_flush.push(*k);
             } else {
-                candidates_to_evict.push(*k);
+                if v.dirty() {
+                    candidates_to_flush.push(*k);
+                } else {
+                    candidates_to_evict.push(*k);
+                }
             }
         }
 
@@ -1323,6 +1291,41 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Only intended to be called at startup, since it grabs the map's read lock.
     pub(crate) fn capacity_for_startup(&self) -> usize {
         self.map_internal.read().unwrap().capacity()
+    }
+}
+
+/// Candidate tracked during reservoir sampling to flush or evict.
+#[derive(Debug, Clone)]
+struct CandidateSelection {
+    key: Pubkey,
+    dirty: bool,
+}
+
+/// State of reservior sampling algorithm for flush/eviction candidates.
+#[derive(Debug)]
+struct ReservoirState {
+    samples: Vec<CandidateSelection>,
+    seen: usize,
+    max_samples: usize,
+}
+
+impl ReservoirState {
+    /// Select a candidate, keeping a roughly set of uniform bounded samples.
+    fn select(&mut self, candidate: CandidateSelection, rng: &mut impl Rng) {
+        if self.max_samples == 0 {
+            return;
+        }
+
+        self.seen += 1;
+        if self.samples.len() < self.max_samples {
+            self.samples.push(candidate);
+            return;
+        }
+
+        let idx = rng.random_range(0..self.seen);
+        if idx < self.max_samples {
+            self.samples[idx] = candidate;
+        }
     }
 }
 
