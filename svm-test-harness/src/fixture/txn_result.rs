@@ -1,8 +1,7 @@
 //! Transaction result (output).
 
 use {
-    solana_account::Account,
-    solana_pubkey::Pubkey,
+    solana_account::Account, solana_pubkey::Pubkey,
     solana_svm::transaction_processing_result::TransactionProcessingResultExtensions,
     solana_transaction_error::TransactionError,
 };
@@ -60,7 +59,12 @@ pub fn transaction_error_to_err_nums(error: &TransactionError) -> (u32, u32, u32
         u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
     };
 
-    (txn_err_no, instr_err_no, custom_err_no, instr_err_idx.into())
+    (
+        txn_err_no,
+        instr_err_no,
+        custom_err_no,
+        instr_err_idx.into(),
+    )
 }
 
 #[cfg(feature = "fuzz")]
