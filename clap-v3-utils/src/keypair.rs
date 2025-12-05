@@ -27,6 +27,7 @@ use {
     solana_presigner::Presigner,
     solana_pubkey::Pubkey,
     solana_remote_wallet::{
+        locator::Manufacturer,
         remote_keypair::generate_remote_keypair,
         remote_wallet::{maybe_wallet_manager, RemoteWalletError, RemoteWalletManager},
     },
@@ -663,6 +664,15 @@ pub fn signer_from_source_with_config(
             Ok(Box::new(read_keypair(&mut stdin)?))
         }
         SignerSourceKind::Usb(locator) => {
+            // YubiKey PIV doesn't support BIP44 derivation paths - reject if specified
+            if locator.manufacturer == Manufacturer::YubiKey && derivation_path.is_some() {
+                return Err(std::io::Error::other(
+                    "YubiKey does not support derivation paths (e.g., ?key=0/1). Use ?slot=XX to \
+                     select a PIV slot instead (e.g., usb://yubikey?slot=9c).",
+                )
+                .into());
+            }
+
             if wallet_manager.is_none() {
                 *wallet_manager = maybe_wallet_manager()?;
             }
@@ -810,6 +820,15 @@ pub fn resolve_signer_from_source(
             read_keypair(&mut stdin).map(|_| None)
         }
         SignerSourceKind::Usb(locator) => {
+            // YubiKey PIV doesn't support BIP44 derivation paths - reject if specified
+            if locator.manufacturer == Manufacturer::YubiKey && derivation_path.is_some() {
+                return Err(std::io::Error::other(
+                    "YubiKey does not support derivation paths (e.g., ?key=0/1). Use ?slot=XX to \
+                     select a PIV slot instead (e.g., usb://yubikey?slot=9c).",
+                )
+                .into());
+            }
+
             if wallet_manager.is_none() {
                 *wallet_manager = maybe_wallet_manager()?;
             }
