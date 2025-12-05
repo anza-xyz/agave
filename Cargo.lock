@@ -8449,14 +8449,14 @@ dependencies = [
 
 [[package]]
 name = "solana-curve25519"
-version = "2.3.13"
+version = "3.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eae4261b9a8613d10e77ac831a8fa60b6fa52b9b103df46d641deff9f9812a23"
+checksum = "a2cb3f53e40375fba75e908295c7723d16dad3fb54384140366fade2c7ef37bb"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "curve25519-dalek 4.1.3",
- "solana-define-syscall 2.3.0",
+ "solana-define-syscall 3.0.0",
  "subtle",
  "thiserror 2.0.17",
 ]
@@ -8472,12 +8472,6 @@ dependencies = [
  "subtle",
  "thiserror 2.0.17",
 ]
-
-[[package]]
-name = "solana-define-syscall"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ae3e2abcf541c8122eafe9a625d4d194b4023c20adde1e251f94e056bb1aee2"
 
 [[package]]
 name = "solana-define-syscall"
@@ -12310,13 +12304,13 @@ dependencies = [
 
 [[package]]
 name = "spl-token-confidential-transfer-proof-extraction"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a22217af69b7a61ca813f47c018afb0b00b02a74a4c70ff099cd4287740bc3d"
+checksum = "879a9ebad0d77383d3ea71e7de50503554961ff0f4ef6cbca39ad126e6f6da3a"
 dependencies = [
  "bytemuck",
  "solana-account-info",
- "solana-curve25519 2.3.13",
+ "solana-curve25519 3.1.4",
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-msg",
