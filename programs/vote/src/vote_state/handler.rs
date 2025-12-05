@@ -679,9 +679,6 @@ impl VoteStateHandle for VoteStateHandler {
     {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => {
-                if bls_pubkey.is_some() {
-                    return Err(InstructionError::InvalidAccountData);
-                }
                 v3.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
             }
             TargetVoteState::V4(v4) => v4.set_new_authorized_voter(
