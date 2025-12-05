@@ -33,6 +33,7 @@ Release channels have their own copy of this changelog:
 ### CLI
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`
+* Support YubiKey 5 series (firmware 5.7+) hardware wallets via PIV using `usb://yubikey`
 
 ## 3.1.0
 ### RPC
