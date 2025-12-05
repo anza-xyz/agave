@@ -171,7 +171,9 @@ fn test_solana_package(
     );
 
     // Pass --sbf-out-dir along to the solana-program-test crate
-    env::set_var("SBF_OUT_DIR", sbf_out_dir);
+    unsafe {
+        env::set_var("SBF_OUT_DIR", sbf_out_dir);
+    }
 
     cargo_args.insert(0, "test");
 
