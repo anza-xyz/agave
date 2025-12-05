@@ -18,6 +18,7 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::Debug,
         mem,
+        num::NonZeroUsize,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -906,14 +907,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
         current_age: Age,
         ages_flushing_now: Age,
-        max_evictions: Option<usize>,
+        max_evictions: Option<NonZeroUsize>,
     ) -> (CandidatesToFlush, CandidatesToEvict) {
         let mut candidates_to_flush = Vec::new();
         let mut candidates_to_evict = Vec::new();
         let mut rng = rng();
         // use reservoir sampling to select a bounded, roughly uniform subset
         let mut sampling_state = max_evictions.map(|limit| ReservoirState {
-            samples: Vec::with_capacity(limit),
+            samples: Vec::with_capacity(limit.get()),
             seen: 0,
             max_samples: limit,
         });
@@ -1299,29 +1300,25 @@ struct CandidateSelection {
     dirty: bool,
 }
 
-/// State of reservior sampling algorithm for flush/eviction candidates.
+/// State of reservoir sampling algorithm for flush/eviction candidates.
 #[derive(Debug)]
 struct ReservoirState {
     samples: Vec<CandidateSelection>,
     seen: usize,
-    max_samples: usize,
+    max_samples: NonZeroUsize,
 }
 
 impl ReservoirState {
-    /// Select a candidate, keeping a roughly set of uniform bounded samples.
+    /// Select a candidate, keeping a bounded roughly uniform sample set.
     fn select(&mut self, candidate: CandidateSelection, rng: &mut impl Rng) {
-        if self.max_samples == 0 {
-            return;
-        }
-
         self.seen += 1;
-        if self.samples.len() < self.max_samples {
+        if self.samples.len() < self.max_samples.get() {
             self.samples.push(candidate);
             return;
         }
 
         let idx = rng.random_range(0..self.seen);
-        if idx < self.max_samples {
+        if idx < self.max_samples.get() {
             self.samples[idx] = candidate;
         }
     }
@@ -1873,7 +1870,7 @@ mod tests {
         let current_age = 100;
         let ages_flushing_now = 0;
         let total_entries = 256;
-        let max_evictions = 5;
+        let max_evictions = NonZeroUsize::new(5).unwrap();
 
         // Create a map with 256 entries
         let map: HashMap<_, _> = (0..total_entries)
@@ -1901,7 +1898,7 @@ mod tests {
         );
 
         let total_selected = to_flush.0.len() + to_evict.0.len();
-        assert_eq!(total_selected, max_evictions);
+        assert_eq!(total_selected, max_evictions.get());
 
         for key in to_flush.0.iter().chain(&to_evict.0) {
             let entry = map.get(key).unwrap();
