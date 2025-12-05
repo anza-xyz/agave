@@ -2365,48 +2365,6 @@ impl ClusterInfo {
     }
 }
 
-#[derive(Debug)]
-pub struct Sockets {
-    pub gossip: Arc<[UdpSocket]>,
-    pub ip_echo: Option<TcpListener>,
-    pub tvu: Vec<UdpSocket>,
-    pub tvu_quic: UdpSocket,
-    pub tpu: Vec<UdpSocket>,
-    pub tpu_forwards: Vec<UdpSocket>,
-    pub tpu_vote: Vec<UdpSocket>,
-    pub broadcast: Vec<UdpSocket>,
-    // Socket sending out local repair requests,
-    // and receiving repair responses from the cluster.
-    pub repair: UdpSocket,
-    pub repair_quic: UdpSocket,
-    pub retransmit_sockets: Vec<UdpSocket>,
-    // Socket receiving remote repair requests from the cluster,
-    // and sending back repair responses.
-    pub serve_repair: UdpSocket,
-    pub serve_repair_quic: UdpSocket,
-    // Socket sending out local RepairProtocol::AncestorHashes,
-    // and receiving AncestorHashesResponse from the cluster.
-    pub ancestor_hashes_requests: UdpSocket,
-    pub ancestor_hashes_requests_quic: UdpSocket,
-    pub tpu_quic: Vec<UdpSocket>,
-    pub tpu_forwards_quic: Vec<UdpSocket>,
-    pub tpu_vote_quic: Vec<UdpSocket>,
-
-    /// Client-side socket for ForwardingStage vote transactions
-    pub tpu_vote_forwarding_client: UdpSocket,
-    /// Client-side socket for ForwardingStage non-vote transactions
-    pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>,
-    /// Socket for alpenglow consensus logic
-    pub alpenglow: Option<UdpSocket>,
-    /// Connection cache endpoint for QUIC-based Vote
-    pub quic_vote_client: UdpSocket,
-    /// Connection cache endpoint for QUIC-based Alpenglow messages
-    pub quic_alpenglow_client: UdpSocket,
-    /// Client-side socket for RPC/SendTransactionService.
-    pub rpc_sts_client: UdpSocket,
-    pub vortexor_receivers: Option<Vec<UdpSocket>>,
-}
-
 pub struct NodeConfig {
     /// The IP address advertised to the cluster in gossip
     pub advertised_ip: IpAddr,
@@ -2872,7 +2830,7 @@ mod tests {
         }
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
-        check_sockets(&node.sockets.tpu, ip, range);
+        check_sockets(&node.sockets.tpu.transactions, ip, range);
     }
 
     #[test]

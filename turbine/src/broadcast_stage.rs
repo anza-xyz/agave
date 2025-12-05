@@ -760,7 +760,7 @@ pub mod test {
 
         // Start up the broadcast stage
         let broadcast_service = BroadcastStage::new(
-            leader_info.sockets.broadcast,
+            leader_info.sockets.tpu.broadcast,
             cluster_info,
             entry_receiver,
             retransmit_slots_receiver,
