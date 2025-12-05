@@ -1597,7 +1597,7 @@ mod tests {
         if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
             // If both features are enabled, the old instruction should be accepted when
             // the account does not have a BLS key.
-            let (_, vote_account_no_bls_key) = create_test_account(false);
+            let (new_vote_pubkey, vote_account_no_bls_key) = create_test_account(false);
             let new_authorized_voter_pubkey = solana_pubkey::new_rand();
             let old_instruction_data = serialize(&VoteInstruction::Authorize(
                 new_authorized_voter_pubkey,
@@ -1609,20 +1609,53 @@ mod tests {
                 bls_pubkey_management_in_vote_account_enabled,
                 &old_instruction_data,
                 vec![
-                    (vote_pubkey, vote_account_no_bls_key),
+                    (new_vote_pubkey, vote_account_no_bls_key),
                     (sysvar::clock::id(), clock_account.clone()),
                     (new_authorized_voter_pubkey, AccountSharedData::default()),
                 ],
-                instruction_accounts.clone(),
+                vec![
+                    AccountMeta {
+                        pubkey: new_vote_pubkey,
+                        is_signer: true,
+                        is_writable: true,
+                    },
+                    AccountMeta {
+                        pubkey: sysvar::clock::id(),
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
                 Ok(()),
             );
             // However, once the BLS key is set, the old instruction should be rejected
+            let (new_vote_pubkey, vote_account_with_bls_key) = create_test_account(true);
+            let new_authorized_voter_pubkey = solana_pubkey::new_rand();
+            let old_instruction_data = serialize(&VoteInstruction::Authorize(
+                new_authorized_voter_pubkey,
+                VoteAuthorize::Voter,
+            ))
+            .unwrap();
             process_instruction(
                 vote_state_v4_enabled,
                 bls_pubkey_management_in_vote_account_enabled,
                 &old_instruction_data,
-                transaction_accounts.clone(),
-                instruction_accounts.clone(),
+                vec![
+                    (new_vote_pubkey, vote_account_with_bls_key),
+                    (sysvar::clock::id(), clock_account.clone()),
+                    (new_authorized_voter_pubkey, AccountSharedData::default()),
+                ],
+                vec![
+                    AccountMeta {
+                        pubkey: new_vote_pubkey,
+                        is_signer: true,
+                        is_writable: true,
+                    },
+                    AccountMeta {
+                        pubkey: sysvar::clock::id(),
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                ],
                 Err(InstructionError::InvalidInstructionData),
             );
         } else {
