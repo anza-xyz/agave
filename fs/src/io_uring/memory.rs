@@ -17,7 +17,7 @@ const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 /// Allocate memory buffer optimized for io_uring operations, i.e.
 /// using HugeTable when it is available on the host.
 pub fn new_large_buffer(size: usize) -> std::io::Result<PageAlignedMemory> {
-    log::info!("trying to allocate page-aligned buffer of size {}", size);
+    log::debug!("trying to allocate page-aligned buffer of size {size}");
     if size > PageAlignedMemory::page_size() {
         let size = size.next_power_of_two();
         if let Ok(alloc) = PageAlignedMemory::alloc(size, true) {
@@ -31,7 +31,6 @@ pub fn new_large_buffer(size: usize) -> std::io::Result<PageAlignedMemory> {
             format!("allocating large buffer failed with {:?}", e),
         )
     })?;
-    log::info!("obtained io_uring buffer (len={size})");
     Ok(alloc)
 }
 

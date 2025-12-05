@@ -42,7 +42,7 @@ pub struct SequentialFileReader {
 impl SequentialFileReader {
     /// Create a new `SequentialFileReader` for the given `path` using internally allocated
     /// buffer of specified `buf_size` and default read size.
-    pub fn with_capacity(buf_size: usize, path: impl AsRef<Path> + Clone) -> io::Result<Self> {
+    pub fn with_capacity(buf_size: usize, path: impl AsRef<Path>) -> io::Result<Self> {
         Self::with_buffer(path, new_large_buffer(buf_size)?, DEFAULT_READ_SIZE)
     }
 }
@@ -63,7 +63,7 @@ impl SequentialFileReader {
     /// `buffer` is the internal buffer used for reading. It must be at least `read_capacity` long.
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
     pub fn with_buffer(
-        path: impl AsRef<Path> + Clone,
+        path: impl AsRef<Path>,
         mut buffer: PageAlignedMemory,
         read_capacity: usize,
     ) -> io::Result<Self> {
@@ -96,7 +96,7 @@ impl SequentialFileReader {
     fn with_buffer_and_ring(
         mut backing_buffer: PageAlignedMemory,
         ring: IoUring,
-        path: impl AsRef<Path> + Clone,
+        path: impl AsRef<Path>,
         read_capacity: usize,
     ) -> io::Result<Self> {
         let buffer = backing_buffer.as_mut();
@@ -117,12 +117,13 @@ impl SequentialFileReader {
         // in other words, each O_DIRECT read must be into a subbuffer of some multiple of 4096
         // the other requirement for O_DIRECT is that the buffer must be aligned
         // but since we are using `PageAlignedMemory`, the buffer will always be aligned
+        let custom_flags = libc::O_NOATIME;
         let file = match (
             read_capacity % 4096 == 0,
             OpenOptions::new()
                 .read(true)
-                .custom_flags(libc::O_DIRECT | libc::O_NOATIME)
-                .open(path.clone()),
+                .custom_flags(custom_flags | libc::O_DIRECT)
+                .open(&path),
         ) {
             (true, Ok(f)) => f,
             (_, res) => {
@@ -131,7 +132,7 @@ impl SequentialFileReader {
                 }
                 OpenOptions::new()
                     .read(true)
-                    .custom_flags(libc::O_NOATIME)
+                    .custom_flags(custom_flags)
                     .open(path)?
             }
         };
