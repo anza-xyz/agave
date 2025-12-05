@@ -2769,11 +2769,8 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            self.load_message_nonce_account(message).map(
-                |(_nonce_address, _nonce_account, nonce_data)| {
-                    nonce_data.get_lamports_per_signature()
-                },
-            )
+            self.load_message_nonce_data(message)
+                .map(|(_nonce_address, nonce_data)| nonce_data.get_lamports_per_signature())
         })?;
         Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
     }

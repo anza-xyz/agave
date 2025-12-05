@@ -550,7 +550,7 @@ impl SvmTestEntry {
                             )
                         })
                         .unwrap();
-                    CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
+                    CheckedTransactionDetails::new(tx_details.nonce_address, compute_budget)
                 });
 
                 (message, check_result)
@@ -577,10 +577,11 @@ pub struct TransactionBatchItem {
 }
 
 impl TransactionBatchItem {
+    // TODO accept Pubkey and remove all NonceInfo creation from tests
     fn with_nonce(nonce_info: NonceInfo) -> Self {
         Self {
             check_result: Ok(CheckedTransactionDetails::new(
-                Some(nonce_info),
+                Some(*nonce_info.address()),
                 SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             ..Self::default()
@@ -1696,7 +1697,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             Hash::default(),
         );
 
-        test_entry.push_nonce_transaction(first_transaction, initial_nonce_info.clone());
+        test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
             advanced_nonce_info.clone(),
@@ -1704,10 +1705,6 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         );
 
         test_entries.push(test_entry);
-    }
-
-    for test_entry in &mut test_entries {
-        test_entry.add_initial_program(program_name);
     }
 
     // batch 5:
@@ -1963,7 +1960,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             ],
             Some(&fee_payer),
             &[&fee_payer_keypair, &new_authority_keypair],
-            *advanced_durable.as_hash(),
+            *initial_durable.as_hash(),
         );
 
         test_entry.push_transaction(first_transaction);
@@ -3208,8 +3205,8 @@ fn svm_inspect_nonce_load_failure(fee_paying_nonce: bool) {
 
     let transaction = Transaction::new_signed_with_payer(
         &[
-            compute_instruction,
             advance_instruction,
+            compute_instruction,
             fee_only_noop_instruction,
         ],
         Some(&fee_payer),
