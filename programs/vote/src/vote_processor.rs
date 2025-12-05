@@ -1566,6 +1566,7 @@ mod tests {
         vote_state_v4_enabled: bool,
         bls_pubkey_management_in_vote_account_enabled: bool,
     ) {
+        agave_logger::setup();
         let (vote_pubkey, vote_account) = create_test_account(vote_state_v4_enabled);
         let authorized_voter_pubkey = solana_pubkey::new_rand();
         let clock = Clock {
@@ -1605,16 +1606,33 @@ mod tests {
 
         // processing incompatible instruction should fail
         if vote_state_v4_enabled && bls_pubkey_management_in_vote_account_enabled {
-            // If both features are enabled, the old instruction should be rejected
+            // If both features are enabled, the old instruction should be accepted when
+            // the account does not have a BLS key.
+            let (_, vote_account_no_bls_key) = create_test_account(false);
+            let new_authorized_voter_pubkey = solana_pubkey::new_rand();
+            let old_instruction_data = serialize(&VoteInstruction::Authorize(
+                new_authorized_voter_pubkey,
+                VoteAuthorize::Voter,
+            ))
+            .unwrap();
             process_instruction(
                 vote_state_v4_enabled,
                 bls_pubkey_management_in_vote_account_enabled,
-                &instruction_data,
+                &old_instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
+                    (vote_pubkey, vote_account_no_bls_key),
                     (sysvar::clock::id(), clock_account.clone()),
-                    (authorized_voter_pubkey, AccountSharedData::default()),
+                    (new_authorized_voter_pubkey, AccountSharedData::default()),
                 ],
+                instruction_accounts.clone(),
+                Ok(()),
+            );
+            // However, once the BLS key is set, the old instruction should be rejected
+            process_instruction(
+                vote_state_v4_enabled,
+                bls_pubkey_management_in_vote_account_enabled,
+                &old_instruction_data,
+                transaction_accounts.clone(),
                 instruction_accounts.clone(),
                 Err(InstructionError::InvalidInstructionData),
             );
@@ -2481,7 +2499,10 @@ mod tests {
     }
 
     #[test_matrix([false, true], [false, true])]
-    fn test_withdrawer_base_key_can_authorize_new_withdrawer(vote_state_v4_enabled: bool, bls_pubkey_feature_enabled: bool) {
+    fn test_withdrawer_base_key_can_authorize_new_withdrawer(
+        vote_state_v4_enabled: bool,
+        bls_pubkey_feature_enabled: bool,
+    ) {
         let VoteAccountTestFixtureWithAuthorities {
             vote_pubkey,
             withdrawer_base_key,
