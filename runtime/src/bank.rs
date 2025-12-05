@@ -563,7 +563,7 @@ impl PartialEq for Bank {
             accounts_data_size_initial: _,
             accounts_data_size_delta_on_chain: _,
             accounts_data_size_delta_off_chain: _,
-            accounts_net_state_growth: _,
+            accounts_num_delta_on_chain: _,
             rent_controller_integral: _,
             epoch_reward_status: _,
             transaction_processor: _,
@@ -871,8 +871,8 @@ pub struct Bank {
     accounts_data_size_delta_on_chain: AtomicI64,
     /// The change to accounts data size in this Bank, due to off-chain events (i.e. rent collection)
     accounts_data_size_delta_off_chain: AtomicI64,
-    /// The change to accounts state growth in this Bank, due on-chain events (i.e. transactions)
-    accounts_net_state_growth: AtomicI64,
+    /// The change to accounts num delta in this Bank, due on-chain events (i.e. transactions)
+    accounts_num_delta_on_chain: AtomicI64,
 
     /// Integral accumulator for dynamic rent controller (SIMD-0389)
     rent_controller_integral: AtomicI64,
@@ -1137,7 +1137,7 @@ impl Bank {
             accounts_data_size_initial: 0,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
-            accounts_net_state_growth: AtomicI64::new(0),
+            accounts_num_delta_on_chain: AtomicI64::new(0),
             rent_controller_integral: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
@@ -1386,7 +1386,7 @@ impl Bank {
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
-            accounts_net_state_growth: AtomicI64::new(0),
+            accounts_num_delta_on_chain: AtomicI64::new(0),
             rent_controller_integral: AtomicI64::new(0),
             epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor,
@@ -1497,7 +1497,8 @@ impl Bank {
 
         report_rent_controller_metrics(
             &new,
-            parent.load_accounts_net_state_growth(),
+            new.load_accounts_data_size_delta_on_chain(),
+            parent.load_accounts_num_delta_on_chain(),
             new.rent_collector.rent.lamports_per_byte_year,
             new.rent_collector.rent.exemption_threshold,
             new.rent_controller_integral.load(Relaxed),
@@ -1889,7 +1890,7 @@ impl Bank {
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
-            accounts_net_state_growth: AtomicI64::new(0),
+            accounts_num_delta_on_chain: AtomicI64::new(0),
             rent_controller_integral: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
@@ -1944,14 +1945,19 @@ impl Bank {
         });
 
         // Initialize runtime-only fields from sysvars (persisted state), since we do not serialize them
+        if let Some(account) =
+            bank.get_account(&private_sysvars_ids::ACCOUNTS_DATA_SIZE_DELTA_ON_CHAIN)
+        {
+            let val: i64 = bincode::deserialize(account.data()).unwrap_or(0);
+            bank.accounts_data_size_delta_on_chain.store(val, Relaxed);
+        }
         if let Some(account) = bank.get_account(&private_sysvars_ids::RENT_CONTROLLER_INTEGRAL_ID) {
             let val: i64 = bincode::deserialize(account.data()).unwrap_or(0);
             bank.rent_controller_integral.store(val, Relaxed);
         }
-        if let Some(account) = bank.get_account(&private_sysvars_ids::ACCOUNTS_NET_STATE_GROWTH_ID)
-        {
+        if let Some(account) = bank.get_account(&private_sysvars_ids::ACCOUNTS_NUM_DELTA_ON_CHAIN) {
             let val: i64 = bincode::deserialize(account.data()).unwrap_or(0);
-            bank.accounts_net_state_growth.store(val, Relaxed);
+            bank.accounts_num_delta_on_chain.store(val, Relaxed);
         }
 
         datapoint_info!(
@@ -2246,22 +2252,18 @@ impl Bank {
         });
     }
 
-    fn update_net_state_growth_sysvar(&self, value: i64) {
-        self.update_sysvar_account(
-            &private_sysvars_ids::ACCOUNTS_NET_STATE_GROWTH_ID,
-            |account| {
-                let (lamports, rent_epoch) =
-                    self.inherit_specially_retained_account_fields(account);
-                let data = bincode::serialize(&value).expect("serialize private sysvar");
-                AccountSharedData::create(
-                    lamports,
-                    data,
-                    solana_sdk_ids::sysvar::id(),
-                    false,
-                    rent_epoch,
-                )
-            },
-        );
+    fn update_i64_sysvar(&self, pubkey: &Pubkey, value: i64) {
+        self.update_sysvar_account(pubkey, |account| {
+            let (lamports, rent_epoch) = self.inherit_specially_retained_account_fields(account);
+            let data = bincode::serialize(&value).expect("serialize private sysvar");
+            AccountSharedData::create(
+                lamports,
+                data,
+                solana_sdk_ids::sysvar::id(),
+                false,
+                rent_epoch,
+            )
+        });
     }
 
     fn update_slot_hashes(&self) {
@@ -2328,11 +2330,19 @@ impl Bank {
             return;
         };
 
+        // get account state deltas from parent
         let parent_i = parent.rent_controller_integral.load(Acquire);
-        let parent_net_growth = parent.load_accounts_net_state_growth();
+        let parent_data_size_delta = parent.load_accounts_data_size_delta_on_chain();
+        let parent_num_delta = parent
+            .load_accounts_num_delta_on_chain()
+            .saturating_mul(solana_rent::ACCOUNT_STORAGE_OVERHEAD as i64); // account for additional per account storage overhead
+
+        // compute new accumulator value by adding an adjustment to the parent accumulator
         let target_per_slot =
             RENT_CTRL_G_TARGET_SLOTS_PER_EPOCH / parent.epoch_schedule().slots_per_epoch as i64;
-        let e = parent_net_growth.saturating_sub(target_per_slot);
+        let e = parent_data_size_delta
+            .saturating_add(parent_num_delta)
+            .saturating_sub(target_per_slot);
         let new_i = parent_i
             .saturating_add(e)
             .clamp(RENT_CTRL_I_MIN, RENT_CTRL_I_MAX);
@@ -2639,7 +2649,14 @@ impl Bank {
             // finish up any deferred changes to account state
             self.distribute_transaction_fee_details();
             self.update_slot_history();
-            self.update_net_state_growth_sysvar(self.load_accounts_net_state_growth());
+            self.update_i64_sysvar(
+                &private_sysvars_ids::ACCOUNTS_NUM_DELTA_ON_CHAIN,
+                self.load_accounts_num_delta_on_chain(),
+            );
+            self.update_i64_sysvar(
+                &private_sysvars_ids::ACCOUNTS_DATA_SIZE_DELTA_ON_CHAIN,
+                self.load_accounts_data_size_delta_on_chain(),
+            );
             self.run_incinerator();
 
             // freeze is a one-way trip, idempotent
@@ -3661,9 +3678,9 @@ impl Bank {
         self.accounts_data_size_delta_off_chain.load(Acquire)
     }
 
-    /// Load the net state growth observed in this bank for the current slot, in bytes.
-    fn load_accounts_net_state_growth(&self) -> i64 {
-        self.accounts_net_state_growth.load(Acquire)
+    /// Load the accounts num delta observed in this bank for the current slot, in bytes.
+    fn load_accounts_num_delta_on_chain(&self) -> i64 {
+        self.accounts_num_delta_on_chain.load(Acquire)
     }
 
     /// Update the accounts data size delta from on-chain events by adding `amount`.
@@ -3681,16 +3698,16 @@ impl Bank {
             .unwrap();
     }
 
-    /// Update the accounts net state growth from on-chain events by adding `amount`.
+    /// Update the accounts num delta from on-chain events by adding `amount`.
     /// The arithmetic saturates.
-    fn update_accounts_net_state_growth(&self, amount: i64) {
+    fn update_accounts_num_delta(&self, amount: i64) {
         if amount == 0 {
             return;
         }
 
-        self.accounts_net_state_growth
-            .fetch_update(AcqRel, Acquire, |accounts_net_state_growth| {
-                Some(accounts_net_state_growth.saturating_add(amount))
+        self.accounts_num_delta_on_chain
+            .fetch_update(AcqRel, Acquire, |accounts_num_delta| {
+                Some(accounts_num_delta.saturating_add(amount))
             })
             // SAFETY: unwrap() is safe since our update fn always returns `Some`
             .unwrap();
@@ -3846,20 +3863,20 @@ impl Bank {
             }
         });
 
-        let (accounts_data_len_delta, accounts_net_state_growth) = processing_results
+        let (accounts_data_len_delta, accounts_num_delta) = processing_results
             .iter()
             .filter_map(|processing_result| processing_result.processed_transaction())
             .filter_map(|processed_tx| processed_tx.execution_details())
             .filter_map(|details| {
                 if details.status.is_ok() {
-                    Some((details.accounts_data_len_delta, details.state_growth_delta))
+                    Some((details.accounts_data_len_delta, details.accounts_num_delta))
                 } else {
                     None
                 }
             })
             .fold((0, 0), |(acc1, acc2), (v1, v2)| (acc1 + v1, acc2 + v2));
         self.update_accounts_data_size_delta_on_chain(accounts_data_len_delta);
-        self.update_accounts_net_state_growth(accounts_net_state_growth);
+        self.update_accounts_num_delta(accounts_num_delta);
 
         let ((), update_transaction_statuses_us) =
             measure_us!(self.update_transaction_statuses(sanitized_txs, &processing_results));

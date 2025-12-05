@@ -18,6 +18,12 @@ pub struct WritableTransactionAccountStateInfo {
 
 pub type TransactionAccountStateInfo = Option<WritableTransactionAccountStateInfo>; // None: readonly account
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub(crate) struct AccountDeltas {
+    pub num_delta: i64,
+    pub data_size_delta: i64,
+}
+
 pub(crate) fn new_pre_exec(
     transaction_context: &TransactionContext,
     message: &impl SVMMessage,
@@ -127,30 +133,42 @@ pub(crate) fn verify_changes(
     Ok(())
 }
 
-pub(crate) fn get_account_state_growth_delta(
+// Returns delta for num_accounts and account_size given the pre and post state infos.
+pub(crate) fn get_account_deltas(
     pre: &[TransactionAccountStateInfo],
     post: &[TransactionAccountStateInfo],
-) -> i64 {
-    pre.iter().zip(post).fold(0i64, |sum, (pre_opt, post_opt)| {
-        match (pre_opt.as_ref(), post_opt.as_ref()) {
-            (Some(pre), Some(post)) => {
-                sum + match (&pre.rent_state, &post.rent_state) {
-                    (RentState::Uninitialized, RentState::RentExempt) => {
-                        post.data_size as i64 + solana_rent::ACCOUNT_STORAGE_OVERHEAD as i64
-                    } // created
-                    (RentState::RentExempt, RentState::Uninitialized) => {
-                        -(pre.data_size as i64 + solana_rent::ACCOUNT_STORAGE_OVERHEAD as i64)
-                    } // deleted
-                    (RentState::Uninitialized, RentState::Uninitialized) => 0, // ephemeral account
-                    _ => {
-                        let delta = post.data_size as i64 - pre.data_size as i64;
-                        delta
-                    } // existing account realloc
+    accounts_resize_delta: i64,
+) -> AccountDeltas {
+    // accounts_resize_delta accounts doesn't account for deleted accounts, so the overall
+    // state delta is computed by subtracting the data size of every deleted account.
+    let (num_accounts_delta, data_size_delta) = pre.iter().zip(post).fold(
+        (0i64, accounts_resize_delta),
+        |(num_accounts_delta, data_size_delta), (pre_opt, post_opt)| {
+            match (pre_opt.as_ref(), post_opt.as_ref()) {
+                (Some(pre), Some(post)) => {
+                    match (&pre.rent_state, &post.rent_state) {
+                        // created
+                        (RentState::Uninitialized, RentState::RentExempt) => {
+                            (num_accounts_delta + 1, data_size_delta)
+                        }
+                        // deleted
+                        (RentState::RentExempt, RentState::Uninitialized) => (
+                            num_accounts_delta - 1,
+                            data_size_delta - post.data_size as i64,
+                        ),
+                        // ephemeral account or existing account realloc
+                        _ => (num_accounts_delta, data_size_delta),
+                    }
                 }
+                // None indicates non write-locked accounts -> no change
+                _ => (num_accounts_delta, data_size_delta),
             }
-            _ => sum, // skip if either side is None
-        }
-    })
+        },
+    );
+    AccountDeltas {
+        num_delta: num_accounts_delta,
+        data_size_delta,
+    }
 }
 
 #[cfg(test)]

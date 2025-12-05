@@ -11,7 +11,7 @@ use {
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
-            get_account_state_growth_delta, new_post_exec, new_pre_exec, verify_changes,
+            get_account_deltas, new_post_exec, new_pre_exec, verify_changes, AccountDeltas,
         },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -1042,7 +1042,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts,
             return_data,
             touched_account_count,
-            accounts_resize_delta: accounts_data_len_delta,
+            accounts_resize_delta,
         } = execution_record;
 
         if post_account_state_info.is_ok()
@@ -1069,10 +1069,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             None
         };
 
-        let state_growth_delta: i64 = if let Ok(post_state_info) = post_account_state_info {
-            get_account_state_growth_delta(&pre_account_state_info, &post_state_info)
+        let deltas = if let Ok(post_state_info) = post_account_state_info {
+            get_account_deltas(
+                &pre_account_state_info,
+                &post_state_info,
+                accounts_resize_delta,
+            )
         } else {
-            0
+            AccountDeltas::default()
         };
 
         ExecutedTransaction {
@@ -1082,8 +1086,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 inner_instructions,
                 return_data,
                 executed_units,
-                accounts_data_len_delta,
-                state_growth_delta,
+                accounts_data_len_delta: deltas.data_size_delta,
+                accounts_num_delta: deltas.num_delta,
             },
             loaded_transaction,
             programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
