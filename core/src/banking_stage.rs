@@ -783,6 +783,7 @@ mod external {
             // Spawn tpu to pack.
             threads.push(tpu_to_pack::spawn(
                 self.worker_exit_signal.clone(),
+                self.banking_shutdown_signal.clone(),
                 tpu_to_pack_receivers,
                 tpu_to_pack,
             ));
