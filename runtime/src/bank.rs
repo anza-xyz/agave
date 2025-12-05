@@ -6000,7 +6000,12 @@ impl Bank {
     }
 
     pub fn set_block_id(&self, block_id: Option<Hash>) {
-        *self.block_id.write().unwrap() = block_id;
+        let mut block_id_w = self.block_id.write().unwrap();
+        if block_id_w.is_some() {
+            debug_assert_eq!(*block_id_w, block_id);
+        } else {
+            *block_id_w = block_id;
+        }
     }
 
     pub fn compute_budget(&self) -> Option<ComputeBudget> {

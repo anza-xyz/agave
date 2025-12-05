@@ -2613,7 +2613,7 @@ pub fn process_single_slot(
     })?;
 
     let block_id = blockstore
-        .get_last_shred_merkle_root(slot)
+        .get_block_id(slot, migration_status)
         .expect("Full block must have block id");
     bank.set_block_id(Some(block_id));
     bank.freeze(); // all banks handled by this routine are created from complete slots
