@@ -2336,10 +2336,7 @@ mod tests {
         );
     }
 
-    #[test_case(false, false; "VoteStateV3 without BLS")]
-    #[test_case(false, true; "VoteStateV3 with BLS")]
-    #[test_case(true, false; "VoteStateV4 without BLS")]
-    #[test_case(true, true; "VoteStateV4 with BLS")]
+    #[test_matrix([false, true], [false, true])]
     fn test_voter_base_key_can_authorize_new_voter(
         vote_state_v4_enabled: bool,
         bls_pubkey_feature_enabled: bool,
@@ -2376,10 +2373,7 @@ mod tests {
         );
     }
 
-    #[test_case(false, false; "VoteStateV3 without BLS")]
-    #[test_case(false, true; "VoteStateV3 with BLS")]
-    #[test_case(true, false; "VoteStateV4 without BLS")]
-    #[test_case(true, true; "VoteStateV4 with BLS")]
+    #[test_matrix([false, true], [false, true])]
     fn test_withdrawer_base_key_can_authorize_new_voter(
         vote_state_v4_enabled: bool,
         bls_pubkey_feature_enabled: bool,
@@ -2475,9 +2469,8 @@ mod tests {
         );
     }
 
-    #[test_case(false ; "VoteStateV3")]
-    #[test_case(true ; "VoteStateV4")]
-    fn test_withdrawer_base_key_can_authorize_new_withdrawer(vote_state_v4_enabled: bool) {
+    #[test_matrix([false, true], [false, true])]
+    fn test_withdrawer_base_key_can_authorize_new_withdrawer(vote_state_v4_enabled: bool, bls_pubkey_feature_enabled: bool) {
         let VoteAccountTestFixtureWithAuthorities {
             vote_pubkey,
             withdrawer_base_key,
@@ -2489,7 +2482,7 @@ mod tests {
         let new_withdrawer_pubkey = Pubkey::new_unique();
         perform_authorize_with_seed_test(
             vote_state_v4_enabled,
-            false,
+            bls_pubkey_feature_enabled,
             VoteAuthorize::Withdrawer,
             vote_pubkey,
             vote_account,
@@ -2500,10 +2493,7 @@ mod tests {
         );
     }
 
-    #[test_case(false, false; "VoteStateV3 without BLS")]
-    #[test_case(false, true; "VoteStateV3 with BLS")]
-    #[test_case(true, false; "VoteStateV4 without BLS")]
-    #[test_case(true, true; "VoteStateV4 with BLS")]
+    #[test_matrix([false, true], [false, true])]
     fn test_voter_base_key_can_authorize_new_voter_checked(
         vote_state_v4_enabled: bool,
         bls_pubkey_feature_enabled: bool,
