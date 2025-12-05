@@ -402,7 +402,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         // Create the batch-local program cache.
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-        let builtins = self.builtin_program_ids.read().unwrap().clone();
+        let builtins = self
+            .builtin_program_ids
+            .read()
+            .unwrap()
+            .iter()
+            .map(|key| (*key, 0))
+            .collect::<HashSet<_>>();
         let ((), program_cache_us) = measure_us!({
             self.replenish_program_cache(
                 &account_loader,
@@ -796,17 +802,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         account_loader: &AccountLoader<CB>,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         tx: &impl SVMMessage,
-    ) -> HashSet<Pubkey> {
+    ) -> HashSet<(Pubkey, Slot)> {
         let mut program_accounts_set = HashSet::default();
         for account_key in tx.account_keys().iter() {
             if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
                 cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
-            } else if account_loader
-                .get_account_shared_data(account_key)
-                .map(|(account, _slot)| PROGRAM_OWNERS.contains(account.owner()))
-                .unwrap_or(false)
+            } else if let Some((account, last_modification_slot)) =
+                account_loader.get_account_shared_data(account_key)
             {
-                program_accounts_set.insert(*account_key);
+                if PROGRAM_OWNERS.contains(account.owner()) {
+                    program_accounts_set.insert((*account_key, last_modification_slot));
+                }
             }
         }
         program_accounts_set
@@ -816,7 +822,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        program_accounts_set: &HashSet<Pubkey>,
+        program_accounts_set: &HashSet<(Pubkey, Slot)>,
         program_runtime_environments_for_execution: &ProgramRuntimeEnvironments,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
@@ -827,7 +833,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> =
             program_accounts_set
                 .iter()
-                .map(|pubkey| {
+                .map(|(pubkey, last_modification_slot)| {
                     let match_criteria = if check_program_modification_slot {
                         get_program_modification_slot(account_loader, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
@@ -836,14 +842,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     } else {
                         ProgramCacheMatchCriteria::NoCriteria
                     };
-                    let last_modification_slot = if increment_usage_counter {
-                        // If the pubkey got selected by filter_executable_program_accounts() the account must exist
-                        account_loader.get_account_shared_data(pubkey).unwrap().1
-                    } else {
-                        // This is the built-in pre-loading stage
-                        0
-                    };
-                    (*pubkey, match_criteria, last_modification_slot)
+                    (*pubkey, match_criteria, *last_modification_slot)
                 })
                 .collect();
 
@@ -1563,7 +1562,7 @@ mod tests {
         let key = Pubkey::new_unique();
 
         let mut account_set = HashSet::new();
-        account_set.insert(key);
+        account_set.insert((key, 0));
 
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
@@ -1599,7 +1598,7 @@ mod tests {
         let account_loader = (&mock_bank).into();
 
         let mut account_set = HashSet::new();
-        account_set.insert(key);
+        account_set.insert((key, 0));
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
@@ -1683,8 +1682,8 @@ mod tests {
         );
 
         assert_eq!(program_accounts_set.len(), 2);
-        assert!(program_accounts_set.contains(&key1));
-        assert!(program_accounts_set.contains(&key2));
+        assert!(program_accounts_set.contains(&(key1, 0)));
+        assert!(program_accounts_set.contains(&(key2, 0)));
     }
 
     #[test]
@@ -1766,7 +1765,7 @@ mod tests {
 
         assert_eq!(tx1_programs.len(), 1);
         assert!(
-            tx1_programs.contains(&account3_pubkey),
+            tx1_programs.contains(&(account3_pubkey, 0)),
             "failed to find the program account",
         );
 
@@ -1778,11 +1777,11 @@ mod tests {
 
         assert_eq!(tx2_programs.len(), 2);
         assert!(
-            tx2_programs.contains(&account3_pubkey),
+            tx2_programs.contains(&(account3_pubkey, 0)),
             "failed to find the program account",
         );
         assert!(
-            tx2_programs.contains(&account4_pubkey),
+            tx2_programs.contains(&(account4_pubkey, 0)),
             "failed to find the program account",
         );
     }

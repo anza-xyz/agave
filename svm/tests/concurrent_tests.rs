@@ -9,6 +9,7 @@ use {
         thread, Runner,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_clock::Slot,
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -47,7 +48,7 @@ fn program_cache_execution(threads: usize) {
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashSet<Pubkey> = programs.iter().copied().collect();
+    let account_maps: HashSet<(Pubkey, Slot)> = programs.iter().map(|key| (*key, 0)).collect();
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
