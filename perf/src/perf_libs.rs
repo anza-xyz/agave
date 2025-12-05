@@ -20,5 +20,5 @@ pub fn append_to_ld_library_path(mut ld_library_path: String) {
         ld_library_path.push_str(&env_value);
     }
     info!("setting ld_library_path to: {ld_library_path:?}");
-    env::set_var("LD_LIBRARY_PATH", ld_library_path);
+    unsafe { env::set_var("LD_LIBRARY_PATH", ld_library_path) }
 }
