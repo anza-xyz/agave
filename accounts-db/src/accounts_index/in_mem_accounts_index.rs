@@ -5,7 +5,8 @@ use {
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         stats::Stats,
-        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
+        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, SlotListItem,
+        UpsertReclaim,
     },
     crate::pubkey_bins::PubkeyBinCalculator24,
     rand::{rng, Rng},
@@ -412,7 +413,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// Insert a cached entry into the accounts index
     /// If the entry is already present, just mark dirty and set the age to the future
-    fn cache_entry_at_slot(current: &AccountMapEntry<T>, new_value: (Slot, T)) {
+    fn cache_entry_at_slot(current: &AccountMapEntry<T>, new_value: SlotListItem<T>) {
         let mut slot_list = current.slot_list_write_lock();
         let (slot, new_entry) = new_value;
         if !slot_list
@@ -540,7 +541,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Note:: This function only supports uncached types `T`.
     fn lock_and_update_slot_list(
         current: &AccountMapEntry<T>,
-        new_value: (Slot, T),
+        new_value: SlotListItem<T>,
         other_slot: Option<Slot>,
         reclaims: &mut ReclaimsSlotList<T>,
         reclaim: UpsertReclaim,
@@ -841,7 +842,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         entry: &AccountMapEntry<T>,
         current_age: Age,
         ages_flushing_now: Age,
-    ) -> ShouldFlush<(Slot, T)> {
+    ) -> ShouldFlush<SlotListItem<T>> {
         // Step 1: Perform the cheap checks on the entry
         // Step 2: Clear the dirty flag
         // Step 3: Perform all the checks on the entry.

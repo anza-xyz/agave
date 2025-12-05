@@ -2,9 +2,8 @@ use {
     super::{
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         in_mem_accounts_index::InMemAccountsIndex,
-        DiskIndexValue, IndexValue,
+        DiskIndexValue, IndexValue, SlotListItem,
     },
-    solana_clock::Slot,
     solana_time_utils::AtomicInterval,
     std::{
         fmt::Debug,
@@ -287,7 +286,7 @@ impl Stats {
                 // and for entries held in mem due to ref count or slot list length, assume
                 // conservatively a slot list with two entries
                 + (held_in_mem_ref_count + held_in_mem_slot_list_len) as usize
-                    * size_of::<(Slot, T)>() // <-- size of one slot list entry
+                    * size_of::<SlotListItem<T>>() // <-- size of one slot list entry
                     * 2; // <-- and assume there are two entries
             datapoint_info!(
                 datapoint_name,
