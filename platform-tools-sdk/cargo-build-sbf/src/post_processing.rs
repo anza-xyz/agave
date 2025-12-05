@@ -59,7 +59,6 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             });
         }
 
-        #[cfg(windows)]
         let llvm_bin = config
             .sbf_sdk
             .join("dependencies")
@@ -68,7 +67,6 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             .join("bin");
 
         if file_older_or_missing(&program_unstripped_so, &program_so) {
-            #[cfg(windows)]
             let output = spawn(
                 &llvm_bin.join("llvm-objcopy"),
                 [
@@ -78,55 +76,62 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 ],
                 config.generate_child_script_on_failure,
             );
-            #[cfg(not(windows))]
-            let output = spawn(
-                &config.sbf_sdk.join("scripts").join("strip.sh"),
-                [&program_unstripped_so, &program_so],
-                config.generate_child_script_on_failure,
-            );
             if config.verbose {
                 debug!("{output}");
             }
         }
 
         if config.dump && file_older_or_missing(&program_unstripped_so, &program_dump) {
-            let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
-            #[cfg(windows)]
+            let mangled_name = format!("{}.mangled", program_dump.display());
             {
-                error!(
-                    "Using Bash scripts from within a program is not supported on Windows, \
-                     skipping `--dump`."
-                );
-                error!(
-                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this \
-                     command to see the processed program dump.",
-                    &dump_script.display(),
-                    &program_unstripped_so.display(),
-                    &program_dump.display()
-                );
-            }
-            #[cfg(not(windows))]
-            {
-                let output = spawn(
-                    &dump_script,
-                    [&program_unstripped_so, &program_dump],
+                let mangled =
+                    File::create(mangled_name.clone()).expect("failed to open mangled file");
+                let mut mangled_out = BufWriter::new(mangled);
+                let mut output = spawn(
+                    &llvm_bin.join("llvm-readelf"),
+                    ["-aW".as_ref(), program_unstripped_so.as_os_str()],
                     config.generate_child_script_on_failure,
                 );
+                output.retain(|c| c != ':');
+                write!(mangled_out, "{output}").expect("write readelf output to mangled file");
+                if config.verbose {
+                    debug!("{output}");
+                }
+
+                let mut output = spawn(
+                    &llvm_bin.join("llvm-objdump"),
+                    [
+                        "--print-imm-hex".as_ref(),
+                        "--source".as_ref(),
+                        "--disassemble".as_ref(),
+                        program_unstripped_so.as_os_str(),
+                    ],
+                    config.generate_child_script_on_failure,
+                );
+                output.retain(|c| c != ':');
+                write!(mangled_out, "{output}").expect("write objdump output to mangled file");
                 if config.verbose {
                     debug!("{output}");
                 }
             }
+
+            let dump = File::create(&program_dump).expect("failed to open dump file");
+            let mut dump_out = BufWriter::new(dump);
+            let output = spawn(
+                Path::new("rustfilt"),
+                ["--input", mangled_name.as_str()],
+                config.generate_child_script_on_failure,
+            );
+            write!(dump_out, "{output}").expect("write output of rustfilt");
+            std::fs::remove_file(mangled_name).expect("mangled file to be removed");
+
+            info!("Wrote {}", program_dump.display());
             postprocess_dump(&program_dump);
         }
 
         if config.debug && file_older_or_missing(&program_unstripped_so, &program_debug) {
-            #[cfg(windows)]
-            let llvm_objcopy = &llvm_bin.join("llvm-objcopy");
-            #[cfg(not(windows))]
-            let llvm_objcopy = &config.sbf_sdk.join("scripts").join("objcopy.sh");
-
             let output = spawn(
-                llvm_objcopy,
+                &llvm_bin.join("llvm-objcopy"),
                 [
                     "--only-keep-debug".as_ref(),
                     program_unstripped_so.as_os_str(),
