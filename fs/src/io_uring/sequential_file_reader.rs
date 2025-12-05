@@ -2,9 +2,10 @@
 
 use {
     super::{
-        memory::{FixedIoBuffer, LargeBuffer},
+        memory::{FixedIoBuffer, PageAlignedMemory},
         IO_PRIO_BE_HIGHEST,
     },
+    crate::io_uring::memory::new_large_buffer,
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -30,19 +31,19 @@ const MAX_IOWQ_WORKERS: u32 = 2;
 /// Reader for non-seekable files.
 ///
 /// Implements read-ahead using io_uring.
-pub struct SequentialFileReader<B> {
+pub struct SequentialFileReader {
     // Note: state is tied to `backing_buffer` and contains unsafe pointer references to it
     inner: Ring<SequentialFileReaderState, ReadOp>,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
-    _backing_buffer: B,
+    _backing_buffer: PageAlignedMemory,
 }
 
-impl SequentialFileReader<LargeBuffer> {
+impl SequentialFileReader {
     /// Create a new `SequentialFileReader` for the given `path` using internally allocated
     /// buffer of specified `buf_size` and default read size.
     pub fn with_capacity(buf_size: usize, path: impl AsRef<Path>) -> io::Result<Self> {
-        Self::with_buffer(path, LargeBuffer::new(buf_size), DEFAULT_READ_SIZE)
+        Self::with_buffer(path, new_large_buffer(buf_size)?, DEFAULT_READ_SIZE)
     }
 }
 
@@ -56,14 +57,14 @@ struct SequentialFileReaderState {
     current_buf: usize,
 }
 
-impl<B: AsMut<[u8]>> SequentialFileReader<B> {
+impl SequentialFileReader {
     /// Create a new `SequentialFileReader` for the given file using provided backing `buffer`.
     ///
     /// `buffer` is the internal buffer used for reading. It must be at least `read_capacity` long.
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
     pub fn with_buffer(
         path: impl AsRef<Path>,
-        mut buffer: B,
+        mut buffer: PageAlignedMemory,
         read_capacity: usize,
     ) -> io::Result<Self> {
         let buf_capacity = buffer.as_mut().len();
@@ -93,7 +94,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
     /// Create a new `SequentialFileReader` for the given file, using a custom
     /// ring instance.
     fn with_buffer_and_ring(
-        mut backing_buffer: B,
+        mut backing_buffer: PageAlignedMemory,
         ring: IoUring,
         path: impl AsRef<Path>,
         read_capacity: usize,
@@ -103,10 +104,38 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         let read_aligned_buf_len = buffer.len() / read_capacity * read_capacity;
         let buffer = &mut buffer[..read_aligned_buf_len];
 
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOATIME)
-            .open(path)?;
+        log::info!("attempting to open with O_DIRECT");
+        // check that read_capacity is a multiple of 4096 when using O_DIRECT
+        // from https://man7.org/linux/man-pages/man2/open.2.html
+        //    In Linux
+        //    2.4, most filesystems based on block devices require that the file
+        //    offset and the length and memory address of all I/O segments be
+        //    multiples of the filesystem block size (typically 4096 bytes).  In
+        //    Linux 2.6.0, this was relaxed to the logical block size of the
+        //    block device (typically 512 bytes)
+
+        // in other words, each O_DIRECT read must be into a subbuffer of some multiple of 4096
+        // the other requirement for O_DIRECT is that the buffer must be aligned
+        // but since we are using `PageAlignedMemory`, the buffer will always be aligned
+        let custom_flags = libc::O_NOATIME;
+        let file = match (
+            read_capacity % 4096 == 0,
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(custom_flags | libc::O_DIRECT)
+                .open(&path),
+        ) {
+            (true, Ok(f)) => f,
+            (_, res) => {
+                if let Err(e) = res {
+                    log::warn!("O_DIRECT open failed ({}), falling back to normal read", e);
+                }
+                OpenOptions::new()
+                    .read(true)
+                    .custom_flags(custom_flags)
+                    .open(path)?
+            }
+        };
         // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
         // dropped before `backing_buffer` is dropped.
         let buffers = unsafe { FixedIoBuffer::split_buffer_chunks(buffer, read_capacity) }
@@ -188,7 +217,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
 }
 
 // BufRead requires Read, but we never really use the Read interface.
-impl<B: AsMut<[u8]>> Read for SequentialFileReader<B> {
+impl Read for SequentialFileReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let available = self.fill_buf()?;
         if available.is_empty() {
@@ -202,7 +231,7 @@ impl<B: AsMut<[u8]>> Read for SequentialFileReader<B> {
     }
 }
 
-impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
+impl BufRead for SequentialFileReader {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         let _have_data = loop {
             let state = self.inner.context_mut();
@@ -423,7 +452,7 @@ mod tests {
         }
         io::Write::write_all(&mut temp_file, &pattern[..file_size % pattern.len()]).unwrap();
 
-        let buf = vec![0; backing_buffer_size];
+        let buf = new_large_buffer(backing_buffer_size).unwrap();
         let mut reader =
             SequentialFileReader::with_buffer(temp_file.path(), buf, read_capacity).unwrap();
 
