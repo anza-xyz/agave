@@ -224,7 +224,7 @@ impl FileCreator for SyncIoFileCreator<'_> {
         set_path_permissions(&path, mode)?;
 
         let file = file_buf.into_inner()?;
-        let file_info = FileInfo::read_from_path_and_file(path, file)?;
+        let file_info = FileInfo::new_from_path_and_file(path, file)?;
         (self.file_complete)(file_info);
         Ok(())
     }

@@ -15,14 +15,14 @@ pub struct FileInfo {
 
 impl FileInfo {
     /// Create new instance by opening a file from a given `path` and reading its metadata
-    pub fn read_from_path(path: impl Into<PathBuf>) -> io::Result<Self> {
+    pub fn new_from_path(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
         let file = File::open(&path)?;
-        Self::read_from_path_and_file(path, file)
+        Self::new_from_path_and_file(path, file)
     }
 
     /// Create new instance by using already open `file` and only reading its metadata
-    pub fn read_from_path_and_file(path: impl Into<PathBuf>, file: File) -> io::Result<Self> {
+    pub fn new_from_path_and_file(path: impl Into<PathBuf>, file: File) -> io::Result<Self> {
         let size = file.metadata()?.len();
         Ok(Self {
             path: path.into(),
