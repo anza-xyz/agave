@@ -1,7 +1,6 @@
 //! The `logger` module configures `env_logger`
 #![cfg(feature = "agave-unstable-api")]
 use std::{
-    env,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, RwLock},
     thread::JoinHandle,
@@ -90,11 +89,6 @@ pub fn redirect_stderr(filename: &Path) {
 }
 
 pub fn initialize_logging(logfile: Option<PathBuf>) {
-    // Debugging panics is easier with a backtrace
-    if env::var_os("RUST_BACKTRACE").is_none() {
-        env::set_var("RUST_BACKTRACE", "1")
-    }
-
     let Some(logfile) = logfile else {
         setup_with_default_filter();
         return;
@@ -111,15 +105,10 @@ pub fn initialize_logging(logfile: Option<PathBuf>) {
     }
 }
 
-// Redirect stderr to a file with support for logrotate by sending a SIGUSR1 to the process.
-//
-// Upon success, future `log` macros and `eprintln!()` can be found in the specified log file.
+/// Redirect stderr to a file with support for logrotate by sending a SIGUSR1 to the process.
+///
+/// Upon success, future `log` macros and `eprintln!()` can be found in the specified log file.
 pub fn redirect_stderr_to_file(logfile: Option<PathBuf>) -> Option<JoinHandle<()>> {
-    // Default to RUST_BACKTRACE=1 for more informative validator logs
-    if env::var_os("RUST_BACKTRACE").is_none() {
-        env::set_var("RUST_BACKTRACE", "1")
-    }
-
     match logfile {
         None => {
             setup_with_default_filter();
