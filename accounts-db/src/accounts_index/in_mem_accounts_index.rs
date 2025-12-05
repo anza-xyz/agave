@@ -907,17 +907,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
         current_age: Age,
         ages_flushing_now: Age,
-        max_evictions: Option<NonZeroUsize>,
+        max_evictions: NonZeroUsize,
     ) -> (CandidatesToFlush, CandidatesToEvict) {
         let mut candidates_to_flush = Vec::new();
         let mut candidates_to_evict = Vec::new();
         let mut rng = rng();
         // use reservoir sampling to select a bounded, roughly uniform subset
-        let mut sampling_state = max_evictions.map(|limit| ReservoirState {
-            samples: Vec::with_capacity(limit.get()),
+        let mut sampling_state = ReservoirState {
+            samples: Vec::with_capacity(max_evictions.get()),
             seen: 0,
-            max_samples: limit,
-        });
+            max_samples: max_evictions,
+        };
         for (k, v) in iter {
             if !Self::should_evict_based_on_age(current_age, v, ages_flushing_now) {
                 // not planning to evict this item from memory within 'ages_flushing_now' ages
@@ -930,28 +930,20 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if v.ref_count() != 1 {
                 continue;
             }
-            if let Some(state) = sampling_state.as_mut() {
-                state.select(
-                    CandidateSelection {
-                        key: *k,
-                        dirty: v.dirty(),
-                    },
-                    &mut rng,
-                );
-            } else if v.dirty() {
-                candidates_to_flush.push(*k);
-            } else {
-                candidates_to_evict.push(*k);
-            }
+            sampling_state.select(
+                CandidateSelection {
+                    key: *k,
+                    dirty: v.dirty(),
+                },
+                &mut rng,
+            );
         }
 
-        if let Some(state) = sampling_state {
-            for candidate in state.samples {
-                if candidate.dirty {
-                    candidates_to_flush.push(candidate.key);
-                } else {
-                    candidates_to_evict.push(candidate.key);
-                }
+        for candidate in sampling_state.samples {
+            if candidate.dirty {
+                candidates_to_flush.push(candidate.key);
+            } else {
+                candidates_to_evict.push(candidate.key);
             }
         }
         (
@@ -973,8 +965,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let (possible_evictions, m) = {
             let map = self.map_internal.read().unwrap();
             let m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
-            let possible_evictions =
-                Self::gather_possible_evictions(map.iter(), current_age, ages_flushing_now, None);
+            let max_evictions = NonZeroUsize::new(map.len().max(1)).unwrap();
+            let possible_evictions = Self::gather_possible_evictions(
+                map.iter(),
+                current_age,
+                ages_flushing_now,
+                max_evictions,
+            );
             (possible_evictions, m)
         };
         Self::update_time_stat(&self.stats().flush_scan_us, m);
@@ -1811,7 +1808,7 @@ mod tests {
                         map_dirty.iter().chain(&map_clean),
                         current_age,
                         ages_flushing_now,
-                        None,
+                        NonZeroUsize::new(map_dirty.len() + map_clean.len()).unwrap(),
                     );
                 // Verify that the number of entries selected for eviction matches the expected count.
                 // Test setup: map contains 256 dirty entries and 256 clean entries.
@@ -1894,7 +1891,7 @@ mod tests {
             map.iter(),
             current_age,
             ages_flushing_now,
-            Some(max_evictions),
+            max_evictions,
         );
 
         let total_selected = to_flush.0.len() + to_evict.0.len();
