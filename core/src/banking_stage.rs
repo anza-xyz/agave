@@ -448,7 +448,7 @@ impl BankingStage {
     }
 
     async fn run(mut self, initial_args: BankingControlMsg) -> std::thread::Result<()> {
-        assert!(self.spawn_scheduler(initial_args));
+        self.spawn_scheduler(initial_args).unwrap();
 
         loop {
             tokio::select! {
@@ -456,8 +456,8 @@ impl BankingStage {
 
                 _ = self.banking_shutdown_signal.cancelled() => break,
                 Some(args) = self.banking_control_receiver.recv() => {
-                    if !self.cycle_threads(args).await {
-                        assert!(self.cycle_threads_fallback().await);
+                    if self.cycle_threads(args).await.is_err() {
+                        self.cycle_threads_fallback().await.unwrap();
                     }
                 },
                 Some((name, res)) = self.threads.next() => {
@@ -465,7 +465,7 @@ impl BankingStage {
                         Ok(()) => error!("Banking worker exited unexpectedly; name={name}"),
                         Err(err) => error!("Banking worker exited with error; name={name}; err={err:?}"),
                     };
-                    assert!(self.cycle_threads_fallback().await);
+                    self.cycle_threads_fallback().await.unwrap();
                 },
             }
         }
@@ -479,7 +479,7 @@ impl BankingStage {
         Ok(())
     }
 
-    async fn cycle_threads(&mut self, args: BankingControlMsg) -> bool {
+    async fn cycle_threads(&mut self, args: BankingControlMsg) -> Result<(), ()> {
         // Shutdown all current threads.
         self.worker_exit_signal.store(true, Ordering::Relaxed);
         while let Some((name, res)) = self.threads.next().await {
@@ -496,7 +496,7 @@ impl BankingStage {
         self.spawn_scheduler(args)
     }
 
-    async fn cycle_threads_fallback(&mut self) -> bool {
+    async fn cycle_threads_fallback(&mut self) -> Result<(), ()> {
         error!("Spawning the default block production method as a fallback...");
 
         self.cycle_threads(BankingControlMsg::Internal {
@@ -507,8 +507,8 @@ impl BankingStage {
         .await
     }
 
-    fn spawn_scheduler(&mut self, args: BankingControlMsg) -> bool {
-        let Ok(threads) = (match args {
+    fn spawn_scheduler(&mut self, args: BankingControlMsg) -> Result<(), ()> {
+        let threads = (match args {
             BankingControlMsg::Internal {
                 block_production_method,
                 num_workers,
@@ -524,9 +524,7 @@ impl BankingStage {
             },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
-        }) else {
-            return false;
-        };
+        })?;
 
         self.threads.extend(threads.into_iter().map(|handle| {
             let name = handle.thread().name().unwrap().to_string();
@@ -535,7 +533,7 @@ impl BankingStage {
         }));
 
         info!("Scheduler spawned");
-        true
+        Ok(())
     }
 
     fn spawn_internal_central(
