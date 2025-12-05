@@ -610,6 +610,10 @@ impl BankingStage {
                                 Err(SchedulerError::DisconnectedRecvChannel(_)) => {
                                     info!("Upstream disconnected, shutting down banking");
 
+                                    // NB: We must signal shutdown before dropping the scheduler
+                                    //     controller, else, the workers may exit with an error and
+                                    //     trigger a new spawn before we have a chance to issue the
+                                    //     cancel.
                                     shutdown_signal.cancel();
                                     drop(scheduler_controller);
                                 }
