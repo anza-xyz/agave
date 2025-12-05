@@ -54,7 +54,7 @@ solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = "=3.0.0"
 solana-cluster-type = "=3.0.0"
-solana-commitment-config = "=3.0.0"
+solana-commitment-config = "=3.1.0"
 solana-compute-budget-interface = { version = "=3.0.0", features = ["borsh"] }
 solana-config-interface = "=2.0.0"
 solana-connection-cache = { workspace = true }
