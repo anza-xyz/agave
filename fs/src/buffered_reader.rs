@@ -390,10 +390,9 @@ pub fn large_file_buf_reader(path: &Path, buf_size: usize) -> io::Result<impl Bu
     #[cfg(target_os = "linux")]
     {
         assert!(agave_io_uring::io_uring_supported());
-        use crate::io_uring::sequential_file_reader::{SequentialFileReader, DEFAULT_READ_SIZE};
+        use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 
-        let buf_size = buf_size.max(DEFAULT_READ_SIZE);
-        SequentialFileReader::with_capacity(buf_size, path)
+        SequentialFileReaderBuilder::new().build(path, buf_size)
     }
     #[cfg(not(target_os = "linux"))]
     {
