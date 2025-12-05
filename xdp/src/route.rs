@@ -163,7 +163,7 @@ struct InterfaceTable {
 
 impl InterfaceTable {
     pub fn new() -> Result<Self, io::Error> {
-        let interfaces= netlink_get_interfaces()?;
+        let interfaces= netlink_get_interfaces(AF_INET as u8)?;
         Ok(Self { interfaces })
     }
 

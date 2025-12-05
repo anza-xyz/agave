@@ -225,7 +225,7 @@ impl XdpRetransmitter {
                             move |ip| {
                                 let r = atomic_router.load();
                                 let next_hop = r.route(*ip).ok()?;
-                                let interface_info = r.get_interface(next_hop.if_index).ok()?;
+                                let interface_info = r.get_interface(next_hop.if_index).ok()?; //greg: can we make this more efficient? get interface info from next_hop?
                                 Some((next_hop, interface_info))
                             },
                         )

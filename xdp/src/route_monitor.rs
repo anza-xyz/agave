@@ -1,7 +1,7 @@
 use {
     crate::{
         netlink::{
-            parse_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
+            parse_rtm_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
         },
         route::Router,
     },
@@ -121,12 +121,12 @@ impl RouteMonitor {
                     }
                 }
                 RTM_NEWLINK => {
-                    if let Some(interface_info) = parse_ifinfomsg(m) {
+                    if let Some(interface_info) = parse_rtm_ifinfomsg(m) {
                         dirty |= router.upsert_interface(interface_info);
                     }
                 }
                 RTM_DELLINK => {
-                    if let Some(interface_info) = parse_ifinfomsg(m) {
+                    if let Some(interface_info) = parse_rtm_ifinfomsg(m) {
                         dirty |= router.remove_interface(interface_info.if_index);
                     }
                 }

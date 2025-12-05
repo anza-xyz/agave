@@ -3,12 +3,12 @@
 use {
     libc::{
         nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket, AF_INET, AF_INET6,
-        AF_NETLINK, ARPHRD_ETHER, ARPHRD_IPGRE, ARPHRD_LOOPBACK, IFLA_IFNAME, IFLA_INFO_DATA,
+        AF_NETLINK, IFLA_IFNAME, IFLA_INFO_DATA,
         IFLA_LINKINFO, IFNAMSIZ, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO,
         NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST, RTA_DST,
         RTA_GATEWAY, RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK,
         RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, RT_TABLE_MAIN,
-        SOCK_RAW, SOL_NETLINK, SOL_SOCKET, SO_RCVBUF,
+        SOCK_RAW, SOL_NETLINK, SOL_SOCKET, SO_RCVBUF
     },
     std::{
         collections::HashMap,
@@ -23,16 +23,17 @@ use {
 const NETLINK_RCVBUF_SIZE: i32 = 1 << 16;
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
 // GRE nested attributes (from include/uapi/linux/if_tunnel.h)
+const IFLA_GRE_UNSPEC: u16 = 0;
 const IFLA_GRE_LINK: u16 = 1;
+const IFLA_GRE_IFLAGS: u16 = 2;
+const IFLA_GRE_OFLAGS: u16 = 3;
 const IFLA_GRE_IKEY: u16 = 4;
 const IFLA_GRE_OKEY: u16 = 5;
 const IFLA_GRE_LOCAL: u16 = 6;
 const IFLA_GRE_REMOTE: u16 = 7;
-const IFLA_GRE_TTL: u16 = 10;
-const IFLA_GRE_TOS: u16 = 11;
-const IFLA_GRE_PMTUDISC: u16 = 12;
-const IFLA_GRE_CSUM: u16 = 13;
-const IFLA_GRE_SEQ: u16 = 14;
+const IFLA_GRE_TTL: u16 = 8;
+const IFLA_GRE_TOS: u16 = 9;
+const IFLA_GRE_PMTUDISC: u16 = 10;
 
 const IFLA_INFO_KIND: u16 = 1;
 
@@ -347,15 +348,15 @@ impl std::fmt::Display for MacAddress {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreTunnelInfo {
-    pub local: Ipv4Addr,
-    pub remote: Ipv4Addr,
+    pub local: Option<IpAddr>,
+    pub remote: Option<IpAddr>,
+    pub iflags: Option<u16>,
+    pub oflags: Option<u16>,
     pub ikey: Option<u32>,
     pub okey: Option<u32>,
     pub ttl: Option<u8>,
     pub tos: Option<u8>,
-    pub pmtudisc: Option<u8>, // non-zero => set DF on outer IP
-    pub csum: Option<u8>,
-    pub seq: Option<u8>,
+    pub pmtudisc: Option<u8>,
     pub link_ifindex: Option<u32>, // underlay ifindex (IFLA_GRE_LINK)
 }
 
@@ -368,83 +369,58 @@ pub struct InterfaceInfo {
     pub primary_ipv4: Option<Ipv4Addr>,
 }
 
-// Get all interfaces via netlink (based off of FD: fd_netdev_netlink_load_table)
-pub fn netlink_get_interfaces() -> Result<Vec<InterfaceInfo>, io::Error> {
-    let socket = NetlinkSocket::open()?;
+#[repr(C)]
+struct InterfaceRequest {
+    header: nlmsghdr,
+    ifi: ifinfomsg,
+}
 
-    // Create request struct
-    #[repr(C)]
-    struct Request {
-        nlh: nlmsghdr,
-        ifi: ifinfomsg,
-    }
 
-    let request = Request {
-        nlh: nlmsghdr {
-            nlmsg_type: RTM_GETLINK,
-            nlmsg_flags: (NLM_F_REQUEST | NLM_F_DUMP) as u16,
-            nlmsg_len: mem::size_of::<Request>() as u32,
-            nlmsg_seq: 1,
-            nlmsg_pid: 0,
-        },
-        ifi: ifinfomsg {
-            ifi_family: AF_INET as u8,
-            ifi_type: 0,
-            ifi_index: 0,
-            ifi_flags: 0,
-            ifi_change: 0,
-        },
+// Get all interfaces via netlink
+pub fn netlink_get_interfaces(family: u8) -> Result<Vec<InterfaceInfo>, io::Error> {
+    let sock = NetlinkSocket::open()?;
+
+    // Safety: ifinfomsg is POD
+    let mut req = unsafe { mem::zeroed::<InterfaceRequest>() };
+
+    let nlmsg_len = mem::size_of::<nlmsghdr>() + mem::size_of::<ifinfomsg>();
+    req.header = nlmsghdr {
+        nlmsg_len: nlmsg_len as u32,
+        nlmsg_flags: (NLM_F_REQUEST | NLM_F_DUMP) as u16,
+        nlmsg_type: RTM_GETLINK,
+        nlmsg_pid: 0,
+        nlmsg_seq: 1,
     };
 
-    // Send request
-    let request_bytes = bytes_of(&request);
-    socket.send(request_bytes)?;
+    req.ifi.ifi_family = family;
 
-    // Receive and parse messages
-    let messages = socket.recv()?;
+    sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
+
     let mut interfaces = Vec::new();
 
-    for msg in messages {
-        // Check for netlink errors
-        if msg.header.nlmsg_type == NLMSG_ERROR as u16 {
-            let err = msg.error.unwrap();
-            if err.error != 0 {
-                return Err(io::Error::from_raw_os_error(-err.error));
-            }
-            continue;
-        }
-
+    for msg in sock.recv()? {
         if msg.header.nlmsg_type != RTM_NEWLINK {
             continue;
         }
-        if let Some(if_info) = parse_ifinfomsg(&msg) {
+
+        if msg.data.len() < mem::size_of::<ifinfomsg>() {
+            continue;
+        }
+
+        if let Some(if_info) = parse_rtm_ifinfomsg(&msg) {
             interfaces.push(if_info);
         }
     }
 
-    // log::info!("greg: xdp: interfaces parsed, returning");
     Ok(interfaces)
 }
 
-// Interface info parsing (modeled after the FD impl: fd_netdev_netlink_load_table)
-// Just parsing the interface info for:
-// - if_index
-// - if_name
-// - dev_type
-pub(crate) fn parse_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
+pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
     if msg.data.len() < mem::size_of::<ifinfomsg>() {
         return None;
     }
 
     let ifi = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ifinfomsg) };
-
-    // Filter interface types
-    let ifi_type = ifi.ifi_type;
-    if ifi_type != ARPHRD_ETHER && ifi_type != ARPHRD_LOOPBACK && ifi_type != ARPHRD_IPGRE {
-        return None;
-    }
-
-    // Parse attributes
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<ifinfomsg>()..]) else {
         return None;
     };
@@ -466,7 +442,7 @@ pub(crate) fn parse_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
     Some(InterfaceInfo {
         if_index: ifi.ifi_index,
         if_name,
-        dev_type: ifi_type,
+        dev_type: ifi.ifi_type,
         gre_tunnel,
         primary_ipv4: None,
     })
@@ -479,85 +455,59 @@ fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<G
         return None; // only L3 GRE; ignore gretap/erspan
     }
 
-    let mut local = Ipv4Addr::UNSPECIFIED;
-    let mut remote = Ipv4Addr::UNSPECIFIED;
-    let mut ikey = None;
-    let mut okey = None;
-    let mut ttl = None;
-    let mut tos = None;
-    let mut pmtu = None;
-    let mut csum = None;
-    let mut seq = None;
-    let mut link_ifindex = None;
+    let u8_from_bytes = |data: &[u8]| -> Option<u8> {
+        data.first().copied()
+    };
+
+    fn u16_from_ne_bytes(data: &[u8]) -> Option<u16> {
+        let b: [u8; 2] = data.get(..2)?.try_into().ok()?;
+        Some(u16::from_ne_bytes(b))
+    }
+
+    let mut tunnel_info = GreTunnelInfo {
+        local: None,
+        remote: None,
+        iflags: None,
+        oflags: None,
+        ikey: None,
+        okey: None,
+        ttl: None,
+        tos: None,
+        pmtudisc: None,
+        link_ifindex: None,
+    };
 
     if let Some(a) = gre.get(&IFLA_GRE_LOCAL) {
-        if a.data.len() >= 4 {
-            local = Ipv4Addr::new(a.data[0], a.data[1], a.data[2], a.data[3]);
-        }
+            tunnel_info.local = parse_ip_address(a.data, AF_INET as u8);
     }
     if let Some(a) = gre.get(&IFLA_GRE_REMOTE) {
-        if a.data.len() >= 4 {
-            remote = Ipv4Addr::new(a.data[0], a.data[1], a.data[2], a.data[3]);
-        }
+        tunnel_info.remote = parse_ip_address(a.data, AF_INET as u8);
+    }
+    if let Some(a) = gre.get(&IFLA_GRE_IFLAGS) {
+        tunnel_info.iflags = u16_from_ne_bytes(a.data);
+    }
+    if let Some(a) = gre.get(&IFLA_GRE_OFLAGS) {
+        tunnel_info.oflags = u16_from_ne_bytes(a.data);
     }
     if let Some(a) = gre.get(&IFLA_GRE_IKEY) {
-        if a.data.len() >= 4 {
-            ikey = Some(u32::from_be_bytes(a.data[0..4].try_into().unwrap()));
-        }
+        tunnel_info.ikey = u32_from_ne_bytes(a.data);
     }
     if let Some(a) = gre.get(&IFLA_GRE_OKEY) {
-        if a.data.len() >= 4 {
-            okey = Some(u32::from_be_bytes(a.data[0..4].try_into().unwrap()));
-        }
+        tunnel_info.okey = u32_from_ne_bytes(a.data);
     }
     if let Some(a) = gre.get(&IFLA_GRE_TTL) {
-        if !a.data.is_empty() {
-            ttl = Some(a.data[0]);
-        }
+        tunnel_info.ttl = u8_from_bytes(a.data);
     }
     if let Some(a) = gre.get(&IFLA_GRE_TOS) {
-        if !a.data.is_empty() {
-            tos = Some(a.data[0]);
-        }
+        tunnel_info.tos = u8_from_bytes(a.data);
     }
     if let Some(a) = gre.get(&IFLA_GRE_PMTUDISC) {
-        if !a.data.is_empty() {
-            pmtu = Some(a.data[0]);
-        }
-    }
-    if let Some(a) = gre.get(&IFLA_GRE_CSUM) {
-        if !a.data.is_empty() {
-            csum = Some(a.data[0]);
-        }
-    }
-    if let Some(a) = gre.get(&IFLA_GRE_SEQ) {
-        if !a.data.is_empty() {
-            seq = Some(a.data[0]);
-        }
+        tunnel_info.pmtudisc = u8_from_bytes(a.data);
     }
     if let Some(a) = gre.get(&IFLA_GRE_LINK) {
-        if a.data.len() >= 4 {
-            link_ifindex = Some(u32::from_ne_bytes(a.data[0..4].try_into().unwrap()));
-        }
+        tunnel_info.link_ifindex = u32_from_ne_bytes(a.data);
     }
-
-    // Must have both endpoints for a valid GRE tunnel.
-    if local == Ipv4Addr::UNSPECIFIED || remote == Ipv4Addr::UNSPECIFIED {
-        return None;
-    }
-
-    Some(GreTunnelInfo {
-        local,
-        remote,
-        ikey,
-        okey,
-        ttl,
-        tos,
-        pmtudisc: pmtu,
-        csum,
-        seq,
-        link_ifindex,
-    })
+    Some(tunnel_info)
 }
 
 fn parse_linkinfo_kind_and_data<'a>(
@@ -833,11 +783,6 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
         route.gateway = parse_ip_address(gateway_attr.data, rt_msg.rtm_family);
     }
 
-    let u32_from_ne_bytes = |data: &[u8]| -> Option<u32> {
-        data.get(..4)
-            .map(|data| u32::from_ne_bytes([data[0], data[1], data[2], data[3]]))
-    };
-
     if let Some(oif_attr) = attrs.get(&RTA_OIF) {
         route.out_if_index = u32_from_ne_bytes(oif_attr.data).map(|i| i as i32);
     }
@@ -854,4 +799,9 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
         route.pref_src = parse_ip_address(prefsrc_attr.data, rt_msg.rtm_family);
     }
     Some(route)
+}
+
+fn u32_from_ne_bytes(data: &[u8]) -> Option<u32> {
+    data.get(..4)
+        .map(|data| u32::from_ne_bytes([data[0], data[1], data[2], data[3]]))
 }

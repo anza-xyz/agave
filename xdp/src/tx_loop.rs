@@ -228,6 +228,15 @@ pub fn tx_loop<
                     };
 
                     if let Some(gre) = interface_info.gre_tunnel.as_ref() {
+                        let (Some(IpAddr::V4(gre_local)), Some(IpAddr::V4(gre_remote))) =
+                            (gre.local, gre.remote)
+                        else {
+                            log::warn!("dropping packet: no GRE endpoints for peer {addr}");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+
                         // Calculate GRE packet size
                         const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
                         let inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
@@ -248,10 +257,10 @@ pub fn tx_loop<
                             src_port,
                             addr.port(),
                             payload.as_ref(),
-                            gre.local,        // gre src ip
-                            gre.remote,       // gre dst ip
-                            &src_mac.0,       // src MAC (our nic)
-                            &dest_mac.0, //outer dst MAC (underlay next-hop)
+                            gre_local,     // gre src ip
+                            gre_remote,    // gre dst ip
+                            &src_mac.0,    // src MAC (our nic)
+                            &dest_mac.0,   // outer dst MAC (underlay next-hop)
                         );
 
                         // Update frame length and submit packet
