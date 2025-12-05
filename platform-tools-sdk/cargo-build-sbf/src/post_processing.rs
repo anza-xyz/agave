@@ -1,10 +1,10 @@
 use {
-    crate::{spawn, toolchain::rust_target_triple, Config},
+    crate::{spawn, syscalls::SYSCALLS, toolchain::rust_target_triple, Config},
     log::{debug, error, info, warn},
     regex::Regex,
     solana_keypair::{write_keypair_file, Keypair},
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         fs::{self, File},
         io::{BufRead, BufReader, BufWriter, Write},
         path::Path,
@@ -13,7 +13,12 @@ use {
     },
 };
 
-pub(crate) fn post_process(config: &Config, target_directory: &Path, program_name: Option<String>) {
+pub(crate) fn post_process(
+    config: &Config,
+    platform_tools_dir: &Path,
+    target_directory: &Path,
+    program_name: Option<String>,
+) {
     let sbf_out_dir = config
         .sbf_out_dir
         .as_ref()
@@ -59,16 +64,9 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             });
         }
 
-        #[cfg(windows)]
-        let llvm_bin = config
-            .sbf_sdk
-            .join("dependencies")
-            .join("platform-tools")
-            .join("llvm")
-            .join("bin");
+        let llvm_bin = platform_tools_dir.join("llvm").join("bin");
 
         if file_older_or_missing(&program_unstripped_so, &program_so) {
-            #[cfg(windows)]
             let output = spawn(
                 &llvm_bin.join("llvm-objcopy"),
                 [
@@ -78,55 +76,62 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 ],
                 config.generate_child_script_on_failure,
             );
-            #[cfg(not(windows))]
-            let output = spawn(
-                &config.sbf_sdk.join("scripts").join("strip.sh"),
-                [&program_unstripped_so, &program_so],
-                config.generate_child_script_on_failure,
-            );
             if config.verbose {
                 debug!("{output}");
             }
         }
 
         if config.dump && file_older_or_missing(&program_unstripped_so, &program_dump) {
-            let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
-            #[cfg(windows)]
+            let mangled_name = format!("{}.mangled", program_dump.display());
             {
-                error!(
-                    "Using Bash scripts from within a program is not supported on Windows, \
-                     skipping `--dump`."
-                );
-                error!(
-                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this \
-                     command to see the processed program dump.",
-                    &dump_script.display(),
-                    &program_unstripped_so.display(),
-                    &program_dump.display()
-                );
-            }
-            #[cfg(not(windows))]
-            {
-                let output = spawn(
-                    &dump_script,
-                    [&program_unstripped_so, &program_dump],
+                let mangled =
+                    File::create(mangled_name.clone()).expect("failed to open mangled file");
+                let mut mangled_out = BufWriter::new(mangled);
+                let mut output = spawn(
+                    &llvm_bin.join("llvm-readelf"),
+                    ["-aW".as_ref(), program_unstripped_so.as_os_str()],
                     config.generate_child_script_on_failure,
                 );
+                output.retain(|c| c != ':');
+                write!(mangled_out, "{output}").expect("write readelf output to mangled file");
+                if config.verbose {
+                    debug!("{output}");
+                }
+
+                let mut output = spawn(
+                    &llvm_bin.join("llvm-objdump"),
+                    [
+                        "--print-imm-hex".as_ref(),
+                        "--source".as_ref(),
+                        "--disassemble".as_ref(),
+                        program_unstripped_so.as_os_str(),
+                    ],
+                    config.generate_child_script_on_failure,
+                );
+                output.retain(|c| c != ':');
+                write!(mangled_out, "{output}").expect("write objdump output to mangled file");
                 if config.verbose {
                     debug!("{output}");
                 }
             }
+
+            let dump = File::create(&program_dump).expect("failed to open dump file");
+            let mut dump_out = BufWriter::new(dump);
+            let output = spawn(
+                Path::new("rustfilt"),
+                ["--input", mangled_name.as_str()],
+                config.generate_child_script_on_failure,
+            );
+            write!(dump_out, "{output}").expect("write output of rustfilt");
+            std::fs::remove_file(mangled_name).expect("mangled file to be removed");
+
+            info!("Wrote {}", program_dump.display());
             postprocess_dump(&program_dump);
         }
 
         if config.debug && file_older_or_missing(&program_unstripped_so, &program_debug) {
-            #[cfg(windows)]
-            let llvm_objcopy = &llvm_bin.join("llvm-objcopy");
-            #[cfg(not(windows))]
-            let llvm_objcopy = &config.sbf_sdk.join("scripts").join("objcopy.sh");
-
             let output = spawn(
-                llvm_objcopy,
+                &llvm_bin.join("llvm-objcopy"),
                 [
                     "--only-keep-debug".as_ref(),
                     program_unstripped_so.as_os_str(),
@@ -141,7 +146,7 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
 
         if config.arch != "v3" {
             // SBPFv3 shall not have any undefined syscall.
-            check_undefined_symbols(config, &program_so);
+            check_undefined_symbols(config, platform_tools_dir, &program_so);
         }
 
         info!("To deploy this program:");
@@ -155,24 +160,11 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
 
 // Check whether the built .so file contains undefined symbols that are
 // not known to the runtime and warn about them if any.
-fn check_undefined_symbols(config: &Config, program: &Path) {
-    let syscalls_txt = config.sbf_sdk.join("syscalls.txt");
-    let Ok(file) = File::open(syscalls_txt) else {
-        return;
-    };
-    let mut syscalls = HashSet::new();
-    for line_result in BufReader::new(file).lines() {
-        let line = line_result.unwrap();
-        let line = line.trim_end();
-        syscalls.insert(line.to_string());
-    }
+fn check_undefined_symbols(config: &Config, platform_tools_dir: &Path, program: &Path) {
     let entry =
         Regex::new(r"^ *[0-9]+: [0-9a-f]{16} +[0-9a-f]+ +NOTYPE +GLOBAL +DEFAULT +UND +(.+)")
             .unwrap();
-    let readelf = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
+    let readelf = platform_tools_dir
         .join("llvm")
         .join("bin")
         .join("llvm-readelf");
@@ -192,7 +184,7 @@ fn check_undefined_symbols(config: &Config, program: &Path) {
         if entry.is_match(line) {
             let captures = entry.captures(line).unwrap();
             let symbol = captures[1].to_string();
-            if !syscalls.contains(&symbol) {
+            if !SYSCALLS.contains(&symbol.as_str()) {
                 unresolved_symbols.push(symbol);
             }
         }

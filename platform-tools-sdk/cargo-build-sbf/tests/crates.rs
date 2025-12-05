@@ -59,7 +59,7 @@ fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
         .join(crate_name)
         .join("Cargo.toml");
     let toml = format!("{}", toml.display());
-    let mut args = vec!["-v", "--sbf-sdk", "../sbf", "--manifest-path", &toml];
+    let mut args = vec!["-v", "--manifest-path", &toml];
     if should_install_tools() {
         args.push("--force-tools-install");
     }
@@ -297,7 +297,7 @@ fn test_corrupted_toolchain() {
             .join("noop")
             .join("Cargo.toml");
         let toml = format!("{}", toml.display());
-        let args = vec!["--sbf-sdk", "../sbf", "--manifest-path", &toml];
+        let args = vec!["--manifest-path", &toml];
 
         let mut cmd = assert_cmd::Command::cargo_bin("cargo-build-sbf").unwrap();
         let assert = cmd.env("RUST_LOG", "debug").args(&args).assert();
@@ -350,13 +350,7 @@ fn test_corrupted_toolchain() {
 #[test]
 #[serial]
 fn test_alternate_download() {
-    let args = [
-        "-v",
-        "--sbf-sdk",
-        "../sbf",
-        "--install-only",
-        "--force-tools-install",
-    ];
+    let args = ["-v", "--install-only", "--force-tools-install"];
     let assert = assert_cmd::Command::cargo_bin("cargo-build-sbf")
         .unwrap()
         .env("RUST_LOG", "debug")
