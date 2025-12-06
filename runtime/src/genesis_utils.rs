@@ -35,7 +35,7 @@ use {
 };
 
 // Default amount received by the validator
-const VALIDATOR_LAMPORTS: u64 = 42;
+const VALIDATOR_LAMPORTS: u64 = 1_000_000 * LAMPORTS_PER_SOL;
 
 // fun fact: rustc is very close to make this const fn.
 pub fn bootstrap_validator_stake_lamports() -> u64 {

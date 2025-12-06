@@ -2191,8 +2191,8 @@ mod tests {
             &voters,               // expected_voters
             &stakers,              // expected_stakers
             0,                     // expected_vote_rewards
-            12300,                 // expected_stake_rewards
-            12392,                 // expected_rewards
+            3082695200,            // expected_stake_rewards
+            3082695211,            // expected_rewards
             8_400_000_000_000u128, // expected_points
             None,                  // parent_capitalization
         );
@@ -2211,9 +2211,9 @@ mod tests {
             2,                           // expected_cache_len
             &voters,                     // expected_voters
             &stakers,                    // expected_stakers
-            145,                         // expected_vote_rewards
-            13010,                       // expected_stake_rewards
-            13163,                       // expected_rewards
+            34252175,                    // expected_vote_rewards
+            3048443575,                  // expected_stake_rewards
+            3082695779,                  // expected_rewards
             9_450_000_000_000u128,       // expected_points
             Some(parent_capitalization), // parent_capitalization
         );
@@ -2232,9 +2232,9 @@ mod tests {
             3,                           // expected_cache_len
             &voters,                     // expected_voters
             &stakers,                    // expected_stakers
-            525,                         // expected_vote_rewards
-            15030,                       // expected_stake_rewards
-            15629,                       // expected_rewards
+            106125665,                   // expected_vote_rewards
+            2976572315,                  // expected_stake_rewards
+            3082698043,                  // expected_rewards
             12_810_000_000_000u128,      // expected_points
             Some(parent_capitalization), // parent_capitalization
         );

@@ -167,6 +167,7 @@ impl SvmTestEnvironment<'_> {
                 .get_environments_for_epoch(EXECUTION_EPOCH),
             program_runtime_environments_for_deployment: batch_processor
                 .get_environments_for_epoch(EXECUTION_EPOCH),
+            rent: test_entry.rent.clone(),
             ..TransactionProcessingEnvironment::default()
         };
 
@@ -385,6 +386,9 @@ pub struct SvmTestEntry {
 
     // expected final account states, checked after transaction execution
     pub final_accounts: AccountsMap,
+
+    // rent parameters for the test
+    pub rent: Rent,
 }
 
 impl Default for SvmTestEntry {
@@ -398,6 +402,7 @@ impl Default for SvmTestEntry {
             initial_accounts: HashMap::new(),
             transaction_batch: Vec::new(),
             final_accounts: HashMap::new(),
+            rent: Rent::default(),
         }
     }
 }
@@ -408,6 +413,10 @@ impl SvmTestEntry {
             with_loader_v4: true,
             ..Self::default()
         }
+    }
+
+    pub fn set_rent_params(&mut self, rent: Rent) {
+        self.rent = rent;
     }
 
     // add a new a rent-exempt account that exists before the batch
@@ -2120,7 +2129,15 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
     let real_program_id = program_address(program_name);
     test_entry.add_initial_program(program_name);
 
-    // 0/1: a rent-paying fee-payer goes to zero lamports on an executed transaction, the batch sees it as deallocated
+    // rent minimum needs to be adjusted so fee payer can be deallocated
+    let rent = Rent {
+        lamports_per_byte_year: LAMPORTS_PER_SIGNATURE / solana_rent::ACCOUNT_STORAGE_OVERHEAD,
+        exemption_threshold: 1.0,
+        burn_percent: 0,
+    };
+    test_entry.set_rent_params(rent);
+
+    // 0/1: a fee-payer balance goes to zero lamports on an executed transaction, the batch sees it as deallocated
     // 2/3: the same, except if fee-only transactions are enabled, it goes to zero lamports from a fee-only transaction
     for do_fee_only_transaction in [false, true] {
         let dealloc_fee_payer_keypair = Keypair::new();
@@ -2128,7 +2145,6 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
 
         let mut dealloc_fee_payer_data = AccountSharedData::default();
         dealloc_fee_payer_data.set_lamports(LAMPORTS_PER_SIGNATURE);
-        dealloc_fee_payer_data.set_rent_epoch(u64::MAX - 1);
         test_entry.add_initial_account(dealloc_fee_payer, &dealloc_fee_payer_data);
 
         let stable_fee_payer_keypair = Keypair::new();
@@ -2185,7 +2201,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         test_entry.drop_expected_account(dealloc_fee_payer);
     }
 
-    // 4: a rent-paying non-nonce fee-payer goes to zero on a fee-only nonce transaction, the batch sees it as deallocated
+    // 4: a non-nonce fee-payer balance goes to zero on a fee-only nonce transaction, the batch sees it as deallocated
     // we test in `simple_nonce()` that nonce fee-payers cannot as a rule be brought below rent-exemption
     {
         let dealloc_fee_payer_keypair = Keypair::new();
@@ -3267,7 +3283,7 @@ fn svm_inspect_account() {
 
     // fee payer
     let mut fee_payer_account = AccountSharedData::default();
-    fee_payer_account.set_lamports(85_000);
+    fee_payer_account.set_lamports(10_000_000);
     fee_payer_account.set_rent_epoch(u64::MAX);
     initial_test_entry.add_initial_account(fee_payer, &fee_payer_account);
     expected_inspected_accounts.inspect(fee_payer, Inspect::LiveWrite(&fee_payer_account));

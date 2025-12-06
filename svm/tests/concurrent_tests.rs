@@ -158,7 +158,7 @@ fn svm_concurrent() {
     const TRANSACTIONS_PER_THREAD: usize = 3;
     const AMOUNT: u64 = 50;
     const CAPACITY: usize = THREADS * TRANSACTIONS_PER_THREAD;
-    const BALANCE: u64 = 500000;
+    const BALANCE: u64 = 10_000_000;
 
     let mut transactions = vec![Vec::new(); THREADS];
     let mut check_data = vec![Vec::new(); THREADS];

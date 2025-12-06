@@ -9,7 +9,7 @@ use {
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct TransactionAccountStateInfo {
-    rent_state: Option<RentState>, // None: readonly account
+    pub rent_state: Option<RentState>, // None: readonly account
 }
 
 impl TransactionAccountStateInfo {
@@ -172,6 +172,30 @@ mod test {
 
         let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20);
         let _result = TransactionAccountStateInfo::new(&context, &sanitized_message, &rent);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid pre-execution RentPaying account detected")]
+    fn test_panic_pre_exec_rent_paying_account() {
+        let key1 = Keypair::new();
+        let pre_rent_state = vec![TransactionAccountStateInfo {
+            rent_state: Some(RentState::RentPaying {
+                lamports: 100,
+                data_size: 100,
+            }),
+        }];
+        let post_rent_state = vec![TransactionAccountStateInfo {
+            rent_state: Some(RentState::Uninitialized),
+        }];
+
+        let transaction_accounts: Vec<(solana_pubkey::Pubkey, AccountSharedData)> =
+            vec![(key1.pubkey(), AccountSharedData::default())];
+        let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20);
+        _ = TransactionAccountStateInfo::verify_changes(
+            &pre_rent_state,
+            &post_rent_state,
+            &context,
+        );
     }
 
     #[test]
