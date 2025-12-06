@@ -8,7 +8,6 @@ use {
     solana_pubkey::Pubkey,
     solana_reward_info::{RewardInfo, RewardType},
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
     thiserror::Error,
@@ -16,6 +15,7 @@ use {
 
 #[derive(Error, Debug, PartialEq)]
 enum DepositFeeError {
+    #[allow(dead_code)]
     #[error("fee account became rent paying")]
     InvalidRentPayingAccount,
     #[error("lamport overflow")]
@@ -152,26 +152,9 @@ impl Bank {
         if !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
-
-        let recipient_pre_rent_state = get_account_rent_state(
-            &self.rent_collector().rent,
-            account.lamports(),
-            account.data().len(),
-        );
         let distribution = account.checked_add_lamports(fees);
         if distribution.is_err() {
             return Err(DepositFeeError::LamportOverflow);
-        }
-
-        let recipient_post_rent_state = get_account_rent_state(
-            &self.rent_collector().rent,
-            account.lamports(),
-            account.data().len(),
-        );
-        let rent_state_transition_allowed =
-            transition_allowed(&recipient_pre_rent_state, &recipient_post_rent_state);
-        if !rent_state_transition_allowed {
-            return Err(DepositFeeError::InvalidRentPayingAccount);
         }
 
         self.store_account(pubkey, &account);
@@ -253,7 +236,7 @@ pub mod tests {
             burn += bank.deposit_or_burn_fee(deposit);
             let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
-            if test_case.scenario != Scenario::Normal {
+            if test_case.scenario == Scenario::InvalidOwner {
                 assert_eq!(initial_leader_id_balance, new_leader_id_balance);
                 assert_eq!(initial_burn + deposit, burn);
                 let locked_rewards = bank.rewards.read().unwrap();
@@ -329,26 +312,6 @@ pub mod tests {
             bank.deposit_fees(&pubkey, deposit_amount),
             Err(DepositFeeError::InvalidAccountOwner),
             "Expected an error due to invalid account owner"
-        );
-    }
-
-    #[test]
-    fn test_deposit_fees_invalid_rent_paying() {
-        let initial_balance = 0;
-        let genesis = create_genesis_config(initial_balance);
-        let pubkey = genesis.mint_keypair.pubkey();
-        let mut genesis_config = genesis.genesis_config;
-        genesis_config.rent = Rent::default(); // Ensure rent is non-zero, as genesis_utils sets Rent::free by default
-        let bank = Bank::new_for_tests(&genesis_config);
-        let min_rent_exempt_balance = genesis_config.rent.minimum_balance(0);
-
-        let deposit_amount = 500;
-        assert!(initial_balance + deposit_amount < min_rent_exempt_balance);
-
-        assert_eq!(
-            bank.deposit_fees(&pubkey, deposit_amount),
-            Err(DepositFeeError::InvalidRentPayingAccount),
-            "Expected an error due to invalid rent paying account"
         );
     }
 
