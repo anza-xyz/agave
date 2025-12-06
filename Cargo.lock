@@ -9612,6 +9612,7 @@ name = "solana-perf"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "agave-random",
  "ahash 0.8.11",
  "assert_matches",
  "bencher",
