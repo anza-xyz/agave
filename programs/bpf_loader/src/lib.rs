@@ -1529,6 +1529,18 @@ fn execute<'a, 'b: 'a>(
         };
         create_vm_time.stop();
 
+        #[cfg(feature = "sbpf-debugger")]
+        if let Some(debug_port) = &mut vm.debug_port {
+            // Offset the debug port with regards to the CPI level to prevent port collisions.
+            let debug_port_cpi_offset = vm
+                .context_object_pointer
+                .transaction_context
+                .get_current_instruction_context()?
+                .get_stack_height()
+                .saturating_sub(1) as u16;
+            *debug_port = debug_port.saturating_add(debug_port_cpi_offset);
+        }
+
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         vm.registers[1] = ebpf::MM_INPUT_START;
 
