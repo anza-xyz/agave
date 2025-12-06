@@ -101,26 +101,17 @@ pub fn get_account_rent_state(
 ///
 /// This method has a default implementation that allows transitions from
 /// any state to `RentState::Uninitialized` or `RentState::RentExempt`.
-/// Pre-state `RentState::RentPaying` can only transition to
-/// `RentState::RentPaying` if the data size remains the same and the
-/// account is not credited.
+/// Pre-state `RentState::RentPaying` should be impossible because rent
+/// paying accounts have been deprecated and therefore results in a panic.
+/// Post-state `RentState::RentPaying` results is a possible but disallowed
+/// transition, so yields an error.
 pub fn transition_allowed(pre_rent_state: &RentState, post_rent_state: &RentState) -> bool {
+    if let RentState::RentPaying { .. } = pre_rent_state {
+        panic!("invalid pre-execution RentPaying account detected");
+    }
+
     match post_rent_state {
         RentState::Uninitialized | RentState::RentExempt => true,
-        RentState::RentPaying {
-            data_size: post_data_size,
-            lamports: post_lamports,
-        } => {
-            match pre_rent_state {
-                RentState::Uninitialized | RentState::RentExempt => false,
-                RentState::RentPaying {
-                    data_size: pre_data_size,
-                    lamports: pre_lamports,
-                } => {
-                    // Cannot remain RentPaying if resized or credited.
-                    post_data_size == pre_data_size && post_lamports <= pre_lamports
-                }
-            }
-        }
+        RentState::RentPaying { .. } => false,
     }
 }
