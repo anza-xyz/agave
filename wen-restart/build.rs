@@ -2,9 +2,12 @@ use std::io::Result;
 
 fn main() -> Result<()> {
     const PROTOC_ENVAR: &str = "PROTOC";
+    // Safety: env is checked and updated before any threads might exist
     if std::env::var(PROTOC_ENVAR).is_err() {
         #[cfg(not(windows))]
-        std::env::set_var(PROTOC_ENVAR, protobuf_src::protoc());
+        unsafe {
+            std::env::set_var(PROTOC_ENVAR, protobuf_src::protoc())
+        }
     }
 
     let proto_base_path = std::path::PathBuf::from("proto");
