@@ -28,15 +28,6 @@ ec2)
   blockstreamerMachineType=m5.4xlarge
   selfDestructHours=0
   ;;
-azure)
-  # shellcheck source=net/scripts/azure-provider.sh
-  source "$here"/scripts/azure-provider.sh
-
-  cpuBootstrapLeaderMachineType=Standard_D16s_v3
-  clientMachineType=Standard_D16s_v3
-  blockstreamerMachineType=Standard_D16s_v3
-  selfDestructHours=0
-  ;;
 colo)
   # shellcheck source=net/scripts/colo-provider.sh
   source "$here"/scripts/colo-provider.sh
@@ -308,7 +299,7 @@ gce)
   fi
   cpuBootstrapLeaderMachineType+=" --custom-memory ${customMemoryGB}GB"
   ;;
-ec2|azure|colo)
+ec2|colo)
   if [[ -n $validatorAdditionalDiskSizeInGb ]] ; then
     usage "--validator-additional-disk-size-gb currently only supported with cloud provider: gce"
   fi
@@ -325,7 +316,7 @@ ec2|azure|colo)
 esac
 
 case $cloudProvider in
-  gce | ec2 | azure)
+  gce | ec2)
     maybePreemptible="never preemptible"
     ;;
   colo)
@@ -631,7 +622,7 @@ delete() {
   $metricsWriteDatapoint "testnet-deploy net-delete-begin=1"
 
   case $cloudProvider in
-    gce | ec2 | azure)
+    gce | ec2)
       # Filter for all nodes
       filter="$prefix-"
       ;;
