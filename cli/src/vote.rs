@@ -1079,7 +1079,7 @@ pub async fn process_vote_authorize(
                 verify_bls_proof_of_possession(
                     vote_account_pubkey,
                     &args.bls_pubkey,
-                    &args.proof_of_possession,
+                    &args.bls_proof_of_possession,
                 )?;
             }
         }
