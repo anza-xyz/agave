@@ -6,7 +6,7 @@
 
 use {
     bincode::{deserialize, serialize, serialized_size},
-    crossbeam_channel::{unbounded, Sender},
+    crossbeam_channel::Sender,
     log::*,
     serde::{Deserialize, Serialize},
     solana_cli_output::display::build_balance_message,
@@ -23,18 +23,18 @@ use {
     std::{
         collections::{HashMap, HashSet},
         io::{Read, Write},
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
+        net::{IpAddr, SocketAddr, TcpStream},
         sync::{Arc, Mutex},
-        thread,
         time::Duration,
     },
     thiserror::Error,
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream as TokioTcpStream},
-        runtime::Runtime,
     },
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {crossbeam_channel::unbounded, std::net::Ipv4Addr, std::thread};
 
 #[macro_export]
 macro_rules! socketaddr {
@@ -316,31 +316,6 @@ pub fn request_airdrop_transaction(
     Ok(transaction)
 }
 
-#[deprecated(since = "3.1.0", note = "use `run_local_faucet_with_config` instead")]
-pub fn run_local_faucet_with_port(
-    faucet_keypair: Keypair,
-    sender: Sender<Result<SocketAddr, String>>,
-    time_input: Option<u64>,
-    per_time_cap: Option<u64>,
-    per_request_cap: Option<u64>,
-    port: u16, // 0 => auto assign
-) {
-    thread::spawn(move || {
-        let faucet_addr = socketaddr!(Ipv4Addr::UNSPECIFIED, port);
-        #[allow(deprecated)]
-        {
-            let faucet = Arc::new(Mutex::new(Faucet::new(
-                faucet_keypair,
-                time_input,
-                per_time_cap,
-                per_request_cap,
-            )));
-            let runtime = Runtime::new().unwrap();
-            runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
-        }
-    });
-}
-
 /// Configuration for running a local faucet server.
 #[cfg(feature = "dev-context-only-utils")]
 pub struct LocalFaucetConfig {
@@ -370,7 +345,7 @@ pub fn run_local_faucet_with_config(
             config.per_time_cap,
             config.per_request_cap,
         )));
-        let runtime = Runtime::new().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
     });
 }
@@ -412,18 +387,6 @@ pub fn run_local_faucet_with_unique_port_for_tests(keypair: Keypair) -> SocketAd
         None, /* per_time_cap */
         solana_net_utils::sockets::unique_port_range_for_tests(1).start,
     )
-}
-
-// For integration tests. Listens on random open port and reports port to Sender.
-#[deprecated(since = "3.1.0", note = "use `run_local_faucet_for_tests` instead")]
-pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> SocketAddr {
-    let (sender, receiver) = unbounded();
-    #[allow(deprecated)]
-    run_local_faucet_with_port(faucet_keypair, sender, None, per_time_cap, None, 0);
-    receiver
-        .recv()
-        .expect("run_local_faucet")
-        .expect("faucet_addr")
 }
 
 pub async fn run_faucet(
