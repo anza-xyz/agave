@@ -99,6 +99,11 @@ if [[ -z "$SOLANA_DOCKER_RUN_NOSETUID" ]]; then
   ARGS+=(--user "$(id -u):$(id -g)")
 fi
 
+if [[ -n $EXTRA_DOCKER_RUN_ARGS ]]; then
+  read -r -a extra_docker_run_args <<< "$EXTRA_DOCKER_RUN_ARGS"
+  ARGS+=("${extra_docker_run_args[@]}")
+fi
+
 if [[ -n $SOLANA_ALLOCATE_TTY ]]; then
   # Colored output, progress bar and Ctrl-C:
   # https://stackoverflow.com/a/41099052/10242004
