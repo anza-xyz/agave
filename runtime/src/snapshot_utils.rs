@@ -13,6 +13,7 @@ use {
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
+    agave_fs::buffered_writer::large_file_buf_writer,
     agave_snapshots::{
         archive_snapshot,
         error::{
@@ -45,7 +46,7 @@ use {
         cmp::Ordering,
         collections::{HashMap, HashSet},
         fs,
-        io::{self, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
+        io::{self, BufReader, Error as IoError, Read, Seek, Write},
         mem,
         num::NonZeroUsize,
         path::{Path, PathBuf},
@@ -517,7 +518,7 @@ pub fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let bank_snapshot_serializer = move |stream: &mut BufWriter<fs::File>| -> Result<()> {
+        let bank_snapshot_serializer = move |stream: &mut dyn Write| -> Result<()> {
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let extra_fields = ExtraFieldsToSerialize {
                 lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
@@ -699,8 +700,7 @@ fn serialize_obsolete_accounts(
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
-    let obsolete_accounts_file = fs::File::create(&obsolete_accounts_path)?;
-    let mut file_stream = BufWriter::new(obsolete_accounts_file);
+    let mut file_stream = large_file_buf_writer(&obsolete_accounts_path)?;
 
     serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map)?;
 
@@ -747,7 +747,7 @@ fn deserialize_obsolete_accounts(
 
 pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
 where
-    F: FnOnce(&mut BufWriter<std::fs::File>) -> Result<()>,
+    F: FnOnce(&mut dyn Write) -> Result<()>,
 {
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
@@ -793,10 +793,9 @@ fn serialize_snapshot_data_file_capped<F>(
     serializer: F,
 ) -> Result<u64>
 where
-    F: FnOnce(&mut BufWriter<std::fs::File>) -> Result<()>,
+    F: FnOnce(&mut dyn Write) -> Result<()>,
 {
-    let data_file = fs::File::create(data_file_path)?;
-    let mut data_file_stream = BufWriter::new(data_file);
+    let mut data_file_stream = large_file_buf_writer(data_file_path)?;
     serializer(&mut data_file_stream)?;
     data_file_stream.flush()?;
 
@@ -1907,8 +1906,8 @@ mod tests {
             &temp_dir.path().join("data-file"),
             expected_consumed_size * 2,
             |stream| {
-                serialize_into(stream.by_ref(), &expected_data)?;
-                serialize_into(stream.by_ref(), &expected_data)?;
+                serialize_into(&mut *stream, &expected_data)?;
+                serialize_into(&mut *stream, &expected_data)?;
                 Ok(())
             },
         )
