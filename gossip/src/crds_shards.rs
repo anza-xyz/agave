@@ -137,7 +137,7 @@ mod test {
             crds::{Crds, GossipRoute},
             crds_value::CrdsValue,
         },
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         solana_time_utils::timestamp,
         std::{collections::HashSet, iter::repeat_with, ops::Index},
     };
@@ -180,7 +180,7 @@ mod test {
 
     #[test]
     fn test_crds_shards_round_trip() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         // Generate some random hash and crds value labels.
         let mut values: Vec<_> = repeat_with(|| new_test_crds_value(&mut rng))
             .take(4096)
@@ -193,7 +193,7 @@ mod test {
         shards.check(&values);
         // Remove some of the values.
         for _ in 0..512 {
-            let index = rng.gen_range(0..values.len());
+            let index = rng.random_range(0..values.len());
             let value = values.swap_remove(index);
             assert!(shards.remove(index, &value));
             if index < values.len() {
@@ -205,7 +205,7 @@ mod test {
         }
         // Random masks.
         for _ in 0..10 {
-            let mask = rng.gen();
+            let mask = rng.random();
             for mask_bits in 0..12 {
                 let mut set = filter_crds_values(&values, mask, mask_bits);
                 for index in shards.find(mask, mask_bits) {
@@ -222,7 +222,7 @@ mod test {
         }
         // Remove everything.
         while !values.is_empty() {
-            let index = rng.gen_range(0..values.len());
+            let index = rng.random_range(0..values.len());
             let value = values.swap_remove(index);
             assert!(shards.remove(index, &value));
             if index < values.len() {
