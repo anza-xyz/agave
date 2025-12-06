@@ -1528,7 +1528,7 @@ impl Bank {
             {
                 drop(epoch_boundary_preparation);
                 drop(program_cache);
-                if let Some(recompiled) = load_program_with_pubkey(
+                if let Some((recompiled, last_modification_slot)) = load_program_with_pubkey(
                     self,
                     &upcoming_environments,
                     &key,
@@ -1547,7 +1547,12 @@ impl Bank {
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(&upcoming_environments, key, recompiled);
+                    program_cache.assign_program(
+                        &upcoming_environments,
+                        key,
+                        last_modification_slot,
+                        recompiled,
+                    );
                 }
             }
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
@@ -1568,7 +1573,10 @@ impl Bank {
             epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
             epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
             epoch_boundary_preparation.programs_to_recompile = program_cache
-                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
+                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2)
+                .into_iter()
+                .map(|(id, _last_modification_slot, entry)| (id, entry))
+                .collect();
             epoch_boundary_preparation
                 .programs_to_recompile
                 .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
@@ -3726,6 +3734,7 @@ impl Bank {
                             })
                             .merge(
                                 &self.transaction_processor.environments,
+                                self.slot,
                                 programs_modified_by_tx,
                             );
                     }
@@ -6093,6 +6102,7 @@ impl Bank {
             &mut ExecuteTimings::default(), // Called by ledger-tool, metrics not accumulated.
             reload,
         )
+        .map(|(loaded_program, _last_modification_slot)| loaded_program)
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
