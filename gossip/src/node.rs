@@ -475,32 +475,39 @@ mod multihoming {
                 .set_gossip_socket(gossip_addr)
                 .map_err(|e| e.to_string())?;
 
+            let addr_index = addr_index_for_ip(&self.addresses, interface).ok_or_else(|| {
+                format!(
+                    "Invalid interface address provided, no multihoming address found for \
+                     {interface}"
+                )
+            })?;
+
             // update tvu ingress advertised socket
-            let tvu_ingress_address = self.addresses.tvu[interface_index];
+            let tvu_ingress_address = self.addresses.tvu[addr_index];
             cluster_info
                 .set_tvu_socket(tvu_ingress_address)
                 .map_err(|e| e.to_string())?;
 
             // tpu_quic
-            let tpu_quic_address = self.addresses.tpu_quic[interface_index];
+            let tpu_quic_address = self.addresses.tpu_quic[addr_index];
             cluster_info
                 .set_tpu_quic(tpu_quic_address)
                 .map_err(|e| e.to_string())?;
 
             // tpu_forwards_quic
-            let tpu_forwards_quic_address = self.addresses.tpu_forwards_quic[interface_index];
+            let tpu_forwards_quic_address = self.addresses.tpu_forwards_quic[addr_index];
             cluster_info
                 .set_tpu_forwards_quic(tpu_forwards_quic_address)
                 .map_err(|e| e.to_string())?;
 
             // tpu_vote_quic
-            let tpu_vote_quic_address = self.addresses.tpu_vote_quic[interface_index];
+            let tpu_vote_quic_address = self.addresses.tpu_vote_quic[addr_index];
             cluster_info
                 .set_tpu_vote(QUIC, tpu_vote_quic_address)
                 .map_err(|e| e.to_string())?;
 
             // tpu_vote (udp)
-            let tpu_vote_address = self.addresses.tpu_vote[interface_index];
+            let tpu_vote_address = self.addresses.tpu_vote[addr_index];
             cluster_info
                 .set_tpu_vote(UDP, tpu_vote_address)
                 .map_err(|e| e.to_string())?;
@@ -516,6 +523,10 @@ mod multihoming {
         }
     }
 
+    fn addr_index_for_ip(addresses: &MultihomingAddresses, interface: IpAddr) -> Option<usize> {
+        addresses.tvu.iter().position(|a| a.ip() == interface)
+    }
+
     impl From<&Node> for NodeMultihoming {
         fn from(node: &Node) -> Self {
             NodeMultihoming {
@@ -523,6 +534,45 @@ mod multihoming {
                 addresses: node.addresses.clone(),
                 bind_ip_addrs: node.bind_ip_addrs.clone(),
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use {
+            super::*,
+            std::net::{IpAddr, Ipv4Addr, SocketAddr},
+        };
+
+        #[test]
+        fn test_addr_index_for_ip_maps_correctly() {
+            let ip_a = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+            let ip_b = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 2));
+
+            let tvu =
+                vec![SocketAddr::new(ip_b, 1000), SocketAddr::new(ip_a, 1000)].into_boxed_slice();
+            let tpu_vote =
+                vec![SocketAddr::new(ip_b, 2000), SocketAddr::new(ip_a, 2000)].into_boxed_slice();
+            let tpu_quic =
+                vec![SocketAddr::new(ip_b, 3000), SocketAddr::new(ip_a, 3000)].into_boxed_slice();
+            let tpu_forwards_quic =
+                vec![SocketAddr::new(ip_b, 4000), SocketAddr::new(ip_a, 4000)].into_boxed_slice();
+            let tpu_vote_quic =
+                vec![SocketAddr::new(ip_b, 5000), SocketAddr::new(ip_a, 5000)].into_boxed_slice();
+
+            let addresses = MultihomingAddresses {
+                tvu,
+                tpu_vote,
+                tpu_quic,
+                tpu_forwards_quic,
+                tpu_vote_quic,
+            };
+
+            let idx_a = addr_index_for_ip(&addresses, ip_a).expect("index for ip_a");
+            let idx_b = addr_index_for_ip(&addresses, ip_b).expect("index for ip_b");
+
+            assert_eq!(idx_b, 0);
+            assert_eq!(idx_a, 1);
         }
     }
 }
