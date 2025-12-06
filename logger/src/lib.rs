@@ -89,10 +89,16 @@ pub fn redirect_stderr(filename: &Path) {
     }
 }
 
+/// Safety: This function is unsafe because it modifies the environment variables, which can have
+/// unintended consequences if called after threads have started. It is recommended to call this
+/// function early in the program's lifecycle to ensure that it is called before any threads are
+/// created.
 pub fn initialize_logging(logfile: Option<PathBuf>) {
     // Debugging panics is easier with a backtrace
     if env::var_os("RUST_BACKTRACE").is_none() {
-        env::set_var("RUST_BACKTRACE", "1")
+        // Safety: env updates should be made before any threads might access the environment,
+        // `initialize_logging` is called early in the program's lifecycle to ensure this.
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
     }
 
     let Some(logfile) = logfile else {
@@ -111,13 +117,20 @@ pub fn initialize_logging(logfile: Option<PathBuf>) {
     }
 }
 
-// Redirect stderr to a file with support for logrotate by sending a SIGUSR1 to the process.
-//
-// Upon success, future `log` macros and `eprintln!()` can be found in the specified log file.
+/// Redirect stderr to a file with support for logrotate by sending a SIGUSR1 to the process.
+///
+/// Upon success, future `log` macros and `eprintln!()` can be found in the specified log file.
+///
+/// Safety: This function is unsafe because it modifies the environment variables, which can have
+/// unintended consequences if called after threads have started. It is recommended to call this
+/// function early in the program's lifecycle to ensure that it is called before any threads are
+/// created.
 pub fn redirect_stderr_to_file(logfile: Option<PathBuf>) -> Option<JoinHandle<()>> {
     // Default to RUST_BACKTRACE=1 for more informative validator logs
     if env::var_os("RUST_BACKTRACE").is_none() {
-        env::set_var("RUST_BACKTRACE", "1")
+        // Safety: env updates should be made before any threads might access the environment,
+        // `redirect_stderr_to_file` is called early in the program's lifecycle to ensure this.
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
     }
 
     match logfile {
