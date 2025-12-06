@@ -18,7 +18,7 @@ use {
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, ResumptionStrategy, StakeIdentity,
         },
         leader_updater::create_pinned_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
@@ -68,6 +68,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
             send: 1,
             connect: 1,
         },
+        resumption: ResumptionStrategy::InMemory(16),
     }
 }
 
@@ -404,6 +405,15 @@ async fn test_connection_pruned_and_reopened() {
         "Expected at least 1 connection error from pruning and retries. Stats: {stats:?}"
     );
 
+    assert_eq!(
+        stats.connection_succeeded_1rtt, 1,
+        "Expected that 0-RTT failed the first time we were trying to connect."
+    );
+    assert_eq!(
+        stats.connection_succeeded_0rtt, 1,
+        "Expected that 0-RTT succeeded when we reconnected after pruning."
+    );
+
     // Exit server
     cancel.cancel();
     server_handle.await.unwrap();
@@ -461,6 +471,7 @@ async fn test_staked_connection() {
         stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
+            connection_succeeded_1rtt: 1,
             ..Default::default()
         }
     );
@@ -512,6 +523,7 @@ async fn test_connection_throttling() {
         stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
+            connection_succeeded_1rtt: 1,
             ..Default::default()
         }
     );
@@ -618,6 +630,7 @@ async fn test_rate_limiting() {
         stats
             == SendTransactionStatsNonAtomic {
                 connection_error_timed_out: 1,
+                connection_succeeded_1rtt: 1,
                 ..Default::default()
             }
     );
