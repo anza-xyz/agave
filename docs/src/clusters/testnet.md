@@ -6,7 +6,7 @@ It's intended to be both dev and CD friendly.
 
 ### Cloud account prerequisites
 
-The test networks to be created can run in GCP, AWS or colo. Whichever cloud provider you choose, you will need the credentials set up on your machine.
+The test networks to be created can run in GCP, AWS, Azure, or colo. Whichever cloud provider you choose, you will need the credentials set up on your machine.
 
 #### GCP
 You will need a working `gcloud` command from google SDK,
@@ -29,6 +29,13 @@ Obtain your credentials from the AWS IAM Console and configure the AWS CLI with
 $ aws configure
 ```
 More information on AWS CLI configuration can be found [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-quick-configuration)
+
+#### Azure
+Sign in with the Azure CLI and select your subscription
+```bash
+$ az login
+$ az account set --subscription <your-azure-subscription-id>
+```
 
 ## Metrics configuration (Optional)
 Metrics collection relies on 2 environment variables that are patched to the remote nodes by net.sh:
@@ -84,8 +91,9 @@ Note: this only works if you store `SOLANA_METRICS_CONFIG` in your shell environ
 
 ## Quick Start
 
-NOTE: This example uses GCE.  If you are using AWS EC2, replace `./gce.sh` with
-`./ec2.sh` in the commands.
+NOTE: This example uses GCE. If you are using AWS EC2, replace `./gce.sh` with
+`./ec2.sh` in the commands. If you are using Azure, replace `./gce.sh` with
+`./azure.sh`.
 
 ```bash
 # In Agave repo
