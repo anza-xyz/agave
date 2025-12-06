@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
@@ -177,6 +179,8 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
     Ok(())
 }
 
+/// A small grouping struct to temporarily hold banking packet channel senders and receivers with
+/// different source labels for the banking stage setup.
 pub struct Channels {
     pub non_vote_sender: BankingPacketSender,
     pub non_vote_receiver: BankingPacketReceiver,
@@ -186,25 +190,33 @@ pub struct Channels {
     pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
-#[allow(dead_code)]
 impl Channels {
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn unified_sender(&self) -> &BankingPacketSender {
-        let unified_sender = &self.non_vote_sender;
-        assert!(unified_sender
-            .sender
-            .same_channel(&self.tpu_vote_sender.sender));
-        assert!(unified_sender
-            .sender
-            .same_channel(&self.gossip_vote_sender.sender));
-        unified_sender
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn sender_for_unified_scheduler(&self) -> &BankingPacketSender {
+        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
+        // channel arbitrarily here for consistency with receiver_for_unified_scheduler().
+        //
+        // This method is only used internally by clone_is_unified_for_unified_scheduler() below or
+        // tests as a convenience method. So, while no apparent code-patch reaching here, banking
+        // packets can still be routed dynamically depending on the activation of unified scheduler
+        // as block production. That's because each TracedSender is passed to sources (i.e.
+        // non-vote, tpu-vote, gossip-vote) during the validator booting.
+        //
+        // So, while this method name is similar to receiver_for_unified_scheduler() due to being
+        // paired getters of the channel for unified scheduler, this method is used differently
+        // than receiver_for_unified_scheduler() below as hinted by different visibility under no
+        // DCOU: `private` v.s. `pub(crate)`.
+        &self.non_vote_sender
     }
 
-    pub(crate) fn unified_receiver(&self) -> &BankingPacketReceiver {
-        let unified_receiver = &self.non_vote_receiver;
-        assert!(unified_receiver.same_channel(&self.tpu_vote_receiver));
-        assert!(unified_receiver.same_channel(&self.gossip_vote_receiver));
-        unified_receiver
+    pub(crate) fn receiver_for_unified_scheduler(&self) -> &BankingPacketReceiver {
+        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
+        // channel arbitrarily here for consistency with sender_for_unified_scheduler().
+        &self.non_vote_receiver
+    }
+
+    pub(crate) fn clone_is_unified_for_unified_scheduler(&self) -> Arc<AtomicBool> {
+        self.sender_for_unified_scheduler().is_unified.clone()
     }
 }
 
@@ -250,85 +262,6 @@ impl BankingTracer {
         self.active_tracer.is_some()
     }
 
-    pub fn create_channels(&self, unify_channels: bool) -> Channels {
-        if unify_channels {
-            // Returning the same channel is needed when unified scheduler supports block
-            // production because unified scheduler doesn't distinguish them and treats them as
-            // unified as the single source of incoming transactions. This is to reduce the number
-            // of recv operation per loop and load balance evenly as much as possible there.
-            let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
-            // Tap into some private helper fns so that banking trace labelling works as before.
-            let (tpu_vote_sender, tpu_vote_receiver) =
-                self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver);
-            let (gossip_vote_sender, gossip_vote_receiver) =
-                self.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver);
-
-            Channels {
-                non_vote_sender,
-                non_vote_receiver,
-                tpu_vote_sender,
-                tpu_vote_receiver,
-                gossip_vote_sender,
-                gossip_vote_receiver,
-            }
-        } else {
-            let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
-            let (tpu_vote_sender, tpu_vote_receiver) = self.create_channel_tpu_vote();
-            let (gossip_vote_sender, gossip_vote_receiver) = self.create_channel_gossip_vote();
-
-            Channels {
-                non_vote_sender,
-                non_vote_receiver,
-                tpu_vote_sender,
-                tpu_vote_receiver,
-                gossip_vote_sender,
-                gossip_vote_receiver,
-            }
-        }
-    }
-
-    fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {
-        Self::channel(label, self.active_tracer.as_ref().cloned())
-    }
-
-    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
-        self.create_channel(ChannelLabel::NonVote)
-    }
-
-    fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
-        self.create_channel(ChannelLabel::TpuVote)
-    }
-
-    fn create_channel_gossip_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
-        self.create_channel(ChannelLabel::GossipVote)
-    }
-
-    fn create_unified_channel_tpu_vote(
-        &self,
-        sender: &TracedSender,
-        receiver: &BankingPacketReceiver,
-    ) -> (BankingPacketSender, BankingPacketReceiver) {
-        Self::channel_inner(
-            ChannelLabel::TpuVote,
-            self.active_tracer.as_ref().cloned(),
-            sender.sender.clone(),
-            receiver.clone(),
-        )
-    }
-
-    fn create_unified_channel_gossip_vote(
-        &self,
-        sender: &TracedSender,
-        receiver: &BankingPacketReceiver,
-    ) -> (BankingPacketSender, BankingPacketReceiver) {
-        Self::channel_inner(
-            ChannelLabel::GossipVote,
-            self.active_tracer.as_ref().cloned(),
-            sender.sender.clone(),
-            receiver.clone(),
-        )
-    }
-
     pub fn hash_event(&self, slot: Slot, blockhash: &Hash, bank_hash: &Hash) {
         self.trace_event(|| {
             TimedTracedEvent(
@@ -348,25 +281,69 @@ impl BankingTracer {
         }
     }
 
+    pub fn create_channels(&self) -> Channels {
+        let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
+
+        // non_vote_sender will conditionally be repurposed as the shared channel when unified
+        // scheduler supports block production. That's because unified scheduler doesn't
+        // distinguish sources of incoming messages and treats them as if they're coming from the
+        // single source. This is to reduce the number of recv operation per loop and load balance
+        // evenly as much as possible there.
+        let unified_sender = non_vote_sender.sender.clone();
+        let is_unified = non_vote_sender.is_unified.clone();
+
+        let (tpu_vote_sender, tpu_vote_receiver) = Self::channel(
+            ChannelLabel::TpuVote,
+            self.active_tracer.as_ref().cloned(),
+            Some(unified_sender.clone()),
+            Some(is_unified.clone()),
+        );
+        let (gossip_vote_sender, gossip_vote_receiver) = Self::channel(
+            ChannelLabel::GossipVote,
+            self.active_tracer.as_ref().cloned(),
+            Some(unified_sender.clone()),
+            Some(is_unified.clone()),
+        );
+
+        Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        }
+    }
+
+    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+        Self::channel(
+            ChannelLabel::NonVote,
+            self.active_tracer.as_ref().cloned(),
+            None,
+            None,
+        )
+    }
+
     pub fn channel_for_test() -> (TracedSender, Receiver<BankingPacketBatch>) {
-        Self::channel(ChannelLabel::Dummy, None)
+        Self::channel(ChannelLabel::Dummy, None, None, None)
     }
 
     fn channel(
         label: ChannelLabel,
         active_tracer: Option<ActiveTracer>,
+        unified_sender: Option<Sender<BankingPacketBatch>>,
+        is_unified: Option<Arc<AtomicBool>>,
     ) -> (TracedSender, Receiver<BankingPacketBatch>) {
         let (sender, receiver) = unbounded();
-        Self::channel_inner(label, active_tracer, sender, receiver)
-    }
 
-    fn channel_inner(
-        label: ChannelLabel,
-        active_tracer: Option<ActiveTracer>,
-        sender: Sender<BankingPacketBatch>,
-        receiver: BankingPacketReceiver,
-    ) -> (TracedSender, Receiver<BankingPacketBatch>) {
-        (TracedSender::new(label, sender, active_tracer), receiver)
+        // Prepare unified scheduler related values when not supplied
+        let unified_sender = unified_sender.unwrap_or_else(|| sender.clone());
+        let is_unified = is_unified.unwrap_or_default();
+
+        (
+            TracedSender::new(label, sender, unified_sender, is_unified, active_tracer),
+            receiver,
+        )
     }
 
     pub fn ensure_cleanup_path(path: &PathBuf) -> Result<(), io::Error> {
@@ -423,9 +400,25 @@ impl BankingTracer {
     }
 }
 
+/// A small wrapper around the sender of crossbeam channels to message banking packet batches.
+///
+/// The underlying channels are used by the banking stage to receive packets from multiple sources.
+/// The sources are labelled as non-vote, tpu-vote, and gossip-vote respectively. As such, traced
+/// senders are separately constructed for each of these sources, then all are grouped under the
+/// `Channels` struct transiently during setup.
+///
+/// This wrapper exists to enable the banking trace functionality conditionally on creation.
+///
+/// Also, this wrapper can dynamically switch sending batches to an alternate channel, called the
+/// unified channel, depending on a flag. Both the actual crossbeam sender for the unified channel
+/// and the flag are expected to be shared among all of traced sender instances, which will be used
+/// by the trio of sources respectively. This routing functionality is needed for unified scheduler
+/// and its runtime switching.
 pub struct TracedSender {
     label: ChannelLabel,
     sender: Sender<BankingPacketBatch>,
+    unified_sender: Sender<BankingPacketBatch>,
+    is_unified: Arc<AtomicBool>,
     active_tracer: Option<ActiveTracer>,
 }
 
@@ -433,12 +426,58 @@ impl TracedSender {
     fn new(
         label: ChannelLabel,
         sender: Sender<BankingPacketBatch>,
+        unified_sender: Sender<BankingPacketBatch>,
+        is_unified: Arc<AtomicBool>,
         active_tracer: Option<ActiveTracer>,
     ) -> Self {
         Self {
             label,
             sender,
+            unified_sender,
+            is_unified,
             active_tracer,
+        }
+    }
+
+    fn current_sender(&self) -> &Sender<BankingPacketBatch> {
+        // Batches fed into `self.sender` could be indefinitely buffered in the channels except the
+        // traced sender used by the non-vote channel, if those batches are sent within the small
+        // time window of the case of block production method switching from the central scheduler
+        // to the unified scheduler (this doesn't happen in the opposite direction and any
+        // switching cases among central and external schedulers).
+        //
+        // That's because the newly running unified scheduler doesn't consume batches from the
+        // tpu-vote and gossip-vote channels. It does only from the unified (= actually non-vote)
+        // channel, which is now used by tpu-vote and gossip-vote traced senders _around same
+        // time_. This sender-side and receiver-side switching isn't synchronized to avoid any
+        // significant overhead (i.e. per batch locking). Also, the transition code doesn't try to
+        // ensure to empty those batches during switching, which is constrained to the best effort
+        // basis due to the lack of such synchronization. Thus, this omission is intentional not to
+        // introduce the DOS attack vector in switching by tx saturation from a remote attacker.
+        //
+        // However, this particularly lenient behavior won't pose any significant problem in
+        // practice. That's because any block production method is generally assumed to
+        // aggressively try to empty those channels continuously, regardless the awareness of any
+        // imminent leader slots according to the current leader schedule. Otherwise, low-staked
+        // validator nodes would be vulnerable to remotely-controllable unbounded memory growth
+        // during normal operation even with no switching whatsoever.
+        //
+        // Also, block production switching isn't a frequent operation and it can only be triggered
+        // by privileged validator operators. Reasonably, they won't do this during their leader
+        // slots, even if they're unaware of this implementation compromise.
+        //
+        // As an extra comment, those possibly quite old txes in the unconsumed batches should
+        // safely be discarded by the central scheduler, because it should be resilient against any
+        // untrusted input by nature, should the block production method be switched back to the
+        // central scheduler.
+        //
+        // All in all, the bottom line of the effective incurred overhead for supporting unified
+        // scheduler block production switching is a good and old atomic bool relaxed load per
+        // batch, whose cache line won't be invalidated at all, practically speaking.
+        if self.is_unified.load(Ordering::Relaxed) {
+            &self.unified_sender
+        } else {
+            &self.sender
         }
     }
 
@@ -456,11 +495,11 @@ impl TracedSender {
                     })?;
             }
         }
-        self.sender.send(batch)
+        self.current_sender().send(batch)
     }
 
     pub fn len(&self) -> usize {
-        self.sender.len()
+        self.current_sender().len()
     }
 
     pub fn is_empty(&self) -> bool {

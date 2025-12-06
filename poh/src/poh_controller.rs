@@ -26,6 +26,7 @@ pub struct PohController {
     /// This is necessary because crossbeam does not support peeking the
     /// channel.
     pending_message: Arc<AtomicUsize>,
+    last_bank: Option<BankWithScheduler>,
 }
 
 impl PohController {
@@ -41,6 +42,7 @@ impl PohController {
             Self {
                 sender,
                 pending_message,
+                last_bank: None,
             },
             receiver,
         )
@@ -89,7 +91,7 @@ impl PohController {
     }
 
     fn send_and_wait_on_pending_message(
-        &self,
+        &mut self,
         message: PohServiceMessage,
     ) -> Result<(), SendError<PohServiceMessage>> {
         self.send_message(message)?;
@@ -99,9 +101,35 @@ impl PohController {
         Ok(())
     }
 
-    fn send_message(&self, message: PohServiceMessage) -> Result<(), SendError<PohServiceMessage>> {
+    fn send_message(
+        &mut self,
+        message: PohServiceMessage,
+    ) -> Result<(), SendError<PohServiceMessage>> {
+        let cleared_bank = match &message {
+            PohServiceMessage::SetBank { bank } => {
+                if bank.has_installed_active_bp_scheduler() {
+                    self.last_bank = Some(bank.clone_with_scheduler());
+                }
+                None
+            }
+            PohServiceMessage::Reset { .. } => {
+                // This could happen due to an abandoned leader fork, which needs a special
+                // book-keeping below if unified scheduler was installed for the bank.
+                self.last_bank.take()
+            }
+        };
+
         self.pending_message.fetch_add(1, Ordering::AcqRel);
         self.sender.send(message)?;
+
+        if let Some(cleared_bank) = cleared_bank {
+            // This must be done without poh_recorder lock being held; otherwise deadlock would
+            // occur due to choked tx processing on session ending by unified scheduler handler
+            // threads. So, we can't nicely hide this impl detail inside PohRecorder::reset()..
+            // Also, this must be done outside the PohService thread due to similar reasons.
+            cleared_bank.ensure_return_abandoned_bp_scheduler_to_scheduler_pool();
+        }
+
         Ok(())
     }
 }

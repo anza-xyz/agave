@@ -40,7 +40,7 @@ use {
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_transaction::versioned::VersionedTransaction,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     std::{
         path::{Path, PathBuf},
         process::exit,
@@ -370,7 +370,8 @@ pub fn load_and_process_ledger(
             bank_forks
                 .write()
                 .unwrap()
-                .install_scheduler_pool(DefaultSchedulerPool::new_dyn(
+                .install_scheduler_pool(DefaultSchedulerPool::new(
+                    SupportedSchedulingMode::with_verification(),
                     unified_scheduler_handler_threads,
                     process_options.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),

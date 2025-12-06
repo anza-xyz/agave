@@ -83,8 +83,9 @@ fn test_scheduler_waited_by_drop_bank_service() {
     // Setup bankforks with unified scheduler enabled
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
-    let pool_raw =
-        SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(None, None, None, None, None);
+    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
+        None, None, None, None, None,
+    );
     let pool = pool_raw.clone();
     bank_forks.write().unwrap().install_scheduler_pool(pool);
     let genesis = 0;
@@ -228,10 +229,10 @@ fn test_scheduler_producing_blocks() {
         None,
         Some(leader_schedule_cache),
     );
-    let pool = DefaultSchedulerPool::new(None, None, None, None, None);
+    let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
-        banking_tracer.create_channels(true)
+        banking_tracer.create_channels()
     };
     ensure_banking_stage_setup(
         &pool,
@@ -273,7 +274,7 @@ fn test_scheduler_producing_blocks() {
 
     // Now, send transaction
     channels
-        .unified_sender()
+        .sender_for_unified_scheduler()
         .send(banking_packet_batch)
         .unwrap();
 
