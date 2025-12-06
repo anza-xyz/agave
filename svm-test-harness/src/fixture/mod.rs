@@ -5,10 +5,14 @@
 //! between Firedancer's protobuf payloads and Solana SDK types.
 
 pub mod account_state;
+pub mod epoch_context;
 pub mod error;
 pub mod feature_set;
 pub mod instr_context;
 pub mod instr_effects;
+pub mod slot_context;
+pub mod txn_context;
+pub mod txn_result;
 
 #[cfg(feature = "fuzz")]
 pub mod proto {
