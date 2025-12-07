@@ -543,7 +543,7 @@ impl BankingStage {
         scheduler_config: SchedulerConfig,
     ) -> Result<Vec<JoinHandle<()>>, ()> {
         info!("Spawning internal central scheduler");
-        // Togging unified scheduler into the disabled state should always be a safe and idempotent
+        // Toggling unified scheduler into the disabled state should always be a safe and idempotent
         // operation.
         assert!(self.toggle_internal_unified(false));
 
