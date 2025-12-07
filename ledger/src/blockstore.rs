@@ -5212,7 +5212,7 @@ pub mod tests {
         super::*,
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
+            leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
             shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
@@ -10115,9 +10115,10 @@ pub mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = FixedSchedule {
-            leader_schedule: Arc::new(Box::new(IdentityKeyedLeaderSchedule::new_from_schedule(
-                vec![leader_keypair.pubkey()],
-            ))),
+            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader {
+                id: leader_keypair.pubkey(),
+                vote_address: Pubkey::new_unique(),
+            }])),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 
