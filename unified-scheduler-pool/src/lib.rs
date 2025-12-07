@@ -855,6 +855,13 @@ where
                 }
             }
             BlockProduction => {
+                // Grab this lock early so that following banking_stage_status() (i.e. the
+                // is_unified AtomicBool load) is synchronized well.
+                let mut block_production_scheduler_inner = self
+                    .block_production_scheduler_inner
+                    .lock()
+                    .expect("not poisoned");
+
                 if matches!(
                     self.banking_stage_status()
                         .expect("register_banking_stage() isn't called yet"),
@@ -865,11 +872,7 @@ where
 
                 // There must be a pooled block-production scheduler at this point because prior
                 // register_banking_stage() invocation should have spawned such one.
-                let inner = self
-                    .block_production_scheduler_inner
-                    .lock()
-                    .expect("not poisoned")
-                    .take_pooled();
+                let inner = block_production_scheduler_inner.take_pooled();
                 Some(S::from_inner(inner, context, result_with_timings))
             }
         }
@@ -1111,14 +1114,24 @@ where
             return !enable;
         }
 
+        // Grab this lock early so that following toggle_banking_packet_receiver() (i.e. the
+        // is_unified AtomicBool store) is synchronized well.
+        let mut block_production_scheduler_inner =
+            self.block_production_scheduler_inner.lock().unwrap();
         if enable {
-            let mut block_production_scheduler_inner =
-                self.block_production_scheduler_inner.lock().unwrap();
             if block_production_scheduler_inner.is_not_spawned() {
                 self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
             }
+        } else if block_production_scheduler_inner.peek_pooled().is_some() {
+            let scheduler = block_production_scheduler_inner.take_and_trash_pooled();
+            self.trashed_scheduler_inners
+                .lock()
+                .expect("not poisoned")
+                .push(scheduler);
         }
         self.toggle_banking_packet_receiver(enable);
+        drop(block_production_scheduler_inner);
+
         info!("toggle_block_production_mode: succeeded: enable: {enable}");
         true
     }
@@ -5247,5 +5260,119 @@ mod tests {
         *START_DISCARD.lock().unwrap() = true;
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);
+    }
+
+    #[derive(Debug)]
+    struct DummyDisabledBankingMinitor(bool);
+
+    impl BankingStageMonitor for DummyDisabledBankingMinitor {
+        fn status(&mut self) -> BankingStageStatus {
+            if self.0 {
+                BankingStageStatus::Active
+            } else {
+                BankingStageStatus::Disabled
+            }
+        }
+
+        fn toggle_banking_packet_receiver(&mut self, enable: bool) {
+            self.0 = enable;
+        }
+    }
+
+    #[test]
+    fn test_block_production_scheduler_disable_while_taken() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::TrashedSchedulerCleaned(1),
+            &TestCheckPoint::AfterTrashedSchedulerCleaned,
+        ]);
+
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_for_block_production(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let pool = DefaultSchedulerPool::do_new(
+            SupportedSchedulingMode::with_production(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
+        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let monitor = Box::new(DummyDisabledBankingMinitor(false));
+        pool.register_banking_stage(
+            None,
+            banking_packet_receiver,
+            Box::new(|_, _| unreachable!()),
+            transaction_recorder,
+            monitor,
+        );
+
+        let context = SchedulingContext::for_production(bank.clone());
+        let scheduler = pool.do_take_scheduler(context.clone());
+        scheduler.unpause_after_taken();
+
+        assert!(pool.toggle_block_production_mode(false));
+
+        Box::new(scheduler.into_inner().1).return_to_pool();
+        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
+    }
+
+    #[test]
+    fn test_block_production_scheduler_disable_while_pooled() {
+        agave_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::TrashedSchedulerCleaned(1),
+            &TestCheckPoint::AfterTrashedSchedulerCleaned,
+        ]);
+
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_for_block_production(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let pool = DefaultSchedulerPool::do_new(
+            SupportedSchedulingMode::with_production(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
+        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let monitor = Box::new(DummyDisabledBankingMinitor(false));
+        pool.register_banking_stage(
+            None,
+            banking_packet_receiver,
+            Box::new(|_, _| unreachable!()),
+            transaction_recorder,
+            monitor,
+        );
+
+        assert!(pool.toggle_block_production_mode(false));
+
+        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
     }
 }
