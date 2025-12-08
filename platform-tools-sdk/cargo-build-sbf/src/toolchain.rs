@@ -531,6 +531,7 @@ pub(crate) fn install_and_link_tools(
                 "Removed RUSTC from cargo environment, because it overrides +solana cargo command \
                  line option."
             );
+            // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
             unsafe { env::remove_var("RUSTC") }
         }
     }

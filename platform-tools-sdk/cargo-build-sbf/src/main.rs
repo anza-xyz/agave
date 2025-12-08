@@ -170,6 +170,8 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         .join("platform-tools")
         .join("llvm")
         .join("bin");
+    // Override the behavior of cargo to use the Solana toolchain.
+    // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
     unsafe {
         env::set_var("CC", llvm_bin.join("clang"));
         env::set_var("AR", llvm_bin.join("llvm-ar"));
@@ -183,6 +185,8 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
     let rustflags = env::var("RUSTFLAGS").ok().unwrap_or_default();
     if env::var("RUSTFLAGS").is_ok() {
         warn!("Removed RUSTFLAGS from cargo environment, because it overrides {cargo_target}.");
+        // User provided rust flags should apply to the solana target only, but not the host target.
+        // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
         unsafe { env::remove_var("RUSTFLAGS") }
     }
     let target_rustflags = env::var(&cargo_target).ok();
@@ -205,6 +209,7 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         target_rustflags = Cow::Owned(format!("{} -g", &target_rustflags));
     }
     if let Cow::Owned(flags) = target_rustflags {
+        // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
         unsafe { env::set_var(&cargo_target, flags) }
     }
     if config.verbose {
