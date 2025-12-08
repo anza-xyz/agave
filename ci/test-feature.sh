@@ -17,5 +17,6 @@ source "$here"/rust-version.sh nightly
 partition="${1:-1/1}"
 
 cargo +"$rust_nightly" hack check \
+	--keep-going \
 	--each-feature \
 	--partition "$partition"
