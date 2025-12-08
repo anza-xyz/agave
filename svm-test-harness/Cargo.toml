@@ -18,7 +18,13 @@ required-features = ["fuzz"]
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
-fuzz = ["dep:clap", "dep:prost", "dep:prost-build", "dep:protosol"]
+fuzz = [
+    "dep:clap",
+    "dep:prost",
+    "dep:prost-build",
+    "dep:protosol",
+    "solana-pubkey/default",
+]
 
 [dependencies]
 agave-feature-set = { workspace = true }
