@@ -33,7 +33,7 @@ shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-svm-type-overrides/shuttle-test",
 ]
-svm-internal = []
+svm-internal = ["dep:qualifier_attr"]
 
 [dependencies]
 ahash = { workspace = true }

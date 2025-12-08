@@ -66,7 +66,7 @@ pub(crate) enum TransactionLoadResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
+#[cfg_attr(feature = "svm-internal", qualifier_attr::field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
     pub(crate) nonce: Option<NonceInfo>,
     pub(crate) compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
