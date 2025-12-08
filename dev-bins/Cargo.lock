@@ -6295,6 +6295,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tpu-client",
  "solana-transaction",
+ "solana-unified-scheduler-pool",
  "solana-version",
  "tokio",
 ]
@@ -9754,7 +9755,6 @@ dependencies = [
  "derive_more 2.0.1",
  "dyn-clone",
  "log",
- "qualifier_attr",
  "scopeguard",
  "solana-clock",
  "solana-cost-model",
