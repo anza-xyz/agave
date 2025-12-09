@@ -291,7 +291,7 @@ fn test_program_sbf_sanity() {
 
         let effects = harness::instr::execute_instr(
             context,
-            &compute_budget,
+            compute_budget,
             &mut program_cache,
             &sysvar_cache,
         )
@@ -568,7 +568,7 @@ fn test_program_sbf_error_handling() {
                 cu_avail: compute_budget.compute_unit_limit,
             };
 
-            harness::instr::execute_instr(context, &compute_budget, program_cache, &sysvar_cache)
+            harness::instr::execute_instr(context, compute_budget, program_cache, &sysvar_cache)
                 .unwrap()
         };
 

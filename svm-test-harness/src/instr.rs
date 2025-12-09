@@ -106,11 +106,13 @@ fn compile_accounts<'a>(
 /// Execute a single instruction against the Solana VM.
 pub fn execute_instr(
     input: InstrContext,
-    compute_budget: &ComputeBudget,
+    mut compute_budget: ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
 ) -> Option<InstrEffects> {
     let mut compute_units_consumed = 0;
+    compute_budget.compute_unit_limit = input.cu_avail;
+
     let mut timings = ExecuteTimings::default();
 
     let log_collector = LogCollector::new_ref();
@@ -122,7 +124,7 @@ pub fn execute_instr(
         .account_owner();
 
     let (instruction_accounts, mut transaction_context) =
-        compile_accounts(&input, compute_budget, (*rent).clone(), &loader_key);
+        compile_accounts(&input, &compute_budget, (*rent).clone(), &loader_key);
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
@@ -372,7 +374,7 @@ mod tests {
         .unwrap();
 
         // Execute the instruction.
-        let effects = execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+        let effects = execute_instr(context, compute_budget, &mut program_cache, &sysvar_cache)
             .expect("Instruction execution should succeed");
 
         // Verify the results.
