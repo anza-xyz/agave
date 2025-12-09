@@ -7,7 +7,7 @@ use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bls_signatures::PubkeyCompressed as BLSPubkeyCompressed,
+    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_clap_utils::{
         input_parsers::{
             bls_pubkeys_of, cluster_type_of, pubkey_of, pubkeys_of,
@@ -74,6 +74,16 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
             Keypair::try_from(bytes.as_ref()).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
+}
+
+fn bls_pubkey_from_str(key_str: &str) -> Result<BLSPubkeyCompressed, Box<dyn error::Error>> {
+    match BLSPubkeyCompressed::from_str(key_str) {
+        Ok(bls_pubkey) => Ok(bls_pubkey),
+        Err(_) => {
+            let bls_pubkey = BLSPubkey::from_str(key_str)?;
+            Ok(bls_pubkey.try_into()?)
+        }
+    }
 }
 
 pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> io::Result<u64> {
@@ -149,12 +159,16 @@ pub fn load_validator_accounts(
                 ))
             })?,
         ];
-        let bls_pubkeys: Vec<BLSPubkeyCompressed> =
-            account_details.bls_pubkey.map_or(Ok(vec![]), |s| {
-                BLSPubkeyCompressed::from_str(&s)
-                    .map(|pk| vec![pk])
+        let bls_pubkeys: Vec<BLSPubkeyCompressed> = account_details
+            .bls_pubkey
+            .as_ref()
+            .map(|key_str| {
+                bls_pubkey_from_str(key_str)
                     .map_err(|err| io::Error::other(format!("Invalid BLS pubkey: {err}")))
-            })?;
+            })
+            .transpose()?
+            .map(|pk| vec![pk])
+            .unwrap_or_default();
 
         add_validator_accounts(
             genesis_config,
@@ -1316,7 +1330,9 @@ mod tests {
 
         let generate_bls_pubkey = || {
             if add_bls_pubkey {
-                Some(BLSKeypair::new().public.to_string())
+                let bls_pubkey = BLSKeypair::new().public;
+                let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
+                Some(bls_pubkey_compressed.to_string())
             } else {
                 None
             }
