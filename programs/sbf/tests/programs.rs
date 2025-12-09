@@ -1682,34 +1682,38 @@ fn test_program_sbf_call_depth() {
 fn test_program_sbf_compute_budget() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_noop");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let mut compute_budget = ComputeBudget::new_with_defaults(false, false);
+    compute_budget.compute_unit_limit = 0;
 
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_noop",
+    let accounts = vec![(program_id, Account::new(0, 0, &loader_v4::id()))];
+
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
-    let message = Message::new(
-        &[
-            ComputeBudgetInstruction::set_compute_unit_limit(150),
-            Instruction::new_with_bincode(program_id, &0, vec![]),
-        ],
-        Some(&mint_keypair.pubkey()),
-    );
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair], message);
+    let sysvar_cache = default_sysvar_cache();
+
+    let instruction = Instruction::new_with_bincode(program_id, &0, vec![]);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
     assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(1, InstructionError::ProgramFailedToComplete),
+        effects.result,
+        Some(InstructionError::ProgramFailedToComplete),
     );
 }
 
