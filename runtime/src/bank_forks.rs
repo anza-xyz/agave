@@ -315,7 +315,9 @@ impl BankForks {
         bank: Arc<Bank>,
     ) -> BankWithScheduler {
         let context = SchedulingContext::new_with_mode(mode, bank.clone());
-        let scheduler = scheduler_pool.take_scheduler(context);
+        let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
+            return BankWithScheduler::new_without_scheduler(bank);
+        };
         let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
         // Skip registering for block production. Both the tvu main loop in the replay stage
         // and PohRecorder don't support _concurrent block production_ at all. It's strongly
@@ -325,6 +327,15 @@ impl BankForks {
             scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
         }
         bank_with_scheduler
+    }
+
+    #[must_use]
+    pub fn toggle_unified_scheduler_block_production_mode(&self, enable: bool) -> bool {
+        if let Some(scheduler_pool) = &self.scheduler_pool {
+            scheduler_pool.toggle_block_production_mode(enable)
+        } else {
+            !enable
+        }
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {

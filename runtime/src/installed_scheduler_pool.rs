@@ -49,7 +49,7 @@ pub fn initialized_result_with_timings() -> ResultWithTimings {
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
     /// A very thin wrapper of [`Self::take_resumed_scheduler`] to take a scheduler from this pool
     /// for a brand-new bank.
-    fn take_scheduler(&self, context: SchedulingContext) -> InstalledSchedulerBox {
+    fn take_scheduler(&self, context: SchedulingContext) -> Option<InstalledSchedulerBox> {
         self.take_resumed_scheduler(context, initialized_result_with_timings())
     }
 
@@ -57,7 +57,7 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-    ) -> InstalledSchedulerBox;
+    ) -> Option<InstalledSchedulerBox>;
 
     /// Registers an opaque timeout listener.
     ///
@@ -69,6 +69,9 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
 
     fn uninstalled_from_bank_forks(self: Arc<Self>);
+
+    #[must_use]
+    fn toggle_block_production_mode(&self, enable: bool) -> bool;
 }
 
 #[derive(Debug)]
@@ -504,6 +507,14 @@ impl BankWithScheduler {
         )
     }
 
+    pub fn has_installed_active_bp_scheduler(&self) -> bool {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
+        } else {
+            false
+        }
+    }
+
     /// Schedule the transaction as long as the scheduler hasn't been aborted.
     ///
     /// If the scheduler has been aborted, this doesn't schedule the transaction, instead just
@@ -583,6 +594,20 @@ impl BankWithScheduler {
         )
     }
 
+    pub fn ensure_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
+        if !self.has_installed_active_bp_scheduler() {
+            return;
+        }
+
+        if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
+            info!(
+                "Reaped cleared tpu_bank and returned abandoned bp scheduler: {} {:?}",
+                self.slot(),
+                result
+            );
+        }
+    }
+
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
         RwLock::new(SchedulerStatus::Unavailable)
     }
@@ -616,7 +641,13 @@ impl BankWithSchedulerInner {
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {scheduler:?}");
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
-                    let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
+                    // Re-taking a block verification scheduler should succeed because this code
+                    // path indicates taking it succeeded previously to begin with.
+                    // Note that a block production scheduler won't reach here because the whole
+                    // callback thing is gated by BankForks::install_scheduler_into_bank().
+                    let scheduler = pool
+                        .take_resumed_scheduler(context, result_with_timings)
+                        .unwrap();
                     info!(
                         "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: \
                          {})",
