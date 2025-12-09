@@ -501,7 +501,12 @@ pub fn create_genesis_config_with_leader_ex(
     initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
     let feature_set = if cluster_type == ClusterType::Development {
-        FeatureSet::all_enabled()
+        let mut fs = FeatureSet::all_enabled();
+
+        // Disable Alpenglow by default for development clusters. To enable it,
+        // use `create_genesis_config_with_leader_ex_with_features`.
+        fs.deactivate(&agave_feature_set::alpenglow::id());
+        fs
     } else {
         FeatureSet::default()
     };
