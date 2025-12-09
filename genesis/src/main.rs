@@ -7,7 +7,7 @@ use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bls_signatures::Pubkey as BLSPubkey,
+    solana_bls_signatures::PubkeyCompressed as BLSPubkeyCompressed,
     solana_clap_utils::{
         input_parsers::{
             bls_pubkeys_of, cluster_type_of, pubkey_of, pubkeys_of,
@@ -42,10 +42,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
-        genesis_utils::{
-            add_genesis_epoch_rewards_account, add_genesis_stake_config_account,
-            bls_pubkey_to_compressed_bytes,
-        },
+        genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
         stake_utils,
     },
     solana_sdk_ids::system_program,
@@ -152,11 +149,12 @@ pub fn load_validator_accounts(
                 ))
             })?,
         ];
-        let bls_pubkeys: Vec<BLSPubkey> = account_details.bls_pubkey.map_or(Ok(vec![]), |s| {
-            BLSPubkey::from_str(&s)
-                .map(|pk| vec![pk])
-                .map_err(|err| io::Error::other(format!("Invalid BLS pubkey: {err}")))
-        })?;
+        let bls_pubkeys: Vec<BLSPubkeyCompressed> =
+            account_details.bls_pubkey.map_or(Ok(vec![]), |s| {
+                BLSPubkeyCompressed::from_str(&s)
+                    .map(|pk| vec![pk])
+                    .map_err(|err| io::Error::other(format!("Invalid BLS pubkey: {err}")))
+            })?;
 
         add_validator_accounts(
             genesis_config,
@@ -240,7 +238,7 @@ fn features_to_deactivate_for_cluster(
 fn add_validator_accounts(
     genesis_config: &mut GenesisConfig,
     pubkeys_iter: &mut Iter<Pubkey>,
-    bls_pubkeys_iter: &mut Iter<BLSPubkey>,
+    bls_pubkeys_iter: &mut Iter<BLSPubkeyCompressed>,
     lamports: u64,
     stake_lamports: u64,
     commission: u8,
@@ -264,8 +262,9 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let bls_pubkey_compressed_bytes =
-            bls_pubkeys_iter.next().map(bls_pubkey_to_compressed_bytes);
+        let bls_pubkey_compressed_bytes = bls_pubkeys_iter
+            .next()
+            .map(|bls_pubkey| bincode::serialize(&bls_pubkey).unwrap().try_into().unwrap());
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
@@ -1395,10 +1394,11 @@ mod tests {
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
                 if add_bls_pubkey {
                     assert_eq!(
-                        bls_pubkey_to_compressed_bytes(
-                            &BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap()).unwrap()
-                        ),
-                        vote_state.bls_pubkey_compressed.unwrap()
+                        b64_account.bls_pubkey.map(|x| x.as_bytes().to_vec()),
+                        vote_state
+                            .bls_pubkey_compressed
+                            .as_ref()
+                            .map(|arr| arr.to_vec()),
                     );
                 } else {
                     assert!(b64_account.bls_pubkey.is_none());
