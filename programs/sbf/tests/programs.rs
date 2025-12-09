@@ -1644,40 +1644,37 @@ fn test_program_sbf_ro_modify() {
 fn test_program_sbf_call_depth() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_call_depth");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_call_depth",
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
-    let budget = ComputeBudget::new_with_defaults(
-        genesis_config
-            .accounts
-            .contains_key(&feature_set::raise_cpi_nesting_limit_to_8::id()),
-        genesis_config
-            .accounts
-            .contains_key(&feature_set::increase_cpi_account_info_limit::id()),
-    );
-    let instruction =
-        Instruction::new_with_bincode(program_id, &(budget.max_call_depth - 1), vec![]);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok());
+    let mut execute = |depth: usize| {
+        let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
 
-    let instruction = Instruction::new_with_bincode(program_id, &budget.max_call_depth, vec![]);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_err());
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts: vec![],
+            instruction,
+        };
+
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap()
+    };
+
+    let effects = execute(compute_budget.max_call_depth - 1);
+    assert!(effects.result.is_none());
+
+    let effects = execute(compute_budget.max_call_depth);
+    assert!(effects.result.is_some());
 }
 
 #[test]
