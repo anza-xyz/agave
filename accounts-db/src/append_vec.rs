@@ -8,9 +8,9 @@ mod meta;
 pub mod test_utils;
 
 #[cfg(feature = "dev-context-only-utils")]
-pub use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
+pub use meta::StoredAccountMeta;
 #[cfg(not(feature = "dev-context-only-utils"))]
-use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
+use meta::StoredAccountMeta;
 use {
     crate::{
         account_info::Offset,
@@ -30,7 +30,7 @@ use {
     },
     log::*,
     memmap2::MmapMut,
-    meta::StoredAccountNoData,
+    meta::{AccountMeta, StoredAccountNoData, StoredMeta},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
