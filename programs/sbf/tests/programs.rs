@@ -683,45 +683,52 @@ fn test_return_data_and_log_data_syscall() {
     }
 
     for program in programs.iter() {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
+        println!("Test program: {:?}", program);
 
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let authority_keypair = Keypair::new();
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let (bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let feature_set = FeatureSet::all_enabled();
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let pubkey = Pubkey::new_unique();
+        let accounts = vec![(pubkey, Account::default())];
+
+        let mut program_cache = default_program_cache_with_program(
+            &program_id,
+            &program_elf,
+            &feature_set,
+            &compute_budget,
         );
+        let sysvar_cache = default_sysvar_cache();
 
-        bank.freeze();
-
-        let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
+        let account_metas = vec![AccountMeta::new(pubkey, true)];
         let instruction =
             Instruction::new_with_bytes(program_id, &[1, 2, 3, 0, 4, 5, 6], account_metas);
 
-        let blockhash = bank.last_blockhash();
-        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-        let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
-        let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+        let context = InstrContext {
+            feature_set,
+            accounts,
+            instruction,
+        };
 
-        let result = bank.simulate_transaction(&sanitized_tx, false);
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
 
-        assert!(result.result.is_ok());
+        assert!(effects.result.is_none());
 
-        assert_eq!(result.logs[1], "Program data: AQID BAUG");
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == "Program data: AQID BAUG"));
 
-        assert_eq!(
-            result.logs[3],
-            format!("Program return: {} CAFE", program_id)
-        );
+        assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
+
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
     }
 }
 
