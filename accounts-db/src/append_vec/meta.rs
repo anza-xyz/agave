@@ -1,10 +1,6 @@
 use {
-    crate::is_zero_lamport::IsZeroLamport,
-    serde::{Deserialize, Serialize},
-    solana_account::ReadableAccount,
-    solana_clock::Epoch,
-    solana_pubkey::Pubkey,
-    std::{ptr, str},
+    crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount, solana_clock::Epoch,
+    solana_pubkey::Pubkey, std::ptr,
 };
 
 /// Meta contains enough context to recover the index from storage itself
@@ -25,7 +21,7 @@ pub struct StoredMeta {
 
 /// This struct will be backed by mmapped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 #[repr(C)]
 pub struct AccountMeta {
     /// lamports in the account
