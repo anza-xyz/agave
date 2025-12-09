@@ -17,8 +17,9 @@ use {
         poh_controller::PohController, poh_service::PohService, record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
+    agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
-    crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
+    crossbeam_channel::{bounded, unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
     solana_clock::{BankId, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_entry::{
@@ -188,9 +189,6 @@ pub struct PohRecorder {
     // Allocation to hold PohEntrys recorded into PoHStream.
     entries: Vec<PohEntry>,
 
-    // Alpenglow related migration things
-    pub is_alpenglow_enabled: bool,
-
     /// When alpenglow is enabled there will be no ticks apart from a final one
     /// to complete the block. This tick will not be verified, and we use this
     /// flag to unset hashes_per_tick
@@ -277,7 +275,6 @@ impl PohRecorder {
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
                 entries: Vec::with_capacity(64),
-                is_alpenglow_enabled: false,
                 alpenglow_enabled: false,
             },
             working_bank_receiver,
@@ -988,6 +985,7 @@ fn do_create_test_recorder(
     let transaction_recorder = TransactionRecorder::new(record_sender);
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
     let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+    let (record_receiver_sender, _record_receiver_receiver) = bounded(1);
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &poh_config,
@@ -997,6 +995,8 @@ fn do_create_test_recorder(
         crate::poh_service::DEFAULT_HASHES_PER_BATCH,
         record_receiver,
         poh_service_message_receiver,
+        Arc::new(MigrationStatus::default()),
+        record_receiver_sender,
     );
 
     poh_controller

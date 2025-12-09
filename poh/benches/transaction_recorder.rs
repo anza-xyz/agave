@@ -1,5 +1,7 @@
 use {
+    agave_votor_messages::migration::MigrationStatus,
     criterion::{criterion_group, criterion_main, Criterion},
+    crossbeam_channel::bounded,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -76,6 +78,7 @@ fn bench_record_transactions(c: &mut Criterion) {
 
     let (mut poh_controller, poh_service_receiver) = PohController::new();
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+    let (record_receiver_sender, _record_receiver_receiver) = bounded(1);
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &genesis_config_info.genesis_config.poh_config,
@@ -85,6 +88,8 @@ fn bench_record_transactions(c: &mut Criterion) {
         DEFAULT_HASHES_PER_BATCH,
         record_receiver,
         poh_service_receiver,
+        Arc::new(MigrationStatus::default()),
+        record_receiver_sender,
     );
     poh_controller
         .set_bank_sync(BankWithScheduler::new_without_scheduler(bank.clone()))
