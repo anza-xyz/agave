@@ -63,6 +63,11 @@ impl BlockhashQueue {
         self.last_hash.expect("no hash has been set")
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    
+    }
+
     pub fn get_lamports_per_signature(&self, hash: &Hash) -> Option<u64> {
         self.hashes
             .get(hash)
@@ -153,7 +158,20 @@ mod tests {
         super::*, bincode::serialize, solana_clock::MAX_RECENT_BLOCKHASHES,
         solana_sha256_hasher::hash,
     };
+#[test]
+    fn test_is_empty() {
+        // Проверяем, что новый метод `is_empty` работает правильно.
+        let mut blockhash_queue = BlockhashQueue::new(10); // <--- ДОБАВЬТЕ `mut`
+        assert!(blockhash_queue.is_empty());
 
+        // Используем register_hash, передавая Hash и lamports_per_signature (например, 100)
+        let new_hash = Hash::new_unique();
+        let lamports_fee = 100;
+        
+        blockhash_queue.register_hash(&new_hash, lamports_fee); // <--- ИСПРАВЛЕННЫЙ ВЫЗОВ
+
+        assert!(!blockhash_queue.is_empty());
+    }
     #[test]
     fn test_register_hash() {
         let last_hash = Hash::default();
@@ -326,3 +344,4 @@ mod tests {
             .is_none());
     }
 }
+
