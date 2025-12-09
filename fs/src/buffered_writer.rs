@@ -13,7 +13,6 @@ const DEFAULT_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 ///
 /// The returned writer is using a buffer size tuned for writing large files to disks.
 pub fn large_file_buf_writer(path: impl AsRef<Path>) -> io::Result<impl io::Write + io::Seek> {
-    let path = path.as_ref();
     let file = fs::File::create(path)?;
 
     Ok(BufWriter::with_capacity(DEFAULT_BUFFER_SIZE, file))
