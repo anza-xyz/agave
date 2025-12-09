@@ -1,47 +1,74 @@
 //! Solana SVM test harness for transactions.
 
 use {
-    crate::fixture::{
-        proto::{AcctState as ProtoAcctState, ResultingState as ProtoResultingState},
-        txn_context::TxnContext,
-        txn_result::{transaction_error_to_err_nums, FeeDetails, ResultingState, TxnResult},
+    crate::{
+        fixture::{
+            proto::{AcctState as ProtoAcctState, ResultingState as ProtoResultingState},
+            txn_context::TxnContext,
+            txn_result::{transaction_error_to_err_nums, FeeDetails, ResultingState, TxnResult},
+        },
+        program_cache::register_builtins_on_processor,
     },
+    agave_feature_set::raise_cpi_nesting_limit_to_8,
     agave_precompiles::get_precompile,
     ahash::AHashSet,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::{
-        accounts_db::AccountsDbConfig,
-        accounts_file::StorageAccess,
-        accounts_index::{AccountsIndexConfig, IndexLimit},
-    },
-    solana_clock::MAX_PROCESSING_AGE,
+    solana_clock::Slot,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_epoch_schedule::EpochSchedule,
-    solana_genesis_config::GenesisConfig,
-    solana_message::SanitizedMessage,
+    solana_message::{SanitizedMessage, SimpleAddressLoader},
+    solana_program_runtime::{
+        execution_budget::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        loaded_programs::{BlockRelation, ForkGraph},
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_runtime::{
-        bank::{Bank, LoadAndExecuteTransactionsOutput},
-        bank_forks::BankForks,
-        runtime_config::RuntimeConfig,
-    },
-    solana_sdk_ids::{address_lookup_table, bpf_loader_upgradeable, config, stake},
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_sdk_ids::{address_lookup_table, bpf_loader_upgradeable, compute_budget, config, stake},
     solana_svm::{
-        transaction_error_metrics::TransactionErrorMetrics,
+        account_loader::CheckedTransactionDetails,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
-        transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
+        transaction_processor::{
+            ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+            TransactionProcessingEnvironment,
+        },
     },
-    solana_svm_timings::ExecuteTimings,
-    solana_transaction::TransactionVerificationMode,
+    solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_transaction::svm_message::SVMStaticMessage,
+    solana_sysvar_id::SysvarId,
+    solana_transaction::sanitized::MessageHash,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     std::{
-        collections::HashMap,
-        num::NonZeroUsize,
-        sync::{atomic::AtomicBool, Arc},
+        collections::{HashMap, HashSet},
+        num::NonZeroU32,
+        sync::{Arc, RwLock},
     },
 };
+
+struct StubForkGraph;
+
+impl ForkGraph for StubForkGraph {
+    fn relationship(&self, _a: Slot, _b: Slot) -> BlockRelation {
+        BlockRelation::Unknown
+    }
+}
+
+struct TxnAccountStore {
+    accounts: HashMap<Pubkey, AccountSharedData>,
+}
+
+impl InvokeContextCallback for TxnAccountStore {}
+
+impl TransactionProcessingCallback for TxnAccountStore {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+        self.accounts.get(pubkey).map(|a| (a.clone(), 0))
+    }
+
+    fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
+    }
+}
 
 fn get_sysvar<T: serde::de::DeserializeOwned + Default>(
     accounts: &HashMap<&[u8], &crate::fixture::proto::AcctState>,
@@ -92,11 +119,52 @@ impl From<KeyedAccountSharedData> for ProtoAcctState {
     }
 }
 
-fn output_txn_result_from_result(
-    value: LoadAndExecuteTransactionsOutput,
+fn process_compute_budget_instructions<'a>(
+    instructions: impl Iterator<
+        Item = (
+            &'a Pubkey,
+            solana_svm_transaction::instruction::SVMInstruction<'a>,
+        ),
+    >,
+) -> Result<ComputeBudgetLimits, solana_transaction_error::TransactionError> {
+    let mut loaded_accounts_data_size_limit = None;
+
+    for (program_id, instruction) in instructions {
+        if *program_id == compute_budget::id()
+            && instruction.data.len() >= 5
+            && instruction.data[0] == 4
+        {
+            let size = u32::from_le_bytes([
+                instruction.data[1],
+                instruction.data[2],
+                instruction.data[3],
+                instruction.data[4],
+            ]);
+            loaded_accounts_data_size_limit = Some(size);
+        }
+    }
+
+    let loaded_accounts_bytes = if let Some(requested_loaded_accounts_data_size_limit) =
+        loaded_accounts_data_size_limit
+    {
+        NonZeroU32::new(requested_loaded_accounts_data_size_limit)
+            .ok_or(solana_transaction_error::TransactionError::InvalidLoadedAccountsDataSizeLimit)?
+    } else {
+        MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
+    }
+    .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
+    Ok(ComputeBudgetLimits {
+        loaded_accounts_bytes,
+        ..Default::default()
+    })
+}
+
+fn output_txn_result_from_processing_results(
+    processing_results: &[solana_svm::transaction_processing_result::TransactionProcessingResult],
     sanitized_message: &SanitizedMessage,
 ) -> TxnResult {
-    let execution_results = &value.processing_results[0];
+    let execution_results = &processing_results[0];
     let (
         is_ok,
         sanitization_error,
@@ -243,20 +311,22 @@ fn output_txn_result_from_result(
     }
 }
 
+const LAMPORTS_PER_SIGNATURE: u64 = 5000;
+
 #[allow(deprecated)]
 pub fn execute_transaction(
     context: TxnContext,
     proto_context: &crate::fixture::proto::TxnContext,
 ) -> Option<TxnResult> {
     let feature_set = context.epoch_context.features.clone();
-
-    const FEE_COLLECTOR: Pubkey = Pubkey::from_str_const("1111111111111111111111111111111111");
+    let svm_feature_set = feature_set.runtime_features();
 
     let slot = if context.slot_context.slot == 0 {
         10
     } else {
         context.slot_context.slot
     };
+    let epoch = slot / 432000;
 
     let sysvar_accounts: HashMap<&[u8], &crate::fixture::proto::AcctState> = proto_context
         .account_shared_data
@@ -271,100 +341,74 @@ pub fn execute_transaction(
         solana_sysvar::epoch_schedule::id().as_ref(),
     );
 
-    let mut genesis_config = GenesisConfig {
-        creation_time: 0,
-        rent,
-        epoch_schedule,
-        ..GenesisConfig::default()
-    };
+    let mut accounts: HashMap<Pubkey, AccountSharedData> = HashMap::new();
 
-    let bpf_native_program_accounts = get_dummy_bpf_native_programs();
-    bpf_native_program_accounts
-        .iter()
-        .for_each(|(key, account)| {
-            genesis_config.add_account(*key, account.clone());
-        });
-
-    let genesis_hash = context.blockhash_queue.first().cloned();
-
-    let index = Some(AccountsIndexConfig {
-        bins: Some(2),
-        num_flush_threads: Some(NonZeroUsize::new(1).unwrap()),
-        index_limit: IndexLimit::InMemOnly,
-        ..AccountsIndexConfig::default()
-    });
-
-    let shm_path = std::path::PathBuf::from("/dev/shm");
-
-    let accounts_db_config = AccountsDbConfig {
-        index,
-        storage_access: StorageAccess::Mmap,
-        skip_initial_hash_calc: true,
-        base_working_path: Some(shm_path),
-        ..AccountsDbConfig::default()
-    };
-
-    let bank = Bank::new_from_genesis(
-        &genesis_config,
-        Arc::new(RuntimeConfig::default()),
-        vec!["/dev/shm/a".into()],
-        None,
-        accounts_db_config,
-        None,
-        Some(FEE_COLLECTOR),
-        Arc::new(AtomicBool::new(false)),
-        genesis_hash,
-        Some(feature_set.clone()),
-    );
-    let bank_forks = BankForks::new_rw_arc(bank);
-    let mut bank = bank_forks.read().unwrap().root_bank();
-    bank.rehash();
-
-    if slot > 0 {
-        let new_bank = Bank::new_from_parent(bank.clone(), &FEE_COLLECTOR, slot);
-        bank = bank_forks
-            .write()
-            .unwrap()
-            .insert(new_bank)
-            .clone_without_scheduler();
-        bank.prune_program_cache(slot, bank.epoch());
-    }
-
-    bank.store_account(&address_lookup_table::id(), &AccountSharedData::default());
-    bank.store_account(&config::id(), &AccountSharedData::default());
-    bank.store_account(&stake::id(), &AccountSharedData::default());
-
-    bank.get_transaction_processor().reset_sysvar_cache();
     for (pubkey, account) in &context.accounts {
-        let account_data = AccountSharedData::from(account.clone());
-        bank.store_account(pubkey, &account_data);
-    }
-    bank.get_transaction_processor()
-        .fill_missing_sysvar_cache_entries(bank.as_ref());
-
-    let sysvar_recent_blockhashes = bank.get_sysvar_cache_for_tests().get_recent_blockhashes();
-    let mut lamports_per_signature: Option<u64> = None;
-    if let Ok(recent_blockhashes) = &sysvar_recent_blockhashes {
-        if let Some(hash) = recent_blockhashes.first() {
-            if hash.fee_calculator.lamports_per_signature != 0 {
-                lamports_per_signature = Some(hash.fee_calculator.lamports_per_signature);
-            }
-        }
+        accounts.insert(*pubkey, AccountSharedData::from(account.clone()));
     }
 
-    for blockhash in &context.blockhash_queue {
-        bank.register_recent_blockhash_for_test(blockhash, lamports_per_signature);
+    for (pubkey, account) in get_dummy_bpf_native_programs() {
+        accounts.insert(pubkey, account);
     }
-    bank.update_recent_blockhashes();
-    bank.get_transaction_processor().reset_sysvar_cache();
-    bank.get_transaction_processor()
-        .fill_missing_sysvar_cache_entries(bank.as_ref());
 
-    let runtime_transaction = match bank.verify_transaction(
+    // Configure sysvars
+    let clock = solana_clock::Clock {
+        slot,
+        epoch_start_timestamp: 0,
+        epoch,
+        leader_schedule_epoch: epoch,
+        unix_timestamp: 0,
+    };
+    let mut clock_account = AccountSharedData::default();
+    clock_account.set_data_from_slice(&bincode::serialize(&clock).unwrap());
+    accounts.insert(solana_clock::Clock::id(), clock_account);
+
+    let mut rent_account = AccountSharedData::default();
+    rent_account.set_data_from_slice(&bincode::serialize(&rent).unwrap());
+    accounts.insert(Rent::id(), rent_account);
+
+    let mut epoch_schedule_account = AccountSharedData::default();
+    epoch_schedule_account.set_data_from_slice(&bincode::serialize(&epoch_schedule).unwrap());
+    accounts.insert(EpochSchedule::id(), epoch_schedule_account);
+
+    #[allow(deprecated)]
+    {
+        use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
+        let recent_blockhashes = vec![BlockhashesEntry::default()];
+        let mut recent_blockhashes_account = AccountSharedData::default();
+        recent_blockhashes_account
+            .set_data_from_slice(&bincode::serialize(&recent_blockhashes).unwrap());
+        accounts.insert(RecentBlockhashes::id(), recent_blockhashes_account);
+    }
+
+    let fork_graph = Arc::new(RwLock::new(StubForkGraph));
+    let batch_processor = TransactionBatchProcessor::new_uninitialized(slot, epoch);
+    batch_processor
+        .global_program_cache
+        .write()
+        .unwrap()
+        .set_fork_graph(Arc::downgrade(&fork_graph));
+
+    let mut account_store = TxnAccountStore {
+        accounts: accounts.clone(),
+    };
+
+    register_builtins_on_processor(&batch_processor, &mut account_store.accounts, &feature_set);
+
+    batch_processor.fill_missing_sysvar_cache_entries(&account_store);
+
+    let blockhash = context.blockhash_queue.first().cloned().unwrap_or_default();
+
+    let reserved_account_keys = HashSet::new();
+    let runtime_transaction = match RuntimeTransaction::try_create(
         context.transaction.clone(),
-        TransactionVerificationMode::HashAndVerifyPrecompiles,
+        MessageHash::Compute,
+        None,
+        SimpleAddressLoader::Disabled,
+        &reserved_account_keys,
+        true,
     ) {
-        Ok(v) => v,
+        Ok(tx) => tx,
         Err(e) => {
             let (status, instruction_error, _custom_error, instruction_error_index) =
                 transaction_error_to_err_nums(&e);
@@ -385,8 +429,60 @@ pub fn execute_transaction(
         }
     };
 
-    let transactions = vec![runtime_transaction];
-    let batch = bank.prepare_sanitized_batch(&transactions);
+    let compute_budget_limits = match process_compute_budget_instructions(
+        SVMStaticMessage::program_instructions_iter(&runtime_transaction),
+    ) {
+        Ok(limits) => limits,
+        Err(e) => {
+            let (status, instruction_error, _custom_error, instruction_error_index) =
+                transaction_error_to_err_nums(&e);
+            return Some(TxnResult {
+                executed: false,
+                sanitization_error: true,
+                resulting_state: None,
+                is_ok: false,
+                status,
+                instruction_error,
+                instruction_error_index,
+                custom_error: 0,
+                return_data: vec![],
+                executed_units: 0,
+                fee_details: None,
+                loaded_accounts_data_size: 0,
+            });
+        }
+    };
+
+    let signature_count = runtime_transaction
+        .num_transaction_signatures()
+        .saturating_add(runtime_transaction.num_ed25519_signatures())
+        .saturating_add(runtime_transaction.num_secp256k1_signatures())
+        .saturating_add(runtime_transaction.num_secp256r1_signatures());
+
+    let fee_details = solana_fee_structure::FeeDetails::new(
+        signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
+        compute_budget_limits.get_prioritization_fee(),
+    );
+
+    let raise_cpi_limit = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+    let compute_budget = compute_budget_limits.get_compute_budget_and_limits(
+        compute_budget_limits.loaded_accounts_bytes,
+        fee_details,
+        raise_cpi_limit,
+    );
+
+    let check_result = Ok(CheckedTransactionDetails::new(None, compute_budget));
+
+    let processing_environment = TransactionProcessingEnvironment {
+        blockhash,
+        feature_set: svm_feature_set,
+        blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
+        program_runtime_environments_for_execution: batch_processor
+            .get_environments_for_epoch(epoch),
+        program_runtime_environments_for_deployment: batch_processor
+            .get_environments_for_epoch(epoch),
+        ..TransactionProcessingEnvironment::default()
+    };
 
     let recording_config = ExecutionRecordingConfig {
         enable_cpi_recording: false,
@@ -395,9 +491,7 @@ pub fn execute_transaction(
         enable_transaction_balance_recording: false,
     };
 
-    let mut timings = ExecuteTimings::default();
-
-    let configs = TransactionProcessingConfig {
+    let processing_config = TransactionProcessingConfig {
         account_overrides: None,
         check_program_modification_slot: false,
         log_messages_bytes_limit: None,
@@ -407,13 +501,15 @@ pub fn execute_transaction(
         all_or_nothing: false,
     };
 
-    let mut metrics = TransactionErrorMetrics::default();
-    let result = bank.load_and_execute_transactions(
-        &batch,
-        MAX_PROCESSING_AGE,
-        &mut timings,
-        &mut metrics,
-        configs,
+    let transactions = vec![runtime_transaction];
+    let check_results = vec![check_result];
+
+    let batch_output = batch_processor.load_and_execute_sanitized_transactions(
+        &account_store,
+        &transactions,
+        check_results,
+        &processing_environment,
+        &processing_config,
     );
 
     let runtime_transaction_ref = &transactions[0];
@@ -425,7 +521,10 @@ pub fn execute_transaction(
         .map(|message| message.account_keys.clone())
         .unwrap_or_default();
 
-    let mut txn_result = output_txn_result_from_result(result, runtime_transaction_ref.message());
+    let mut txn_result = output_txn_result_from_processing_results(
+        &batch_output.processing_results,
+        runtime_transaction_ref.message(),
+    );
     if let Some(relevant_accounts) = &mut txn_result.resulting_state {
         let mut loaded_account_keys = AHashSet::<Pubkey>::new();
         loaded_account_keys.extend(

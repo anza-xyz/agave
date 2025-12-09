@@ -4,17 +4,42 @@ use {
     },
     agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{Account, AccountSharedData},
-    solana_builtins::BUILTINS,
+    solana_builtins::{prototype::BuiltinPrototype, BUILTINS},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::loaded_programs::{
-        LoadProgramMetrics, ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+        ForkGraph, LoadProgramMetrics, ProgramCacheEntry, ProgramCacheForTxBatch,
+        ProgramRuntimeEnvironments,
     },
     solana_pubkey::Pubkey,
+    solana_svm::transaction_processor::TransactionBatchProcessor,
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_timings::ExecuteTimings,
-    std::{collections::HashSet, sync::Arc},
+    std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    },
 };
+
+/// Check if a builtin should be skipped based on feature gates.
+fn should_skip_builtin(builtin: &BuiltinPrototype, feature_set: &FeatureSet) -> bool {
+    if builtin.program_id == solana_sdk_ids::loader_v4::id()
+        && !feature_set.is_active(&enable_loader_v4::id())
+    {
+        return true;
+    }
+    if builtin.program_id == solana_sdk_ids::zk_elgamal_proof_program::id()
+        && !feature_set.is_active(&zk_elgamal_proof_program_enabled::id())
+    {
+        return true;
+    }
+    if builtin.program_id == solana_sdk_ids::zk_token_proof_program::id()
+        && !feature_set.is_active(&zk_token_sdk_enabled::id())
+    {
+        return true;
+    }
+    false
+}
 
 /// Create a new `ProgramCacheForTxBatch` instance with all builtins from `solana-builtins`.
 pub fn new_with_builtins(feature_set: &FeatureSet, slot: u64) -> ProgramCacheForTxBatch {
@@ -22,20 +47,7 @@ pub fn new_with_builtins(feature_set: &FeatureSet, slot: u64) -> ProgramCacheFor
     cache.set_slot_for_tests(slot);
 
     for builtin in BUILTINS {
-        // Only activate feature-gated builtins if the feature is active.
-        if builtin.program_id == solana_sdk_ids::loader_v4::id()
-            && !feature_set.is_active(&enable_loader_v4::id())
-        {
-            continue;
-        }
-        if builtin.program_id == solana_sdk_ids::zk_elgamal_proof_program::id()
-            && !feature_set.is_active(&zk_elgamal_proof_program_enabled::id())
-        {
-            continue;
-        }
-        if builtin.program_id == solana_sdk_ids::zk_token_proof_program::id()
-            && !feature_set.is_active(&zk_token_sdk_enabled::id())
-        {
+        if should_skip_builtin(builtin, feature_set) {
             continue;
         }
 
@@ -50,6 +62,35 @@ pub fn new_with_builtins(feature_set: &FeatureSet, slot: u64) -> ProgramCacheFor
     }
 
     cache
+}
+
+/// Register all builtins on a `TransactionBatchProcessor` and add their accounts to the store.
+pub fn register_builtins_on_processor<FG: ForkGraph>(
+    batch_processor: &TransactionBatchProcessor<FG>,
+    accounts: &mut HashMap<Pubkey, AccountSharedData>,
+    feature_set: &FeatureSet,
+) {
+    for builtin in BUILTINS {
+        if should_skip_builtin(builtin, feature_set) {
+            continue;
+        }
+
+        // Add builtin account to account store
+        let account = AccountSharedData::from(Account {
+            lamports: 1,
+            data: builtin.name.as_bytes().to_vec(),
+            owner: solana_sdk_ids::native_loader::id(),
+            executable: true,
+            rent_epoch: 0,
+        });
+        accounts.insert(builtin.program_id, account);
+
+        // Register builtin on processor
+        batch_processor.add_builtin(
+            builtin.program_id,
+            ProgramCacheEntry::new_builtin(0, builtin.name.len(), builtin.entrypoint),
+        );
+    }
 }
 
 /// Add a program loaded from ELF bytes to the cache.
