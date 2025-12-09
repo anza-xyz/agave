@@ -4743,44 +4743,43 @@ fn test_deplete_cost_meter_with_access_violation() {
 fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_divide_by_zero");
+    let program_id = Pubkey::new_unique();
 
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
-    let (bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        bank_forks.as_ref(),
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_divide_by_zero",
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = {
+        let mut budget = ComputeBudget::new_with_defaults(false, false);
+        budget.compute_unit_limit = 10_000u64;
+        budget
+    };
+
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
     let instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
-    let compute_unit_limit = 10_000;
-    let message = Message::new(
-        &[
-            ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
-            instruction,
-        ],
-        Some(&mint_keypair.pubkey()),
-    );
-    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
-    let result = load_execute_and_commit_transaction(&bank, tx).unwrap();
+    let context = InstrContext {
+        feature_set,
+        accounts: vec![],
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
 
     assert_eq!(
-        result.status.unwrap_err(),
-        TransactionError::InstructionError(1, InstructionError::ProgramFailedToComplete)
+        effects.result,
+        Some(InstructionError::ProgramFailedToComplete)
     );
 
     // all compute unit limit should be consumed due to SBF VM error
-    assert_eq!(result.executed_units, u64::from(compute_unit_limit));
+    assert_eq!(effects.cu_avail, 0);
 }
 
 #[test]
