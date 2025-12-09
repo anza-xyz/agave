@@ -1394,11 +1394,11 @@ mod tests {
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
                 if add_bls_pubkey {
                     assert_eq!(
-                        b64_account.bls_pubkey.map(|x| x.as_bytes().to_vec()),
+                        b64_account.bls_pubkey.as_ref().map(|s| s.as_bytes()),
                         vote_state
                             .bls_pubkey_compressed
                             .as_ref()
-                            .map(|arr| arr.to_vec()),
+                            .map(|arr| arr.as_slice()),
                     );
                 } else {
                     assert!(b64_account.bls_pubkey.is_none());
