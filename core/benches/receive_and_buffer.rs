@@ -1,12 +1,15 @@
 #[path = "receive_and_buffer_utils.rs"]
 mod utils;
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{criterion_group, criterion_main, Criterion, Throughput},
     solana_core::banking_stage::transaction_scheduler::{
         receive_and_buffer::{ReceiveAndBuffer, TransactionViewReceiveAndBuffer},
         transaction_state_container::StateContainer,
     },
-    std::time::{Duration, Instant},
+    std::{
+        hint::black_box,
+        time::{Duration, Instant},
+    },
 };
 
 fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator>(

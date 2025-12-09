@@ -1,6 +1,6 @@
 use {
     agave_feature_set::FeatureSet,
-    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{criterion_group, criterion_main, Criterion, Throughput},
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_instruction::Instruction,
@@ -11,6 +11,7 @@ use {
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_system_interface::instruction::transfer,
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    std::hint::black_box,
 };
 
 const NUM_TRANSACTIONS_PER_ITER: usize = 1024;
