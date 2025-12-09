@@ -26,7 +26,10 @@ use {
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
-    solana_loader_v4_interface::instruction as loader_v4_instruction,
+    solana_loader_v4_interface::{
+        instruction as loader_v4_instruction,
+        state::{LoaderV4State, LoaderV4Status},
+    },
     solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
@@ -112,6 +115,10 @@ fn default_sysvar_cache() -> SysvarCache {
             let rent = Rent::default();
             let rent_data = bincode::serialize(&rent).unwrap();
             callback(&rent_data);
+        } else if pubkey == &clock::id() {
+            let clock = solana_clock::Clock::default();
+            let clock_data = bincode::serialize(&clock).unwrap();
+            callback(&clock_data);
         }
     });
     sysvar_cache
@@ -381,20 +388,8 @@ fn test_program_sbf_loader_deprecated() {
 
 #[test]
 #[cfg(feature = "sbf_rust")]
-#[should_panic(expected = "called `Result::unwrap()` on an `Err` value: \
-                           TransactionError(InstructionError(0, InvalidAccountData))")]
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
 
     // Populate loader account with `solana_sbf_rust_deprecated_loader` elf, which
     // depends on `sol_alloc_free_` syscall. This can be verified with
@@ -404,18 +399,63 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     // In fact, `sol_alloc_free_` is called from sbf allocator, which is originated from
     // AccountInfo::realloc() in the program code.
 
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_deprecated_loader");
+    let program_id = Pubkey::new_unique();
+    let authority_pubkey = Pubkey::new_unique();
+
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+    // Create a retracted program account with LoaderV4State header + ELF bytes.
+    let loader_state = LoaderV4State {
+        slot: 0,
+        authority_address_or_next_version: authority_pubkey,
+        status: LoaderV4Status::Retracted,
+    };
+    let state_bytes: &[u8; LoaderV4State::program_data_offset()] = unsafe {
+        std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
+            &loader_state,
+        )
+    };
+    let mut program_data = state_bytes.to_vec();
+    program_data.extend_from_slice(&program_elf);
+
+    let accounts = vec![
+        (
+            program_id,
+            Account {
+                lamports: 1_000_000_000,
+                data: program_data,
+                owner: loader_v4::id(),
+                executable: false,
+                rent_epoch: u64::MAX,
+            },
+        ),
+        (authority_pubkey, Account::default()),
+    ];
+
+    let mut program_cache = default_program_cache(&feature_set);
+    let sysvar_cache = default_sysvar_cache();
+
+    // Build the deploy instruction
+    let instruction = loader_v4_instruction::deploy(&program_id, &authority_pubkey);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
     // Expect that deployment to fail. B/C during deployment, there is an elf
     // verification step, which uses the runtime to look up relocatable symbols
     // in elf inside syscall table. In this case, `sol_alloc_free_` can't be
     // found in syscall table. Hence, the verification fails and the deployment
     // fails.
-    let (_bank, _program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_deprecated_loader",
-    );
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
+    assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
 }
 
 #[test]
