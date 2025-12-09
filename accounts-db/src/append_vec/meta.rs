@@ -86,14 +86,6 @@ impl<'append_vec> StoredAccountMeta<'append_vec> {
     pub fn data(&self) -> &'append_vec [u8] {
         self.data
     }
-
-    pub fn data_len(&self) -> usize {
-        self.meta.data_len as usize
-    }
-
-    pub fn meta(&self) -> &StoredMeta {
-        self.meta
-    }
 }
 
 impl IsZeroLamport for StoredAccountMeta<'_> {
