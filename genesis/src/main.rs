@@ -1409,12 +1409,17 @@ mod tests {
                 let authorized_voters = &vote_state.authorized_voters;
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
                 if add_bls_pubkey {
-                    assert_eq!(
-                        b64_account.bls_pubkey.as_ref().map(|s| s.as_bytes()),
+                    let bls_pubkey_compressed_from_input =
+                        BLSPubkeyCompressed::from_str(b64_account.bls_pubkey.as_ref().unwrap())
+                            .expect("failed to parse BLS pubkey from input");
+                    let bls_pubkey_compressed_from_account = BLSPubkeyCompressed(
                         vote_state
                             .bls_pubkey_compressed
-                            .as_ref()
-                            .map(|arr| arr.as_slice()),
+                            .expect("missing BLS pubkey bytes"),
+                    );
+                    assert_eq!(
+                        bls_pubkey_compressed_from_input,
+                        bls_pubkey_compressed_from_account,
                     );
                 } else {
                     assert!(b64_account.bls_pubkey.is_none());
