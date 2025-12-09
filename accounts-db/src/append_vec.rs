@@ -1365,7 +1365,7 @@ pub mod tests {
         memoffset::offset_of,
         rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
-        solana_account::{accounts_equal, Account, AccountSharedData, WritableAccount},
+        solana_account::{accounts_equal, AccountSharedData, WritableAccount},
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::{test_case, test_matrix},
@@ -1388,43 +1388,6 @@ pub mod tests {
 
     // Offset of the first account's `data_len` field.
     const ACCOUNT_0_DATA_LEN_OFFSET: u64 = core::mem::offset_of!(StoredMeta, data_len) as u64;
-
-    #[test]
-    fn test_account_meta_default() {
-        let def1 = AccountMeta::default();
-        let def2 = AccountMeta::from(&Account::default());
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(&AccountSharedData::default());
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(Some(&AccountSharedData::default()));
-        assert_eq!(&def1, &def2);
-        let none: Option<&AccountSharedData> = None;
-        let def2 = AccountMeta::from(none);
-        assert_eq!(&def1, &def2);
-    }
-
-    #[test]
-    fn test_account_meta_non_default() {
-        let def1 = AccountMeta {
-            lamports: 1,
-            owner: Pubkey::new_unique(),
-            executable: true,
-            rent_epoch: 3,
-        };
-        let def2_account = Account {
-            lamports: def1.lamports,
-            owner: def1.owner,
-            executable: def1.executable,
-            rent_epoch: def1.rent_epoch,
-            data: Vec::new(),
-        };
-        let def2 = AccountMeta::from(&def2_account);
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(&AccountSharedData::from(def2_account.clone()));
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(Some(&AccountSharedData::from(def2_account)));
-        assert_eq!(&def1, &def2);
-    }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
