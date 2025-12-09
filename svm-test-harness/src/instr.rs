@@ -25,7 +25,7 @@ use {
         instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
         IndexOfAccount, TransactionContext,
     },
-    std::sync::Arc,
+    std::{rc::Rc, sync::Arc},
 };
 
 /// Implement the callback trait so that the SVM API can be used to load
@@ -194,6 +194,11 @@ pub fn execute_instr(
     let cu_avail = input.cu_avail.saturating_sub(compute_units_consumed);
     let return_data = transaction_context.get_return_data().1.to_vec();
 
+    let logs = Rc::try_unwrap(log_collector)
+        .ok()
+        .map(|cell| cell.into_inner().into_messages())
+        .unwrap_or_default();
+
     let account_keys: Vec<Pubkey> = (0..transaction_context.get_number_of_accounts())
         .map(|index| {
             *transaction_context
@@ -223,6 +228,7 @@ pub fn execute_instr(
             .collect(),
         cu_avail,
         return_data,
+        logs,
     })
 }
 
