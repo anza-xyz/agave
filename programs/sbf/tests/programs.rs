@@ -74,7 +74,6 @@ use {
 use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::sysvar::rent,
     solana_svm_test_harness_instr::{
         self as harness, fixture::instr_context::InstrContext,
@@ -1878,34 +1877,29 @@ fn test_program_sbf_instruction_introspection() {
 fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_len: usize) {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf =
+        harness::file::load_program_elf("solana_sbf_rust_r2_instruction_data_pointer");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_r2_instruction_data_pointer",
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
+    let mut accounts = Vec::new();
     let mut account_metas = Vec::new();
 
     for i in 0..num_accounts {
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        bank.store_account(
-            &pubkey,
-            &AccountSharedData::new(0, 100 + (i * 50), &program_id),
-        );
+        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
 
         // Mixed account roles.
         if i % 2 == 0 {
@@ -1915,23 +1909,23 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
         }
     }
 
-    bank.freeze();
-
     // The provided instruction data will be set to the return data.
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
 
     let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
 
-    let blockhash = bank.last_blockhash();
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
-    let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
 
-    let result = bank.simulate_transaction(&sanitized_tx, false);
-    assert!(result.result.is_ok());
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
 
-    let return_data = result.return_data.unwrap().data;
-    assert_eq!(input_data, return_data);
+    assert!(effects.result.is_none());
+    assert_eq!(input_data, effects.return_data);
 }
 
 fn get_stable_genesis_config() -> GenesisConfigInfo {
