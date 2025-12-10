@@ -28,8 +28,8 @@ regex = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "rustls-tls", "rustls-tls-native-roots", "json" ] }
 semver = { workspace = true }
 serde = { workspace = true }
-solana-file-download = "=3.0.1"
-solana-keypair = "=3.0.0"
+solana-file-download = "=3.1.0"
+solana-keypair = "=3.0.1"
 tar = { workspace = true }
 
 [dev-dependencies]
