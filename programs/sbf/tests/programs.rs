@@ -12,7 +12,7 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
     solana_clock::{UnixTimestamp, MAX_PROCESSING_AGE},
@@ -31,7 +31,6 @@ use {
         state::{LoaderV4State, LoaderV4Status},
     },
     solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
-    solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -43,15 +42,13 @@ use {
             create_genesis_config_with_leader_ex, GenesisConfigInfo,
         },
         loader_utils::{
-            create_program, instructions_to_load_program_of_loader_v4, load_program_from_file,
-            load_program_of_loader_v4, load_upgradeable_buffer,
+            create_program, instructions_to_load_program_of_loader_v4, load_program_of_loader_v4,
+            load_upgradeable_buffer,
         },
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_realloc_dep::*,
     solana_sbf_rust_realloc_invoke_dep::*,
-    solana_sbpf::vm::ContextObject,
     solana_sdk_ids::sysvar::{self as sysvar, clock},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_signer::Signer,
@@ -67,7 +64,6 @@ use {
     solana_transaction_error::TransactionError,
     std::{
         assert_eq,
-        cell::RefCell,
         str::FromStr,
         sync::{Arc, RwLock},
         time::Duration,
@@ -78,6 +74,7 @@ use {
 use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::sysvar::rent,
     solana_svm_test_harness_instr::{
         self as harness, fixture::instr_context::InstrContext,
@@ -1760,55 +1757,55 @@ fn assert_instruction_count() {
         ]);
     }
 
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let sysvar_cache = default_sysvar_cache();
+
     println!("\n  {:36} expected actual  diff", "SBF program");
     for (program_name, expected_consumption) in programs.iter() {
-        let loader_id = bpf_loader::id();
-        let program_key = Pubkey::new_unique();
-        let mut transaction_accounts = vec![
-            (program_key, AccountSharedData::new(0, 0, &loader_id)),
-            (
-                Pubkey::new_unique(),
-                AccountSharedData::new(0, 0, &program_key),
-            ),
-        ];
+        let program_elf = harness::file::load_program_elf(program_name);
+        let program_id = Pubkey::new_unique();
+
+        let mut program_cache = default_program_cache_with_program(
+            &program_id,
+            &program_elf,
+            &feature_set,
+            &compute_budget,
+        );
+
+        let account_pubkey = Pubkey::new_unique();
+        let accounts = vec![(account_pubkey, Account::new(0, 0, &program_id))];
+
         let instruction_accounts = vec![AccountMeta {
-            pubkey: transaction_accounts[1].0,
+            pubkey: account_pubkey,
             is_signer: false,
             is_writable: false,
         }];
-        transaction_accounts[0]
-            .1
-            .set_data_from_slice(&load_program_from_file(program_name));
-        transaction_accounts[0].1.set_executable(true);
+        let instruction = Instruction::new_with_bytes(program_id, &[], instruction_accounts);
 
-        let prev_compute_meter = RefCell::new(0);
-        print!("  {:36} {:8}", program_name, *expected_consumption);
-        mock_process_instruction(
-            &loader_id,
-            Some(0),
-            &[],
-            transaction_accounts,
-            instruction_accounts,
-            Ok(()),
-            solana_bpf_loader_program::Entrypoint::vm,
-            |invoke_context| {
-                *prev_compute_meter.borrow_mut() = invoke_context.get_remaining();
-                solana_bpf_loader_program::test_utils::load_all_invoked_programs(invoke_context);
-            },
-            |invoke_context| {
-                let consumption = prev_compute_meter
-                    .borrow()
-                    .saturating_sub(invoke_context.get_remaining());
-                let diff: i64 = consumption as i64 - *expected_consumption as i64;
-                println!(
-                    "{:6} {:+5} ({:+3.0}%)",
-                    consumption,
-                    diff,
-                    100.0_f64 * consumption as f64 / *expected_consumption as f64 - 100.0_f64,
-                );
-                assert!(consumption <= *expected_consumption);
-            },
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts,
+            instruction,
+        };
+
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+
+        let consumption = compute_budget
+            .compute_unit_limit
+            .saturating_sub(effects.cu_avail);
+        let diff: i64 = consumption as i64 - *expected_consumption as i64;
+        println!(
+            "  {:36} {:8}{:6} {:+5} ({:+3.0}%)",
+            program_name,
+            *expected_consumption,
+            consumption,
+            diff,
+            100.0_f64 * consumption as f64 / *expected_consumption as f64 - 100.0_f64,
         );
+        assert!(consumption <= *expected_consumption);
     }
 }
 
