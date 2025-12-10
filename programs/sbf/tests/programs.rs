@@ -56,6 +56,7 @@ use {
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_processor::ExecutionRecordingConfig,
     },
+    solana_svm_test_harness_instr::keyed_account::keyed_account_for_system_program,
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
@@ -70,15 +71,12 @@ use {
     },
     test_case::test_matrix,
 };
-#[cfg(feature = "sbf_rust")]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
-    solana_svm_test_harness_instr::{
-        self as harness, fixture::instr_context::InstrContext,
-        keyed_account::keyed_account_for_system_program,
-    },
+    solana_svm_test_harness_instr::{self as harness, fixture::instr_context::InstrContext},
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -2462,36 +2460,69 @@ fn test_program_sbf_disguised_as_sbf_loader() {
 #[test]
 #[cfg(feature = "sbf_c")]
 fn test_program_reads_from_program_account() {
-    use solana_loader_v4_interface::state as loader_v4_state;
+    use solana_loader_v4_interface::state::LoaderV4State;
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("read_program");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "read_program",
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &program_id,
+        &solana_sdk_ids::loader_v4::id(),
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
-    let data = bank_client.get_account_data(&program_id).unwrap().unwrap();
+
+    let mut sysvar_cache = SysvarCache::default();
+    sysvar_cache.fill_missing_entries(|pubkey, callback| {
+        if pubkey == &rent::id() {
+            let rent = Rent::default();
+            let rent_data = bincode::serialize(&rent).unwrap();
+            callback(&rent_data);
+        }
+    });
+
+    // Build the program account data: LoaderV4State header + ELF bytes
+    let loader_state = LoaderV4State {
+        slot: 0,
+        authority_address_or_next_version: Pubkey::default(),
+        status: solana_loader_v4_interface::state::LoaderV4Status::Deployed,
+    };
+    let state_bytes: &[u8; LoaderV4State::program_data_offset()] = unsafe {
+        std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
+            &loader_state,
+        )
+    };
+    let mut program_account_data = state_bytes.to_vec();
+    program_account_data.extend_from_slice(&program_elf);
+
+    let program_account = Account {
+        lamports: 1,
+        data: program_account_data,
+        owner: solana_sdk_ids::loader_v4::id(),
+        executable: true,
+        rent_epoch: u64::MAX,
+    };
+
     let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
-    let instruction = Instruction::new_with_bytes(
-        program_id,
-        &data[0..loader_v4_state::LoaderV4State::program_data_offset()],
-        account_metas,
-    );
-    bank_client
-        .send_and_confirm_instruction(&mint_keypair, instruction)
-        .unwrap();
+    let instruction = Instruction::new_with_bytes(program_id, state_bytes, account_metas);
+
+    let context = InstrContext {
+        feature_set,
+        accounts: vec![(program_id, program_account)],
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+    assert!(effects.result.is_none());
 }
 
 #[test]
