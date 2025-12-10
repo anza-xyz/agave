@@ -363,14 +363,6 @@ impl AppendVec {
         Ok(())
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn reset(&self) {
-        // Writable state's mutex forces append to be single threaded, but concurrent
-        // with reads. See UNSAFE usage in `append_ptr`
-        let _lock = self.read_write_state.append_guard();
-        self.current_len.store(0, Ordering::Release);
-    }
-
     /// Return AppendVec opened in read-only file-io mode or `None` if it already is such
     pub(crate) fn reopen_as_readonly_file_io(&self) -> Option<Self> {
         if matches!(self.read_write_state, ReadWriteState::ReadOnly)
@@ -1945,19 +1937,6 @@ pub mod tests {
 
         let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
-    }
-
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_append_vec_reset(storage_access: StorageAccess) {
-        let file = get_append_vec_path("test_append_vec_reset");
-        let path = &file.path;
-        let av = AppendVec::new(path, true, 1024 * 1024, storage_access);
-        av.append_account_test(&create_test_account(10)).unwrap();
-
-        assert!(!av.is_empty());
-        av.reset();
-        assert_eq!(av.len(), 0);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
