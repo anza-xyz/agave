@@ -1748,7 +1748,7 @@ mod test {
                 shred::layout::get_chained_merkle_root(shred),
                 Some(chained_merkle_root)
             );
-            let data = shred::layout::get_signed_data(shred).unwrap();
+            let data = shred::layout::get_merkle_root(shred).unwrap();
             assert_eq!(data, merkle_root);
             assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
         }
