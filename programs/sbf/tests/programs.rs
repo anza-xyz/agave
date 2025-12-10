@@ -2425,32 +2425,37 @@ fn test_program_sbf_disguised_as_sbf_loader() {
     }
 
     for program in programs.iter() {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.deactivate_feature(&agave_feature_set::remove_bpf_loader_incorrect_program_id::id());
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let mut bank_client = BankClient::new_shared(bank);
-        let authority_keypair = Keypair::new();
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let (_bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&agave_feature_set::remove_bpf_loader_incorrect_program_id::id());
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let mut program_cache = default_program_cache(&feature_set);
+        harness::program_cache::add_program(
+            &mut program_cache,
+            &program_id,
+            &bpf_loader::id(),
+            &program_elf,
+            &feature_set,
+            &compute_budget,
         );
+        let sysvar_cache = default_sysvar_cache();
 
         let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
         let instruction = Instruction::new_with_bytes(bpf_loader::id(), &[1], account_metas);
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId)
-        );
+
+        let context = InstrContext {
+            feature_set,
+            accounts: vec![],
+            instruction,
+        };
+
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+        assert_eq!(effects.result, Some(InstructionError::UnsupportedProgramId));
     }
 }
 
