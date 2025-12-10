@@ -278,7 +278,7 @@ fn add_validator_accounts(
 
         let bls_pubkey_compressed_bytes = bls_pubkeys_iter
             .next()
-            .map(|bls_pubkey| bincode::serialize(&bls_pubkey).unwrap().try_into().unwrap());
+            .map(|bls_pubkey| bls_pubkey.0);
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
