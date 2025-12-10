@@ -1119,7 +1119,25 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
+    #[cfg(feature = "dev-context-only-utils")]
+    use {
+        solana_keypair::{Keypair, Signer},
+        std::sync::LazyLock,
+    };
+
+    // Used to activate alpenglow in local-cluster tests without exposing the actual feature's private key
+    #[cfg(feature = "dev-context-only-utils")]
+    pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
+        let keypair = Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR");
+        assert_eq!(keypair.pubkey(), super::alpenglow::id());
+        keypair
+    });
+
+    #[cfg(not(feature = "dev-context-only-utils"))]
     solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+
+    #[cfg(feature = "dev-context-only-utils")]
+    solana_pubkey::declare_id!("8KpruRFrT59jQ9NfFX9DU6j8a1hW7y6xchvZNQ5rxD4P");
 }
 
 pub mod disable_zk_elgamal_proof_program {

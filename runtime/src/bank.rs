@@ -226,6 +226,10 @@ pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
+/// This will be guaranteed through the VAT rules,
+/// only the top 2000 validators by stake will be present in vote account structures.
+pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
+
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",

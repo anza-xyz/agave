@@ -7,6 +7,7 @@ use {
     },
     agave_feature_set::FeatureSet,
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
+    agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     itertools::izip,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -69,6 +70,16 @@ use {
 
 pub const DEFAULT_MINT_LAMPORTS: u64 = 10_000_000 * LAMPORTS_PER_SOL;
 const DUMMY_SNAPSHOT_CONFIG_PATH_MARKER: &str = "dummy";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlpenglowMode {
+    /// No alpenglow
+    Disabled,
+    /// Full alpenglow - creates vote accounts w/ bls pubkeys and activates alpenglow feature and set GenesisCertificate
+    Enabled,
+    /// Pre-migration mode - creates V4 vote accounts w/ bls pubkeys but does NOT activate alpenglow feature or set GenesisCertificate
+    PreMigration,
+}
 
 pub struct ClusterConfig {
     /// The validator config that should be applied to every node in the cluster
@@ -188,6 +199,25 @@ impl LocalCluster {
     }
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::Disabled)
+    }
+
+    pub fn new_alpenglow(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::Enabled)
+    }
+
+    pub fn new_pre_migration_alpenglow(
+        config: &mut ClusterConfig,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::PreMigration)
+    }
+
+    pub fn init(
+        config: &mut ClusterConfig,
+        socket_addr_space: SocketAddrSpace,
+        alpenglow_mode: AlpenglowMode,
+    ) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
         let quic_connection_cache_config = {
@@ -298,8 +328,17 @@ impl LocalCluster {
             stakes_in_genesis,
             config.cluster_type,
             &feature_set,
-            false,
+            !matches!(alpenglow_mode, AlpenglowMode::Disabled), /* is_alpenglow */
         );
+
+        // Remove the alpenglow feature and genesis certificate for PreMigration mode
+        if alpenglow_mode == AlpenglowMode::PreMigration {
+            genesis_config
+                .accounts
+                .remove(&agave_feature_set::alpenglow::id());
+            genesis_config.accounts.remove(&GENESIS_CERTIFICATE_ACCOUNT);
+        }
+
         genesis_config.accounts.extend(
             config
                 .additional_accounts
@@ -854,6 +893,46 @@ impl LocalCluster {
             test_name,
         );
         info!("{test_name} done waiting for roots");
+    }
+
+    pub fn check_for_new_processed(
+        &self,
+        num_new_processed: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+    ) {
+        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        info!("{test_name} looking for new processed slots on all nodes");
+        cluster_tests::check_for_new_processed(
+            num_new_processed,
+            &alive_node_contact_infos,
+            &self.connection_cache,
+            test_name,
+        );
+        info!("{test_name} done waiting for processed slots");
+    }
+
+    pub fn check_for_new_notarized_votes(
+        &self,
+        num_new_notarized_votes: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+        vote_listener_addr: std::net::UdpSocket,
+        validator_keys: &[Arc<Keypair>],
+        node_stakes: &[u64],
+    ) {
+        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        info!("{test_name} looking for new notarized votes on all nodes");
+        cluster_tests::check_for_new_notarized_votes(
+            num_new_notarized_votes,
+            &alive_node_contact_infos,
+            &self.connection_cache,
+            test_name,
+            vote_listener_addr,
+            validator_keys,
+            node_stakes,
+        );
+        info!("{test_name} done waiting for notarized votes");
     }
 
     pub fn check_no_new_roots(

@@ -81,6 +81,7 @@ dependencies = [
  "ahash 0.8.12",
  "solana-epoch-schedule",
  "solana-hash 3.1.0",
+ "solana-keypair",
  "solana-pubkey 4.0.0",
  "solana-sha256-hasher",
  "solana-svm-feature-set",
@@ -281,6 +282,7 @@ dependencies = [
  "agave-geyser-plugin-interface",
  "agave-logger",
  "agave-snapshots",
+ "agave-votor",
  "caps",
  "chrono",
  "clap",
@@ -7453,6 +7455,7 @@ dependencies = [
  "agave-random",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-votor-messages",
  "anyhow",
  "assert_matches",
  "bincode",
@@ -10202,6 +10205,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-votor",
+ "agave-votor-messages",
  "agave-xdp",
  "arc-swap",
  "aya",
@@ -10413,6 +10417,7 @@ name = "solana-wen-restart"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-snapshots",
+ "agave-votor-messages",
  "anyhow",
  "log",
  "prost",

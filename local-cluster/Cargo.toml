@@ -14,12 +14,19 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["solana-core/dev-context-only-utils"]
+dev-context-only-utils = [
+    "solana-core/dev-context-only-utils",
+    "agave-feature-set/dev-context-only-utils",
+    "agave-votor-messages/dev-context-only-utils",
+]
 
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-votor = { workspace = true }
+agave-votor-messages = { workspace = true }
+bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -35,6 +42,7 @@ solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+solana-feature-gate-interface = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hard-forks = { workspace = true }
@@ -74,6 +82,7 @@ solana-vote-program = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true }
+tokio-util = { workspace = true }
 trees = { workspace = true }
 
 [dev-dependencies]

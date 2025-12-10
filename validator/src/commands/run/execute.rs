@@ -11,6 +11,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
+    agave_votor::vote_history_storage,
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
@@ -521,6 +522,10 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
+    let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
+        vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
+    );
+
     let accounts_index_limit =
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
     let index_limit = match accounts_index_limit.as_str() {
@@ -742,6 +747,7 @@ pub fn execute(
         logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
+        vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
@@ -852,6 +858,7 @@ pub fn execute(
             Arc::new(AtomicBool::new(false)),
         )]
         .into(),
+        voting_service_test_override: None,
     };
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {

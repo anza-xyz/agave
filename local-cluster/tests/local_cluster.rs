@@ -4,6 +4,8 @@ use {
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_config::SnapshotConfig, SnapshotArchiveKind, SnapshotInterval,
     },
+    agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
+    agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -34,7 +36,7 @@ use {
     solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
     solana_hard_forks::HardForks,
     solana_hash::Hash,
-    solana_keypair::Keypair,
+    solana_keypair::{keypair_from_seed, Keypair},
     solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
@@ -55,7 +57,7 @@ use {
             run_cluster_partition, run_kill_partition_switch_threshold, save_tower,
             setup_snapshot_validator_config, test_faulty_node, wait_for_duplicate_proof,
             wait_for_last_vote_in_tower_to_land_in_ledger, SnapshotValidatorConfig, ValidatorKeys,
-            ValidatorTestConfig, DEFAULT_NODE_STAKE, RUST_LOG_FILTER,
+            ValidatorTestConfig, AG_DEBUG_LOG_FILTER, DEFAULT_NODE_STAKE, RUST_LOG_FILTER,
         },
         local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
         validator_configs::*,
@@ -5989,4 +5991,368 @@ fn test_invalid_forks_persisted_on_restart() {
         );
         sleep(Duration::from_millis(100));
     }
+}
+
+fn test_alpenglow_nodes_basic(num_nodes: usize, num_offline_nodes: usize) {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    let validator_keys = (0..num_nodes)
+        .map(|i| {
+            (
+                ValidatorKeys {
+                    node_keypair: Arc::new(keypair_from_seed(&[i as u8; 32]).unwrap()),
+                    vote_keypair: Arc::new(Keypair::new()),
+                },
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
+
+    let mut config = ClusterConfig {
+        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_keys: Some(validator_keys.clone()),
+        node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
+        ticks_per_slot: 8,
+        slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
+        stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
+        poh_config: PohConfig {
+            target_tick_duration: PohConfig::default().target_tick_duration,
+            hashes_per_tick: Some(clock::DEFAULT_HASHES_PER_TICK),
+            target_tick_count: None,
+        },
+        ..ClusterConfig::default()
+    };
+    let mut cluster = LocalCluster::new_alpenglow(&mut config, SocketAddrSpace::Unspecified);
+    assert_eq!(cluster.validators.len(), num_nodes);
+
+    // Check transactions land
+    cluster_tests::spend_and_verify_all_nodes(
+        &cluster.entry_point_info,
+        &cluster.funding_keypair,
+        num_nodes,
+        HashSet::new(),
+        SocketAddrSpace::Unspecified,
+        &cluster.connection_cache,
+    );
+
+    if num_offline_nodes > 0 {
+        // Bring nodes offline
+        info!("Shutting down {num_offline_nodes} nodes");
+        for (key, _) in validator_keys.iter().take(num_offline_nodes) {
+            cluster.exit_node(&key.node_keypair.pubkey());
+        }
+    }
+
+    // Check for new roots
+    cluster.check_for_new_roots(
+        16,
+        &format!("test_{num_nodes}_nodes_alpenglow"),
+        SocketAddrSpace::Unspecified,
+    );
+}
+
+#[test]
+#[serial]
+fn test_alpenglow_1() {
+    const NUM_NODES: usize = 1;
+    test_alpenglow_nodes_basic(NUM_NODES, 0);
+}
+
+#[test]
+#[serial]
+fn test_alpenglow_4() {
+    const NUM_NODES: usize = 4;
+    test_alpenglow_nodes_basic(NUM_NODES, 0);
+}
+
+#[test]
+#[serial]
+fn test_alpenglow_4_1_offline() {
+    const NUM_NODES: usize = 4;
+    const NUM_OFFLINE: usize = 1;
+    test_alpenglow_nodes_basic(NUM_NODES, NUM_OFFLINE);
+}
+
+#[test]
+#[serial]
+fn test_restart_node_alpenglow() {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
+    let ticks_per_slot = 16;
+    let validator_config = ValidatorConfig::default_for_test();
+    let mut cluster = LocalCluster::new_alpenglow(
+        &mut ClusterConfig {
+            node_stakes: vec![DEFAULT_NODE_STAKE],
+            validator_configs: vec![safe_clone_config(&validator_config)],
+            ticks_per_slot,
+            slots_per_epoch,
+            stakers_slot_offset: slots_per_epoch,
+            skip_warmup_slots: true,
+            ..ClusterConfig::default()
+        },
+        SocketAddrSpace::Unspecified,
+    );
+    let nodes = cluster.get_node_pubkeys();
+    cluster_tests::sleep_n_epochs(
+        1.0,
+        &cluster.genesis_config.poh_config,
+        clock::DEFAULT_TICKS_PER_SLOT,
+        slots_per_epoch,
+    );
+    info!("Restarting node");
+    cluster.exit_restart_node(&nodes[0], validator_config, SocketAddrSpace::Unspecified);
+    cluster_tests::sleep_n_epochs(
+        0.5,
+        &cluster.genesis_config.poh_config,
+        clock::DEFAULT_TICKS_PER_SLOT,
+        slots_per_epoch,
+    );
+    cluster_tests::send_many_transactions(
+        &cluster.entry_point_info,
+        &cluster.funding_keypair,
+        &cluster.connection_cache,
+        10,
+        1,
+    );
+}
+
+/// We start 2 nodes, where the first node A holds 90% of the stake
+///
+/// We let A run by itself, and ensure that B can join and rejoin the network
+/// through repair
+#[test]
+#[serial]
+fn test_alpenglow_imbalanced_stakes_catchup() {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    // Create node stakes
+    let slots_per_epoch = 512;
+
+    let total_stake = 2 * DEFAULT_NODE_STAKE;
+    let tenth_stake = total_stake / 10;
+    let node_a_stake = 9 * tenth_stake;
+    let node_b_stake = total_stake - node_a_stake;
+
+    let node_stakes = vec![node_a_stake, node_b_stake];
+    let num_nodes = node_stakes.len();
+
+    // Create leader schedule with A and B as leader 72/28
+    let (leader_schedule, validator_keys) =
+        create_custom_leader_schedule_with_random_keys(&[72, 28]);
+
+    let leader_schedule = FixedSchedule {
+        leader_schedule: Arc::new(leader_schedule),
+    };
+
+    // Create our UDP socket to listen to votes
+    let vote_listener_addr = solana_net_utils::bind_to_localhost().unwrap();
+
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.fixed_leader_schedule = Some(leader_schedule);
+    validator_config.voting_service_test_override = Some(VotingServiceOverride {
+        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
+        alpenglow_port_override: AlpenglowPortOverride::default(),
+    });
+    validator_config.wait_for_supermajority = Some(0);
+
+    // Collect node pubkeys
+    let node_pubkeys = validator_keys
+        .iter()
+        .map(|key| key.node_keypair.pubkey())
+        .collect::<Vec<_>>();
+
+    // Cluster config
+    let mut cluster_config = ClusterConfig {
+        mint_lamports: total_stake,
+        node_stakes: node_stakes.clone(),
+        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_keys: Some(
+            validator_keys
+                .iter()
+                .cloned()
+                .zip(iter::repeat_with(|| true))
+                .collect(),
+        ),
+        slots_per_epoch,
+        stakers_slot_offset: slots_per_epoch,
+        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
+        skip_warmup_slots: true,
+        ..ClusterConfig::default()
+    };
+
+    // Create local cluster
+    let mut cluster =
+        LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
+
+    // Ensure all nodes are voting
+    cluster.check_for_new_processed(
+        8,
+        "test_alpenglow_imbalanced_stakes_catchup",
+        SocketAddrSpace::Unspecified,
+    );
+
+    info!("exiting node B");
+    let b_info = cluster.exit_node(&node_pubkeys[1]);
+
+    // Let A make roots by itself
+    cluster.check_for_new_roots(
+        8,
+        "test_alpenglow_imbalanced_stakes_catchup",
+        SocketAddrSpace::Unspecified,
+    );
+
+    info!("restarting node B");
+    cluster.restart_node(&node_pubkeys[1], b_info, SocketAddrSpace::Unspecified);
+
+    // Ensure all nodes are voting
+    let validator_node_keypairs: Vec<_> = validator_keys
+        .iter()
+        .map(|k| k.node_keypair.clone())
+        .collect();
+    cluster.check_for_new_notarized_votes(
+        16,
+        "test_alpenglow_imbalanced_stakes_catchup",
+        SocketAddrSpace::Unspecified,
+        vote_listener_addr,
+        &validator_node_keypairs,
+        &node_stakes,
+    );
+}
+
+fn test_alpenglow_migration(num_nodes: usize) {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    let test_name = &format!("test_alpenglow_migration_{num_nodes}");
+
+    let vote_listener_socket = solana_net_utils::bind_to_localhost().unwrap();
+    let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.voting_service_test_override = Some(VotingServiceOverride {
+        additional_listeners: vec![vote_listener_addr.local_addr().unwrap()],
+        alpenglow_port_override: AlpenglowPortOverride::default(),
+    });
+    validator_config.wait_for_supermajority = Some(0);
+
+    let validator_keys = (0..num_nodes)
+        .map(|i| {
+            (
+                ValidatorKeys {
+                    node_keypair: Arc::new(keypair_from_seed(&[i as u8; 32]).unwrap()),
+                    vote_keypair: Arc::new(Keypair::new()),
+                },
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    let node_stakes = vec![DEFAULT_NODE_STAKE; num_nodes];
+
+    // We want the epochs to be as short as possible to reduce test time without being flaky.
+    // We start the migration at an offset of 32, so use 64 as the epoch length.
+    let slots_per_epoch = 2 * MINIMUM_SLOTS_PER_EPOCH;
+    assert!(slots_per_epoch > MIGRATION_SLOT_OFFSET);
+    let mut cluster_config = ClusterConfig {
+        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_keys: Some(validator_keys.clone()),
+        node_stakes: node_stakes.clone(),
+        slots_per_epoch,
+        stakers_slot_offset: slots_per_epoch,
+        // So we don't have to wait so long
+        skip_warmup_slots: false,
+        ..ClusterConfig::default()
+    };
+
+    // Create local cluster with alpenglow accounts but feature not activated
+    let cluster = LocalCluster::new_pre_migration_alpenglow(
+        &mut cluster_config,
+        SocketAddrSpace::Unspecified,
+    );
+
+    let validator_keys: Vec<Arc<Keypair>> = cluster
+        .validators
+        .values()
+        .map(|v| v.info.keypair.clone())
+        .collect();
+
+    // Send feature activation transaction
+    info!("Sending feature activation transaction");
+    let client = RpcClient::new_socket_with_commitment(
+        cluster.entry_point_info.rpc().unwrap(),
+        CommitmentConfig::processed(),
+    );
+    let faucet_keypair = &cluster.funding_keypair;
+    let feature_keypair = &*agave_feature_set::alpenglow::TEST_KEYPAIR;
+    let blockhash = client.get_latest_blockhash().unwrap();
+    let lamports = client
+        .get_minimum_balance_for_rent_exemption(solana_feature_gate_interface::Feature::size_of())
+        .unwrap();
+
+    let activation_message = solana_message::Message::new(
+        &solana_feature_gate_interface::activate_with_lamports(
+            &agave_feature_set::alpenglow::id(),
+            &faucet_keypair.pubkey(),
+            lamports,
+        ),
+        Some(&faucet_keypair.pubkey()),
+    );
+    let activation_tx = solana_transaction::Transaction::new(
+        &[&feature_keypair, &faucet_keypair],
+        activation_message,
+        blockhash,
+    );
+
+    client.send_and_confirm_transaction(&activation_tx).unwrap();
+    info!("Feature activation transaction confirmed");
+
+    // Monitor for feature activation
+    let activation_slot;
+    loop {
+        if let Ok(account) = client.get_account(&agave_feature_set::alpenglow::id()) {
+            if let Some(feature) = solana_feature_gate_interface::from_account(&account) {
+                if let Some(slot) = feature.activated_at {
+                    activation_slot = slot;
+                    info!("Feature activated at slot {slot}");
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // The migration happens at a fixed offset from feature activation
+    let migration_slot = activation_slot + MIGRATION_SLOT_OFFSET;
+    info!("Waiting for migration slot {migration_slot}");
+
+    loop {
+        let slot = client.get_slot().unwrap();
+        if slot >= migration_slot - 1 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    info!("Migration slot reached, checking for notarized votes");
+
+    // Check for new notarized votes
+    cluster.check_for_new_notarized_votes(
+        4,
+        test_name,
+        SocketAddrSpace::Unspecified,
+        vote_listener_addr,
+        &validator_keys,
+        &node_stakes,
+    );
+
+    // Additionally ensure that roots are being made
+    cluster.check_for_new_roots(8, test_name, SocketAddrSpace::Unspecified);
+}
+
+#[test]
+#[serial]
+fn test_alpenglow_migration_1() {
+    test_alpenglow_migration(1)
+}
+
+#[test]
+#[serial]
+fn test_alpenglow_migration_4() {
+    test_alpenglow_migration(4)
 }

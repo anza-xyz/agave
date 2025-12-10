@@ -36,15 +36,6 @@ pub(crate) enum BuildError {
     Bls(#[from] BlsError),
 }
 
-/// Different types of errors that can be returned from the [`CertificateBuilder::build_for_rewards()`] function.
-#[derive(Debug, Error, PartialEq)]
-pub enum BuildForRewardsError {
-    #[error("Encoding failed: {0:?}")]
-    Encode(EncodeError),
-    #[error("rewards certs of these types are not needed")]
-    InvalidCertType,
-}
-
 fn default_bitvec() -> BitVec<u8, Lsb0> {
     BitVec::repeat(false, MAXIMUM_VALIDATORS)
 }
@@ -246,29 +237,6 @@ impl BuilderType {
             },
         }
     }
-
-    /// Builds a [`Certificate`] for rewards purposes from the builder.
-    fn build_for_rewards(
-        self,
-        cert_type: CertificateType,
-    ) -> Result<Certificate, BuildForRewardsError> {
-        match self {
-            Self::Skip {
-                signature0,
-                bitmap0,
-                sig_and_bitmap1: _,
-            } => build_cert_from_bitmap(cert_type, signature0, bitmap0)
-                .map_err(BuildForRewardsError::Encode),
-            Self::SingleVote { signature, bitmap } => match cert_type {
-                CertificateType::Notarize(_, _) => {
-                    build_cert_from_bitmap(cert_type, signature, bitmap)
-                        .map_err(BuildForRewardsError::Encode)
-                }
-                _ => Err(BuildForRewardsError::InvalidCertType),
-            },
-            Self::NotarFallback { .. } => Err(BuildForRewardsError::InvalidCertType),
-        }
-    }
 }
 
 /// Builder for creating [`Certificate`] by using BLS signature aggregation.
@@ -295,12 +263,6 @@ impl CertificateBuilder {
     /// Builds a [`Certificate`] from the builder.
     pub(super) fn build(self) -> Result<Certificate, BuildError> {
         self.builder_type.build(self.cert_type)
-    }
-
-    /// Builds a [`Certificate`] for rewards purposes from the builder.
-    #[allow(dead_code)]
-    pub(super) fn build_for_rewards(self) -> Result<Certificate, BuildForRewardsError> {
-        self.builder_type.build_for_rewards(self.cert_type)
     }
 }
 

@@ -161,6 +161,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
     // get latest identity pubkey during startup
     let mut my_pubkey = cluster_info.id();
 
+    info!("{my_pubkey}: Block creation loop initialized");
     // Wait for PohService to be shutdown
     let record_receiver = match record_receiver_receiver.recv() {
         Ok(receiver) => receiver,
@@ -253,6 +254,8 @@ fn start_loop(config: BlockCreationLoopConfig) {
         ctx.metrics.loop_count += 1;
         ctx.metrics.report(Duration::from_secs(1));
     }
+
+    info!("{my_pubkey}: Block creation loop shutting down");
 }
 
 /// Resets poh recorder
@@ -571,8 +574,9 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
 
     // Insert the bank
     let tpu_bank = ctx.bank_forks.write().unwrap().insert(tpu_bank);
+    let bank_id = tpu_bank.bank_id();
     ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
-    ctx.record_receiver.restart(slot);
+    ctx.record_receiver.restart(bank_id);
     ctx.slot_metrics.reset(slot);
 
     info!(

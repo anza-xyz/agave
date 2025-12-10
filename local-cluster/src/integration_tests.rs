@@ -61,6 +61,12 @@ use {
 pub const RUST_LOG_FILTER: &str =
     "error,solana_core::replay_stage=warn,solana_local_cluster=info,local_cluster=info";
 
+pub const AG_DEBUG_LOG_FILTER: &str =
+    "error,solana_core::replay_stage=info,solana_local_cluster=info,local_cluster=info,\
+     solana_core::block_creation_loop=trace,agave_votor=trace,agave_votor::voting_service=info,\
+     agave_votor::vote_history_storage=info,solana_core::validator=info,\
+     agave_votor::consensus_metrics=info,solana_core::consensus=info,\
+     solana_ledger::blockstore_processor=info";
 pub const DEFAULT_NODE_STAKE: u64 = 10 * LAMPORTS_PER_SOL;
 
 #[derive(Clone)]
