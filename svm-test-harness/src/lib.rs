@@ -3,6 +3,7 @@
 pub mod file;
 pub mod fixture;
 pub mod instr;
+pub mod keyed_account;
 pub mod program_cache;
 pub mod sysvar_cache;
 

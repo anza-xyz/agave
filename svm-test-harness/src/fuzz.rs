@@ -83,7 +83,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
 
     let instr_effects = execute_instr(
         instr_context,
-        &compute_budget,
+        compute_budget,
         &mut program_cache,
         &sysvar_cache,
     );

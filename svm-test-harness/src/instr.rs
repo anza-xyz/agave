@@ -25,7 +25,7 @@ use {
         instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
         IndexOfAccount, TransactionContext,
     },
-    std::sync::Arc,
+    std::{rc::Rc, sync::Arc},
 };
 
 /// Implement the callback trait so that the SVM API can be used to load
@@ -59,6 +59,7 @@ fn compile_accounts<'a>(
     input: &'a InstrContext,
     compute_budget: &ComputeBudget,
     rent: Rent,
+    loader_key: &Pubkey,
 ) -> (Vec<InstructionAccount>, TransactionContext<'a>) {
     let mut transaction_accounts: Vec<KeyedAccountSharedData> = input
         .accounts
@@ -71,7 +72,10 @@ fn compile_accounts<'a>(
         .iter()
         .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
     {
-        transaction_accounts.push((input.instruction.program_id, AccountSharedData::default()));
+        transaction_accounts.push((
+            input.instruction.program_id,
+            AccountSharedData::new(0, 0, loader_key),
+        ));
     }
 
     let transaction_context = TransactionContext::new(
@@ -102,19 +106,25 @@ fn compile_accounts<'a>(
 /// Execute a single instruction against the Solana VM.
 pub fn execute_instr(
     input: InstrContext,
-    compute_budget: &ComputeBudget,
+    mut compute_budget: ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
 ) -> Option<InstrEffects> {
     let mut compute_units_consumed = 0;
+    compute_budget.compute_unit_limit = input.cu_avail;
+
     let mut timings = ExecuteTimings::default();
 
     let log_collector = LogCollector::new_ref();
     let runtime_features = input.feature_set.runtime_features();
 
     let rent = sysvar_cache.get_rent().unwrap();
+    let loader_key = program_cache
+        .find(&input.instruction.program_id)?
+        .account_owner();
+
     let (instruction_accounts, mut transaction_context) =
-        compile_accounts(&input, compute_budget, (*rent).clone());
+        compile_accounts(&input, &compute_budget, (*rent).clone(), &loader_key);
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
@@ -184,6 +194,11 @@ pub fn execute_instr(
     let cu_avail = input.cu_avail.saturating_sub(compute_units_consumed);
     let return_data = transaction_context.get_return_data().1.to_vec();
 
+    let logs = Rc::try_unwrap(log_collector)
+        .ok()
+        .map(|cell| cell.into_inner().into_messages())
+        .unwrap_or_default();
+
     let account_keys: Vec<Pubkey> = (0..transaction_context.get_number_of_accounts())
         .map(|index| {
             *transaction_context
@@ -213,6 +228,7 @@ pub fn execute_instr(
             .collect(),
         cu_avail,
         return_data,
+        logs,
     })
 }
 
@@ -364,7 +380,7 @@ mod tests {
         .unwrap();
 
         // Execute the instruction.
-        let effects = execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+        let effects = execute_instr(context, compute_budget, &mut program_cache, &sysvar_cache)
             .expect("Instruction execution should succeed");
 
         // Verify the results.
