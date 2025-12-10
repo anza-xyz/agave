@@ -1537,41 +1537,55 @@ fn test_program_sbf_program_id_spoofing() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_caller_has_access_to_cpi_program() {
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let caller_access_elf = harness::file::load_program_elf("solana_sbf_rust_caller_access");
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let caller_pubkey = Pubkey::new_unique();
+    let caller2_pubkey = Pubkey::new_unique();
 
-    let (_bank, caller_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_caller_access",
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+    let accounts = vec![
+        (caller_pubkey, Account::new(0, 0, &loader_v4::id())),
+        (caller2_pubkey, Account::new(0, 0, &loader_v4::id())),
+    ];
+
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &caller_pubkey,
+        &loader_v4::id(),
+        &caller_access_elf,
+        &feature_set,
+        &compute_budget,
     );
-    let (_bank, caller2_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_caller_access",
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &caller2_pubkey,
+        &loader_v4::id(),
+        &caller_access_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
     let account_metas = vec![
         AccountMeta::new_readonly(caller_pubkey, false),
         AccountMeta::new_readonly(caller2_pubkey, false),
     ];
-    let instruction = Instruction::new_with_bytes(caller_pubkey, &[1], account_metas.clone());
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::MissingAccount),
-    );
+    let instruction = Instruction::new_with_bytes(caller_pubkey, &[1], account_metas);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
+    assert_eq!(effects.result, Some(InstructionError::MissingAccount));
 }
 
 #[test]
