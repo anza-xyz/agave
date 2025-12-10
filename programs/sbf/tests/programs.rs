@@ -337,26 +337,45 @@ fn test_program_sbf_loader_deprecated() {
     for program in programs.iter() {
         println!("Test program: {:?}", program);
 
-        let GenesisConfigInfo {
-            mut genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
-        genesis_config
-            .accounts
-            .remove(&agave_feature_set::disable_deploy_of_alloc_free_syscall::id())
-            .unwrap();
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let program_id = create_program(&bank, &bpf_loader_deprecated::id(), program);
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let mut bank_client = BankClient::new_shared(bank);
-        bank_client
-            .advance_slot(1, bank_forks.as_ref(), &Pubkey::default())
-            .expect("Failed to advance the slot");
-        let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&agave_feature_set::disable_deploy_of_alloc_free_syscall::id());
+
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let pubkey = Pubkey::new_unique();
+        let accounts = vec![
+            (program_id, Account::new(0, 0, &bpf_loader_deprecated::id())),
+            (pubkey, Account::default()),
+        ];
+
+        let mut program_cache = default_program_cache(&feature_set);
+        harness::program_cache::add_program(
+            &mut program_cache,
+            &program_id,
+            &bpf_loader_deprecated::id(),
+            &program_elf,
+            &feature_set,
+            &compute_budget,
+        );
+        let sysvar_cache = default_sysvar_cache();
+
+        let account_metas = vec![AccountMeta::new(pubkey, true)];
         let instruction = Instruction::new_with_bytes(program_id, &[255], account_metas);
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
+
+        let context = InstrContext {
+            feature_set,
+            accounts,
+            instruction,
+        };
+
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+
+        assert!(effects.result.is_none());
     }
 }
 
