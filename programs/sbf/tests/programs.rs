@@ -2566,35 +2566,50 @@ fn test_program_reads_from_program_account() {
 fn test_program_sbf_c_dup() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("ser");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &program_id,
+        &solana_sdk_ids::loader_v4::id(),
+        &program_elf,
+        &feature_set,
+        &compute_budget,
+    );
+
+    let mut sysvar_cache = SysvarCache::default();
+    sysvar_cache.fill_missing_entries(|pubkey, callback| {
+        if pubkey == &rent::id() {
+            let rent_data = bincode::serialize(&Rent::default()).unwrap();
+            callback(&rent_data);
+        }
+    });
 
     let account_address = Pubkey::new_unique();
-    let account = AccountSharedData::new_data(42, &[1_u8, 2, 3], &system_program::id()).unwrap();
-    bank.store_account(&account_address, &account);
+    let account =
+        Account::new_data(42, &[1_u8, 2, 3], &solana_sdk_ids::system_program::id()).unwrap();
 
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "ser",
-    );
     let account_metas = vec![
         AccountMeta::new_readonly(account_address, false),
         AccountMeta::new_readonly(account_address, false),
     ];
     let instruction = Instruction::new_with_bytes(program_id, &[4, 5, 6, 7], account_metas);
-    bank_client
-        .send_and_confirm_instruction(&mint_keypair, instruction)
-        .unwrap();
+
+    let context = InstrContext {
+        feature_set,
+        accounts: vec![(account_address, account)],
+        instruction: instruction.into(),
+        cu_avail: compute_budget.compute_unit_limit,
+    };
+
+    let effects =
+        harness::instr::execute_instr(context, compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+    assert!(effects.result.is_none());
 }
 
 #[test]
