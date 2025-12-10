@@ -624,23 +624,6 @@ impl ReplayStage {
             popular_pruned_forks_receiver,
         } = receivers;
 
-        // Alpenglow migration status
-        let mut is_alpenglow_migration_complete = false;
-        let mut first_alpenglow_slot = bank_forks
-            .read()
-            .unwrap()
-            .root_bank()
-            .feature_set
-            .activated_slot(&agave_feature_set::alpenglow::id());
-        if let Some(first_alpenglow_slot) = first_alpenglow_slot {
-            assert!(bank_forks.read().unwrap().highest_slot() >= first_alpenglow_slot);
-            info!("alpenglow active on startup");
-            Self::maybe_initiate_alpenglow_migration(
-                &poh_recorder,
-                &mut is_alpenglow_migration_complete,
-            );
-        }
-
         trace!("replay stage");
         // Start the replay stage loop
         let (lockouts_sender, commitment_service) = AggregateCommitmentService::new(
@@ -804,9 +787,7 @@ impl ReplayStage {
                     prioritization_fee_cache.as_deref(),
                     &mut purge_repair_slot_counter,
                     &poh_recorder,
-                    first_alpenglow_slot,
                     (!is_alpenglow_migration_complete).then_some(&mut tbft_structs),
-                    &mut is_alpenglow_migration_complete,
                 );
                 replay_active_banks_time.stop();
 
@@ -1058,7 +1039,6 @@ impl ReplayStage {
                             &voting_sender,
                             &drop_bank_sender,
                             wait_to_vote_slot,
-                            &mut first_alpenglow_slot,
                             &mut tbft_structs,
                         );
                     }
@@ -1219,8 +1199,6 @@ impl ReplayStage {
                             &mut skipped_slots_info,
                             &banking_tracer,
                             has_new_vote_been_rooted,
-                            &first_alpenglow_slot,
-                            &mut is_alpenglow_migration_complete,
                         ) {
                             Self::log_leader_change(
                                 &my_pubkey,
@@ -2142,8 +2120,6 @@ impl ReplayStage {
         skipped_slots_info: &mut SkippedSlotsInfo,
         banking_tracer: &Arc<BankingTracer>,
         has_new_vote_been_rooted: bool,
-        first_alpenglow_slot: &Option<Slot>,
-        is_alpenglow_migration_complete: &mut bool,
     ) -> Option<Slot> {
         // all the individual calls to poh_recorder.read() are designed to
         // increase granularity, decrease contention
@@ -2163,24 +2139,6 @@ impl ReplayStage {
             // Migration is already complete Votor will handle the rest
             return None;
         };
-
-        // Check if migration is necessary
-        if let Some(first_alpenglow_slot) = first_alpenglow_slot {
-            if !(*is_alpenglow_migration_complete) && poh_slot >= *first_alpenglow_slot {
-                // Initiate migration
-                // TODO: need to keep the ticks around for parent slots in previous epoch
-                // because reset below will delete those ticks
-                info!(
-                    "initiating alpenglow migration from maybe_start_leader() for slot {poh_slot}",
-                );
-                Self::maybe_initiate_alpenglow_migration(
-                    poh_recorder,
-                    is_alpenglow_migration_complete,
-                );
-                // Votor will handle leader blocks from now on
-                return None;
-            }
-        }
 
         trace!("{my_pubkey} reached_leader_slot");
 
@@ -2467,7 +2425,6 @@ impl ReplayStage {
         voting_sender: &Sender<VoteOp>,
         drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
         wait_to_vote_slot: Option<Slot>,
-        first_alpenglow_slot: &mut Option<Slot>,
         tbft_structs: &mut TowerBFTStructures,
     ) {
         if bank.is_empty() {
@@ -2477,20 +2434,6 @@ impl ReplayStage {
         let new_root = tower.record_bank_vote(bank);
 
         if let Some(new_root) = new_root {
-            if first_alpenglow_slot.is_none() {
-                if let Some(activation_slot) = bank_forks
-                    .read()
-                    .unwrap()
-                    .root_bank()
-                    .compute_pending_activation_slot(&agave_feature_set::alpenglow::id())
-                {
-                    *first_alpenglow_slot = Some(activation_slot);
-                    info!(
-                        "alpenglow feature detected in root bank {new_root}, to be enabled on \
-                         slot {activation_slot}",
-                    );
-                }
-            }
             let highest_super_majority_root = Some(
                 block_commitment_cache
                     .read()
@@ -3128,21 +3071,6 @@ impl ReplayStage {
         replay_result
     }
 
-    fn maybe_initiate_alpenglow_migration(
-        _poh_recorder: &RwLock<PohRecorder>,
-        is_alpenglow_migration_complete: &mut bool,
-    ) {
-        if *is_alpenglow_migration_complete {
-            error!("Attempting to start alpenglow migration but it is already complete");
-            return;
-        }
-        info!("initiating alpenglow migration");
-        // This by itself does not do anything, a follow up PR will enact action to
-        // turn off PoH based on this flag
-
-        info!("alpenglow migration complete!");
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn process_replay_results(
         blockstore: &Blockstore,
@@ -3161,9 +3089,7 @@ impl ReplayStage {
         replay_result_vec: &[ReplaySlotFromBlockstore],
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         my_pubkey: &Pubkey,
-        first_alpenglow_slot: Option<Slot>,
         poh_recorder: &RwLock<PohRecorder>,
-        is_alpenglow_migration_complete: &mut bool,
         mut tbft_structs: Option<&mut TowerBFTStructures>,
     ) -> bool {
         // TODO: See if processing of blockstore replay results and bank completion can be made thread safe.
@@ -3206,18 +3132,6 @@ impl ReplayStage {
 
             assert_eq!(bank_slot, bank.slot());
             if bank.is_complete() {
-                if let Some(first_alpenglow_slot) = first_alpenglow_slot {
-                    if !*is_alpenglow_migration_complete && bank.slot() >= first_alpenglow_slot {
-                        info!(
-                            "initiating alpenglow migration from replaying bank {}",
-                            bank.slot()
-                        );
-                        Self::maybe_initiate_alpenglow_migration(
-                            poh_recorder,
-                            is_alpenglow_migration_complete,
-                        );
-                    }
-                }
                 let mut bank_complete_time = Measure::start("bank_complete_time");
                 let bank_progress = progress
                     .get_mut(&bank.slot())
@@ -3490,9 +3404,7 @@ impl ReplayStage {
         prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         poh_recorder: &RwLock<PohRecorder>,
-        first_alpenglow_slot: Option<Slot>,
         tbft_structs: Option<&mut TowerBFTStructures>,
-        is_alpenglow_migration_complete: &mut bool,
     ) -> bool /* completed a bank */ {
         let active_bank_slots = bank_forks.read().unwrap().active_bank_slots();
         let num_active_banks = active_bank_slots.len();
@@ -3560,9 +3472,7 @@ impl ReplayStage {
             &replay_result_vec,
             purge_repair_slot_counter,
             my_pubkey,
-            first_alpenglow_slot,
             poh_recorder,
-            is_alpenglow_migration_complete,
             tbft_structs,
         )
     }
