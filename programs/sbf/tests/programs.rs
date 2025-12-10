@@ -79,7 +79,10 @@ use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
-    solana_svm_test_harness_instr::{self as harness, fixture::instr_context::InstrContext},
+    solana_svm_test_harness_instr::{
+        self as harness, fixture::instr_context::InstrContext,
+        keyed_account::keyed_account_for_system_program,
+    },
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -1458,38 +1461,46 @@ fn test_program_sbf_invoke_sanity() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_program_id_spoofing() {
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let spoof1_elf = harness::file::load_program_elf("solana_sbf_rust_spoof1");
+    let spoof1_system_elf = harness::file::load_program_elf("solana_sbf_rust_spoof1_system");
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let malicious_swap_pubkey = Pubkey::new_unique();
+    let malicious_system_pubkey = Pubkey::new_unique();
 
-    let (_bank, malicious_swap_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_spoof1",
-    );
-    let (bank, malicious_system_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_spoof1_system",
-    );
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let from_pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(10, 0, &system_program::id());
-    bank.store_account(&from_pubkey, &account);
-
     let to_pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(0, 0, &system_program::id());
-    bank.store_account(&to_pubkey, &account);
+
+    let accounts = vec![
+        keyed_account_for_system_program(),
+        (
+            malicious_system_pubkey,
+            Account::new(0, 0, &loader_v4::id()),
+        ),
+        (from_pubkey, Account::new(10, 0, &system_program::id())),
+        (to_pubkey, Account::new(0, 0, &system_program::id())),
+    ];
+
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &malicious_swap_pubkey,
+        &loader_v4::id(),
+        &spoof1_elf,
+        &feature_set,
+        &compute_budget,
+    );
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &malicious_system_pubkey,
+        &loader_v4::id(),
+        &spoof1_system_elf,
+        &feature_set,
+        &compute_budget,
+    );
+    let sysvar_cache = default_sysvar_cache();
 
     let account_metas = vec![
         AccountMeta::new_readonly(system_program::id(), false),
@@ -1500,13 +1511,27 @@ fn test_program_sbf_program_id_spoofing() {
 
     let instruction =
         Instruction::new_with_bytes(malicious_swap_pubkey, &[], account_metas.clone());
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
     assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature)
+        effects.result,
+        Some(InstructionError::MissingRequiredSignature)
     );
-    assert_eq!(10, bank.get_balance(&from_pubkey));
-    assert_eq!(0, bank.get_balance(&to_pubkey));
+
+    let from_account = effects.get_account(&from_pubkey).unwrap();
+    assert_eq!(10, from_account.lamports);
+
+    let to_account = effects.get_account(&to_pubkey).unwrap();
+    assert_eq!(0, to_account.lamports);
 }
 
 #[test]
