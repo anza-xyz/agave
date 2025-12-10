@@ -145,7 +145,7 @@ check_dcou() {
   # output after turning rustc into the nightly mode with RUSTC_BOOTSTRAP=1.
   # In this way, additional requirement of nightly rustc toolchian is avoided.
   # Note that `cargo tree` can't be used, because it doesn't support `--bin`.
-  if check_dcou "${binArgs[@]}" --workspace; then
+  if check_dcou "$buildProfileArg" "${binArgs[@]}" --workspace; then
      echo 'dcou feature activation is incorrectly activated!'
      exit 1
   fi
