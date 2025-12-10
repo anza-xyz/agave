@@ -612,7 +612,7 @@ dependencies = [
  "solana-metrics",
  "solana-native-token",
  "solana-notifier",
- "solana-pubkey 3.0.0",
+ "solana-pubkey 4.0.0",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-version",
