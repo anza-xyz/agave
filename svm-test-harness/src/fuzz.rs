@@ -4,9 +4,14 @@ use {
     crate::{
         fixture::{
             instr_context::InstrContext,
-            proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+            proto::{
+                InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects,
+                TxnContext as ProtoTxnContext, TxnResult as ProtoTxnResult,
+            },
+            txn_context::TxnContext,
         },
         instr::execute_instr,
+        txn::execute_transaction,
     },
     agave_feature_set::{increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8},
     agave_syscalls::create_program_runtime_environment_v1,
@@ -106,6 +111,41 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     };
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
     let out_vec = instr_effects.encode_to_vec();
+    if out_vec.len() > out_slice.len() {
+        return 0;
+    }
+    out_slice[..out_vec.len()].copy_from_slice(&out_vec);
+    unsafe {
+        *out_psz = out_vec.len() as u64;
+    }
+    1
+}
+
+pub fn execute_txn_proto(input: ProtoTxnContext) -> Option<ProtoTxnResult> {
+    let txn_context = TxnContext::try_from(input.clone()).ok()?;
+    let txn_result = execute_transaction(txn_context, &input)?;
+    Some(txn_result.into())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sol_compat_txn_execute_v1(
+    out_ptr: *mut u8,
+    out_psz: *mut u64,
+    in_ptr: *mut u8,
+    in_sz: u64,
+) -> c_int {
+    if in_ptr.is_null() || in_sz == 0 {
+        return 0;
+    }
+    let in_slice = unsafe { std::slice::from_raw_parts(in_ptr, in_sz as usize) };
+    let Ok(txn_context) = ProtoTxnContext::decode(in_slice) else {
+        return 0;
+    };
+    let Some(txn_result) = execute_txn_proto(txn_context) else {
+        return 0;
+    };
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
+    let out_vec = txn_result.encode_to_vec();
     if out_vec.len() > out_slice.len() {
         return 0;
     }
