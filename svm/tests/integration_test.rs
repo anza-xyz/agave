@@ -3260,7 +3260,7 @@ fn svm_inspect_account() {
 
     // fee payer
     let mut fee_payer_account = AccountSharedData::default();
-    fee_payer_account.set_lamports(85_000);
+    fee_payer_account.set_lamports(10_000_000);
     fee_payer_account.set_rent_epoch(u64::MAX);
     initial_test_entry.add_initial_account(fee_payer, &fee_payer_account);
     expected_inspected_accounts.inspect(fee_payer, Inspect::LiveWrite(&fee_payer_account));
