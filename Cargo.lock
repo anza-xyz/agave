@@ -11139,12 +11139,39 @@ version = "4.0.0-alpha.0"
 name = "solana-svm-test-harness"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-logger",
+ "clap 4.5.31",
+ "prost",
+ "solana-svm-test-harness-fixture",
+ "solana-svm-test-harness-instr",
+]
+
+[[package]]
+name = "solana-svm-test-harness-fixture"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-feature-set",
+ "bincode",
+ "prost",
+ "prost-build",
+ "protosol",
+ "solana-account",
+ "solana-instruction",
+ "solana-instruction-error",
+ "solana-pubkey 4.0.0",
+ "solana-stable-layout",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "solana-svm-test-harness-instr"
+version = "4.0.0-alpha.0"
+dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-precompiles",
  "agave-syscalls",
  "bincode",
- "clap 4.5.31",
  "prost",
  "solana-account",
  "solana-builtins",
@@ -11167,23 +11194,6 @@ dependencies = [
  "solana-svm-timings",
  "solana-sysvar-id",
  "solana-transaction-context",
-]
-
-[[package]]
-name = "solana-svm-test-harness-fixture"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "bincode",
- "prost",
- "prost-build",
- "protosol",
- "solana-account",
- "solana-instruction",
- "solana-instruction-error",
- "solana-pubkey 4.0.0",
- "solana-stable-layout",
- "thiserror 2.0.17",
 ]
 
 [[package]]

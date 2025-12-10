@@ -2,11 +2,11 @@
 
 use {
     crate::{
+        execute_instr,
         fixture::{
             instr_context::InstrContext,
             proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
         },
-        instr::execute_instr,
     },
     agave_feature_set::{increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8},
     agave_syscalls::create_program_runtime_environment_v1,

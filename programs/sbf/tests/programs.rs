@@ -76,7 +76,7 @@ use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
-    solana_svm_test_harness::{self as harness, fixture::instr_context::InstrContext},
+    solana_svm_test_harness_instr::{self as harness, fixture::instr_context::InstrContext},
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -289,13 +289,9 @@ fn test_program_sbf_sanity() {
             cu_avail: compute_budget.compute_unit_limit,
         };
 
-        let effects = harness::instr::execute_instr(
-            context,
-            &compute_budget,
-            &mut program_cache,
-            &sysvar_cache,
-        )
-        .unwrap();
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
 
         let result = match effects.result {
             Some(err) => Err(err),
@@ -568,7 +564,7 @@ fn test_program_sbf_error_handling() {
                 cu_avail: compute_budget.compute_unit_limit,
             };
 
-            harness::instr::execute_instr(context, &compute_budget, program_cache, &sysvar_cache)
+            harness::execute_instr(context, &compute_budget, program_cache, &sysvar_cache)
                 .unwrap()
         };
 

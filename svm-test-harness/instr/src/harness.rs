@@ -1,7 +1,4 @@
-//! Solana SVM test harness for instructions.
-//!
-//! This entrypoint provides an API for Agave's program runtime in order to
-//! execute program instructions directly against the VM.
+//! Instruction harness.
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},

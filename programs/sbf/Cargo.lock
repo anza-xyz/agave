@@ -8620,7 +8620,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
- "solana-svm-test-harness",
+ "solana-svm-test-harness-instr",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-svm-type-overrides",
@@ -9770,7 +9770,20 @@ name = "solana-svm-measure"
 version = "4.0.0-alpha.0"
 
 [[package]]
-name = "solana-svm-test-harness"
+name = "solana-svm-test-harness-fixture"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-feature-set",
+ "solana-account",
+ "solana-instruction",
+ "solana-instruction-error",
+ "solana-pubkey 4.0.0",
+ "solana-stable-layout",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "solana-svm-test-harness-instr"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
@@ -9799,19 +9812,6 @@ dependencies = [
  "solana-svm-timings",
  "solana-sysvar-id",
  "solana-transaction-context",
-]
-
-[[package]]
-name = "solana-svm-test-harness-fixture"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "solana-account",
- "solana-instruction",
- "solana-instruction-error",
- "solana-pubkey 4.0.0",
- "solana-stable-layout",
- "thiserror 2.0.17",
 ]
 
 [[package]]
