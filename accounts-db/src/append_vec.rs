@@ -1011,7 +1011,6 @@ impl AppendVec {
     ///
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
-    #[allow(clippy::blocks_in_conditions)]
     fn scan_accounts_stored_meta<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
