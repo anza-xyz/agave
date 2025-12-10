@@ -1358,7 +1358,7 @@ impl ObsoleteAccountHash {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::{test_utils::*, *},
         assert_matches::assert_matches,
