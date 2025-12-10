@@ -15,7 +15,7 @@ pub struct InstrContext {
 
 #[cfg(feature = "fuzz")]
 use {
-    super::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
+    crate::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
     solana_instruction::AccountMeta,
 };
 

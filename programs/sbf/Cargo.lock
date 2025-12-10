@@ -9795,9 +9795,22 @@ dependencies = [
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-log-collector",
+ "solana-svm-test-harness-fixture",
  "solana-svm-timings",
  "solana-sysvar-id",
  "solana-transaction-context",
+]
+
+[[package]]
+name = "solana-svm-test-harness-fixture"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-feature-set",
+ "solana-account",
+ "solana-instruction",
+ "solana-instruction-error",
+ "solana-pubkey 4.0.0",
+ "solana-stable-layout",
  "thiserror 2.0.17",
 ]
 

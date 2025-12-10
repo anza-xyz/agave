@@ -12,7 +12,7 @@ pub struct InstrEffects {
 }
 
 #[cfg(feature = "fuzz")]
-use {super::proto::InstrEffects as ProtoInstrEffects, bincode};
+use {crate::proto::InstrEffects as ProtoInstrEffects, bincode};
 
 #[cfg(feature = "fuzz")]
 impl From<InstrEffects> for ProtoInstrEffects {

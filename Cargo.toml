@@ -105,6 +105,7 @@ members = [
     "svm-log-collector",
     "svm-measure",
     "svm-test-harness",
+    "svm-test-harness/fixture",
     "svm-timings",
     "svm-transaction",
     "svm-type-overrides",
@@ -555,6 +556,7 @@ solana-svm-feature-set = { path = "svm-feature-set", version = "=4.0.0-alpha.0",
 solana-svm-log-collector = { path = "svm-log-collector", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-measure = { path = "svm-measure", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-test-harness = { path = "svm-test-harness", version = "=4.0.0-alpha.0" }
+solana-svm-test-harness-fixture = { path = "svm-test-harness/fixture", version = "=4.0.0-alpha.0" }
 solana-svm-timings = { path = "svm-timings", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
