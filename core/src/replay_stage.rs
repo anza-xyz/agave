@@ -3294,7 +3294,7 @@ impl ReplayStage {
                 } else {
                     None
                 };
-                bank.set_block_id(block_id);
+                bank.set_block_id(block_id.map(Hash::from));
                 // Freeze the bank before sending to any auxiliary threads
                 // that may expect to be operating on a frozen bank
                 bank.freeze();
