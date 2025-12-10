@@ -14,11 +14,11 @@ tools-version = "v1.52"
 program-id = "MyProgram1111111111111111111111111111111111"
 
 [dependencies]
-solana-account-info = "=2.3.0"
+solana-account-info = "=3.1.0"
 solana-package-metadata = "=2.2.1"
-solana-program-entrypoint = "=2.3.0"
-solana-program-error = "=2.2.2"
-solana-pubkey = "=2.4.0"
+solana-program-entrypoint = "=3.1.1"
+solana-program-error = "=3.0.0"
+solana-pubkey = "=4.0.0"
 
 [lib]
 crate-type = ["cdylib"]
