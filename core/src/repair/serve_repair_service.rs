@@ -3,7 +3,7 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, Sender},
     solana_net_utils::SocketAddrSpace,
-    solana_perf::{packet::PacketBatch, recycler::Recycler},
+    solana_perf::packet::PacketBatch,
     solana_streamer::streamer::{self, StreamerReceiveStats},
     std::{
         net::{SocketAddr, UdpSocket},
@@ -36,10 +36,8 @@ impl ServeRepairService {
             serve_repair_socket.clone(),
             exit.clone(),
             request_sender,
-            Recycler::default(),
             Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
             Some(Duration::from_millis(1)), // coalesce
-            false,                          // use_pinned_memory
             None,                           // in_vote_only_mode
             false,                          // is_staked_service
         );
