@@ -276,11 +276,8 @@ pub fn publish_order_tree(manifest_path: &str) -> Result<()> {
 }
 
 fn write_custom_registry_config() -> Result<()> {
-    let config_file_path = get_git_root_path()?.join(".cargo/config.toml");
-    if !config_file_path.exists() {
-        return Err(anyhow!("file .cargo/config.toml not found"));
-    }
-
+    let git_root = get_git_root_path()?;
+    let config_file_path = git_root.join(".cargo/config.toml");
     let content = fs::read_to_string(&config_file_path)
         .map_err(|e| anyhow!("Failed to read config file: {e}"))?;
     let mut doc = content
@@ -325,10 +322,10 @@ fn start_docker_registry() -> Result<String> {
 fn publish_test(manifest_path: &str) -> Result<()> {
     defer! {
         let git_root = get_git_root_path().unwrap();
-        info!("🧹 Cleanup: git checkout {:?}", git_root.join(".cargo/config.toml").display());
+        let config_file_path = git_root.join(".cargo/config.toml");
+        info!("🧹 Cleanup: git checkout {:?}", config_file_path.to_str().unwrap());
         Command::new("git")
-            .args(["checkout", git_root.join(".cargo/config.toml").to_str().unwrap()])
-            .current_dir(git_root)
+            .args(["checkout", &config_file_path.to_string_lossy()])
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to run git checkout: {e}")).unwrap();
     }
@@ -336,7 +333,7 @@ fn publish_test(manifest_path: &str) -> Result<()> {
     info!("checking docker");
     check_docker_available()?;
 
-    info!("writing custom registry config to .cargo/config.toml");
+    info!("writing custom registry config to config file");
     write_custom_registry_config()?;
 
     info!("starting self-hosted kellnr registry");
