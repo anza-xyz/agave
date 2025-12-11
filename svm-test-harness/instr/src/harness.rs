@@ -56,6 +56,7 @@ fn compile_accounts<'a>(
     input: &'a InstrContext,
     compute_budget: &ComputeBudget,
     rent: Rent,
+    loader_key: &Pubkey,
 ) -> (Vec<InstructionAccount>, TransactionContext<'a>) {
     let mut transaction_accounts: Vec<KeyedAccountSharedData> = input
         .accounts
@@ -68,7 +69,10 @@ fn compile_accounts<'a>(
         .iter()
         .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
     {
-        transaction_accounts.push((input.instruction.program_id, AccountSharedData::default()));
+        transaction_accounts.push((
+            input.instruction.program_id,
+            AccountSharedData::new(0, 0, loader_key),
+        ));
     }
 
     let transaction_context = TransactionContext::new(
@@ -110,8 +114,12 @@ pub fn execute_instr(
     let runtime_features = input.feature_set.runtime_features();
 
     let rent = sysvar_cache.get_rent().unwrap();
+    let loader_key = program_cache
+        .find(&input.instruction.program_id)?
+        .account_owner();
+
     let (instruction_accounts, mut transaction_context) =
-        compile_accounts(&input, compute_budget, (*rent).clone());
+        compile_accounts(&input, compute_budget, (*rent).clone(), &loader_key);
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
