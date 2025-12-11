@@ -105,7 +105,7 @@ impl TransactionRecorder {
         &self,
         bank_id: BankId,
         mixins: Vec<Hash>,
-        transaction_batches: Vec<Vec<VersionedTransaction>>,
+        transaction_batches: Vec<Vec<(VersionedTransaction, Option<FlowState>)>>,
     ) -> Result<Option<usize>, RecordSenderError> {
         self.record_sender
             .try_send(Record::new(mixins, transaction_batches, bank_id))

@@ -439,9 +439,7 @@ impl TransactionViewReceiveAndBuffer {
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
         let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
 
-        Ok(TransactionState::new(
-            view, max_age, priority, cost, flow_state,
-        ))
+        Ok(TransactionState::new(view, max_age, priority, cost))
     }
 }
 

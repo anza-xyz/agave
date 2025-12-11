@@ -118,6 +118,7 @@ use {
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
     solana_packet::PACKET_DATA_SIZE,
+    solana_perf::flow_state::FlowState,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext,
@@ -4786,7 +4787,7 @@ impl Bank {
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
-        flow_id: Option<u64>,
+        flow_state: Option<FlowState>,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
         let enable_static_instruction_limit = self
             .feature_set
@@ -4818,7 +4819,7 @@ impl Bank {
                 self,
                 self.get_reserved_account_keys(),
                 enable_static_instruction_limit,
-                flow_id,
+                flow_state,
             )
         }?;
 
@@ -4828,9 +4829,13 @@ impl Bank {
     pub fn fully_verify_transaction(
         &self,
         tx: VersionedTransaction,
-        flow_id: Option<u64>,
+        flow_state: Option<FlowState>,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        self.verify_transaction(tx, TransactionVerificationMode::FullVerification, flow_id)
+        self.verify_transaction(
+            tx,
+            TransactionVerificationMode::FullVerification,
+            flow_state,
+        )
     }
 
     /// Checks if the transaction violates the bank's reserved keys.

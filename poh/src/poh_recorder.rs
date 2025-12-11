@@ -77,6 +77,7 @@ pub struct Record {
     pub mixins: Vec<Hash>,
     pub transaction_batches: Vec<Vec<VersionedTransaction>>,
     pub bank_id: BankId,
+    pub flow_states: Vec<Option<FlowState>>,
 }
 
 impl Record {
@@ -89,6 +90,7 @@ impl Record {
             mixins,
             transaction_batches,
             bank_id,
+            flow_states,
         }
     }
 }

@@ -14,6 +14,7 @@ pub struct FlowState {
     stream_created_at: SystemTime,
     first_chunk_received_at: Option<SystemTime>,
     flow_id: u64,
+    signature: Option<String>,
 }
 
 impl FlowState {
@@ -22,6 +23,7 @@ impl FlowState {
             stream_created_at,
             first_chunk_received_at,
             flow_id: Self::get_flow_id(),
+            signature: None,
         }
     }
 
@@ -35,6 +37,10 @@ impl FlowState {
         if self.first_chunk_received_at.is_none() {
             self.first_chunk_received_at = Some(SystemTime::now());
         }
+    }
+
+    pub fn set_signature(&mut self, signature: String) {
+        self.signature = Some(signature);
     }
 }
 

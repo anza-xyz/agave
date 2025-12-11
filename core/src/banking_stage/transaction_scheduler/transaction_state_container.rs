@@ -229,13 +229,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         let priority_id = {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
-            entry.insert(TransactionState::new(
-                transaction,
-                max_age,
-                priority,
-                cost,
-                None,
-            ));
+            entry.insert(TransactionState::new(transaction, max_age, priority, cost));
             TransactionPriorityId::new(priority, transaction_id)
         };
 
@@ -495,13 +489,7 @@ mod tests {
             )
             .unwrap();
 
-            Ok(TransactionState::new(
-                view,
-                MaxAge::MAX,
-                priority,
-                cost,
-                None,
-            ))
+            Ok(TransactionState::new(view, MaxAge::MAX, priority, cost))
         };
 
         // Push 2 transactions into the queue so buffer is full.

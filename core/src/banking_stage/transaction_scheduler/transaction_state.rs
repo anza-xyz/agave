@@ -23,25 +23,16 @@ pub(crate) struct TransactionState<Tx> {
     priority: u64,
     /// Estimated cost of the transaction.
     cost: u64,
-    /// flow state used for tracing transactions
-    flow_state: Option<FlowState>,
 }
 
 impl<Tx> TransactionState<Tx> {
     /// Creates a new `TransactionState` in the `Unprocessed` state.
-    pub(crate) fn new(
-        transaction: Tx,
-        max_age: MaxAge,
-        priority: u64,
-        cost: u64,
-        flow_state: Option<FlowState>,
-    ) -> Self {
+    pub(crate) fn new(transaction: Tx, max_age: MaxAge, priority: u64, cost: u64) -> Self {
         Self {
             transaction: Some(transaction),
             max_age,
             priority,
             cost,
-            flow_state,
         }
     }
 
@@ -124,7 +115,6 @@ mod tests {
             MaxAge::MAX,
             compute_unit_price,
             TEST_TRANSACTION_COST,
-            None,
         )
     }
 
