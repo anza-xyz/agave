@@ -9,6 +9,7 @@ pub struct InstrEffects {
     pub modified_accounts: Vec<(Pubkey, Account)>,
     pub cu_avail: u64,
     pub return_data: Vec<u8>,
+    pub logs: Vec<String>,
 }
 
 impl InstrEffects {
