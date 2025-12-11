@@ -1,5 +1,6 @@
 use {
     crate::transaction_meta::StaticMeta,
+    solana_perf::flow_state::FlowState,
     solana_svm_transaction::svm_transaction::SVMTransaction,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     std::borrow::Cow,
@@ -14,4 +15,6 @@ pub trait TransactionWithMeta: StaticMeta + SVMTransaction {
     /// `VersionedTransaction`. This should not be used unless necessary, as it
     /// performs numerous allocations that negatively impact performance.
     fn to_versioned_transaction(&self) -> VersionedTransaction;
+    /// Used to track txn from packet at TPU to shred
+    fn flow_state(&self) -> Option<FlowState>;
 }

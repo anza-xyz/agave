@@ -381,38 +381,30 @@ impl Consumer {
             attempted_processing_count: processing_results.len() as u64,
         };
 
-        let (processed_transactions, processing_results_to_transactions_us) =
+        let ((processed_transactions, flow_state), processing_results_to_transactions_us) =
             measure_us!(processing_results
                 .iter()
                 .zip(batch.sanitized_transactions())
                 .filter_map(|(processing_result, tx)| {
                     if processing_result.was_processed() {
-                        Some(tx.to_versioned_transaction())
+                        Some((tx.to_versioned_transaction(), tx.flow_state()))
                     } else {
                         None
                     }
                 })
-                .collect_vec());
+                .unzip::<_, _, Vec<_>, Vec<_>>());
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
-            .record_transactions(bank.bank_id(), processed_transactions));
+            .record_transactions_with_flow_state(
+                bank.bank_id(),
+                processed_transactions,
+                flow_state
+            ));
         execute_and_commit_timings.record_us = record_us;
-
-        let RecordTransactionsSummary {
-            result: record_transactions_result,
-            record_transactions_timings,
-            starting_transaction_index,
-        } = record_transactions_summary;
-        execute_and_commit_timings.record_transactions_timings = RecordTransactionsTimings {
-            processing_results_to_transactions_us: Saturating(
-                processing_results_to_transactions_us,
-            ),
-            ..record_transactions_timings
-        };
 
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
@@ -1443,7 +1435,6 @@ mod tests {
             &ReservedAccountKeys::empty_key_set(),
             bank.feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::id()),
-            0,
         )
         .unwrap();
         let batch_transactions_inner = [&sanitized_tx]

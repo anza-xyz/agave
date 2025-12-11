@@ -12,6 +12,7 @@
 //!
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use solana_perf::flow_state::FlowState;
 use {
     crate::{
         poh_controller::PohController, poh_service::PohService, record_channels::record_channels,
@@ -77,7 +78,7 @@ pub struct Record {
     pub mixins: Vec<Hash>,
     pub transaction_batches: Vec<Vec<VersionedTransaction>>,
     pub bank_id: BankId,
-    pub flow_states: Vec<Option<FlowState>>,
+    pub flow_state: Option<Vec<Vec<FlowState>>>,
 }
 
 impl Record {
@@ -90,7 +91,21 @@ impl Record {
             mixins,
             transaction_batches,
             bank_id,
-            flow_states,
+            flow_state: None,
+        }
+    }
+
+    pub fn new_with_flow_state(
+        mixins: Vec<Hash>,
+        transaction_batches: Vec<Vec<VersionedTransaction>>,
+        bank_id: BankId,
+        flow_state: Option<Vec<Vec<Option<FlowState>>>>,
+    ) -> Self {
+        Self {
+            mixins,
+            transaction_batches,
+            bank_id,
+            flow_state,
         }
     }
 }

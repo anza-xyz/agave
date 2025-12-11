@@ -50,7 +50,15 @@ pub struct BytesPacket {
 }
 
 impl BytesPacket {
-    pub fn new(buffer: Bytes, meta: Meta, flow_state: Option<FlowState>) -> Self {
+    pub fn new(buffer: Bytes, meta: Meta) -> Self {
+        Self {
+            buffer,
+            meta,
+            flow_state: None,
+        }
+    }
+
+    pub fn new_with_flow_state(buffer: Bytes, meta: Meta, flow_state: Option<FlowState>) -> Self {
         Self {
             buffer,
             meta,
@@ -396,7 +404,7 @@ impl<'a> PacketRef<'a> {
         }
     }
 
-    pub fn get_flow_state(&self) -> Option<FlowState> {
+    pub fn flow_state(&self) -> Option<FlowState> {
         match self {
             Self::Packet(_) => None,
             Self::Bytes(packet) => packet.flow_state.clone(),
@@ -412,7 +420,7 @@ impl<'a> PacketRef<'a> {
                     .data(..)
                     .map(|data| Bytes::from(data.to_vec()))
                     .unwrap_or_else(Bytes::new);
-                BytesPacket::new(buffer, self.meta().clone(), self.get_flow_state())
+                BytesPacket::new_with_flow_state(buffer, self.meta().clone(), self.flow_state())
             }
             // Cheap clone of `Bytes`.
             // We call `to_owned()` twice, because `packet` is `&&BytesPacket`

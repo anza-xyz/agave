@@ -3015,8 +3015,6 @@ impl Bank {
                     self,
                     self.get_reserved_account_keys(),
                     enable_static_instruction_limit,
-                    // used for tests only so setting None
-                    None,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4787,6 +4785,14 @@ impl Bank {
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        self.verify_transaction_with_flow_state(tx, verification_mode, None)
+    }
+
+    pub fn verify_transaction_with_flow_state(
+        &self,
+        tx: VersionedTransaction,
+        verification_mode: TransactionVerificationMode,
         flow_state: Option<FlowState>,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
         let enable_static_instruction_limit = self
@@ -4812,7 +4818,7 @@ impl Bank {
                 tx.message.hash()
             };
 
-            RuntimeTransaction::try_create(
+            RuntimeTransaction::try_create_with_flow_state(
                 tx,
                 MessageHash::Precomputed(message_hash),
                 None,
@@ -4829,9 +4835,20 @@ impl Bank {
     pub fn fully_verify_transaction(
         &self,
         tx: VersionedTransaction,
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        self.verify_transaction_with_flow_state(
+            tx,
+            TransactionVerificationMode::FullVerification,
+            None,
+        )
+    }
+
+    pub fn fully_verify_transaction_with_flow_state(
+        &self,
+        tx: VersionedTransaction,
         flow_state: Option<FlowState>,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        self.verify_transaction(
+        self.verify_transaction_with_flow_state(
             tx,
             TransactionVerificationMode::FullVerification,
             flow_state,

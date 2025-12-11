@@ -96,7 +96,7 @@ mod tests {
         // Invalid signature length
         let mut data = bincode::serialize(&tx).unwrap();
         data[0] = 0x0;
-        let packet = BytesPacket::new(Bytes::from(data), Meta::default(), None);
+        let packet = BytesPacket::new(Bytes::from(data), Meta::default());
         let sig = get_signature_from_packet(&packet);
         assert_eq!(sig, Err(PacketError::InvalidSignatureLen));
     }

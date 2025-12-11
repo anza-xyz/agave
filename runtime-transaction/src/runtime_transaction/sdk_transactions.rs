@@ -84,6 +84,25 @@ impl RuntimeTransaction<SanitizedTransaction> {
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
         enable_static_instruction_limit: bool,
+    ) -> Result<Self> {
+        Self::try_create_with_flow_state(
+            tx,
+            message_hash,
+            is_simple_vote_tx,
+            address_loader,
+            reserved_account_keys,
+            enable_static_instruction_limit,
+            None,
+        )
+    }
+
+    pub fn try_create_with_flow_state(
+        tx: VersionedTransaction,
+        message_hash: MessageHash,
+        is_simple_vote_tx: Option<bool>,
+        address_loader: impl AddressLoader,
+        reserved_account_keys: &HashSet<Pubkey>,
+        enable_static_instruction_limit: bool,
         flow_state: Option<FlowState>,
     ) -> Result<Self> {
         if enable_static_instruction_limit
@@ -149,6 +168,11 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         self.transaction.to_versioned_transaction()
     }
+
+    #[inline]
+    fn flow_state(&self) -> Option<FlowState> {
+        self.flow_state.clone()
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -163,7 +187,6 @@ impl RuntimeTransaction<SanitizedTransaction> {
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
             enable_static_instruction_limit,
-            None,
         )
         .expect("failed to create RuntimeTransaction from Transaction")
     }

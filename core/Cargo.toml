@@ -128,7 +128,7 @@ solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
-solana-packet = { git = "https://github.com/helius-labs/solana-sdk", branch = "add-flow-id" }
+solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }

@@ -601,7 +601,7 @@ pub fn process_entries_for_tests(
     let verify_transaction = {
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<SanitizedTransaction>> {
-            bank.verify_transaction(versioned_tx, TransactionVerificationMode::FullVerification, None)
+            bank.verify_transaction(versioned_tx, TransactionVerificationMode::FullVerification)
         }
     };
 
@@ -1618,7 +1618,7 @@ fn confirm_slot_entries(
         move |versioned_tx: VersionedTransaction,
               verification_mode: TransactionVerificationMode|
               -> Result<RuntimeTransaction<SanitizedTransaction>> {
-            bank.verify_transaction(versioned_tx, verification_mode, None)
+            bank.verify_transaction(versioned_tx, verification_mode)
         }
     };
 

@@ -797,7 +797,7 @@ fn handle_chunks(
     // them into one `Bytes` buffer. We make a copy once, with
     // intention to not do it again.
     let mut packet = if accum.chunks.len() == 1 {
-        BytesPacket::new(
+        BytesPacket::new_with_flow_state(
             accum.chunks.pop().expect("expected one chunk"),
             accum.meta.clone(),
             Some(accum.flow_state.clone()),
@@ -808,7 +808,7 @@ fn handle_chunks(
         for chunk in &accum.chunks {
             buf.put_slice(chunk);
         }
-        BytesPacket::new(
+        BytesPacket::new_with_flow_state(
             buf.freeze(),
             accum.meta.clone(),
             Some(accum.flow_state.clone()),

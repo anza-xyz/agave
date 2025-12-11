@@ -112,7 +112,7 @@ pub(crate) fn ensure_banking_stage_setup(
                         tx,
                         MessageHash::Compute,
                         Some(packet.meta().is_simple_vote_tx()),
-                        packet.get_flow_state(),
+                        packet.flow_state(),
                     )
                     .ok()?;
 

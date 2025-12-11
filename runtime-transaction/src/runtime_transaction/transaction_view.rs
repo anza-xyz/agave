@@ -44,6 +44,14 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         transaction: SanitizedTransactionView<D>,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
+    ) -> Result<Self> {
+        Self::try_new_with_flow_state(transaction, message_hash, is_simple_vote_tx, None)
+    }
+
+    pub fn try_new_with_flow_state(
+        transaction: SanitizedTransactionView<D>,
+        message_hash: MessageHash,
+        is_simple_vote_tx: Option<bool>,
         flow_state: Option<FlowState>,
     ) -> Result<Self> {
         from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx).map(|meta| {
@@ -231,6 +239,10 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
             message,
         }
     }
+
+    fn flow_state(&self) -> Option<FlowState> {
+        self.flow_state.clone()
+    }
 }
 
 #[cfg(test)]
@@ -267,7 +279,6 @@ mod tests {
                 transaction,
                 MessageHash::Precomputed(hash),
                 None,
-                None,
             )
             .unwrap();
 
@@ -299,7 +310,6 @@ mod tests {
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
-                None,
                 None,
             )
             .unwrap();
@@ -367,7 +377,6 @@ mod tests {
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
-                None,
                 None,
             )
             .unwrap();
