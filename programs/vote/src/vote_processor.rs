@@ -255,6 +255,13 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &clock,
             )
         }
+        // New instructions not yet implemented.
+        VoteInstruction::InitializeAccountV2(_)
+        | VoteInstruction::UpdateCommissionCollector(_)
+        | VoteInstruction::UpdateCommissionBps { .. }
+        | VoteInstruction::DepositDelegatorRewards { .. } => {
+            Err(InstructionError::InvalidInstructionData)
+        }
     }
 });
 
@@ -1027,7 +1034,11 @@ mod tests {
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
-                error(InstructionError::UninitializedAccount),
+                if vote_state_v4_enabled {
+                    error(InstructionError::UninitializedAccount)
+                } else {
+                    error(InstructionError::InvalidAccountData)
+                },
             );
         }
     }

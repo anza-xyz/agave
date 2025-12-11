@@ -754,6 +754,10 @@ pub fn authorize<S: std::hash::BuildHasher>(
             verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
             vote_state.set_authorized_withdrawer(*authorized);
         }
+        // VoterWithBLS not yet implemented.
+        VoteAuthorize::VoterWithBLS(_) => {
+            return Err(InstructionError::InvalidInstructionData);
+        }
     }
 
     vote_state.set_vote_account_state(vote_account)

@@ -273,6 +273,60 @@ pub fn parse_vote(
                 }),
             })
         }
+        VoteInstruction::InitializeAccountV2(vote_init) => {
+            check_num_vote_accounts(&instruction.accounts, 2)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "initializeV2".to_string(),
+                info: json!({
+                    "voteAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "node": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "authorizedVoter": vote_init.authorized_voter.to_string(),
+                    "authorizedWithdrawer": vote_init.authorized_withdrawer.to_string(),
+                    "inflationRewardsCommissionBps": vote_init.inflation_rewards_commission_bps,
+                    "inflationRewardsCollector": vote_init.inflation_rewards_collector.to_string(),
+                    "blockRevenueCommissionBps": vote_init.block_revenue_commission_bps,
+                    "blockRevenueCollector": vote_init.block_revenue_collector.to_string(),
+                }),
+            })
+        }
+        VoteInstruction::UpdateCommissionCollector(kind) => {
+            check_num_vote_accounts(&instruction.accounts, 3)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "updateCommissionCollector".to_string(),
+                info: json!({
+                    "voteAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "newCollector": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "withdrawAuthority": account_keys[instruction.accounts[2] as usize].to_string(),
+                    "commissionKind": kind,
+                }),
+            })
+        }
+        VoteInstruction::UpdateCommissionBps {
+            commission_bps,
+            kind,
+        } => {
+            check_num_vote_accounts(&instruction.accounts, 2)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "updateCommissionBps".to_string(),
+                info: json!({
+                    "voteAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "withdrawAuthority": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "commissionBps": commission_bps,
+                    "commissionKind": kind,
+                }),
+            })
+        }
+        VoteInstruction::DepositDelegatorRewards { deposit } => {
+            check_num_vote_accounts(&instruction.accounts, 2)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "depositDelegatorRewards".to_string(),
+                info: json!({
+                    "voteAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "source": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "deposit": deposit,
+                }),
+            })
+        }
     }
 }
 
