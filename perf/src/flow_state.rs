@@ -23,7 +23,6 @@ impl FlowState {
             stream_created_at,
             first_chunk_received_at,
             flow_id: Self::get_flow_id(),
-            signature: None,
         }
     }
 
