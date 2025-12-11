@@ -1,21 +1,6 @@
 use crate::shred::{
-    traits::{Shred, ShredData as ShredDataTrait},
-    Error, ShredType, MAX_DATA_SHREDS_PER_SLOT,
+    traits::ShredData as ShredDataTrait, Error, ShredType, MAX_DATA_SHREDS_PER_SLOT,
 };
-
-// Possibly zero pads bytes stored in blockstore.
-pub(crate) fn resize_stored_shred(shred: Vec<u8>) -> Result<Vec<u8>, Error> {
-    use crate::shred::{merkle, ShredVariant};
-    match crate::shred::layout::get_shred_variant(&shred)? {
-        ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
-        ShredVariant::MerkleData { .. } => {
-            if shred.len() != <merkle::ShredData as Shred>::SIZE_OF_PAYLOAD {
-                return Err(Error::InvalidPayloadSize(shred.len()));
-            }
-            Ok(shred)
-        }
-    }
-}
 
 #[inline]
 pub(super) fn erasure_shard_index<T: ShredDataTrait>(shred: &T) -> Option<usize> {

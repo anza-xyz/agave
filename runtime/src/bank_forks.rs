@@ -329,6 +329,22 @@ impl BankForks {
         bank_with_scheduler
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn reinstall_block_production_scheduler_into_working_genesis_bank(
+        &mut self,
+    ) -> BankWithScheduler {
+        let bank = self.working_bank();
+        assert!(self.banks.len() == 1 && bank.slot() == 0 && !bank.is_frozen());
+        let pool = self.scheduler_pool.as_ref().unwrap();
+        let mode = SchedulingMode::BlockProduction;
+        let bank = Self::install_scheduler_into_bank(pool, mode, bank);
+        self.banks
+            .insert(bank.slot(), bank.clone_with_scheduler())
+            .expect("some removed bank");
+        bank.unpause_new_block_production_scheduler();
+        bank
+    }
+
     #[must_use]
     pub fn toggle_unified_scheduler_block_production_mode(&self, enable: bool) -> bool {
         if let Some(scheduler_pool) = &self.scheduler_pool {

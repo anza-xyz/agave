@@ -45,24 +45,24 @@ impl LeaderScheduleCache {
     }
 
     pub fn new(epoch_schedule: EpochSchedule, root_bank: &Bank) -> Self {
+        let max_epoch = epoch_schedule.get_leader_schedule_epoch(root_bank.slot());
         let cache = Self {
             cached_schedules: RwLock::new((HashMap::new(), VecDeque::new())),
             epoch_schedule,
-            max_epoch: AtomicU64::new(0),
+            max_epoch: AtomicU64::new(max_epoch),
             max_schedules: CacheCapacity::default(),
             fixed_schedule: None,
         };
 
-        // This sets the root and calculates the schedule at leader_schedule_epoch(root)
-        cache.set_root(root_bank);
-
-        // Calculate the schedule for all epochs between 0 and leader_schedule_epoch(root)
-        let leader_schedule_epoch = cache
-            .epoch_schedule
-            .get_leader_schedule_epoch(root_bank.slot());
-        for epoch in 0..leader_schedule_epoch {
-            let first_slot_in_epoch = cache.epoch_schedule.get_first_slot_in_epoch(epoch);
-            cache.slot_leader_at(first_slot_in_epoch, Some(root_bank));
+        // Calculate the schedule for all epochs in epoch stakes
+        let min_epoch = root_bank
+            .epoch_stakes_map()
+            .keys()
+            .min()
+            .copied()
+            .unwrap_or_default();
+        for epoch in min_epoch..=max_epoch {
+            cache.compute_leader_schedule(epoch, root_bank);
         }
         cache
     }
@@ -86,7 +86,7 @@ impl LeaderScheduleCache {
 
         // Calculate the epoch as soon as it's rooted
         if new_max_epoch > old_max_epoch {
-            self.compute_epoch_schedule(new_max_epoch, root_bank);
+            self.compute_leader_schedule(new_max_epoch, root_bank);
         }
     }
 
@@ -122,7 +122,7 @@ impl LeaderScheduleCache {
         }
         // Collect leader schedules first so they stay alive for the iterator chain
         let schedules: Vec<_> = (epoch..=max_epoch)
-            .map(|epoch| self.get_epoch_schedule_else_compute(epoch, bank))
+            .map(|epoch| self.get_leader_schedule_else_compute(epoch, bank))
             .while_some()
             .zip(epoch..)
             .collect();
@@ -186,7 +186,7 @@ impl LeaderScheduleCache {
             cache_result
         } else {
             let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
-            self.compute_epoch_schedule(epoch, bank)
+            self.compute_leader_schedule(epoch, bank)
                 .map(|epoch_schedule| epoch_schedule[slot_index])
         }
     }
@@ -195,7 +195,7 @@ impl LeaderScheduleCache {
         self.cached_schedules.read().unwrap().0.get(&epoch).cloned()
     }
 
-    fn get_epoch_schedule_else_compute(
+    fn get_leader_schedule_else_compute(
         &self,
         epoch: Epoch,
         bank: &Bank,
@@ -207,11 +207,11 @@ impl LeaderScheduleCache {
         if epoch_schedule.is_some() {
             epoch_schedule
         } else {
-            self.compute_epoch_schedule(epoch, bank)
+            self.compute_leader_schedule(epoch, bank)
         }
     }
 
-    fn compute_epoch_schedule(&self, epoch: Epoch, bank: &Bank) -> Option<Arc<LeaderSchedule>> {
+    fn compute_leader_schedule(&self, epoch: Epoch, bank: &Bank) -> Option<Arc<LeaderSchedule>> {
         let leader_schedule = leader_schedule_utils::leader_schedule(epoch, bank);
         leader_schedule.map(|leader_schedule| {
             let leader_schedule = Arc::new(leader_schedule);
@@ -294,11 +294,13 @@ mod tests {
             }
         }
 
+        let (cached_schedules, order) = &*cache.cached_schedules.read().unwrap();
+
         // Should be a schedule for every epoch just checked
-        assert_eq!(
-            cache.cached_schedules.read().unwrap().0.len() as u64,
-            leader_schedule_epoch + 1
-        );
+        assert_eq!(cached_schedules.len() as u64, leader_schedule_epoch + 1);
+
+        // Order should contain every epoch in order of lowest to highest
+        assert_eq!(order, &VecDeque::from_iter(0..=leader_schedule_epoch));
     }
 
     #[test]
@@ -544,7 +546,7 @@ mod tests {
             expected_slot += bank.get_slots_in_epoch(i);
         }
 
-        let schedule = cache.compute_epoch_schedule(epoch, &bank).unwrap();
+        let schedule = cache.compute_leader_schedule(epoch, &bank).unwrap();
         let mut index = 0;
         while schedule[index] != node_pubkey {
             index += 1;

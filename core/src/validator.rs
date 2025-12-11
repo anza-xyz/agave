@@ -201,6 +201,8 @@ impl BlockVerificationMethod {
 #[derive(
     Clone,
     Debug,
+    EnumCount,
+    EnumIter,
     EnumString,
     EnumVariantNames,
     Default,

@@ -1,5 +1,5 @@
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{criterion_group, criterion_main, Criterion, Throughput},
     itertools::iproduct,
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
     solana_instruction::{AccountMeta, Instruction},
@@ -9,7 +9,7 @@ use {
         sanitized::{SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         Transaction,
     },
-    std::sync::Arc,
+    std::{hint::black_box, sync::Arc},
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]

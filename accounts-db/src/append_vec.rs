@@ -8,9 +8,9 @@ mod meta;
 pub mod test_utils;
 
 #[cfg(feature = "dev-context-only-utils")]
-pub use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
+pub use meta::StoredAccountMeta;
 #[cfg(not(feature = "dev-context-only-utils"))]
-use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
+use meta::StoredAccountMeta;
 use {
     crate::{
         account_info::Offset,
@@ -30,7 +30,7 @@ use {
     },
     log::*,
     memmap2::MmapMut,
-    meta::StoredAccountNoData,
+    meta::{AccountMeta, StoredAccountNoData, StoredMeta},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -361,14 +361,6 @@ impl AppendVec {
             APPEND_VEC_STATS.files_dirty.fetch_sub(1, Ordering::Relaxed);
         }
         Ok(())
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn reset(&self) {
-        // Writable state's mutex forces append to be single threaded, but concurrent
-        // with reads. See UNSAFE usage in `append_ptr`
-        let _lock = self.read_write_state.append_guard();
-        self.current_len.store(0, Ordering::Release);
     }
 
     /// Return AppendVec opened in read-only file-io mode or `None` if it already is such
@@ -710,7 +702,7 @@ impl AppendVec {
     ///
     /// Prefer get_stored_account_callback() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
-    pub fn get_stored_account_meta_callback<Ret>(
+    fn get_stored_account_meta_callback<Ret>(
         &self,
         offset: usize,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
@@ -919,7 +911,7 @@ impl AppendVec {
                 r2.as_ref().unwrap()
             ));
             assert_eq!(sizes, r_callback.stored_size());
-            let pubkey = r_callback.meta().pubkey;
+            let pubkey = r_callback.meta.pubkey;
             Some((pubkey, create_account_shared_data(&r_callback)))
         });
         if result.is_none() {
@@ -1011,7 +1003,6 @@ impl AppendVec {
     ///
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
-    #[allow(clippy::blocks_in_conditions)]
     fn scan_accounts_stored_meta<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
@@ -1358,14 +1349,14 @@ impl ObsoleteAccountHash {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::{test_utils::*, *},
         assert_matches::assert_matches,
         memoffset::offset_of,
         rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
-        solana_account::{accounts_equal, Account, AccountSharedData, WritableAccount},
+        solana_account::{accounts_equal, AccountSharedData, WritableAccount},
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::{test_case, test_matrix},
@@ -1388,43 +1379,6 @@ pub mod tests {
 
     // Offset of the first account's `data_len` field.
     const ACCOUNT_0_DATA_LEN_OFFSET: u64 = core::mem::offset_of!(StoredMeta, data_len) as u64;
-
-    #[test]
-    fn test_account_meta_default() {
-        let def1 = AccountMeta::default();
-        let def2 = AccountMeta::from(&Account::default());
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(&AccountSharedData::default());
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(Some(&AccountSharedData::default()));
-        assert_eq!(&def1, &def2);
-        let none: Option<&AccountSharedData> = None;
-        let def2 = AccountMeta::from(none);
-        assert_eq!(&def1, &def2);
-    }
-
-    #[test]
-    fn test_account_meta_non_default() {
-        let def1 = AccountMeta {
-            lamports: 1,
-            owner: Pubkey::new_unique(),
-            executable: true,
-            rent_epoch: 3,
-        };
-        let def2_account = Account {
-            lamports: def1.lamports,
-            owner: def1.owner,
-            executable: def1.executable,
-            rent_epoch: def1.rent_epoch,
-            data: Vec::new(),
-        };
-        let def2 = AccountMeta::from(&def2_account);
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(&AccountSharedData::from(def2_account.clone()));
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(Some(&AccountSharedData::from(def2_account)));
-        assert_eq!(&def1, &def2);
-    }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
@@ -1945,19 +1899,6 @@ pub mod tests {
 
         let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
-    }
-
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_append_vec_reset(storage_access: StorageAccess) {
-        let file = get_append_vec_path("test_append_vec_reset");
-        let path = &file.path;
-        let av = AppendVec::new(path, true, 1024 * 1024, storage_access);
-        av.append_account_test(&create_test_account(10)).unwrap();
-
-        assert!(!av.is_empty());
-        av.reset();
-        assert_eq!(av.len(), 0);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]

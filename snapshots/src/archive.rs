@@ -3,6 +3,7 @@ use {
         error::ArchiveSnapshotPackageError, paths, snapshot_archive_info::SnapshotArchiveInfo,
         snapshot_hash::SnapshotHash, ArchiveFormat, Result, SnapshotArchiveKind,
     },
+    agave_fs::buffered_writer::large_file_buf_writer,
     log::info,
     solana_accounts_db::{
         account_storage::AccountStoragesOrderer, account_storage_reader::AccountStorageReader,
@@ -87,7 +88,7 @@ pub fn archive_snapshot(
     ));
 
     {
-        let archive_file = fs::File::create(&staging_archive_path)
+        let archive_writer = large_file_buf_writer(&staging_archive_path)
             .map_err(|err| E::CreateArchiveFile(err, staging_archive_path.clone()))?;
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {
@@ -140,7 +141,7 @@ pub fn archive_snapshot(
         match archive_format {
             ArchiveFormat::TarZstd { config } => {
                 let mut encoder =
-                    zstd::stream::Encoder::new(archive_file, config.compression_level)
+                    zstd::stream::Encoder::new(archive_writer, config.compression_level)
                         .map_err(E::CreateEncoder)?;
                 do_archive_files(&mut encoder)?;
                 encoder.finish().map_err(E::FinishEncoder)?;
@@ -148,7 +149,7 @@ pub fn archive_snapshot(
             ArchiveFormat::TarLz4 => {
                 let mut encoder = lz4::EncoderBuilder::new()
                     .level(1)
-                    .build(archive_file)
+                    .build(archive_writer)
                     .map_err(E::CreateEncoder)?;
                 do_archive_files(&mut encoder)?;
                 let (_output, result) = encoder.finish();

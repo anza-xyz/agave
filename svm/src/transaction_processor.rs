@@ -1083,10 +1083,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     == TRANSACTION_LEVEL_STACK_HEIGHT)
                 .unwrap_or(true));
 
-            let (ix_trace, ix_accounts, ix_data_trace) =
-                transaction_context.take_instruction_trace();
+            let (ix_trace, accounts, ix_data_trace) = transaction_context.take_instruction_trace();
             let mut outer_instructions = Vec::new();
-            for (ix_in_trace, ix_data) in ix_trace.into_iter().zip(ix_data_trace.into_iter()) {
+            for ((ix_in_trace, ix_data), ix_accounts) in ix_trace
+                .into_iter()
+                .zip(ix_data_trace.into_iter())
+                .zip(accounts)
+            {
                 let stack_height = ix_in_trace.nesting_level.saturating_add(1);
                 if stack_height == TRANSACTION_LEVEL_STACK_HEIGHT {
                     outer_instructions.push(Vec::new());
@@ -1096,7 +1099,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         instruction: CompiledInstruction::new_from_raw_parts(
                             ix_in_trace.program_account_index_in_tx as u8,
                             ix_data.into_owned(),
-                            ix_accounts[ix_in_trace.instruction_accounts_range()]
+                            ix_accounts
                                 .iter()
                                 .map(|acc| acc.index_in_transaction as u8)
                                 .collect(),
