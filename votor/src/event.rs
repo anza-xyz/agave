@@ -1,8 +1,8 @@
 use {
-    agave_votor_messages::consensus_message::Block,
     crossbeam_channel::{Receiver, Sender},
     solana_clock::Slot,
     solana_runtime::bank::Bank,
+    solana_votor_messages::consensus_message::Block,
     std::{sync::Arc, time::Instant},
 };
 
@@ -58,7 +58,7 @@ pub enum VotorEvent {
     /// Produce the window
     ProduceWindow(LeaderWindowInfo),
 
-    /// The block has received a slow or fast finalization certificate and is eligible for rooting
+    /// The block has received a slow or fast finalization certificate and is eligble for rooting
     /// The second bool indicates whether the block is a fast finalization
     Finalized(Block, bool),
 
