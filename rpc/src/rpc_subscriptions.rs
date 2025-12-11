@@ -1041,7 +1041,7 @@ impl RpcSubscriptions {
                                             RpcResponse::from(RpcNotificationResponse {
                                                 context: RpcNotificationContext { slot: s },
                                                 value: RpcBlockUpdate {
-                                                    slot,
+                                                    slot: s,
                                                     block: None,
                                                     err: Some(err),
                                                 },
@@ -1650,6 +1650,53 @@ pub(crate) mod tests {
         subscriptions
             .control
             .assert_unsubscribed(&SubscriptionParams::Block(params));
+    }
+
+    #[test]
+    #[serial]
+    fn test_block_subscribe_error_slot_consistency() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let blockstore = Arc::new(blockstore);
+        // Do NOT populate blockstore to force get_complete_block() to error
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
+
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests_with_blockstore(
+            exit,
+            max_complete_transaction_status_slot,
+            blockstore,
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
+            optimistically_confirmed_bank,
+        ));
+
+        let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&subscriptions);
+        let filter = RpcBlockSubscribeFilter::All;
+        let config = RpcBlockSubscribeConfig {
+            commitment: Some(CommitmentConfig::confirmed()),
+            encoding: Some(UiTransactionEncoding::Json),
+            transaction_details: Some(TransactionDetails::Signatures),
+            show_rewards: None,
+            max_supported_transaction_version: None,
+        };
+        let _sub_id = rpc.block_subscribe(filter, Some(config)).unwrap();
+
+        // Trigger notification for slot 0; blockstore lacks this block so it should error
+        let slot = 0u64;
+        subscriptions.notify_gossip_subscribers(slot);
+        let actual_resp = receiver.recv();
+
+        let v: serde_json::Value = serde_json::from_str(&actual_resp).unwrap();
+        let context_slot = v["params"]["result"]["context"]["slot"].as_u64().unwrap();
+        let value_slot = v["params"]["result"]["value"]["slot"].as_u64().unwrap();
+        assert_eq!(context_slot, slot);
+        assert_eq!(value_slot, slot);
     }
 
     #[test]
