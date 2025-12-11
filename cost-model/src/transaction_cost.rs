@@ -289,6 +289,10 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
     fn instruction_data_len(&self) -> u16 {
         unimplemented!("WritableKeysTransaction::instruction_data_len")
     }
+
+    fn flow_id(&self) -> Option<u64> {
+        unimplemented!("WritableKeysTransaction::flow_id")
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -351,6 +355,7 @@ mod tests {
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
             true,
+            None,
         )
         .unwrap();
 
@@ -371,6 +376,7 @@ mod tests {
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
             true,
+            None,
         )
         .unwrap();
 

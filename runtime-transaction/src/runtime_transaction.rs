@@ -35,6 +35,7 @@ pub struct RuntimeTransaction<T> {
     // transaction meta is a collection of fields, it is updated
     // during message state transition
     meta: TransactionMeta,
+    flow_id: Option<u64>,
 }
 
 impl<T> RuntimeTransaction<T> {
@@ -58,6 +59,9 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     }
     fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len
+    }
+    fn flow_id(&self) -> Option<u64> {
+        self.flow_id
     }
 }
 

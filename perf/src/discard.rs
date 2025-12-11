@@ -28,7 +28,7 @@ mod tests {
     fn test_batch_discard_random() {
         agave_logger::setup();
         let mut batch = BytesPacketBatch::new();
-        batch.resize(1, BytesPacket::new(Bytes::new(), Meta::default()));
+        batch.resize(1, BytesPacket::new(Bytes::new(), Meta::default(), None));
         let batch = PacketBatch::from(batch);
         let num_batches = 100;
         let mut batches = vec![batch; num_batches];

@@ -3014,6 +3014,8 @@ impl Bank {
                     self,
                     self.get_reserved_account_keys(),
                     enable_static_instruction_limit,
+                    // used for tests only so setting None
+                    None,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4784,6 +4786,7 @@ impl Bank {
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
+        flow_id: Option<u64>,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
         let enable_static_instruction_limit = self
             .feature_set
@@ -4815,6 +4818,7 @@ impl Bank {
                 self,
                 self.get_reserved_account_keys(),
                 enable_static_instruction_limit,
+                flow_id,
             )
         }?;
 
@@ -4824,8 +4828,9 @@ impl Bank {
     pub fn fully_verify_transaction(
         &self,
         tx: VersionedTransaction,
+        flow_id: Option<u64>,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
+        self.verify_transaction(tx, TransactionVerificationMode::FullVerification, flow_id)
     }
 
     /// Checks if the transaction violates the bank's reserved keys.

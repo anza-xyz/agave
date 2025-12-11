@@ -22,6 +22,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
         sanitized_versioned_tx: SanitizedVersionedTransaction,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
+        flow_id: Option<u64>,
     ) -> Result<Self> {
         let message_hash = match message_hash {
             MessageHash::Precomputed(hash) => hash,
@@ -67,6 +68,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                 compute_budget_instruction_details,
                 instruction_data_len,
             },
+            flow_id,
         })
     }
 }
@@ -81,6 +83,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
         enable_static_instruction_limit: bool,
+        flow_id: Option<u64>,
     ) -> Result<Self> {
         if enable_static_instruction_limit
             && tx.message.instructions().len()
@@ -93,6 +96,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
                 SanitizedVersionedTransaction::try_from(tx)?,
                 message_hash,
                 is_simple_vote_tx,
+                flow_id,
             )?;
         Self::try_from(
             statically_loaded_runtime_tx,
@@ -122,6 +126,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         let mut tx = Self {
             transaction: sanitized_transaction,
             meta: statically_loaded_runtime_tx.meta,
+            flow_id: statically_loaded_runtime_tx.flow_id,
         };
         tx.load_dynamic_metadata()?;
 
@@ -157,6 +162,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
             enable_static_instruction_limit,
+            None,
         )
         .expect("failed to create RuntimeTransaction from Transaction")
     }
@@ -257,6 +263,7 @@ mod tests {
                 svt,
                 MessageHash::Compute,
                 is_simple_vote,
+                None,
             )
             .unwrap()
             .meta
@@ -293,6 +300,7 @@ mod tests {
                 non_vote_sanitized_versioned_transaction(),
                 MessageHash::Precomputed(hash),
                 None,
+                None,
             )
             .unwrap();
 
@@ -327,6 +335,7 @@ mod tests {
                     .add_loaded_accounts_bytes(loaded_accounts_bytes)
                     .to_sanitized_versioned_transaction(),
                 MessageHash::Precomputed(hash),
+                None,
                 None,
             )
             .unwrap();
