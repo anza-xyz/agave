@@ -292,6 +292,21 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &clock,
             )
         }
+        VoteInstruction::DepositDelegatorRewards { deposit: _ } => {
+            //TODO: implement this
+            Err(InstructionError::InvalidInstructionData)
+        }
+        VoteInstruction::UpdateCommissionBps {
+            commission_bps: _,
+            kind: _,
+        } => {
+            //TODO: implement this
+            Err(InstructionError::InvalidInstructionData)
+        }
+        VoteInstruction::UpdateCommissionCollector(_new_collector) => {
+            //TODO: implement this
+            Err(InstructionError::InvalidInstructionData)
+        }
     }
 });
 

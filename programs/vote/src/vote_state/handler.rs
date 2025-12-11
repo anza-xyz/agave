@@ -678,9 +678,13 @@ impl VoteStateHandle for VoteStateHandler {
         F: Fn(Pubkey) -> Result<(), InstructionError>,
     {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => {
-                v3.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
-            }
+            TargetVoteState::V3(v3) => v3.set_new_authorized_voter(
+                authorized_pubkey,
+                current_epoch,
+                target_epoch,
+                bls_pubkey,
+                verify,
+            ),
             TargetVoteState::V4(v4) => v4.set_new_authorized_voter(
                 authorized_pubkey,
                 current_epoch,
@@ -1330,7 +1334,7 @@ mod tests {
         // Set an authorized voter change at slot 7
         let new_authorized_voter = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_authorized_voter, 5, 7, |_| Ok(()))
+            .set_new_authorized_voter(&new_authorized_voter, 5, 7, None, |_| Ok(()))
             .unwrap();
 
         // Try to get the authorized voter for epoch 6, unchanged
