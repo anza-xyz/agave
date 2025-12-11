@@ -67,7 +67,7 @@ impl TransactionRecorder {
                 bank_id,
                 vec![hash],
                 vec![transactions],
-                vec![flow_state]
+                Some(vec![flow_state])
             ));
             record_transactions_timings.poh_record_us = Saturating(poh_record_us);
 
@@ -111,7 +111,7 @@ impl TransactionRecorder {
         bank_id: BankId,
         transactions: Vec<VersionedTransaction>,
     ) -> RecordTransactionsSummary {
-        self.record_transactions_with_flow_state(bank_id, transactions, None)
+        self.record_transactions(bank_id, transactions)
     }
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank

@@ -406,6 +406,18 @@ impl Consumer {
             ));
         execute_and_commit_timings.record_us = record_us;
 
+        let RecordTransactionsSummary {
+            result: record_transactions_result,
+            record_transactions_timings,
+            starting_transaction_index,
+        } = record_transactions_summary;
+        execute_and_commit_timings.record_transactions_timings = RecordTransactionsTimings {
+            processing_results_to_transactions_us: Saturating(
+                processing_results_to_transactions_us,
+            ),
+            ..record_transactions_timings
+        };
+
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
                 |(index, processing_result)| {
