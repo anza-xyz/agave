@@ -937,10 +937,12 @@ pub fn verify_bls_proof_of_possession(
         BLSProofOfPossession::try_from(bls_proof_of_possession_compressed)
             .map_err(|_| InstructionError::InvalidArgument)?;
     let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
-    bls_proof_of_possession
-        .verify(&bls_pubkey, Some(&message))
-        .map_err(|_| InstructionError::InvalidArgument)?;
-    Ok(())
+    if Ok(true) == bls_proof_of_possession
+        .verify(&bls_pubkey, Some(&message)) {
+        Ok(())
+    } else {
+        Err(InstructionError::InvalidArgument)
+    }
 }
 
 /// Withdraw funds from the vote account
@@ -4019,7 +4021,7 @@ mod tests {
 
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
-            vec![(id(), processor_account), (node_pubkey, vote_account)],
+            vec![(id(), processor_account), (vote_account_pubkey, vote_account)],
             rent,
             0,
             0,
@@ -4052,8 +4054,7 @@ mod tests {
             &signers,
             &clock,
             true,
-        )
-        .is_ok());
+        ).is_ok());
         let vote_state =
             VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
         assert_eq!(vote_state.bls_pubkey_compressed, Some(bls_pubkey));
