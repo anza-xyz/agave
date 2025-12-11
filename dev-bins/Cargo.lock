@@ -131,7 +131,7 @@ dependencies = [
  "itertools 0.13.0",
  "log",
  "num_cpus",
- "pretty-hex",
+ "pretty-hex 0.3.0",
  "rayon",
  "regex",
  "serde",
@@ -4772,6 +4772,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6fa0831dd7cc608c38a5e323422a0077678fa5744aa2be4ad91c4ece8eec8d5"
 
 [[package]]
+name = "pretty-hex"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbc83ee4a840062f368f9096d80077a9841ec117e17e7f700df81958f1451254"
+
+[[package]]
 name = "prettyplease"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6666,7 +6672,7 @@ dependencies = [
  "console 0.16.1",
  "humantime",
  "indicatif 0.18.3",
- "pretty-hex",
+ "pretty-hex 0.4.1",
  "semver",
  "serde",
  "serde_json",
