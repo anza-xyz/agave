@@ -6,24 +6,25 @@ use {
     },
 };
 
-const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(1);
+const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(10);
 
-pub(super) struct Stats {
-    pub(super) add_message_failed: Saturating<usize>,
-    pub(super) certificates_sent: Saturating<usize>,
-    pub(super) certificates_dropped: Saturating<usize>,
-    pub(super) new_finalized_slot: Saturating<usize>,
-    pub(super) parent_ready_missed_window: Saturating<usize>,
-    pub(super) parent_ready_produce_window: Saturating<usize>,
-    pub(super) received_votes: Saturating<usize>,
-    pub(super) received_certificates: Saturating<usize>,
-    pub(super) standstill: bool,
-    pub(super) prune_old_state_called: Saturating<usize>,
+#[derive(Debug)]
+pub(crate) struct ConsensusPoolServiceStats {
+    pub(crate) add_message_failed: Saturating<usize>,
+    pub(crate) certificates_sent: Saturating<usize>,
+    pub(crate) certificates_dropped: Saturating<usize>,
+    pub(crate) new_finalized_slot: Saturating<usize>,
+    pub(crate) parent_ready_missed_window: Saturating<usize>,
+    pub(crate) parent_ready_produce_window: Saturating<usize>,
+    pub(crate) received_votes: Saturating<usize>,
+    pub(crate) received_certificates: Saturating<usize>,
+    pub(crate) standstill: bool,
+    pub(crate) prune_old_state_called: Saturating<usize>,
     last_request_time: Instant,
 }
 
-impl Default for Stats {
-    fn default() -> Self {
+impl ConsensusPoolServiceStats {
+    pub fn new() -> Self {
         Self {
             add_message_failed: Saturating(0),
             certificates_sent: Saturating(0),
@@ -38,9 +39,7 @@ impl Default for Stats {
             last_request_time: Instant::now(),
         }
     }
-}
 
-impl Stats {
     fn report(&self) {
         let &Self {
             add_message_failed: Saturating(add_message_failed),
@@ -53,7 +52,7 @@ impl Stats {
             received_certificates: Saturating(received_certificates),
             standstill,
             prune_old_state_called: Saturating(prune_old_state_called),
-            last_request_time: _,
+            ..
         } = self;
         datapoint_info!(
             "consensus_pool_service",
@@ -73,15 +72,15 @@ impl Stats {
             ),
             ("received_votes", received_votes, i64),
             ("received_certificates", received_certificates, i64),
-            ("entered_standstill_bool", standstill, bool),
+            ("in_standstill_bool", standstill, bool),
             ("prune_old_state_called", prune_old_state_called, i64),
         );
     }
 
-    pub(super) fn maybe_report(&mut self) {
+    pub fn maybe_report(&mut self) {
         if self.last_request_time.elapsed() >= STATS_REPORT_INTERVAL {
             self.report();
-            *self = Self::default();
+            *self = Self::new();
         }
     }
 }

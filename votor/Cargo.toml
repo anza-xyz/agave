@@ -1,9 +1,10 @@
 [package]
-name = "agave-votor"
-documentation = "https://docs.rs/agave-votor"
+name = "solana-votor"
+description = "Blockchain, Rebuilt for Scale"
+documentation = "https://docs.rs/solana-votor"
+readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
-description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -11,7 +12,10 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
+dev-context-only-utils = [
+    "solana-runtime/dev-context-only-utils",
+    "solana-votor-messages/dev-context-only-utils",
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -19,19 +23,19 @@ frozen-abi = [
     "solana-bloom/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-runtime/frozen-abi",
-    "solana-signature/frozen-abi",
-    "agave-votor-messages/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
+    "solana-votor-messages/frozen-abi",
 ]
 
 [dependencies]
-agave-logger = { workspace = true }
-agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
 bitvec = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+etcd-client = { workspace = true, features = ["tls"] }
 histogram = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -41,10 +45,11 @@ qualifier_attr = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
+serde_derive = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
-solana-bls-signatures = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-connection-cache = { workspace = true }
@@ -61,6 +66,7 @@ solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
+solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -69,11 +75,13 @@ solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
+solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor-messages = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
@@ -83,9 +91,8 @@ solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-tempfile = { workspace = true }
+solana-votor = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
-tokio-util = { workspace = true }
 
 [lints]
 workspace = true
