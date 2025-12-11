@@ -276,9 +276,7 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let bls_pubkey_compressed_bytes = bls_pubkeys_iter
-            .next()
-            .map(|bls_pubkey| bls_pubkey.0);
+        let bls_pubkey_compressed_bytes = bls_pubkeys_iter.next().map(|bls_pubkey| bls_pubkey.0);
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
@@ -1313,10 +1311,13 @@ mod tests {
         assert_eq!(genesis_config.accounts.len(), 3);
     }
 
-    #[test_case(true; "add bls pubkey")]
-    #[test_case(false; "no bls pubkey")]
-    // It's wrong to have (true, false) combination, Alpenglow requires BLS keys
-    fn test_append_validator_accounts_to_genesis(add_bls_pubkey: bool) {
+    #[test_case(true, true; "add bls compressed pubkey")]
+    #[test_case(true, false; "add bls pubkey")]
+    #[test_case(false, false; "no bls pubkey")]
+    fn test_append_validator_accounts_to_genesis(
+        add_bls_pubkey: bool,
+        use_compressed_pubkey: bool,
+    ) {
         // Test invalid file returns error
         assert!(load_validator_accounts(
             "unknownfile",
@@ -1331,8 +1332,12 @@ mod tests {
         let generate_bls_pubkey = || {
             if add_bls_pubkey {
                 let bls_pubkey = BLSKeypair::new().public;
-                let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
-                Some(bls_pubkey_compressed.to_string())
+                if use_compressed_pubkey {
+                    let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
+                    return Some(bls_pubkey_compressed.to_string());
+                } else {
+                    Some(bls_pubkey.to_string())
+                }
             } else {
                 None
             }
@@ -1367,17 +1372,21 @@ mod tests {
         let serialized = serde_yaml::to_string(&validator_accounts).unwrap();
 
         // write accounts to file
-        let filename = if add_bls_pubkey {
-            "test_append_validator_accounts_to_genesis_with_bls.yml"
-        } else {
-            "test_append_validator_accounts_to_genesis_without_bls.yml"
-        };
-        let path = Path::new(filename);
+        let filename = format!(
+            "test_append_validator_accounts_to_genesis_{}_{}_bls.yml",
+            if add_bls_pubkey { "with" } else { "without" },
+            if use_compressed_pubkey {
+                "compressed"
+            } else {
+                "uncompressed"
+            }
+        );
+        let path = Path::new(&filename);
         let mut file = File::create(path).unwrap();
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
-        load_validator_accounts(filename, 100, &Rent::default(), &mut genesis_config)
+        load_validator_accounts(&filename, 100, &Rent::default(), &mut genesis_config)
             .expect("Failed to load validator accounts");
 
         remove_file(path).unwrap();
@@ -1409,9 +1418,15 @@ mod tests {
                 let authorized_voters = &vote_state.authorized_voters;
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
                 if add_bls_pubkey {
-                    let bls_pubkey_compressed_from_input =
+                    let bls_pubkey_compressed_from_input = if use_compressed_pubkey {
                         BLSPubkeyCompressed::from_str(b64_account.bls_pubkey.as_ref().unwrap())
-                            .expect("failed to parse BLS pubkey from input");
+                            .expect("failed to parse BLS pubkey from input")
+                    } else {
+                        BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap())
+                            .expect("failed to parse BLS pubkey from input")
+                            .try_into()
+                            .expect("failed to convert BLS pubkey to compressed form")
+                    };
                     let bls_pubkey_compressed_from_account = BLSPubkeyCompressed(
                         vote_state
                             .bls_pubkey_compressed
