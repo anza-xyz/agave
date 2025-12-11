@@ -17,17 +17,29 @@ pub struct CommandArgs {
     pub from: String,
     #[arg(long, required = true)]
     pub to: String,
+    #[arg(long, default_value = "[]", value_delimiter = ',')]
+    pub exclude_paths: Vec<PathBuf>,
 }
 
 pub fn run(args: CommandArgs) -> Result<()> {
     let all_cargo_tomls = common::recursive_find_files(&args.root_path, "Cargo.toml", |_| true)?;
-    for cargo_toml in all_cargo_tomls {
+
+    'MAIN_LOOP: for cargo_toml in all_cargo_tomls {
         let content = fs::read_to_string(&cargo_toml)?;
         let mut doc = content.parse::<DocumentMut>()?;
 
         let mut need_to_write = false;
 
         info!("[{}]", cargo_toml.display());
+        for exclude_path in &args.exclude_paths {
+            if cargo_toml
+                .to_string_lossy()
+                .contains(exclude_path.to_string_lossy().as_ref())
+            {
+                info!("  ⏩ skipped (exclude path)");
+                continue 'MAIN_LOOP;
+            }
+        }
 
         // update workspace.dependencies
         if let Some(workspace_deps) = doc
@@ -55,7 +67,7 @@ pub fn run(args: CommandArgs) -> Result<()> {
         if need_to_write {
             fs::write(&cargo_toml, doc.to_string())?;
         } else {
-            info!("  ⏩ skipped");
+            info!("  ⏩ skipped (no changes)");
         }
     }
     Ok(())

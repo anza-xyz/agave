@@ -31,6 +31,8 @@ fn test_update_crate() {
             "3.0.0",
             "--to",
             "3.1.0",
+            "--exclude-paths",
+            "f",
         ])
         .unwrap();
     assert!(
@@ -84,8 +86,8 @@ fn test_update_crate() {
     // verify f/Cargo.toml
     let f_cargo_toml_content = fs::read_to_string(root_path.join("sub/f/Cargo.toml")).unwrap();
     assert!(
-        f_cargo_toml_content.contains(r#"solana-frozen-abi = "3.1.0""#),
-        "f/Cargo.toml should be updated to 3.1.0"
+        f_cargo_toml_content.contains(r#"solana-frozen-abi = "3.0.0""#),
+        "f/Cargo.toml should not change because it is excluded"
     );
 
     // verify g/Cargo.toml
