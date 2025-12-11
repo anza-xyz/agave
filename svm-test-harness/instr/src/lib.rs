@@ -3,6 +3,7 @@
 //! This crate provides an API for Agave's program runtime in order to
 //! execute program instructions directly against the VM.
 
+mod compile_accounts;
 pub mod file;
 mod harness;
 pub mod keyed_account;

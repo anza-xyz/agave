@@ -1,10 +1,13 @@
 //! Instruction harness.
 
 use {
-    crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
+    crate::{
+        compile_accounts::{compile_accounts, CompiledAccounts},
+        fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
+    },
     agave_precompiles::{get_precompile, is_precompile},
     agave_syscalls::create_program_runtime_environment_v1,
-    solana_account::AccountSharedData,
+    solana_account::Account,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_precompile_error::PrecompileError,
@@ -14,15 +17,11 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
-    solana_rent::Rent,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction_context::{
-        instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
-        IndexOfAccount, TransactionContext,
-    },
-    std::{rc::Rc, sync::Arc},
+    solana_transaction_context::TransactionContext,
+    std::{collections::HashMap, rc::Rc, sync::Arc},
 };
 
 /// Implement the callback trait so that the SVM API can be used to load
@@ -52,54 +51,6 @@ impl InvokeContextCallback for InstrContextCallback<'_> {
     }
 }
 
-fn compile_accounts<'a>(
-    input: &'a InstrContext,
-    compute_budget: &ComputeBudget,
-    rent: Rent,
-    loader_key: &Pubkey,
-) -> (Vec<InstructionAccount>, TransactionContext<'a>) {
-    let mut transaction_accounts: Vec<KeyedAccountSharedData> = input
-        .accounts
-        .iter()
-        .map(|(pubkey, account)| (*pubkey, AccountSharedData::from(account.clone())))
-        .collect();
-
-    // Add default account for the program being invoked if not already present.
-    if !transaction_accounts
-        .iter()
-        .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
-    {
-        transaction_accounts.push((
-            input.instruction.program_id,
-            AccountSharedData::new(0, 0, loader_key),
-        ));
-    }
-
-    let transaction_context = TransactionContext::new(
-        transaction_accounts.clone(),
-        rent,
-        compute_budget.max_instruction_stack_depth,
-        compute_budget.max_instruction_trace_length,
-    );
-
-    let num_transaction_accounts = transaction_context.get_number_of_accounts();
-
-    let instruction_accounts = input
-        .instruction
-        .accounts
-        .iter()
-        .map(|meta| {
-            let index_in_transaction = transaction_context
-                .find_index_of_account(&meta.pubkey)
-                .unwrap_or(num_transaction_accounts)
-                as IndexOfAccount;
-            InstructionAccount::new(index_in_transaction, meta.is_signer, meta.is_writable)
-        })
-        .collect();
-
-    (instruction_accounts, transaction_context)
-}
-
 /// Execute a single instruction against the Solana VM.
 pub fn execute_instr(
     input: InstrContext,
@@ -114,12 +65,35 @@ pub fn execute_instr(
     let runtime_features = input.feature_set.runtime_features();
 
     let rent = sysvar_cache.get_rent().unwrap();
-    let loader_key = program_cache
-        .find(&input.instruction.program_id)?
-        .account_owner();
 
-    let (instruction_accounts, mut transaction_context) =
-        compile_accounts(&input, compute_budget, (*rent).clone(), &loader_key);
+    let program_id = &input.instruction.program_id;
+    let loader_key = program_cache.find(program_id)?.account_owner();
+
+    // Stub the program account if it wasn't provided.
+    let mut fallbacks = HashMap::new();
+    if !input.accounts.iter().any(|(key, _)| key == program_id) {
+        fallbacks.insert(
+            *program_id,
+            Account {
+                owner: loader_key,
+                executable: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    let CompiledAccounts {
+        program_id_index,
+        instruction_accounts,
+        transaction_accounts,
+    } = compile_accounts(&input.instruction, input.accounts.iter(), &fallbacks);
+
+    let mut transaction_context = TransactionContext::new(
+        transaction_accounts,
+        (*rent).clone(),
+        compute_budget.max_instruction_stack_depth,
+        compute_budget.max_instruction_trace_length,
+    );
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
@@ -134,7 +108,6 @@ pub fn execute_instr(
         ..ProgramRuntimeEnvironments::default()
     };
 
-    let instruction_data = input.instruction.data.iter().copied().collect::<Vec<_>>();
     let result = {
         #[allow(deprecated)]
         let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
@@ -145,9 +118,6 @@ pub fn execute_instr(
             .unwrap_or_default();
 
         let callback = InstrContextCallback(&input);
-
-        let program_idx =
-            transaction_context.find_index_of_account(&input.instruction.program_id)?;
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
@@ -169,7 +139,7 @@ pub fn execute_instr(
         invoke_context
             .transaction_context
             .configure_next_instruction_for_tests(
-                program_idx,
+                program_id_index,
                 instruction_accounts,
                 input.instruction.data.to_vec(),
             )
@@ -179,7 +149,7 @@ pub fn execute_instr(
             invoke_context.process_precompile(
                 &input.instruction.program_id,
                 &input.instruction.data,
-                [instruction_data.as_slice()].into_iter(),
+                [input.instruction.data.as_slice()].into_iter(),
             )
         } else {
             invoke_context.process_instruction(&mut compute_units_consumed, &mut timings)
@@ -232,9 +202,12 @@ pub fn execute_instr(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, agave_feature_set::FeatureSet, solana_account::Account,
-        solana_instruction::AccountMeta, solana_pubkey::Pubkey,
-        solana_stable_layout::stable_instruction::StableInstruction, solana_sysvar_id::SysvarId,
+        super::*,
+        agave_feature_set::FeatureSet,
+        solana_account::Account,
+        solana_instruction::{AccountMeta, Instruction},
+        solana_pubkey::Pubkey,
+        solana_sysvar_id::SysvarId,
     };
 
     #[test]
@@ -316,7 +289,7 @@ mod tests {
                     },
                 ),
             ],
-            instruction: StableInstruction {
+            instruction: Instruction {
                 program_id: system_program_id,
                 accounts: vec![
                     AccountMeta {
@@ -329,14 +302,12 @@ mod tests {
                         is_signer: false,
                         is_writable: true,
                     },
-                ]
-                .into(),
+                ],
                 data: vec![
                     // Transfer
                     0x02, 0x00, 0x00, 0x00, // Lamports
                     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                ]
-                .into(),
+                ],
             },
         };
 
