@@ -43,7 +43,7 @@ solana-net-utils = { workspace = true }
 solana-packet = "=4.0.0"
 solana-pubkey = { version = "=4.0.0", features = ["rand"] }
 solana-signer = "=3.0.0"
-solana-system-interface = "=2.0"
+solana-system-interface = "=3.0"
 solana-system-transaction = "=3.0.0"
 solana-transaction = "=3.0.2"
 solana-version = { workspace = true }
