@@ -280,10 +280,12 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     }
 }
 
-pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
-    for feature_id in FeatureSet::default().inactive() {
-        activate_feature(genesis_config, *feature_id);
-    }
+pub fn activate_all_features_besides_alpenglow(genesis_config: &mut GenesisConfig) {
+    FeatureSet::default()
+        .inactive()
+        .into_iter()
+        .filter(|feature| **feature != agave_feature_set::alpenglow::id())
+        .for_each(|feature| activate_feature(genesis_config, *feature));
 }
 
 pub fn deactivate_features(
