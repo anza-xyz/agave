@@ -26,7 +26,7 @@ use {
 };
 
 /// CPI-specific error types
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum CpiError {
     #[error("Invalid pointer")]
     InvalidPointer,
