@@ -1334,7 +1334,7 @@ mod tests {
                 let bls_pubkey = BLSKeypair::new().public;
                 if use_compressed_pubkey {
                     let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
-                    return Some(bls_pubkey_compressed.to_string());
+                    Some(bls_pubkey_compressed.to_string())
                 } else {
                     Some(bls_pubkey.to_string())
                 }
