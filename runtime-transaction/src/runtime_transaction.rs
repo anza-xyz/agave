@@ -15,6 +15,7 @@ use {
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
     solana_message::{AccountKeys, TransactionSignatureDetails},
+    solana_perf::flow_state::FlowState,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_svm_transaction::{
@@ -35,12 +36,17 @@ pub struct RuntimeTransaction<T> {
     // transaction meta is a collection of fields, it is updated
     // during message state transition
     meta: TransactionMeta,
-    flow_id: Option<u64>,
+    // flow_state tracks packet through the pipeline for tracing
+    flow_state: Option<FlowState>,
 }
 
 impl<T> RuntimeTransaction<T> {
     pub fn into_inner_transaction(self) -> T {
         self.transaction
+    }
+
+    pub fn flow_state(&self) -> Option<&FlowState> {
+        self.flow_state.as_ref()
     }
 }
 
@@ -59,9 +65,6 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     }
     fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len
-    }
-    fn flow_id(&self) -> Option<u64> {
-        self.flow_id
     }
 }
 

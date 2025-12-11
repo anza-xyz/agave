@@ -6,6 +6,7 @@ use {
         transaction_with_meta::TransactionWithMeta,
     },
     solana_message::{AddressLoader, TransactionSignatureDetails},
+    solana_perf::flow_state::FlowState,
     solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction::{
@@ -22,7 +23,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
         sanitized_versioned_tx: SanitizedVersionedTransaction,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
-        flow_id: Option<u64>,
+        flow_state: Option<FlowState>,
     ) -> Result<Self> {
         let message_hash = match message_hash {
             MessageHash::Precomputed(hash) => hash,
@@ -68,7 +69,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                 compute_budget_instruction_details,
                 instruction_data_len,
             },
-            flow_id,
+            flow_state,
         })
     }
 }
@@ -83,7 +84,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
         enable_static_instruction_limit: bool,
-        flow_id: Option<u64>,
+        flow_state: Option<FlowState>,
     ) -> Result<Self> {
         if enable_static_instruction_limit
             && tx.message.instructions().len()
@@ -96,7 +97,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
                 SanitizedVersionedTransaction::try_from(tx)?,
                 message_hash,
                 is_simple_vote_tx,
-                flow_id,
+                flow_state,
             )?;
         Self::try_from(
             statically_loaded_runtime_tx,
@@ -126,7 +127,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         let mut tx = Self {
             transaction: sanitized_transaction,
             meta: statically_loaded_runtime_tx.meta,
-            flow_id: statically_loaded_runtime_tx.flow_id,
+            flow_state: statically_loaded_runtime_tx.flow_state,
         };
         tx.load_dynamic_metadata()?;
 

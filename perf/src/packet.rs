@@ -396,7 +396,7 @@ impl<'a> PacketRef<'a> {
         }
     }
 
-    fn get_flow_state(&self) -> Option<FlowState> {
+    pub fn get_flow_state(&self) -> Option<FlowState> {
         match self {
             Self::Packet(_) => None,
             Self::Bytes(packet) => packet.flow_state.clone(),

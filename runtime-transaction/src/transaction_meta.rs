@@ -24,7 +24,6 @@ pub trait StaticMeta {
     fn signature_details(&self) -> &TransactionSignatureDetails;
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails;
     fn instruction_data_len(&self) -> u16;
-    fn flow_id(&self) -> Option<u64>;
 }
 
 /// Statically loaded meta is a supertrait of Dynamically loaded meta, when

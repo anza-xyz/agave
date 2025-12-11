@@ -15,6 +15,7 @@ use {
         LegacyMessage, MessageHeader, SanitizedMessage, TransactionSignatureDetails,
         VersionedMessage,
     },
+    solana_perf::flow_state::FlowState,
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
@@ -43,13 +44,13 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         transaction: SanitizedTransactionView<D>,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
-        flow_id: Option<u64>,
+        flow_state: Option<FlowState>,
     ) -> Result<Self> {
         from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx).map(|meta| {
             RuntimeTransaction {
                 transaction,
                 meta,
-                flow_id,
+                flow_state,
             }
         })
     }
@@ -60,13 +61,13 @@ impl<'a, D: TransactionData> RuntimeTransaction<&'a SanitizedTransactionView<D>>
         transaction: &'a SanitizedTransactionView<D>,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
-        flow_id: Option<u64>,
+        flow_state: Option<FlowState>,
     ) -> Result<Self> {
         from_sanitized_transaction_view(transaction, message_hash, is_simple_vote_tx).map(|meta| {
             RuntimeTransaction {
                 transaction,
                 meta,
-                flow_id,
+                flow_state,
             }
         })
     }
@@ -122,7 +123,7 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let RuntimeTransaction {
             transaction,
             meta,
-            flow_id,
+            flow_state,
         } = statically_loaded_runtime_tx;
         // transaction-view does not distinguish between different types of errors here.
         // return generic sanitize failure error here.
@@ -134,7 +135,7 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let mut tx = Self {
             transaction,
             meta,
-            flow_id,
+            flow_state,
         };
         tx.load_dynamic_metadata()?;
 
@@ -266,7 +267,7 @@ mod tests {
                 transaction,
                 MessageHash::Precomputed(hash),
                 None,
-                0,
+                None,
             )
             .unwrap();
 
@@ -299,7 +300,7 @@ mod tests {
                 transaction_view,
                 MessageHash::Compute,
                 None,
-                0,
+                None,
             )
             .unwrap();
             let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
@@ -367,7 +368,7 @@ mod tests {
                 transaction_view,
                 MessageHash::Compute,
                 None,
-                0,
+                None,
             )
             .unwrap();
             let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(

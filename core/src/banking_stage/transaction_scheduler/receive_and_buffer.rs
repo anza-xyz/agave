@@ -1,5 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use solana_perf::flow_state::FlowState;
 use {
     super::{
         transaction_priority_id::TransactionPriorityId,
@@ -347,6 +348,7 @@ impl TransactionViewReceiveAndBuffer {
                             working_bank,
                             enable_static_instruction_limit,
                             transaction_account_lock_limit,
+                            packet.get_flow_state(),
                         ) {
                             Ok(state) => Ok(state),
                             Err(
@@ -407,6 +409,7 @@ impl TransactionViewReceiveAndBuffer {
         working_bank: &Bank,
         enable_static_instruction_limit: bool,
         transaction_account_lock_limit: usize,
+        flow_state: Option<FlowState>,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         let (view, deactivation_slot) = translate_to_runtime_view(
             bytes,
@@ -414,6 +417,7 @@ impl TransactionViewReceiveAndBuffer {
             root_bank,
             enable_static_instruction_limit,
             transaction_account_lock_limit,
+            flow_state,
         )?;
         if validate_account_locks(
             view.account_keys(),
@@ -435,7 +439,9 @@ impl TransactionViewReceiveAndBuffer {
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
         let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
 
-        Ok(TransactionState::new(view, max_age, priority, cost))
+        Ok(TransactionState::new(
+            view, max_age, priority, cost, flow_state,
+        ))
     }
 }
 
@@ -448,6 +454,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     root_bank: &Bank,
     enable_static_instruction_limit: bool,
     transaction_account_lock_limit: usize,
+    flow_state: Option<FlowState>,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     // Parsing and basic sanitization checks
     let Ok(view) =
@@ -460,6 +467,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         view,
         MessageHash::Compute,
         None,
+        flow_state,
     ) else {
         return Err(PacketHandlingError::Sanitization);
     };

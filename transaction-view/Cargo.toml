@@ -26,7 +26,10 @@ solana-transaction-context = { workspace = true }
 
 [dev-dependencies]
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-agave-transaction-view = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+agave-transaction-view = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 solana-instruction = { workspace = true }
@@ -36,6 +39,7 @@ solana-signature = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-transaction = { workspace = true, features = ["bincode"] }
+solana-perf = { workspace = true }
 
 [[bench]]
 name = "bytes"
