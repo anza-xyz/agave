@@ -10,7 +10,6 @@ pub struct InstrContext {
     pub feature_set: FeatureSet,
     pub accounts: Vec<(Pubkey, Account)>,
     pub instruction: StableInstruction,
-    pub cu_avail: u64,
 }
 
 #[cfg(feature = "fuzz")]
@@ -75,7 +74,6 @@ impl TryFrom<ProtoInstrContext> for InstrContext {
             feature_set,
             accounts,
             instruction,
-            cu_avail: value.cu_avail,
         })
     }
 }

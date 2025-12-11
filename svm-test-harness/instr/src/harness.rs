@@ -186,7 +186,9 @@ pub fn execute_instr(
         }
     };
 
-    let cu_avail = input.cu_avail.saturating_sub(compute_units_consumed);
+    let cu_avail = compute_budget
+        .compute_unit_limit
+        .saturating_sub(compute_units_consumed);
     let return_data = transaction_context.get_return_data().1.to_vec();
 
     let account_keys: Vec<Pubkey> = (0..transaction_context.get_number_of_accounts())
@@ -330,7 +332,6 @@ mod tests {
                 ]
                 .into(),
             },
-            cu_avail,
         };
 
         // Set up the Compute Budget.
