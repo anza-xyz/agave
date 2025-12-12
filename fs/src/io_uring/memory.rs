@@ -18,6 +18,11 @@ const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 #[derive(Debug)]
 struct AllocError;
 
+/// `PageAlignedMemory` always has a memory address aligned to the page size.
+/// When it is allocated, if the `size` is smaller than the page size,
+/// only `ptr` is aligned to the page size.
+/// If `size` is larger than the page size, then a huge table is used
+/// and both `ptr` and `size` are aligned to the page size.
 pub struct PageAlignedMemory {
     ptr: NonNull<u8>,
     len: usize,
