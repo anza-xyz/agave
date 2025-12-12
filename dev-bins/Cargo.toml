@@ -146,7 +146,7 @@ solana-svm-callback = { path = "../svm-callback", version = "=4.0.0-alpha.0", fe
 solana-svm-feature-set = { path = "../svm-feature-set", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-log-collector = { path = "../svm-log-collector", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "../svm-type-overrides", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-system-interface = "2.0"
+solana-system-interface = "3.0"
 solana-system-transaction = "3.0.0"
 solana-test-validator = { path = "../test-validator", version = "=4.0.0-alpha.0" }
 solana-time-utils = "3.0.0"
