@@ -18,8 +18,13 @@ const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 #[derive(Debug)]
 struct AllocError;
 
+enum AllocationMethod {
+    Std,
+    Mmap,
+}
+
 /// `PageAlignedMemory.ptr` is always aligned to the page size.
-/// `PageAligned.size` may or may not be aligned to the page size.
+/// `PageAlignedMemory.len` may or may not be aligned to the page size.
 /// When it is allocated, if the `size` is smaller than the page size,
 /// only `ptr` is aligned to the page size.
 /// If `size` is larger than the page size, then a huge table is used
@@ -27,6 +32,7 @@ struct AllocError;
 pub struct PageAlignedMemory {
     ptr: NonNull<u8>,
     len: usize,
+    allocation_method: AllocationMethod,
 }
 
 impl PageAlignedMemory {
@@ -57,8 +63,9 @@ impl PageAlignedMemory {
         let ptr = unsafe { alloc(layout) };
 
         Self {
-            ptr: NonNull::new(ptr).ok_or(AllocError).unwrap(),
+            ptr: NonNull::new(ptr).unwrap(),
             len: size,
+            allocation_method: AllocationMethod::Std,
         }
     }
 
@@ -88,6 +95,7 @@ impl PageAlignedMemory {
         Ok(Self {
             ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError)?,
             len: aligned_size,
+            allocation_method: AllocationMethod::Mmap,
         })
     }
 
@@ -99,10 +107,22 @@ impl PageAlignedMemory {
 
 impl Drop for PageAlignedMemory {
     fn drop(&mut self) {
-        // Safety:
-        // ptr is a valid pointer returned by mmap
-        unsafe {
-            libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
+        match self.allocation_method {
+            AllocationMethod::Std => {
+                let layout = Layout::from_size_align(self.len, Self::page_size()).unwrap();
+                // Safety:
+                // ptr was allocated with the same layout
+                unsafe {
+                    std::alloc::dealloc(self.ptr.as_ptr(), layout);
+                }
+            }
+            AllocationMethod::Mmap => {
+                // Safety:
+                // ptr is a valid pointer returned by mmap
+                unsafe {
+                    libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
+                }
+            }
         }
     }
 }
