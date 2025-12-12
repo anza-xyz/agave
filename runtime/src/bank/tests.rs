@@ -63,7 +63,7 @@ use {
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
-    solana_keypair::{keypair_from_seed, Keypair},
+    solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
@@ -117,8 +117,8 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
-            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            self, create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit, VoteInitV2,
+            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY, create_bls_pubkey_and_proof_of_possession,
         },
     },
     spl_generic_token::token,
@@ -8283,17 +8283,23 @@ fn test_vote_epoch_panic() {
     );
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-    let vote_keypair = keypair_from_seed(&[1u8; 32]).unwrap();
+    let (private_key, bls_pubkey, bls_proof_of_possession) = create_bls_pubkey_and_proof_of_possession();
+    let vote_keypair = Keypair::new_from_array(private_key);
 
     let mut setup_ixs = Vec::new();
-    setup_ixs.extend(vote_instruction::create_account_with_config(
+    setup_ixs.extend(vote_instruction::create_account_with_config_v2(
         &mint_keypair.pubkey(),
         &vote_keypair.pubkey(),
-        &VoteInit {
+        &VoteInitV2 {
             node_pubkey: mint_keypair.pubkey(),
             authorized_voter: vote_keypair.pubkey(),
             authorized_withdrawer: mint_keypair.pubkey(),
-            commission: 0,
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            inflation_rewards_commission_bps: 0,
+            inflation_rewards_collector: Pubkey::default(),
+            block_revenue_commission_bps: 0,
+            block_revenue_collector: Pubkey::default(),
         },
         1_000_000_000,
         vote_instruction::CreateVoteAccountConfig {
