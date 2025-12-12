@@ -42,7 +42,10 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{VoteAuthorize, VoteInit, VoteStateV4, VOTE_CREDITS_MAXIMUM_PER_SLOT},
+        vote_state::{
+            verify_bls_proof_of_possession, VoteAuthorize, VoteInit, VoteStateV4,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        },
     },
     std::rc::Rc,
 };
@@ -125,6 +128,37 @@ impl VoteSubCommands for App<'_, '_> {
         )
         .subcommand(
             SubCommand::with_name("vote-authorize-voter")
+                .about("Authorize a new vote signing keypair for the given vote account")
+                .arg(pubkey!(
+                    Arg::with_name("vote_account_pubkey")
+                        .index(1)
+                        .value_name("VOTE_ACCOUNT_ADDRESS")
+                        .required(true),
+                    "Vote account in which to set the authorized voter."
+                ))
+                .arg(
+                    Arg::with_name("authorized")
+                        .index(2)
+                        .value_name("AUTHORIZED_KEYPAIR")
+                        .required(true)
+                        .validator(is_valid_signer)
+                        .help("Current authorized vote signer."),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("new_authorized_pubkey")
+                        .index(3)
+                        .value_name("NEW_AUTHORIZED_PUBKEY")
+                        .required(true),
+                    "New authorized vote signer."
+                ))
+                .offline_args()
+                .nonce_args(false)
+                .arg(fee_payer_arg())
+                .arg(memo_arg())
+                .arg(compute_unit_price_arg()),
+        )
+        .subcommand(
+            SubCommand::with_name("vote-authorize-voter-bls")
                 .about("Authorize a new vote signing keypair for the given vote account")
                 .arg(pubkey!(
                     Arg::with_name("vote_account_pubkey")
@@ -1018,11 +1052,36 @@ pub async fn process_vote_authorize(
                 check_current_authority(&[vote_state.authorized_withdrawer], &authorized.pubkey())?
             }
         }
-        VoteAuthorize::VoterWithBLS(_) => {
-            return Err(CliError::BadParameter(
-                "VoterWithBLS authorization not yet supported".to_string(),
-            )
-            .into());
+        VoteAuthorize::VoterWithBLS(args) => {
+            if let Some(vote_state) = vote_state {
+                let current_epoch = rpc_client.get_epoch_info().await?.epoch;
+                let current_authorized_voter = vote_state
+                    .authorized_voters
+                    .get_authorized_voter(current_epoch)
+                    .ok_or_else(|| {
+                        CliError::RpcRequestError(
+                            "Invalid vote account state; no authorized voters found".to_string(),
+                        )
+                    })?;
+                check_current_authority(
+                    &[current_authorized_voter, vote_state.authorized_withdrawer],
+                    &authorized.pubkey(),
+                )?;
+                if let Some(signer) = new_authorized_signer {
+                    if signer.is_interactive() {
+                        return Err(CliError::BadParameter(format!(
+                            "invalid new authorized vote signer {new_authorized_pubkey:?}. \
+                             Interactive vote signers not supported"
+                        ))
+                        .into());
+                    }
+                }
+                verify_bls_proof_of_possession(
+                    vote_account_pubkey,
+                    &args.bls_pubkey,
+                    &args.bls_proof_of_possession,
+                )?;
+            }
         }
     }
 

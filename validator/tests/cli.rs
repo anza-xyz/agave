@@ -18,6 +18,7 @@ fn test_use_the_same_path_for_accounts_and_snapshots() {
 
     let temp_dir_str = temp_dir_path.to_str().unwrap();
 
+    #[allow(deprecated)]
     let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
     cmd.args([
         "--identity",

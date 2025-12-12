@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! [`wincode`] type definitions for types that comprise [`crate::entry::Entry`].
 //!
 //! These definitions should eventually be upstreamed to the solana sdk repository.
