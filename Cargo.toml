@@ -375,7 +375,7 @@ rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.12.2"
-reqwest = { version = "0.12.24", default-features = false }
+reqwest = { version = "0.12.25", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
@@ -506,7 +506,7 @@ solana-program = { version = "3.0.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.0"
-solana-program-memory = "3.0.0"
+solana-program-memory = "3.1.0"
 solana-program-option = "3.0.0"
 solana-program-pack = "3.0.0"
 solana-program-runtime = { path = "program-runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
