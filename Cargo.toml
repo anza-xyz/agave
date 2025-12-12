@@ -426,7 +426,7 @@ solana-builtins = { path = "builtins", version = "=4.0.0-alpha.0", features = ["
 solana-builtins-default-costs = { path = "builtins-default-costs", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-clap-utils = { path = "clap-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-clap-v3-utils = { path = "clap-v3-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-cli = { path = "cli", version = "=4.0.0-alpha.0" }
+solana-cli = { path = "cli", version = "=4.0.0-alpha.0", default-features = false }
 solana-cli-config = { path = "cli-config", version = "=4.0.0-alpha.0" }
 solana-cli-output = { path = "cli-output", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-client = { path = "client", version = "=4.0.0-alpha.0" }
