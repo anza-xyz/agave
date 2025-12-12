@@ -2321,4 +2321,340 @@ mod tests {
             Ok(()),
         );
     }
+
+    // Explicitly covers uninitialized vote accounts for instructions.
+    // `test_vote_signature` above covered:
+    // * Vote
+    // * UpdateVoteState
+    // * CompactUpdateVoteState
+    // * TowerSync
+    #[test_case(false ; "VoteStateV3")]
+    #[test_case(true ; "VoteStateV4")]
+    fn test_uninitialized_vote_account(vote_state_v4_enabled: bool) {
+        // Set up uninitialized vote account.
+        let vote_pubkey = solana_pubkey::new_rand();
+        let vote_account =
+            AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
+
+        let expected_error = if vote_state_v4_enabled {
+            InstructionError::UninitializedAccount
+        } else {
+            InstructionError::InvalidAccountData
+        };
+
+        // VoteInstruction::Authorize
+        {
+            let new_authorized_pubkey = solana_pubkey::new_rand();
+
+            let instruction_data = serialize(&VoteInstruction::Authorize(
+                new_authorized_pubkey,
+                VoteAuthorize::Voter,
+            ))
+            .unwrap();
+
+            let transaction_accounts = vec![
+                (vote_pubkey, vote_account),
+                (sysvar::clock::id(), create_default_clock_account()),
+            ];
+
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: true,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ];
+
+            process_instruction(
+                vote_state_v4_enabled,
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                Err(expected_error.clone()),
+            );
+        }
+
+        // VoteInstruction::AuthorizeWithSeed
+        {
+            let vote_account =
+                AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
+            let current_authority_base_key = Pubkey::new_unique();
+            let current_authority_owner = Pubkey::new_unique();
+            let new_authority_pubkey = Pubkey::new_unique();
+
+            let instruction_data = serialize(&VoteInstruction::AuthorizeWithSeed(
+                VoteAuthorizeWithSeedArgs {
+                    authorization_type: VoteAuthorize::Voter,
+                    current_authority_derived_key_owner: current_authority_owner,
+                    current_authority_derived_key_seed: String::from("SEED"),
+                    new_authority: new_authority_pubkey,
+                },
+            ))
+            .unwrap();
+
+            let transaction_accounts = vec![
+                (vote_pubkey, vote_account),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (current_authority_base_key, AccountSharedData::default()),
+            ];
+
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: current_authority_base_key,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ];
+
+            process_instruction(
+                vote_state_v4_enabled,
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                Err(expected_error.clone()),
+            );
+        }
+
+        // VoteInstruction::AuthorizeCheckedWithSeed
+        {
+            let vote_account =
+                AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
+            let current_authority_base_key = Pubkey::new_unique();
+            let current_authority_owner = Pubkey::new_unique();
+            let new_authority_pubkey = Pubkey::new_unique();
+
+            let instruction_data = serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
+                VoteAuthorizeCheckedWithSeedArgs {
+                    authorization_type: VoteAuthorize::Voter,
+                    current_authority_derived_key_owner: current_authority_owner,
+                    current_authority_derived_key_seed: String::from("SEED"),
+                },
+            ))
+            .unwrap();
+
+            let transaction_accounts = vec![
+                (vote_pubkey, vote_account),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (current_authority_base_key, AccountSharedData::default()),
+                (new_authority_pubkey, AccountSharedData::default()),
+            ];
+
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: current_authority_base_key,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: new_authority_pubkey,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ];
+
+            process_instruction(
+                vote_state_v4_enabled,
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                Err(expected_error.clone()),
+            );
+        }
+
+        // VoteInstruction::UpdateValidatorIdentity
+        {
+            let vote_account =
+                AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
+            let node_pubkey = Pubkey::new_unique();
+            let authorized_withdrawer = Pubkey::new_unique();
+
+            let instruction_data = serialize(&VoteInstruction::UpdateValidatorIdentity).unwrap();
+
+            let transaction_accounts = vec![
+                (vote_pubkey, vote_account),
+                (node_pubkey, AccountSharedData::default()),
+                (authorized_withdrawer, AccountSharedData::default()),
+            ];
+
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: node_pubkey,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: authorized_withdrawer,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ];
+
+            process_instruction(
+                vote_state_v4_enabled,
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                Err(expected_error.clone()),
+            );
+        }
+
+        // VoteInstruction::UpdateCommission
+        {
+            let vote_account =
+                AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
+            let authorized_withdrawer = Pubkey::new_unique();
+
+            let instruction_data = serialize(&VoteInstruction::UpdateCommission(42)).unwrap();
+
+            let transaction_accounts = vec![
+                (vote_pubkey, vote_account),
+                (authorized_withdrawer, AccountSharedData::default()),
+                (
+                    sysvar::clock::id(),
+                    account::create_account_shared_data_for_test(&Clock::default()),
+                ),
+                (
+                    sysvar::epoch_schedule::id(),
+                    account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+                ),
+            ];
+
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: authorized_withdrawer,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ];
+
+            process_instruction(
+                vote_state_v4_enabled,
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                Err(expected_error.clone()),
+            );
+        }
+
+        // VoteInstruction::Withdraw
+        {
+            let vote_account =
+                AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
+            let recipient = Pubkey::new_unique();
+
+            let instruction_data = serialize(&VoteInstruction::Withdraw(10)).unwrap();
+
+            let transaction_accounts = vec![
+                (vote_pubkey, vote_account),
+                (recipient, AccountSharedData::default()),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (sysvar::rent::id(), create_default_rent_account()),
+            ];
+
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: true,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: recipient,
+                    is_signer: false,
+                    is_writable: true,
+                },
+            ];
+
+            process_instruction(
+                vote_state_v4_enabled,
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                Err(expected_error.clone()),
+            );
+        }
+
+        // VoteInstruction::AuthorizeChecked
+        {
+            let vote_account =
+                AccountSharedData::new(100, vote_state_size_of(vote_state_v4_enabled), &id());
+            let authorized_pubkey = Pubkey::new_unique();
+            let new_authorized_pubkey = Pubkey::new_unique();
+
+            let instruction_data =
+                serialize(&VoteInstruction::AuthorizeChecked(VoteAuthorize::Voter)).unwrap();
+
+            let transaction_accounts = vec![
+                (vote_pubkey, vote_account),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (authorized_pubkey, AccountSharedData::default()),
+                (new_authorized_pubkey, AccountSharedData::default()),
+            ];
+
+            let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: authorized_pubkey,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: new_authorized_pubkey,
+                    is_signer: true,
+                    is_writable: false,
+                },
+            ];
+
+            process_instruction(
+                vote_state_v4_enabled,
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                Err(expected_error),
+            );
+        }
+    }
 }
