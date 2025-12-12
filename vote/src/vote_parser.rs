@@ -72,11 +72,11 @@ fn parse_vote_instruction_data(
         | VoteInstruction::InitializeAccount(_)
         | VoteInstruction::InitializeAccountV2(_)
         | VoteInstruction::UpdateCommission(_)
-        | VoteInstruction::UpdateCommissionBps { .. }
         | VoteInstruction::UpdateCommissionCollector { .. }
-        | VoteInstruction::DepositDelegatorRewards { .. }
+        | VoteInstruction::UpdateCommissionBps { .. }
         | VoteInstruction::UpdateValidatorIdentity
-        | VoteInstruction::Withdraw(_) => None,
+        | VoteInstruction::Withdraw(_)
+        | VoteInstruction::DepositDelegatorRewards { .. } => None,
     }
 }
 
