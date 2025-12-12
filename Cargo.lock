@@ -8766,9 +8766,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "497caf6b5b0ad5fbf3879d4417cd520e11f19c34f183d052e42370d9a585c79a"
+checksum = "498e7ac4f4a5d8d9841dbb548bba0fd07e3c0d551cd93bb62784993970ff79f3"
 dependencies = [
  "boxcar",
  "bs58",
@@ -8778,6 +8778,7 @@ dependencies = [
  "im",
  "log",
  "memmap2 0.5.10",
+ "rand 0.8.5",
  "serde",
  "serde_derive",
  "serde_with",
