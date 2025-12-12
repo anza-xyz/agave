@@ -1,6 +1,7 @@
 use {
     agave_io_uring::{Ring, RingOp},
     std::{
+        alloc::{alloc, Layout},
         io,
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
@@ -14,55 +15,6 @@ use {
 // and chunk it in slices of up to 1G each.
 const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
-pub enum LargeBuffer {
-    Vec(Vec<u8>),
-    HugeTable(PageAlignedMemory),
-}
-
-impl Deref for LargeBuffer {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_slice(),
-            Self::HugeTable(mem) => mem.deref(),
-        }
-    }
-}
-
-impl DerefMut for LargeBuffer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_mut_slice(),
-            Self::HugeTable(mem) => mem.deref_mut(),
-        }
-    }
-}
-
-impl AsMut<[u8]> for LargeBuffer {
-    fn as_mut(&mut self) -> &mut [u8] {
-        match self {
-            Self::Vec(vec) => vec.as_mut_slice(),
-            LargeBuffer::HugeTable(mem) => mem,
-        }
-    }
-}
-
-impl LargeBuffer {
-    /// Allocate memory buffer optimized for io_uring operations, i.e.
-    /// using HugeTable when it is available on the host.
-    pub fn new(size: usize) -> Self {
-        if size > PageAlignedMemory::page_size() {
-            let size = size.next_power_of_two();
-            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
-                log::info!("obtained hugetable io_uring buffer (len={size})");
-                return Self::HugeTable(alloc);
-            }
-        }
-        Self::Vec(vec![0; size])
-    }
-}
-
 #[derive(Debug)]
 struct AllocError;
 
@@ -72,6 +24,32 @@ pub struct PageAlignedMemory {
 }
 
 impl PageAlignedMemory {
+    /// Allocate memory buffer optimized for io_uring operations, i.e.
+    /// using HugeTable when it is available on the host.
+    pub fn new(size: usize) -> Self {
+        let size = size.next_power_of_two();
+        let page_size = Self::page_size();
+        if size > page_size {
+            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
+                log::info!("obtained hugetable io_uring buffer (len={size})");
+                return alloc;
+            }
+        }
+
+        assert!(size.is_power_of_two());
+        assert!(page_size.is_power_of_two());
+        let layout = Layout::from_size_align(size, page_size).unwrap();
+        // Safety:
+        // just doing a regular alloc
+        // this should never return a null pointer unless we ran out of memory
+        let ptr = unsafe { alloc(layout) };
+
+        Self {
+            ptr: NonNull::new(ptr).ok_or(AllocError).unwrap(),
+            len: size,
+        }
+    }
+
     fn alloc_huge_table(memory_size: usize) -> Result<Self, AllocError> {
         let page_size = Self::page_size();
         debug_assert!(memory_size.is_power_of_two());
