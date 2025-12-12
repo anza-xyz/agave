@@ -23,6 +23,8 @@ enum Commands {
     Hello,
     #[command(about = "Bump version")]
     BumpVersion(commands::bump_version::CommandArgs),
+    #[command(about = "Generate pipeline")]
+    GeneratePipeline(commands::generate_pipeline::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -60,6 +62,9 @@ async fn try_main() -> Result<()> {
         Commands::Hello => commands::hello::run()?,
         Commands::BumpVersion(args) => {
             commands::bump_version::run(args)?;
+        }
+        Commands::GeneratePipeline(args) => {
+            commands::generate_pipeline::run(args).await?;
         }
     }
 
