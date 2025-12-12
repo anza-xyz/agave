@@ -67,14 +67,14 @@ mod tests {
             crds::{Crds, GossipRoute},
             crds_data::new_rand_timestamp,
         },
-        rand::seq::SliceRandom,
+        rand::prelude::IndexedRandom as _,
         solana_keypair::Keypair,
         std::collections::HashMap,
     };
 
     #[test]
     fn test_get_crds_entry() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut crds = Crds::default();
         let keypairs: Vec<_> = std::iter::repeat_with(Keypair::new).take(32).collect();
         let mut entries = HashMap::new();
