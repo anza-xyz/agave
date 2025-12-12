@@ -18,7 +18,8 @@ const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 #[derive(Debug)]
 struct AllocError;
 
-/// `PageAlignedMemory` always has a memory address aligned to the page size.
+/// `PageAlignedMemory.ptr` is always aligned to the page size.
+/// `PageAligned.size` may or may not be aligned to the page size.
 /// When it is allocated, if the `size` is smaller than the page size,
 /// only `ptr` is aligned to the page size.
 /// If `size` is larger than the page size, then a huge table is used
@@ -32,16 +33,22 @@ impl PageAlignedMemory {
     /// Allocate memory buffer optimized for io_uring operations, i.e.
     /// using HugeTable when it is available on the host.
     pub fn new(size: usize) -> Self {
-        let size = size.next_power_of_two();
         let page_size = Self::page_size();
         if size > page_size {
+            let size = size.next_power_of_two();
             if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
                 log::info!("obtained hugetable io_uring buffer (len={size})");
                 return alloc;
             }
         }
 
-        assert!(size.is_power_of_two());
+        // Safety:
+        // From docs: https://doc.rust-lang.org/stable/std/alloc/struct.Layout.html
+        // 1. align must not be zero,
+        // 2. align must be a power of two,
+        // 3. size, when rounded up to the nearest multiple of align,
+        // must not overflow isize (i.e., the rounded value must be
+        // less than or equal to isize::MAX).
         assert!(page_size.is_power_of_two());
         let layout = Layout::from_size_align(size, page_size).unwrap();
         // Safety:
