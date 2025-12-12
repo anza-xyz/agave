@@ -31,6 +31,7 @@ use {
         state::{Lockup, StakeAuthorize, StakeStateV2},
     },
     solana_test_validator::{TestValidator, TestValidatorGenesis},
+    solana_vote_program::vote_state::create_bls_pubkey_and_proof_of_possession,
     test_case::test_case,
 };
 
@@ -76,15 +77,18 @@ async fn test_stake_delegation_force() {
     .unwrap();
 
     // Create vote account
-    let vote_keypair = Keypair::new();
+    let (private_key, bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession();
+    let vote_keypair = Keypair::new_from_array(private_key);
     config.signers = vec![&default_signer, &vote_keypair];
-    config.command = CliCommand::CreateVoteAccount {
+    config.command = CliCommand::CreateVoteAccountV2 {
         vote_account: 1,
         seed: None,
         identity_account: 0,
         authorized_voter: None,
         authorized_withdrawer,
-        commission: 0,
+        bls_pubkey,
+        bls_proof_of_possession,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -93,6 +97,10 @@ async fn test_stake_delegation_force() {
         memo: None,
         fee_payer: 0,
         compute_unit_price: None,
+        inflation_rewards_commission_bps: 0,
+        inflation_rewards_collector: Pubkey::default(),
+        block_revenue_commission_bps: 0,
+        block_revenue_collector: Pubkey::default(),
     };
     process_command(&config).await.unwrap();
 

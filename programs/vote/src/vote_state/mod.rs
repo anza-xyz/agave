@@ -1252,6 +1252,38 @@ pub fn create_v4_account_with_authorized(
     vote_account
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_bls_pubkey_and_proof_of_possession() -> (
+    [u8; 32],
+    [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+    [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+) {
+    // We don't want to introduce library dependencies in tests, so we
+    // are using pre-computed values for Pubkey::default().
+    // First value is the secret key for ed25519 keypair,
+    // Second value is the compressed BLS public key,
+    // Third value is the compressed BLS proof of possession.
+    (
+        [
+            59, 141, 201, 163, 182, 158, 133, 93, 70, 46, 100, 143, 187, 50, 11, 123, 117, 203,
+            141, 167, 138, 207, 171, 146, 108, 227, 163, 64, 91, 190, 104, 224,
+        ],
+        [
+            137, 73, 75, 64, 150, 79, 65, 37, 178, 226, 136, 9, 53, 3, 139, 70, 236, 187, 28, 131,
+            178, 49, 115, 18, 234, 167, 73, 235, 195, 161, 55, 115, 210, 232, 181, 52, 64, 181, 82,
+            242, 39, 186, 36, 104, 227, 94, 116, 149,
+        ],
+        [
+            142, 171, 246, 74, 155, 53, 221, 16, 146, 4, 154, 187, 119, 167, 172, 185, 148, 90,
+            181, 106, 22, 230, 148, 97, 164, 93, 120, 118, 56, 252, 192, 120, 127, 216, 48, 111,
+            113, 108, 32, 119, 65, 125, 200, 211, 116, 208, 238, 250, 20, 254, 106, 247, 86, 9, 24,
+            124, 7, 219, 33, 209, 179, 200, 29, 117, 64, 149, 236, 123, 172, 79, 129, 87, 239, 163,
+            53, 141, 161, 11, 85, 131, 26, 167, 110, 95, 106, 227, 174, 184, 35, 245, 205, 113, 62,
+            114, 216, 107,
+        ],
+    )
+}
+
 #[allow(clippy::arithmetic_side_effects)]
 #[cfg(test)]
 mod tests {

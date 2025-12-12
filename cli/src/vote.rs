@@ -31,6 +31,7 @@ use {
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
+    solana_instruction::Instruction,
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -43,7 +44,8 @@ use {
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
         vote_state::{
-            verify_bls_proof_of_possession, VoteAuthorize, VoteInit, VoteStateV4,
+            verify_bls_proof_of_possession, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
+            BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
             VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
     },
@@ -841,6 +843,149 @@ pub async fn process_create_vote_account(
     fee_payer: SignerIndex,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
+    let build_instructions =
+        |(lamports, identity_pubkey, vote_account_pubkey, vote_account_address)| {
+            let vote_init = VoteInit {
+                node_pubkey: identity_pubkey,
+                authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
+                authorized_withdrawer,
+                commission,
+            };
+            let space = VoteStateV4::size_of() as u64;
+            let mut create_vote_account_config = CreateVoteAccountConfig {
+                space,
+                ..CreateVoteAccountConfig::default()
+            };
+            let to = if let Some(seed) = seed {
+                create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
+                &vote_account_address
+            } else {
+                &vote_account_pubkey
+            };
+
+            vote_instruction::create_account_with_config(
+                &config.signers[0].pubkey(),
+                to,
+                &vote_init,
+                lamports,
+                create_vote_account_config,
+            )
+        };
+    process_create_vote_account_internal(
+        rpc_client,
+        config,
+        vote_account,
+        seed,
+        identity_account,
+        sign_only,
+        dump_transaction_message,
+        blockhash_query,
+        nonce_account,
+        nonce_authority,
+        memo,
+        fee_payer,
+        compute_unit_price,
+        build_instructions,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn process_create_vote_account_v2(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    vote_account: SignerIndex,
+    seed: &Option<String>,
+    identity_account: SignerIndex,
+    authorized_voter: &Option<Pubkey>,
+    authorized_withdrawer: Pubkey,
+    authorized_voter_bls_pubkey: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+    authorized_voter_bls_proof_of_possession: [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+    sign_only: bool,
+    dump_transaction_message: bool,
+    blockhash_query: &BlockhashQuery,
+    nonce_account: Option<&Pubkey>,
+    nonce_authority: SignerIndex,
+    memo: Option<&String>,
+    fee_payer: SignerIndex,
+    compute_unit_price: Option<u64>,
+    inflation_rewards_commission_bps: u16,
+    inflation_rewards_collector: Pubkey,
+    block_revenue_commission_bps: u16,
+    block_revenue_collector: Pubkey,
+) -> ProcessResult {
+    let build_instructions =
+        |(lamports, identity_pubkey, vote_account_pubkey, vote_account_address)| {
+            let vote_init_v2 = VoteInitV2 {
+                node_pubkey: identity_pubkey,
+                authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
+                authorized_withdrawer,
+                authorized_voter_bls_pubkey,
+                authorized_voter_bls_proof_of_possession,
+                inflation_rewards_commission_bps,
+                inflation_rewards_collector,
+                block_revenue_commission_bps,
+                block_revenue_collector,
+            };
+            let space = VoteStateV4::size_of() as u64;
+            let mut create_vote_account_config = CreateVoteAccountConfig {
+                space,
+                ..CreateVoteAccountConfig::default()
+            };
+            let to = if let Some(seed) = seed {
+                create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
+                &vote_account_address
+            } else {
+                &vote_account_pubkey
+            };
+
+            vote_instruction::create_account_with_config_v2(
+                &config.signers[0].pubkey(),
+                to,
+                &vote_init_v2,
+                lamports,
+                create_vote_account_config,
+            )
+        };
+    process_create_vote_account_internal(
+        rpc_client,
+        config,
+        vote_account,
+        seed,
+        identity_account,
+        sign_only,
+        dump_transaction_message,
+        blockhash_query,
+        nonce_account,
+        nonce_authority,
+        memo,
+        fee_payer,
+        compute_unit_price,
+        build_instructions,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_create_vote_account_internal<F>(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    vote_account: SignerIndex,
+    seed: &Option<String>,
+    identity_account: SignerIndex,
+    sign_only: bool,
+    dump_transaction_message: bool,
+    blockhash_query: &BlockhashQuery,
+    nonce_account: Option<&Pubkey>,
+    nonce_authority: SignerIndex,
+    memo: Option<&String>,
+    fee_payer: SignerIndex,
+    compute_unit_price: Option<u64>,
+    build_instructions: F,
+) -> ProcessResult
+where
+    F: Fn((u64, Pubkey, Pubkey, Pubkey)) -> Vec<Instruction>,
+{
     let vote_account = config.signers[vote_account];
     let vote_account_pubkey = vote_account.pubkey();
     let vote_account_address = if let Some(seed) = seed {
@@ -868,43 +1013,24 @@ pub async fn process_create_vote_account(
 
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
-    let space = VoteStateV4::size_of() as u64;
 
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let build_message = |lamports| {
-        let vote_init = VoteInit {
-            node_pubkey: identity_pubkey,
-            authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
-            authorized_withdrawer,
-            commission,
-        };
-        let mut create_vote_account_config = CreateVoteAccountConfig {
-            space,
-            ..CreateVoteAccountConfig::default()
-        };
-        let to = if let Some(seed) = seed {
-            create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
-            &vote_account_address
-        } else {
-            &vote_account_pubkey
-        };
 
-        let ixs = vote_instruction::create_account_with_config(
-            &config.signers[0].pubkey(),
-            to,
-            &vote_init,
+    let build_message = |lamports| {
+        let ixs = build_instructions((
             lamports,
-            create_vote_account_config,
-        )
+            identity_pubkey,
+            vote_account_pubkey,
+            vote_account_address,
+        ))
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
             compute_unit_limit,
         });
-
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
                 ixs,
