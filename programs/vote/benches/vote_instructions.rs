@@ -19,9 +19,9 @@ use {
         vote_instruction::VoteInstruction,
         vote_processor::Entrypoint,
         vote_state::{
-            create_v4_account_with_authorized, LandedVote, Lockout, TowerSync, Vote, VoteAuthorize,
-            VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate,
-            VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            create_v4_account_with_authorized, handler::VoteStateHandle, TowerSync, Vote,
+            VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit,
+            VoteStateUpdate, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
 };
@@ -64,13 +64,7 @@ fn create_accounts() -> (
         );
 
         for next_vote_slot in 0..num_initial_votes {
-            vote_state.votes.push_back(LandedVote {
-                latency: 0,
-                lockout: Lockout::new_with_confirmation_count(
-                    next_vote_slot,
-                    num_initial_votes.checked_sub(next_vote_slot).unwrap() as u32,
-                ),
-            })
+            vote_state.process_next_vote_slot(next_vote_slot, 0, 0);
         }
         let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
         let versioned = VoteStateVersions::new_v3(vote_state);

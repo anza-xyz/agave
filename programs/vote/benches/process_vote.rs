@@ -15,12 +15,11 @@ use {
     solana_sdk_ids::sysvar,
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
-    solana_vote_interface::state::{LandedVote, Lockout},
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{
-            TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3, VoteStateVersions,
-            MAX_LOCKOUT_HISTORY,
+            handler::VoteStateHandle, TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3,
+            VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     test::Bencher,
@@ -56,13 +55,7 @@ fn create_accounts() -> (
         );
 
         for next_vote_slot in 0..num_initial_votes {
-            vote_state.votes.push_back(LandedVote {
-                latency: 0,
-                lockout: Lockout::new_with_confirmation_count(
-                    next_vote_slot,
-                    num_initial_votes.checked_sub(next_vote_slot).unwrap() as u32,
-                ),
-            })
+            vote_state.process_next_vote_slot(next_vote_slot, 0, 0);
         }
         let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
         let versioned = VoteStateVersions::new_v3(vote_state);
