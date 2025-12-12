@@ -39,26 +39,6 @@ pub fn parse_vote(
                 }),
             })
         }
-        VoteInstruction::InitializeAccountV2(vote_init_v2) => {
-            check_num_vote_accounts(&instruction.accounts, 4)?;
-            Ok(ParsedInstructionEnum {
-                instruction_type: "initialize_v2".to_string(),
-                info: json!({
-                    "voteAccount": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "rentSysvar": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "clockSysvar": account_keys[instruction.accounts[2] as usize].to_string(),
-                    "node": account_keys[instruction.accounts[3] as usize].to_string(),
-                    "authorizedVoter": vote_init_v2.authorized_voter.to_string(),
-                    "authorizedVoterBlsPubkey": bs58::encode(vote_init_v2.authorized_voter_bls_pubkey).into_string(),
-                    "authorizedVoterBlsPoP": bs58::encode(vote_init_v2.authorized_voter_bls_proof_of_possession).into_string(),
-                    "authorizedWithdrawer": vote_init_v2.authorized_withdrawer.to_string(),
-                    "inflation_rewards_commission_bps": vote_init_v2.inflation_rewards_commission_bps,
-                    "inflationRewardsCollector": vote_init_v2.inflation_rewards_collector.to_string(),
-                    "blockRevenueCommissionBps": vote_init_v2.block_revenue_commission_bps,
-                    "blockRevenueCollector": vote_init_v2.block_revenue_collector.to_string(),
-                }),
-            })
-        }
         VoteInstruction::Authorize(new_authorized, authority_type) => {
             check_num_vote_accounts(&instruction.accounts, 3)?;
             Ok(ParsedInstructionEnum {

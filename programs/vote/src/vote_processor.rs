@@ -3224,6 +3224,7 @@ mod tests {
 
             process_instruction(
                 vote_state_v4_enabled,
+                false,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
@@ -3275,6 +3276,7 @@ mod tests {
 
             process_instruction(
                 vote_state_v4_enabled,
+                false,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
@@ -3331,6 +3333,7 @@ mod tests {
 
             process_instruction(
                 vote_state_v4_enabled,
+                false,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
@@ -3373,6 +3376,7 @@ mod tests {
 
             process_instruction(
                 vote_state_v4_enabled,
+                false,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
@@ -3416,6 +3420,7 @@ mod tests {
 
             process_instruction(
                 vote_state_v4_enabled,
+                false,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
@@ -3453,6 +3458,7 @@ mod tests {
 
             process_instruction(
                 vote_state_v4_enabled,
+                false,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
@@ -3502,6 +3508,7 @@ mod tests {
 
             process_instruction(
                 vote_state_v4_enabled,
+                false,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,

@@ -76,8 +76,7 @@ fn parse_vote_instruction_data(
         | VoteInstruction::UpdateCommissionCollector { .. }
         | VoteInstruction::DepositDelegatorRewards { .. }
         | VoteInstruction::UpdateValidatorIdentity
-        | VoteInstruction::Withdraw(_)
-        | VoteInstruction::DepositDelegatorRewards { .. } => None,
+        | VoteInstruction::Withdraw(_) => None,
     }
 }
 

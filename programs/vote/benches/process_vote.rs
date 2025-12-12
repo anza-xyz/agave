@@ -19,8 +19,8 @@ use {
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{
-            handler::VoteStateHandle, TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3,
-            VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     test::Bencher,
