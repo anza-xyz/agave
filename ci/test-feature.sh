@@ -19,4 +19,5 @@ partition="${1:-1/1}"
 cargo +"$rust_nightly" hack check \
 	--keep-going \
 	--each-feature \
+	--exclude-all-features \
 	--partition "$partition"
