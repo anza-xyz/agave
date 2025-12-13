@@ -1,6 +1,7 @@
 use {
     agave_io_uring::{Ring, RingOp},
     std::{
+        alloc::{alloc, Layout},
         io,
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
@@ -14,64 +15,60 @@ use {
 // and chunk it in slices of up to 1G each.
 const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
-pub enum LargeBuffer {
-    Vec(Vec<u8>),
-    HugeTable(PageAlignedMemory),
-}
-
-impl Deref for LargeBuffer {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_slice(),
-            Self::HugeTable(mem) => mem.deref(),
-        }
-    }
-}
-
-impl DerefMut for LargeBuffer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_mut_slice(),
-            Self::HugeTable(mem) => mem.deref_mut(),
-        }
-    }
-}
-
-impl AsMut<[u8]> for LargeBuffer {
-    fn as_mut(&mut self) -> &mut [u8] {
-        match self {
-            Self::Vec(vec) => vec.as_mut_slice(),
-            LargeBuffer::HugeTable(mem) => mem,
-        }
-    }
-}
-
-impl LargeBuffer {
-    /// Allocate memory buffer optimized for io_uring operations, i.e.
-    /// using HugeTable when it is available on the host.
-    pub fn new(size: usize) -> Self {
-        if size > PageAlignedMemory::page_size() {
-            let size = size.next_power_of_two();
-            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
-                log::info!("obtained hugetable io_uring buffer (len={size})");
-                return Self::HugeTable(alloc);
-            }
-        }
-        Self::Vec(vec![0; size])
-    }
-}
-
 #[derive(Debug)]
 struct AllocError;
 
+enum AllocationMethod {
+    Std,
+    Mmap,
+}
+
+/// `PageAlignedMemory.ptr` is always aligned to the page size.
+/// `PageAlignedMemory.len` may or may not be aligned to the page size.
+/// When it is allocated, if the `size` is smaller than the page size,
+/// only `ptr` is aligned to the page size.
+/// If `size` is larger than the page size, then a huge table is used
+/// and both `ptr` and `size` are aligned to the page size.
 pub struct PageAlignedMemory {
     ptr: NonNull<u8>,
     len: usize,
+    allocation_method: AllocationMethod,
 }
 
 impl PageAlignedMemory {
+    /// Allocate memory buffer optimized for io_uring operations, i.e.
+    /// using HugeTable when it is available on the host.
+    pub fn new(size: usize) -> Self {
+        let page_size = Self::page_size();
+        if size > page_size {
+            let size = size.next_power_of_two();
+            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
+                log::info!("obtained hugetable io_uring buffer (len={size})");
+                return alloc;
+            }
+        }
+
+        // Safety:
+        // From docs: https://doc.rust-lang.org/stable/std/alloc/struct.Layout.html
+        // 1. align must not be zero,
+        // 2. align must be a power of two,
+        // 3. size, when rounded up to the nearest multiple of align,
+        // must not overflow isize (i.e., the rounded value must be
+        // less than or equal to isize::MAX).
+        assert!(page_size.is_power_of_two());
+        let layout = Layout::from_size_align(size, page_size).unwrap();
+        // Safety:
+        // just doing a regular alloc
+        // this should never return a null pointer unless we ran out of memory
+        let ptr = unsafe { alloc(layout) };
+
+        Self {
+            ptr: NonNull::new(ptr).unwrap(),
+            len: size,
+            allocation_method: AllocationMethod::Std,
+        }
+    }
+
     fn alloc_huge_table(memory_size: usize) -> Result<Self, AllocError> {
         let page_size = Self::page_size();
         debug_assert!(memory_size.is_power_of_two());
@@ -98,6 +95,7 @@ impl PageAlignedMemory {
         Ok(Self {
             ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError)?,
             len: aligned_size,
+            allocation_method: AllocationMethod::Mmap,
         })
     }
 
@@ -109,10 +107,22 @@ impl PageAlignedMemory {
 
 impl Drop for PageAlignedMemory {
     fn drop(&mut self) {
-        // Safety:
-        // ptr is a valid pointer returned by mmap
-        unsafe {
-            libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
+        match self.allocation_method {
+            AllocationMethod::Std => {
+                let layout = Layout::from_size_align(self.len, Self::page_size()).unwrap();
+                // Safety:
+                // ptr was allocated with the same layout
+                unsafe {
+                    std::alloc::dealloc(self.ptr.as_ptr(), layout);
+                }
+            }
+            AllocationMethod::Mmap => {
+                // Safety:
+                // ptr is a valid pointer returned by mmap
+                unsafe {
+                    libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
+                }
+            }
         }
     }
 }
