@@ -55,10 +55,14 @@ impl LatestValidatorVotesForFrozenBanks {
                             // Only record votes detected through replaying blocks,
                             // because votes in gossip are not consistently observable
                             // if the validator is replacing them.
-                            let (_, dirty_frozen_hashes) =
-                                self.fork_choice_dirty_set.entry(vote_pubkey).or_default();
-                            assert!(!dirty_frozen_hashes.contains(&frozen_hash));
-                            dirty_frozen_hashes.push(frozen_hash);
+                            self.fork_choice_dirty_set
+                                .entry(vote_pubkey)
+                                .and_modify(|(slot, hashes)| {
+                                    debug_assert_eq!(*slot, vote_slot);
+                                    assert!(!hashes.contains(&frozen_hash));
+                                    hashes.push(frozen_hash);
+                                })
+                                .or_insert((vote_slot, vec![frozen_hash]));
                         }
                         latest_frozen_vote_hashes.push(frozen_hash);
                         return (true, Some(vote_slot));
