@@ -28,6 +28,8 @@ Release channels have their own copy of this changelog:
   * `--accounts-hash-cache-path`
   * `--disable-accounts-disk-index`
   * `--dev-halt-at-slot`
+  * `--monitor` (`exit` subcommand)
+  * `--wait-for-exit` (`exit` subcommand)
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 ### CLI
