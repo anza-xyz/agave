@@ -17,7 +17,7 @@ use {
     solana_signer::{null_signer::NullSigner, Signer},
     solana_test_validator::TestValidator,
     solana_vote_program::vote_state::{
-        create_bls_pubkey_and_proof_of_possession_for_test, VoteAuthorize, VoteStateV4,
+        create_bls_pubkey_and_proof_of_possession, VoteAuthorize, VoteStateV4,
     },
     test_case::test_case,
 };
@@ -48,9 +48,9 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         .unwrap();
 
     // Create vote account
-    let (private_key, bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession_for_test();
-    let vote_account_keypair = Keypair::new_from_array(private_key);
+    let vote_account_keypair = Keypair::new();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_account_keypair.pubkey());
     let vote_account_pubkey = vote_account_keypair.pubkey();
     config.signers = vec![&default_signer, &vote_account_keypair];
     config.command = CliCommand::CreateVoteAccountV2 {

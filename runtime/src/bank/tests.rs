@@ -117,9 +117,9 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_bls_pubkey_and_proof_of_possession_for_test,
-            create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit, VoteInitV2,
-            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            self, create_bls_pubkey_and_proof_of_possession, create_v4_account_with_authorized,
+            BlockTimestamp, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -8284,9 +8284,9 @@ fn test_vote_epoch_panic() {
     );
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-    let (private_key, bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession_for_test();
-    let vote_keypair = Keypair::new_from_array(private_key);
+    let vote_keypair = Keypair::new();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_keypair.pubkey());
 
     let mut setup_ixs = Vec::new();
     setup_ixs.extend(vote_instruction::create_account_with_config_v2(
@@ -9889,9 +9889,9 @@ fn test_rent_state_changes_sysvars() {
 
     let validator_pubkey = Pubkey::new_unique();
     let validator_stake_lamports = LAMPORTS_PER_SOL;
-    let (private_key, bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession_for_test();
-    let validator_vote_account_keypair = Keypair::new_from_array(private_key);
+    let validator_vote_account_keypair = Keypair::new();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&validator_vote_account_keypair.pubkey());
     let validator_vote_account_pubkey = validator_vote_account_keypair.pubkey();
     let validator_voting_keypair = Keypair::new();
 

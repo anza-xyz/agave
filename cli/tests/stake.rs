@@ -31,7 +31,7 @@ use {
         state::{Lockup, StakeAuthorize, StakeStateV2},
     },
     solana_test_validator::{TestValidator, TestValidatorGenesis},
-    solana_vote_program::vote_state::create_bls_pubkey_and_proof_of_possession_for_test,
+    solana_vote_program::vote_state::create_bls_pubkey_and_proof_of_possession,
     test_case::test_case,
 };
 
@@ -77,9 +77,9 @@ async fn test_stake_delegation_force() {
     .unwrap();
 
     // Create vote account
-    let (private_key, bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession_for_test();
-    let vote_keypair = Keypair::new_from_array(private_key);
+    let vote_keypair = Keypair::new();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_keypair.pubkey());
     config.signers = vec![&default_signer, &vote_keypair];
     config.command = CliCommand::CreateVoteAccountV2 {
         vote_account: 1,

@@ -54,9 +54,7 @@ use {
     solana_transaction_error::TransportError,
     solana_vote_program::{
         vote_instruction,
-        vote_state::{
-            self, create_bls_pubkey_and_proof_of_possession_for_account, VoteInitV2, VoteStateV4,
-        },
+        vote_state::{self, create_bls_pubkey_and_proof_of_possession, VoteInitV2, VoteStateV4},
     },
     std::{
         collections::HashMap,
@@ -1015,7 +1013,7 @@ impl LocalCluster {
         {
             // 1) Create vote account
             let (bls_pubkey, bls_proof_of_possession) =
-                create_bls_pubkey_and_proof_of_possession_for_account(&vote_account_pubkey);
+                create_bls_pubkey_and_proof_of_possession(&vote_account_pubkey);
             let instructions = vote_instruction::create_account_with_config_v2(
                 &from_account.pubkey(),
                 &vote_account_pubkey,

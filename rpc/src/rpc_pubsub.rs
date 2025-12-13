@@ -652,7 +652,7 @@ mod tests {
             program as vote_program,
             state::{Vote, VoteInitV2, VoteStateV4},
         },
-        solana_vote_program::vote_state::create_bls_pubkey_and_proof_of_possession_for_test,
+        solana_vote_program::vote_state::create_bls_pubkey_and_proof_of_possession,
         std::{
             sync::{
                 atomic::{AtomicBool, AtomicU64},
@@ -877,9 +877,9 @@ mod tests {
         let validator = Keypair::new();
         let voter = Keypair::new();
         let from = Keypair::new();
-        let (private_key, bls_pubkey, bls_proof_of_possesssion) =
-            create_bls_pubkey_and_proof_of_possession_for_test();
-        let vote_account = Keypair::new_from_array(private_key);
+        let vote_account = Keypair::new();
+        let (bls_pubkey, bls_proof_of_possesssion) =
+            create_bls_pubkey_and_proof_of_possession(&vote_account.pubkey());
         let bank = Bank::new_for_tests(&genesis_config);
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
