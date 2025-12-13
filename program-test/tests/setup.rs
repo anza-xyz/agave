@@ -12,7 +12,9 @@ use {
     solana_transaction::Transaction,
     solana_vote_program::{
         vote_instruction,
-        vote_state::{self, create_bls_pubkey_and_proof_of_possession, VoteInitV2, VoteStateV4},
+        vote_state::{
+            self, create_bls_pubkey_and_proof_of_possession_for_test, VoteInitV2, VoteStateV4,
+        },
     },
 };
 
@@ -56,7 +58,7 @@ pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
     ));
     let vote_lamports = Rent::default().minimum_balance(VoteStateV4::size_of());
     let (private_key, bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession();
+        create_bls_pubkey_and_proof_of_possession_for_test();
     let vote_keypair = Keypair::new_from_array(private_key);
     let user_keypair = Keypair::new();
     instructions.append(&mut vote_instruction::create_account_with_config_v2(

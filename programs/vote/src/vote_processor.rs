@@ -863,7 +863,7 @@ mod tests {
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
         let instruction_data = serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
             node_pubkey,
             authorized_voter: vote_pubkey,
@@ -1369,7 +1369,7 @@ mod tests {
         }
     }
 
-    fn create_bls_pubkey_and_proof_of_possession(
+    fn create_bls_pubkey_and_proof_of_possession_for_test(
         vote_account_pubkey: &Pubkey,
     ) -> (
         [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
@@ -1441,7 +1441,7 @@ mod tests {
         } else {
             // If either feature is disabled, the new instruction should be rejected
             let (bls_pubkey, bls_proof_of_possession) =
-                create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+                create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
             let bad_instruction_data = serialize(&VoteInstruction::Authorize(
                 authorized_voter_pubkey,
                 VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
@@ -1589,7 +1589,7 @@ mod tests {
         };
         let clock_account = account::create_account_shared_data_for_test(&clock);
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
         let instruction_data = serialize(&VoteInstruction::Authorize(
             authorized_voter_pubkey,
             VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
@@ -1685,7 +1685,7 @@ mod tests {
         } else {
             // If either feature is disabled, the new instruction should be rejected
             let (bls_pubkey, bls_proof_of_possession) =
-                create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+                create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
             let bad_instruction_data = serialize(&VoteInstruction::Authorize(
                 authorized_voter_pubkey,
                 VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
@@ -2426,7 +2426,7 @@ mod tests {
         } = create_test_account_with_authorized_from_seed(vote_state_v4_enabled);
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
         let authorize_type = if vote_state_v4_enabled && bls_pubkey_feature_enabled {
             VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
                 bls_pubkey,
@@ -2463,7 +2463,7 @@ mod tests {
         } = create_test_account_with_authorized_from_seed(vote_state_v4_enabled);
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
         let authorize_type = if vote_state_v4_enabled && bls_pubkey_feature_enabled {
             VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
                 bls_pubkey,
@@ -2586,7 +2586,7 @@ mod tests {
         } = create_test_account_with_authorized_from_seed(vote_state_v4_enabled);
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
         let authorize_type = if vote_state_v4_enabled && bls_pubkey_feature_enabled {
             VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
                 bls_pubkey,
@@ -2626,7 +2626,7 @@ mod tests {
         } = create_test_account_with_authorized_from_seed(vote_state_v4_enabled);
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
         let authorize_type = if vote_state_v4_enabled && bls_pubkey_feature_enabled {
             VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
                 bls_pubkey,
@@ -3022,7 +3022,7 @@ mod tests {
 
         // Test with vanilla authorize accounts
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_pubkey);
         let mut instruction = if vote_state_v4_enabled && bls_pubkey_feature_enabled {
             authorize_checked(
                 &vote_pubkey,

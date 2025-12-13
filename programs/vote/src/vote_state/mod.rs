@@ -1252,8 +1252,7 @@ pub fn create_v4_account_with_authorized(
     vote_account
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-pub fn create_bls_pubkey_and_proof_of_possession() -> (
+pub fn create_bls_pubkey_and_proof_of_possession_for_test() -> (
     [u8; 32],
     [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
     [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
@@ -4010,7 +4009,7 @@ mod tests {
         assert_eq!(vote_state.block_revenue_collector, new_node_pubkey);
     }
 
-    fn create_bls_pubkey_and_proof_of_possession(
+    fn create_bls_pubkey_and_proof_of_possession_for_test(
         vote_account_pubkey: &Pubkey,
     ) -> (
         [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
@@ -4030,7 +4029,7 @@ mod tests {
     fn test_get_and_update_authorized_voter_v4_with_bls() {
         let vote_account_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_account_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_test(&vote_account_pubkey);
         let node_pubkey = Pubkey::new_unique();
         let authorized_voter = Pubkey::new_unique();
         let authorized_withdrawer = Pubkey::new_unique();
@@ -4097,7 +4096,7 @@ mod tests {
 
         // Test replay attack, can't use someone else's BLS pubkey and PoP
         let (others_bls_pubkey, others_bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&Pubkey::new_unique());
+            create_bls_pubkey_and_proof_of_possession_for_test(&Pubkey::new_unique());
         let new_node_pubkey = solana_pubkey::new_rand();
         let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_node_pubkey]
             .into_iter()
