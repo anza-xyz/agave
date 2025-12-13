@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-// TODO(wen): remove allow(dead_code) when consensus_pool is fully integrated
-
 use {
     crate::{
         common::{
@@ -11,8 +8,8 @@ use {
         consensus_pool::stats::ConsensusPoolStats,
         event::VotorEvent,
     },
-    agave_votor_messages::vote::Vote,
     solana_hash::Hash,
+    solana_votor_messages::vote::Vote,
     std::collections::BTreeMap,
 };
 
@@ -129,7 +126,7 @@ impl SlotStakeCounters {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, agave_votor_messages::vote::Vote};
+    use {super::*, solana_votor_messages::vote::Vote};
 
     #[test]
     fn test_safe_to_notar() {

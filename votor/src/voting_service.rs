@@ -1,11 +1,8 @@
-#![allow(dead_code)]
-
 use {
     crate::{
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
@@ -14,8 +11,10 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
+    solana_rpc::alpenglow_last_voted::AlpenglowLastVoted,
     solana_runtime::bank_forks::BankForks,
     solana_transaction_error::TransportError,
+    solana_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     std::{
         collections::HashMap,
         net::SocketAddr,
@@ -132,6 +131,8 @@ impl VotingService {
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         test_override: Option<VotingServiceOverride>,
+        alpenglow_last_voted: Arc<AlpenglowLastVoted>,
+        my_vote_pubkey: Pubkey,
     ) -> Self {
         let (additional_listeners, alpenglow_port_override) = match test_override {
             None => (Vec::new(), None),
@@ -142,7 +143,7 @@ impl VotingService {
         };
 
         let thread_hdl = Builder::new()
-            .name("solVotorVoteSvc".to_string())
+            .name("solVoteService".to_string())
             .spawn(move || {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
@@ -152,11 +153,22 @@ impl VotingService {
                     alpenglow_port_override,
                 );
 
-                info!("AlpenglowVotingService has started");
+                let mut my_last_voted = 0;
                 loop {
                     let Ok(bls_op) = bls_receiver.recv() else {
                         break;
                     };
+                    if let BLSOp::PushVote { slot, message, .. } = &bls_op {
+                        if let ConsensusMessage::Vote(vote_message) = message.as_ref() {
+                            if vote_message.vote.is_notarization_or_finalization()
+                                && slot > &my_last_voted
+                            {
+                                my_last_voted = *slot;
+                                alpenglow_last_voted
+                                    .update_last_voted(&HashMap::from([(my_vote_pubkey, *slot)]));
+                            }
+                        }
+                    }
                     Self::handle_bls_op(
                         &cluster_info,
                         vote_history_storage.as_ref(),
@@ -166,7 +178,6 @@ impl VotingService {
                         &mut staked_validators_cache,
                     );
                 }
-                info!("AlpenglowVotingService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
@@ -262,14 +273,9 @@ mod tests {
         crate::vote_history_storage::{
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
-        agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
-            vote::Vote,
-        },
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
-        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -279,13 +285,22 @@ mod tests {
         },
         solana_signer::Signer,
         solana_streamer::{
-            nonblocking::swqos::SwQosConfig,
-            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
+            quic::{spawn_server, QuicServerParams, SpawnServerResult},
+            socket::SocketAddrSpace,
             streamer::StakedNodes,
         },
-        std::{net::SocketAddr, sync::Arc},
+        solana_votor_messages::{
+            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+            vote::Vote,
+        },
+        std::{
+            net::SocketAddr,
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            },
+        },
         test_case::test_case,
-        tokio_util::sync::CancellationToken,
     };
 
     fn create_voting_service(
@@ -325,6 +340,8 @@ mod tests {
                     additional_listeners: vec![listener],
                     alpenglow_port_override: AlpenglowPortOverride::default(),
                 }),
+                Arc::new(AlpenglowLastVoted::default()),
+                validator_keypairs[0].vote_keypair.pubkey(),
             ),
             validator_keypairs,
         )
@@ -355,22 +372,23 @@ mod tests {
         bitmap: Vec::new(),
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
-        agave_logger::setup();
+        solana_logger::setup();
         let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
         // Bind to a random UDP port
-        let socket = bind_to_localhost_unique().unwrap();
+        let socket = solana_net_utils::bind_to_localhost().unwrap();
         let listener_addr = socket.local_addr().unwrap();
 
         // Create VotingService with the listener address
         let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
 
         // Send a BLS message via the VotingService
-        bls_sender.send(bls_op).unwrap();
+        assert!(bls_sender.send(bls_op).is_ok());
 
         // Start a quick streamer to handle quick control packets
         let (sender, receiver) = crossbeam_channel::unbounded();
+        let exit = Arc::new(AtomicBool::new(false));
         let stakes = validator_keypairs
             .iter()
             .map(|x| (x.node_keypair.pubkey(), 100))
@@ -379,20 +397,18 @@ mod tests {
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
         )));
-        let cancel_token = CancellationToken::new();
         let SpawnServerResult {
             thread: quic_server_thread,
             ..
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_server(
             "AlpenglowLocalClusterTest",
             "quic_streamer_test",
             [socket],
             &Keypair::new(),
             sender,
+            exit.clone(),
             staked_nodes,
-            QuicStreamerConfig::default_for_tests(),
-            SwQosConfig::default(),
-            cancel_token.clone(),
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
         let packets = receiver.recv().unwrap();
@@ -407,7 +423,7 @@ mod tests {
                 )
             });
         assert_eq!(received_message, expected_message);
-        cancel_token.cancel();
+        exit.store(true, Ordering::Relaxed);
         quic_server_thread.join().unwrap();
     }
 }

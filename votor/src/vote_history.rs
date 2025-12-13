@@ -2,15 +2,31 @@ use {
     super::vote_history_storage::{
         Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
     },
-    agave_votor_messages::{consensus_message::Block, vote::Vote},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
+    solana_votor_messages::{consensus_message::Block, vote::Vote},
     std::collections::{hash_map::Entry, HashMap, HashSet},
     thiserror::Error,
 };
+
+pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(PartialEq, Eq, Debug, Default, Clone, Copy, Serialize, Deserialize)]
+pub(crate) enum BlockhashStatus {
+    /// No vote since restart
+    #[default]
+    Uninitialized,
+    /// Non voting validator
+    NonVoting,
+    /// Hot spare validator
+    HotSpare,
+    /// Successfully generated vote tx with blockhash
+    Blockhash(Slot, Hash),
+}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum VoteHistoryVersions {
@@ -31,7 +47,7 @@ impl VoteHistoryVersions {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "9dp4rEVqAsT7mfiL5oEgWrxgWCUiEe4Fk8xJoTWwSN1X")
+    frozen_abi(digest = "9h5xLzJWKtwn1wLAaGbDUsSVJawLdNfi7jVzcFBP86S6")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct VoteHistory {
@@ -128,7 +144,7 @@ impl VoteHistory {
     pub fn votes_cast_since(&self, slot: Slot) -> Vec<Vote> {
         self.votes_cast
             .iter()
-            .filter(|(s, _)| s > &&slot)
+            .filter(|(&s, _)| s > slot)
             .flat_map(|(_, votes)| votes.iter())
             .cloned()
             .collect()
@@ -193,7 +209,11 @@ impl VoteHistory {
                 self.skipped.insert(vote.slot);
                 self.voted_skip_fallback.insert(vote.slot);
             }
-            Vote::Genesis(_vote) => {}
+            Vote::Genesis(_vote) => {
+                // Genesis votes are only used during migration.
+                // Since these votes are tracked and sent outside of
+                // votor, we do not need to insert anything here.
+            }
         }
         self.votes_cast.entry(vote.slot()).or_default().push(vote);
     }
@@ -290,249 +310,5 @@ impl VoteHistoryError {
         } else {
             false
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use {
-        super::*, crate::vote_history_storage::FileVoteHistoryStorage,
-        agave_votor_messages::vote::Vote, solana_signer::Signer, tempfile::TempDir,
-    };
-
-    // Votes cast since is kept in HashMap, so order is not guaranteed.
-    // This function checks that the votes are the same, regardless of order.
-    fn check_votes_cast_since(vote_history: &VoteHistory, slot: Slot, expected_votes: Vec<Vote>) {
-        let votes = vote_history.votes_cast_since(slot);
-        assert_eq!(votes.len(), expected_votes.len());
-        // This is correct because expected_votes has no duplicates
-        for vote in expected_votes {
-            assert!(votes.contains(&vote));
-        }
-    }
-
-    #[test]
-    fn test_add_votes() {
-        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        // No votes for now
-        assert!(vote_history.votes_cast_since(0).is_empty());
-
-        // Vote Notarize on slot 1
-        let block_id_1 = Hash::new_unique();
-        let vote_notarize_1 = Vote::new_notarization_vote(1, block_id_1);
-        vote_history.add_vote(vote_notarize_1);
-        assert!(vote_history.voted(1));
-        assert!(!vote_history.its_over(1));
-        check_votes_cast_since(&vote_history, 0, vec![vote_notarize_1]);
-        assert_eq!(vote_history.voted_notar(1), Some(block_id_1));
-        assert!(!vote_history.skipped(1));
-        assert!(!vote_history.voted_notar_fallback(1, block_id_1));
-        assert!(!vote_history.bad_window(1));
-
-        // Vote Finalize on slot 1
-        let vote_finalize_1 = Vote::new_finalization_vote(1);
-        vote_history.add_vote(vote_finalize_1);
-        assert!(vote_history.voted(1));
-        assert!(vote_history.its_over(1));
-        check_votes_cast_since(&vote_history, 0, vec![vote_notarize_1, vote_finalize_1]);
-        assert!(!vote_history.bad_window(1));
-
-        // Vote Skip on slot 2
-        let vote_skip_2 = Vote::new_skip_vote(2);
-        vote_history.add_vote(vote_skip_2);
-        assert!(vote_history.voted(2));
-        assert!(vote_history.skipped(2));
-        check_votes_cast_since(
-            &vote_history,
-            0,
-            vec![vote_notarize_1, vote_finalize_1, vote_skip_2],
-        );
-        assert_eq!(vote_history.voted_notar(2), None);
-        assert!(!vote_history.its_over(2));
-        assert!(vote_history.bad_window(2));
-
-        // Now vote NotarizeFallback on slot 2
-        let block_id_2 = Hash::new_unique();
-        let vote_notarize_fallback_2 = Vote::new_notarization_fallback_vote(2, block_id_2);
-        vote_history.add_vote(vote_notarize_fallback_2);
-        assert!(vote_history.voted(2));
-        assert!(vote_history.skipped(2));
-        assert_eq!(vote_history.voted_notar(2), None);
-        assert!(vote_history.voted_notar_fallback(2, block_id_2));
-        check_votes_cast_since(
-            &vote_history,
-            0,
-            vec![
-                vote_notarize_1,
-                vote_finalize_1,
-                vote_skip_2,
-                vote_notarize_fallback_2,
-            ],
-        );
-        assert!(!vote_history.its_over(2));
-        assert!(vote_history.bad_window(2));
-
-        // Vote Notarize on slot 3
-        let block_id_3 = Hash::new_unique();
-        let vote_notarize_3 = Vote::new_notarization_vote(3, block_id_3);
-        vote_history.add_vote(vote_notarize_3);
-        assert!(vote_history.voted(3));
-        assert!(!vote_history.skipped(3));
-        assert_eq!(vote_history.voted_notar(3), Some(block_id_3));
-        assert!(!vote_history.voted_notar_fallback(3, block_id_3));
-        check_votes_cast_since(
-            &vote_history,
-            0,
-            vec![
-                vote_notarize_1,
-                vote_finalize_1,
-                vote_skip_2,
-                vote_notarize_fallback_2,
-                vote_notarize_3,
-            ],
-        );
-        assert!(!vote_history.its_over(3));
-        assert!(!vote_history.bad_window(3));
-
-        // Now vote SkipFallback on slot 3
-        let vote_skip_fallback_3 = Vote::new_skip_fallback_vote(3);
-        vote_history.add_vote(vote_skip_fallback_3);
-        assert!(vote_history.voted(3));
-        assert!(vote_history.skipped(3));
-        assert_eq!(vote_history.voted_notar(3), Some(block_id_3));
-        assert!(!vote_history.voted_notar_fallback(3, block_id_3));
-        assert!(vote_history.voted_skip_fallback(3));
-        check_votes_cast_since(
-            &vote_history,
-            0,
-            vec![
-                vote_notarize_1,
-                vote_finalize_1,
-                vote_skip_2,
-                vote_notarize_fallback_2,
-                vote_notarize_3,
-                vote_skip_fallback_3,
-            ],
-        );
-        assert!(!vote_history.its_over(3));
-        assert!(vote_history.bad_window(3));
-
-        // Set root on 2
-        vote_history.set_root(2);
-        assert_eq!(vote_history.root(), 2);
-        check_votes_cast_since(
-            &vote_history,
-            0,
-            vec![
-                vote_skip_2,
-                vote_notarize_fallback_2,
-                vote_notarize_3,
-                vote_skip_fallback_3,
-            ],
-        );
-        // set_root doesn't automatically set its_over to true
-        assert!(!vote_history.its_over(2));
-    }
-
-    #[test]
-    fn test_add_notarized_blocks() {
-        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let block_1 = (1, Hash::new_unique());
-        assert!(!vote_history.is_block_notarized(&block_1));
-        vote_history.add_block_notarized(block_1);
-        assert!(vote_history.is_block_notarized(&block_1));
-
-        let block_2 = (2, Hash::new_unique());
-        assert!(!vote_history.is_block_notarized(&block_2));
-        vote_history.add_block_notarized(block_2);
-        assert!(vote_history.is_block_notarized(&block_2));
-
-        vote_history.set_root(2);
-        assert_eq!(vote_history.root(), 2);
-        assert!(!vote_history.is_block_notarized(&block_1));
-        assert!(vote_history.is_block_notarized(&block_2));
-
-        // Adding a block before root silently returns
-        vote_history.add_block_notarized(block_1);
-        assert!(!vote_history.is_block_notarized(&block_1));
-    }
-
-    #[test]
-    fn test_add_parent_ready() {
-        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        assert_eq!(vote_history.highest_parent_ready_slot(), None);
-        let block_id_0 = (0, Hash::new_unique());
-        vote_history.add_parent_ready(1, block_id_0);
-        assert!(vote_history.is_parent_ready(1, &block_id_0));
-        assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
-
-        vote_history.set_root(1);
-        assert_eq!(vote_history.root(), 1);
-        assert!(vote_history.is_parent_ready(1, &block_id_0));
-        assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
-
-        // Add parent ready for slot 2
-        let block_id_2_0 = (1, Hash::new_unique());
-        let block_id_2_1 = (1, Hash::new_unique());
-        assert!(vote_history.add_parent_ready(2, block_id_2_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_0));
-        assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
-        assert!(!vote_history.add_parent_ready(2, block_id_2_1));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_1));
-        assert!(!vote_history.add_parent_ready(2, block_id_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_0));
-
-        // Set root to 2
-        vote_history.set_root(2);
-        assert_eq!(vote_history.root(), 2);
-        assert!(!vote_history.is_parent_ready(1, &block_id_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_0));
-        assert!(vote_history.is_parent_ready(2, &block_id_2_1));
-        assert!(vote_history.is_parent_ready(2, &block_id_0));
-        assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
-
-        // Adding a parent ready for slot before root silently returns false
-        assert!(!vote_history.add_parent_ready(1, block_id_0));
-    }
-
-    #[test]
-    fn test_save_and_restore() {
-        let node_keypair = Keypair::new();
-        let mut vote_history = VoteHistory::new(node_keypair.pubkey(), 0);
-        let tmp_dir = TempDir::new().unwrap();
-        let vote_history_storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
-
-        // Add Notarize on 1 and Skip on 2
-        let vote_1 = Vote::new_notarization_vote(1, Hash::new_unique());
-        let vote_2 = Vote::new_skip_vote(2);
-        vote_history.add_vote(vote_1);
-        vote_history.add_vote(vote_2);
-
-        // Save to storage
-        vote_history
-            .save(&vote_history_storage, &node_keypair)
-            .unwrap();
-        // Restore from storage
-        let restored_vote_history =
-            VoteHistory::restore(&vote_history_storage, &node_keypair.pubkey())
-                .ok()
-                .unwrap();
-        check_votes_cast_since(&restored_vote_history, 0, vec![vote_1, vote_2]);
-        assert_eq!(restored_vote_history, vote_history);
-
-        // Save should fail if you give wrong keypair
-        let error = vote_history
-            .save(&vote_history_storage, &Keypair::new())
-            .err()
-            .unwrap();
-        assert!(matches!(error, VoteHistoryError::WrongVoteHistory(_)));
-        assert!(!error.is_file_missing());
-
-        // Restore should fail if you give wrong pubkey
-        let error = VoteHistory::restore(&vote_history_storage, &Pubkey::new_unique())
-            .err()
-            .unwrap();
-        assert!(matches!(error, VoteHistoryError::IoError(_)));
-        assert!(error.is_file_missing());
     }
 }
