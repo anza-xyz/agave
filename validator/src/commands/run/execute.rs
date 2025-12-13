@@ -71,6 +71,7 @@ use {
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
+        env,
         fs::{self, File},
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
@@ -92,6 +93,12 @@ pub fn execute(
     solana_version: &str,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Debugging panics is easier with a backtrace
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        // Safety: env update is made before any spawned threads might access the environment
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
+    }
+
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
@@ -663,6 +670,16 @@ pub fn execute(
             );
         }
         BlockVerificationMethod::UnifiedScheduler => {}
+    }
+    if matches!(
+        validator_config.block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        warn!(
+            "Currently, the unified-scheduler method is experimental for block-production. It has \
+             known security issues and should be used only for developing and benchmarking \
+             purposes"
+        );
     }
 
     let public_rpc_addr = matches

@@ -228,8 +228,8 @@ mod tests {
 
     fn new_from_parent(parent: Arc<Bank>) -> Bank {
         let slot = parent.slot() + 1;
-        let collector_id = Pubkey::default();
-        Bank::new_from_parent(parent, &collector_id, slot)
+        let leader_id = Pubkey::default();
+        Bank::new_from_parent(parent, &leader_id, slot)
     }
 
     #[test]

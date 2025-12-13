@@ -563,7 +563,7 @@ mod tests {
         solana_nonce_account::verify_nonce_account,
         solana_poh::record_channels::{record_channels, RecordReceiver},
         solana_pubkey::Pubkey,
-        solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
+        solana_runtime::bank_forks::BankForks,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
@@ -612,11 +612,7 @@ mod tests {
         record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            transaction_status_sender,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
+        let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         TestFrame {
@@ -639,11 +635,7 @@ mod tests {
         record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
+        let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
         consumer.process_and_record_transactions(&bank, &transactions)
     }

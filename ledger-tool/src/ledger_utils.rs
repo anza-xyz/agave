@@ -12,7 +12,9 @@ use {
         create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
     },
     solana_clock::Slot,
-    solana_core::validator::BlockVerificationMethod,
+    solana_core::validator::{
+        supported_scheduling_mode, BlockProductionMethod, BlockVerificationMethod,
+    },
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::open_genesis_config,
     solana_geyser_plugin_manager::geyser_plugin_service::{
@@ -36,7 +38,6 @@ use {
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank_forks::BankForks,
-        prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
@@ -64,6 +65,7 @@ pub struct LoadAndProcessLedgerOutput {
     // not. It is safe to let ABS continue in the background, and ABS will stop
     // if/when it finally checks the exit flag
     pub accounts_background_service: AccountsBackgroundService,
+    pub unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
 }
 
 const PROCESS_SLOTS_HELP_STRING: &str =
@@ -353,34 +355,57 @@ pub fn load_and_process_ledger(
         "block_verification_method",
         BlockVerificationMethod
     );
-    info!("Using: block-verification-method: {block_verification_method}");
+    let block_production_method = value_t!(
+        arg_matches,
+        "block_production_method",
+        BlockProductionMethod
+    )
+    .inspect(|method| {
+        if matches!(method, BlockProductionMethod::UnifiedScheduler) {
+            warn!(
+                "Currently, the unified-scheduler method is experimental for block-production. It \
+                 has known security issues and should be used only for developing and \
+                 benchmarking purposes"
+            );
+        }
+    })
+    .unwrap_or_default();
+    info!(
+        "Using: block-verification-method: {block_verification_method}, block-production-method: \
+         {block_production_method}",
+    );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    match block_verification_method {
-        BlockVerificationMethod::BlockstoreProcessor => {
-            info!("no scheduler pool is installed for block verification...");
+    let unified_scheduler_pool = match (&block_verification_method, &block_production_method) {
+        methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+        | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+            let no_replay_vote_sender = None;
+
+            let pool = DefaultSchedulerPool::new(
+                supported_scheduling_mode(methods),
+                unified_scheduler_handler_threads,
+                process_options.runtime_config.log_messages_bytes_limit,
+                transaction_status_sender.clone(),
+                no_replay_vote_sender,
+                None,
+            );
+            bank_forks
+                .write()
+                .unwrap()
+                .install_scheduler_pool(pool.clone());
+            Some(pool)
+        }
+        _ => {
+            info!("no scheduler pool is installed for block verification/production...");
             if let Some(count) = unified_scheduler_handler_threads {
                 warn!(
                     "--unified-scheduler-handler-threads={count} is ignored because unified \
                      scheduler isn't enabled"
                 );
             }
+            None
         }
-        BlockVerificationMethod::UnifiedScheduler => {
-            let no_replay_vote_sender = None;
-            let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-            bank_forks
-                .write()
-                .unwrap()
-                .install_scheduler_pool(DefaultSchedulerPool::new_dyn(
-                    unified_scheduler_handler_threads,
-                    process_options.runtime_config.log_messages_bytes_limit,
-                    transaction_status_sender.clone(),
-                    no_replay_vote_sender,
-                    ignored_prioritization_fee_cache,
-                ));
-        }
-    }
+    };
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
     let snapshot_controller = Arc::new(SnapshotController::new(
@@ -419,6 +444,7 @@ pub fn load_and_process_ledger(
         bank_forks,
         starting_snapshot_hashes,
         accounts_background_service,
+        unified_scheduler_pool,
     })
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 

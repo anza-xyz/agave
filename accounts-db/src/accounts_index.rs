@@ -73,8 +73,9 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     num_initial_accounts: None,
 };
 pub type ScanResult<T> = Result<T, ScanError>;
-pub type SlotList<T> = SmallVec<[(Slot, T); 1]>;
-pub type ReclaimsSlotList<T> = Vec<(Slot, T)>;
+pub type SlotList<T> = SmallVec<[SlotListItem<T>; 1]>;
+pub type ReclaimsSlotList<T> = Vec<SlotListItem<T>>;
+pub type SlotListItem<T> = (Slot, T);
 
 // The ref count cannot be higher than the total number of storages, and we should never have more
 // than 1 million storages. A 32-bit ref count should be *significantly* more than enough.
@@ -806,7 +807,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         ancestors: Option<&Ancestors>,
         max_root: Option<Slot>,
         should_add_to_in_mem_cache: bool,
-        callback: impl FnOnce((Slot, T)) -> R,
+        callback: impl FnOnce(SlotListItem<T>) -> R,
     ) -> Option<R> {
         self.get_and_then(pubkey, |entry| {
             let callback_result = entry.and_then(|entry| {
@@ -823,7 +824,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         entry: &AccountMapEntry<T>,
         ancestors: Option<&Ancestors>,
         max_root: Option<Slot>,
-        callback: impl FnOnce((Slot, T)) -> R,
+        callback: impl FnOnce(SlotListItem<T>) -> R,
     ) -> Option<R> {
         let slot_list = entry.slot_list_read_lock();
         self.latest_slot(ancestors, &slot_list, max_root)
@@ -927,7 +928,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     pub fn get_rooted_entries(
         &self,
-        slot_list: &[(Slot, T)],
+        slot_list: &[SlotListItem<T>],
         max_inclusive: Option<Slot>,
     ) -> SlotList<T> {
         let max_inclusive = max_inclusive.unwrap_or(Slot::MAX);
@@ -971,7 +972,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub(crate) fn latest_slot(
         &self,
         ancestors: Option<&Ancestors>,
-        slot_list: &[(Slot, T)],
+        slot_list: &[SlotListItem<T>],
         max_root_inclusive: Option<Slot>,
     ) -> Option<usize> {
         let mut current_max = 0;
@@ -1049,7 +1050,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         avoid_callback_result: Option<AccountsIndexScanResult>,
         filter: ScanFilter,
     ) where
-        F: FnMut(&'a Pubkey, Option<(&[(Slot, T)], RefCount)>) -> AccountsIndexScanResult,
+        F: FnMut(&'a Pubkey, Option<(&[SlotListItem<T>], RefCount)>) -> AccountsIndexScanResult,
         I: Iterator<Item = &'a Pubkey>,
     {
         let mut lock = None;
@@ -1162,7 +1163,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // Get the maximum root <= `max_allowed_root` from the given `slot_list`
     fn get_newest_root_in_slot_list(
         alive_roots: &RollingBitField,
-        slot_list: &[(Slot, T)],
+        slot_list: &[SlotListItem<T>],
         max_allowed_root_inclusive: Option<Slot>,
     ) -> Slot {
         slot_list

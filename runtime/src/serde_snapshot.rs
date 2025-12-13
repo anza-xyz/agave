@@ -42,7 +42,7 @@ use {
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
-        io::{self, BufReader, BufWriter, Read, Write},
+        io::{self, BufReader, Read, Write},
         path::{Path, PathBuf},
         result::Result,
         sync::{
@@ -137,7 +137,7 @@ struct DeserializableVersionedBank {
     slot: Slot,
     epoch: Epoch,
     block_height: u64,
-    collector_id: Pubkey,
+    leader_id: Pubkey,
     collector_fees: u64,
     _fee_calculator: FeeCalculator,
     fee_rate_governor: FeeRateGovernor,
@@ -178,7 +178,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             slot: dvb.slot,
             epoch: dvb.epoch,
             block_height: dvb.block_height,
-            collector_id: dvb.collector_id,
+            leader_id: dvb.leader_id,
             collector_fees: dvb.collector_fees,
             fee_rate_governor: dvb.fee_rate_governor,
             rent_collector: dvb.rent_collector,
@@ -217,7 +217,7 @@ struct SerializableVersionedBank {
     slot: Slot,
     epoch: Epoch,
     block_height: u64,
-    collector_id: Pubkey,
+    leader_id: Pubkey,
     collector_fees: u64,
     fee_calculator: FeeCalculator,
     fee_rate_governor: FeeRateGovernor,
@@ -255,7 +255,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             slot: rhs.slot,
             epoch: rhs.epoch,
             block_height: rhs.block_height,
-            collector_id: rhs.collector_id,
+            leader_id: rhs.leader_id,
             collector_fees: rhs.collector_fees,
             fee_calculator: FeeCalculator::default(),
             fee_rate_governor: rhs.fee_rate_governor,
@@ -598,7 +598,7 @@ where
 
 #[cfg(test)]
 pub(crate) fn bank_to_stream<W>(
-    stream: &mut BufWriter<W>,
+    stream: &mut io::BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
 ) -> Result<(), Error>
@@ -615,17 +615,14 @@ where
 }
 
 /// Serializes bank snapshot into `stream` with bincode
-pub fn serialize_bank_snapshot_into<W>(
-    stream: &mut BufWriter<W>,
+pub fn serialize_bank_snapshot_into(
+    stream: &mut dyn Write,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
     write_version: u64,
-) -> Result<(), Error>
-where
-    W: Write,
-{
+) -> Result<(), Error> {
     let mut serializer = bincode::Serializer::new(
         stream,
         bincode::DefaultOptions::new().with_fixint_encoding(),

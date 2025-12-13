@@ -1,17 +1,152 @@
 use {
-    crate::{spawn, toolchain::rust_target_triple, Config},
+    crate::{
+        spawn,
+        toolchain::rust_target_triple,
+        utils::{copy_file, create_directory, generate_keypair},
+        Config,
+    },
     log::{debug, error, info, warn},
     regex::Regex,
-    solana_keypair::{write_keypair_file, Keypair},
     std::{
         collections::{HashMap, HashSet},
         fs::{self, File},
         io::{BufRead, BufReader, BufWriter, Write},
-        path::Path,
+        path::{Path, PathBuf},
         process::exit,
         str::FromStr,
     },
 };
+
+fn file_older_or_missing(prerequisite_file: &Path, target_file: &Path) -> bool {
+    let prerequisite_metadata = fs::metadata(prerequisite_file).unwrap_or_else(|err| {
+        error!(
+            "Unable to get file metadata for {}: {}",
+            prerequisite_file.display(),
+            err
+        );
+        exit(1);
+    });
+
+    if let Ok(target_metadata) = fs::metadata(target_file) {
+        use std::time::UNIX_EPOCH;
+        prerequisite_metadata.modified().unwrap_or(UNIX_EPOCH)
+            > target_metadata.modified().unwrap_or(UNIX_EPOCH)
+    } else {
+        true
+    }
+}
+
+fn create_folders(config: &Config, deploy_folder: &PathBuf, debug_folder: &PathBuf) {
+    if !deploy_folder.exists() {
+        create_directory(deploy_folder);
+    }
+
+    if config.debug && !debug_folder.exists() {
+        create_directory(debug_folder);
+    }
+}
+
+fn strip_object(
+    config: &Config,
+    unstripped: &Path,
+    stripped: &Path,
+    #[cfg(windows)] llvm_bin: &Path,
+) {
+    #[cfg(windows)]
+    let output = spawn(
+        &llvm_bin.join("llvm-objcopy"),
+        [
+            "--strip-all".as_ref(),
+            unstripped.as_os_str(),
+            stripped.as_os_str(),
+        ],
+        config.generate_child_script_on_failure,
+    );
+    #[cfg(not(windows))]
+    let output = spawn(
+        &config.sbf_sdk.join("scripts").join("strip.sh"),
+        [
+            unstripped.as_os_str(),
+            stripped.as_os_str(),
+            "--strip-all".as_ref(),
+        ],
+        config.generate_child_script_on_failure,
+    );
+    if config.verbose {
+        debug!("{output}");
+    }
+}
+
+fn generate_debug_objects(
+    config: &Config,
+    sbf_debug_dir: &Path,
+    finalized_program: &str,
+    program_unstripped_so: &Path,
+    deploy_keypair: &Path,
+    debug_keypair: &PathBuf,
+    program_name: &str,
+    #[cfg(windows)] llvm_bin: &Path,
+) -> PathBuf {
+    // debug objects
+    let program_debug = sbf_debug_dir.join(format!("{program_name}.so.debug"));
+    let program_debug_stripped = sbf_debug_dir.join(finalized_program);
+
+    if file_older_or_missing(program_unstripped_so, &program_debug_stripped) {
+        strip_object(
+            config,
+            program_unstripped_so,
+            &program_debug_stripped,
+            #[cfg(windows)]
+            llvm_bin,
+        );
+    }
+
+    if file_older_or_missing(program_unstripped_so, &program_debug) {
+        copy_file(program_unstripped_so, &program_debug);
+    }
+
+    if !debug_keypair.exists() {
+        if deploy_keypair.exists() {
+            copy_file(deploy_keypair, debug_keypair);
+        } else {
+            generate_keypair(debug_keypair);
+        }
+    }
+
+    program_debug_stripped
+}
+
+fn generate_release_objects(
+    config: &Config,
+    sbf_out_dir: &Path,
+    program_unstripped_so: &Path,
+    deploy_keypair: &PathBuf,
+    debug_keypair: &Path,
+    program_name: &str,
+    #[cfg(windows)] llvm_bin: &Path,
+) -> PathBuf {
+    let program_so = sbf_out_dir.join(format!("{program_name}.so"));
+
+    if file_older_or_missing(program_unstripped_so, &program_so) {
+        strip_object(
+            config,
+            program_unstripped_so,
+            &program_so,
+            #[cfg(windows)]
+            llvm_bin,
+        );
+    }
+
+    if !deploy_keypair.exists() {
+        if debug_keypair.exists() {
+            copy_file(debug_keypair, deploy_keypair);
+        } else {
+            generate_keypair(deploy_keypair);
+        }
+    }
+
+    program_so
+}
 
 pub(crate) fn post_process(config: &Config, target_directory: &Path, program_name: Option<String>) {
     let sbf_out_dir = config
@@ -20,44 +155,25 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
         .cloned()
         .unwrap_or_else(|| target_directory.join("deploy"));
     let target_triple = rust_target_triple(config);
-    let target_build_directory = target_directory.join(&target_triple).join("release");
+    let sbf_debug_dir = sbf_out_dir.join("debug");
+
+    create_folders(config, &sbf_out_dir, &sbf_debug_dir);
+
+    let target_build_directory = if config.debug {
+        target_directory.join(&target_triple).join("debug")
+    } else {
+        target_directory.join(&target_triple).join("release")
+    };
 
     if let Some(program_name) = program_name {
-        let program_unstripped_so = target_build_directory.join(format!("{program_name}.so"));
+        let keypair_name = format!("{program_name}-keypair.json");
+        let deploy_keypair = sbf_out_dir.join(keypair_name.clone());
+        let debug_keypair = sbf_debug_dir.join(keypair_name);
+
+        let finalized_program_file = format!("{program_name}.so");
+
+        let program_unstripped_so = target_build_directory.join(finalized_program_file.clone());
         let program_dump = sbf_out_dir.join(format!("{program_name}-dump.txt"));
-        let program_so = sbf_out_dir.join(format!("{program_name}.so"));
-        let program_debug = sbf_out_dir.join(format!("{program_name}.debug"));
-        let program_keypair = sbf_out_dir.join(format!("{program_name}-keypair.json"));
-
-        fn file_older_or_missing(prerequisite_file: &Path, target_file: &Path) -> bool {
-            let prerequisite_metadata = fs::metadata(prerequisite_file).unwrap_or_else(|err| {
-                error!(
-                    "Unable to get file metadata for {}: {}",
-                    prerequisite_file.display(),
-                    err
-                );
-                exit(1);
-            });
-
-            if let Ok(target_metadata) = fs::metadata(target_file) {
-                use std::time::UNIX_EPOCH;
-                prerequisite_metadata.modified().unwrap_or(UNIX_EPOCH)
-                    > target_metadata.modified().unwrap_or(UNIX_EPOCH)
-            } else {
-                true
-            }
-        }
-
-        if !program_keypair.exists() {
-            write_keypair_file(&Keypair::new(), &program_keypair).unwrap_or_else(|err| {
-                error!(
-                    "Unable to get create {}: {}",
-                    program_keypair.display(),
-                    err
-                );
-                exit(1);
-            });
-        }
 
         #[cfg(windows)]
         let llvm_bin = config
@@ -67,27 +183,30 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             .join("llvm")
             .join("bin");
 
-        if file_older_or_missing(&program_unstripped_so, &program_so) {
-            #[cfg(windows)]
-            let output = spawn(
-                &llvm_bin.join("llvm-objcopy"),
-                [
-                    "--strip-all".as_ref(),
-                    program_unstripped_so.as_os_str(),
-                    program_so.as_os_str(),
-                ],
-                config.generate_child_script_on_failure,
-            );
-            #[cfg(not(windows))]
-            let output = spawn(
-                &config.sbf_sdk.join("scripts").join("strip.sh"),
-                [&program_unstripped_so, &program_so],
-                config.generate_child_script_on_failure,
-            );
-            if config.verbose {
-                debug!("{output}");
-            }
-        }
+        let program_so = if config.debug {
+            generate_debug_objects(
+                config,
+                &sbf_debug_dir,
+                &finalized_program_file,
+                &program_unstripped_so,
+                &deploy_keypair,
+                &debug_keypair,
+                &program_name,
+                #[cfg(windows)]
+                &llvm_bin,
+            )
+        } else {
+            generate_release_objects(
+                config,
+                &sbf_out_dir,
+                &program_unstripped_so,
+                &deploy_keypair,
+                &debug_keypair,
+                &program_name,
+                #[cfg(windows)]
+                &llvm_bin,
+            )
+        };
 
         if config.dump && file_older_or_missing(&program_unstripped_so, &program_dump) {
             let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
@@ -119,35 +238,17 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             postprocess_dump(&program_dump);
         }
 
-        if config.debug && file_older_or_missing(&program_unstripped_so, &program_debug) {
-            #[cfg(windows)]
-            let llvm_objcopy = &llvm_bin.join("llvm-objcopy");
-            #[cfg(not(windows))]
-            let llvm_objcopy = &config.sbf_sdk.join("scripts").join("objcopy.sh");
-
-            let output = spawn(
-                llvm_objcopy,
-                [
-                    "--only-keep-debug".as_ref(),
-                    program_unstripped_so.as_os_str(),
-                    program_debug.as_os_str(),
-                ],
-                config.generate_child_script_on_failure,
-            );
-            if config.verbose {
-                debug!("{output}");
-            }
-        }
-
         if config.arch != "v3" {
             // SBPFv3 shall not have any undefined syscall.
             check_undefined_symbols(config, &program_so);
         }
 
-        info!("To deploy this program:");
-        info!("  $ solana program deploy {}", program_so.display());
-        info!("The program address will default to this keypair (override with --program-id):");
-        info!("  {}", program_keypair.display());
+        if !config.debug {
+            info!("To deploy this program:");
+            info!("  $ solana program deploy {}", program_so.display());
+            info!("The program address will default to this keypair (override with --program-id):");
+            info!("  {}", deploy_keypair.display());
+        }
     } else if config.dump {
         warn!("Note: --dump is only available for crates with a cdylib target");
     }

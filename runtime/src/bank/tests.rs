@@ -554,6 +554,47 @@ fn test_store_account_and_update_capitalization_unchanged() {
     assert_eq!(account, bank.get_account(&pubkey).unwrap());
 }
 
+/// Ensure that store_account_and_update_capitalization() correctly updates accounts_data_size
+#[test]
+fn test_store_account_and_update_capitalization_accounts_data_size() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(100 * LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+
+    let data_size = 123;
+    let mut account = AccountSharedData::new(LAMPORTS_PER_SOL, data_size, &system_program::id());
+    let address = Pubkey::new_unique();
+
+    // test 1: store a new account
+    let accounts_data_size_pre = bank.load_accounts_data_size();
+    bank.store_account_and_update_capitalization(&address, &account);
+    let accounts_data_size_post = bank.load_accounts_data_size();
+    assert_eq!(
+        accounts_data_size_pre + data_size as u64,
+        accounts_data_size_post,
+    );
+
+    // test 2: change the account's data
+    let data_size_delta = 42;
+    account.set_data(vec![0; data_size + data_size_delta]);
+    let accounts_data_size_pre = bank.load_accounts_data_size();
+    bank.store_account_and_update_capitalization(&address, &account);
+    let accounts_data_size_post = bank.load_accounts_data_size();
+    assert_eq!(
+        accounts_data_size_pre + data_size_delta as u64,
+        accounts_data_size_post,
+    );
+
+    // test 3: close the account
+    account.set_lamports(0);
+    let accounts_data_size_pre = bank.load_accounts_data_size();
+    bank.store_account_and_update_capitalization(&address, &account);
+    let accounts_data_size_post = bank.load_accounts_data_size();
+    assert_eq!(
+        accounts_data_size_pre - (data_size + data_size_delta) as u64,
+        accounts_data_size_post,
+    );
+}
+
 pub(in crate::bank) fn new_from_parent_next_epoch(
     parent: Arc<Bank>,
     bank_forks: &RwLock<BankForks>,
@@ -2209,8 +2250,8 @@ fn test_bank_pay_to_self() {
 
 fn new_from_parent(parent: Arc<Bank>) -> Bank {
     let slot = parent.slot() + 1;
-    let collector_id = Pubkey::default();
-    Bank::new_from_parent(parent, &collector_id, slot)
+    let leader_id = Pubkey::default();
+    Bank::new_from_parent(parent, &leader_id, slot)
 }
 
 fn new_from_parent_with_fork_next_slot(parent: Arc<Bank>, fork: &RwLock<BankForks>) -> Arc<Bank> {
@@ -2526,13 +2567,13 @@ fn test_hash_internal_state_error() {
 
 #[test]
 fn test_bank_hash_internal_state_squash() {
-    let collector_id = Pubkey::default();
+    let leader_id = Pubkey::default();
     let bank0 = Arc::new(Bank::new_for_tests(&create_genesis_config(10).0));
     let hash0 = bank0.hash_internal_state();
     // save hash0 because new_from_parent
     // updates sysvar entries
 
-    let bank1 = Bank::new_from_parent(bank0, &collector_id, 1);
+    let bank1 = Bank::new_from_parent(bank0, &leader_id, 1);
 
     // no delta in bank1, hashes should always update
     assert_ne!(hash0, bank1.hash_internal_state());
@@ -7029,44 +7070,6 @@ fn test_block_limits() {
         MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_SECOND,
         "bank created from genesis config should have new limit"
     );
-}
-
-#[test]
-fn test_program_replacement() {
-    let mut bank = create_simple_test_bank(0);
-
-    // Setup original program account
-    let old_address = Pubkey::new_unique();
-    let new_address = Pubkey::new_unique();
-    bank.store_account_and_update_capitalization(
-        &old_address,
-        &AccountSharedData::from(Account {
-            lamports: 100,
-            ..Account::default()
-        }),
-    );
-    assert_eq!(bank.get_balance(&old_address), 100);
-
-    // Setup new program account
-    let new_program_account = AccountSharedData::from(Account {
-        lamports: 123,
-        ..Account::default()
-    });
-    bank.store_account_and_update_capitalization(&new_address, &new_program_account);
-    assert_eq!(bank.get_balance(&new_address), 123);
-
-    let original_capitalization = bank.capitalization();
-
-    bank.replace_program_account(&old_address, &new_address, "bank-apply_program_replacement");
-
-    // New program account is now empty
-    assert_eq!(bank.get_balance(&new_address), 0);
-
-    // Old program account holds the new program account
-    assert_eq!(bank.get_account(&old_address), Some(new_program_account));
-
-    // Lamports in the old token account were burnt
-    assert_eq!(bank.capitalization(), original_capitalization - 100);
 }
 
 fn min_rent_exempt_balance_for_sysvars(bank: &Bank, sysvar_ids: &[Pubkey]) -> u64 {

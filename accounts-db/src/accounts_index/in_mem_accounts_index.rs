@@ -5,7 +5,8 @@ use {
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         stats::Stats,
-        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
+        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, SlotListItem,
+        UpsertReclaim,
     },
     crate::pubkey_bins::PubkeyBinCalculator24,
     rand::{rng, Rng},
@@ -18,6 +19,7 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::Debug,
         mem,
+        num::NonZeroUsize,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -411,7 +413,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// Insert a cached entry into the accounts index
     /// If the entry is already present, just mark dirty and set the age to the future
-    fn cache_entry_at_slot(current: &AccountMapEntry<T>, new_value: (Slot, T)) {
+    fn cache_entry_at_slot(current: &AccountMapEntry<T>, new_value: SlotListItem<T>) {
         let mut slot_list = current.slot_list_write_lock();
         let (slot, new_entry) = new_value;
         if !slot_list
@@ -539,7 +541,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Note:: This function only supports uncached types `T`.
     fn lock_and_update_slot_list(
         current: &AccountMapEntry<T>,
-        new_value: (Slot, T),
+        new_value: SlotListItem<T>,
         other_slot: Option<Slot>,
         reclaims: &mut ReclaimsSlotList<T>,
         reclaim: UpsertReclaim,
@@ -840,7 +842,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         entry: &AccountMapEntry<T>,
         current_age: Age,
         ages_flushing_now: Age,
-    ) -> ShouldFlush<(Slot, T)> {
+    ) -> ShouldFlush<SlotListItem<T>> {
         // Step 1: Perform the cheap checks on the entry
         // Step 2: Clear the dirty flag
         // Step 3: Perform all the checks on the entry.
@@ -906,9 +908,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
         current_age: Age,
         ages_flushing_now: Age,
+        max_evictions: NonZeroUsize,
     ) -> (CandidatesToFlush, CandidatesToEvict) {
         let mut candidates_to_flush = Vec::new();
         let mut candidates_to_evict = Vec::new();
+        let mut rng = rng();
+        // use reservoir sampling to select a bounded, roughly uniform subset
+        let mut sampling_state = ReservoirState {
+            samples: Vec::with_capacity(max_evictions.get()),
+            seen: 0,
+            max_samples: max_evictions,
+        };
         for (k, v) in iter {
             if !Self::should_evict_based_on_age(current_age, v, ages_flushing_now) {
                 // not planning to evict this item from memory within 'ages_flushing_now' ages
@@ -921,11 +931,20 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if v.ref_count() != 1 {
                 continue;
             }
+            sampling_state.select(
+                CandidateSelection {
+                    key: *k,
+                    dirty: v.dirty(),
+                },
+                &mut rng,
+            );
+        }
 
-            if v.dirty() {
-                candidates_to_flush.push(*k);
+        for candidate in sampling_state.samples {
+            if candidate.dirty {
+                candidates_to_flush.push(candidate.key);
             } else {
-                candidates_to_evict.push(*k);
+                candidates_to_evict.push(candidate.key);
             }
         }
         (
@@ -947,8 +966,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let (possible_evictions, m) = {
             let map = self.map_internal.read().unwrap();
             let m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
-            let possible_evictions =
-                Self::gather_possible_evictions(map.iter(), current_age, ages_flushing_now);
+            let max_evictions = NonZeroUsize::new(map.len().max(1)).unwrap();
+            let possible_evictions = Self::gather_possible_evictions(
+                map.iter(),
+                current_age,
+                ages_flushing_now,
+                max_evictions,
+            );
             (possible_evictions, m)
         };
         Self::update_time_stat(&self.stats().flush_scan_us, m);
@@ -1264,6 +1288,37 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Only intended to be called at startup, since it grabs the map's read lock.
     pub(crate) fn capacity_for_startup(&self) -> usize {
         self.map_internal.read().unwrap().capacity()
+    }
+}
+
+/// Candidate tracked during reservoir sampling to flush or evict.
+#[derive(Debug, Clone)]
+struct CandidateSelection {
+    key: Pubkey,
+    dirty: bool,
+}
+
+/// State of reservoir sampling algorithm for flush/eviction candidates.
+#[derive(Debug)]
+struct ReservoirState {
+    samples: Vec<CandidateSelection>,
+    seen: usize,
+    max_samples: NonZeroUsize,
+}
+
+impl ReservoirState {
+    /// Select a candidate, keeping a bounded roughly uniform sample set.
+    fn select(&mut self, candidate: CandidateSelection, rng: &mut impl Rng) {
+        self.seen += 1;
+        if self.samples.len() < self.max_samples.get() {
+            self.samples.push(candidate);
+            return;
+        }
+
+        let idx = rng.random_range(0..self.seen);
+        if idx < self.max_samples.get() {
+            self.samples[idx] = candidate;
+        }
     }
 }
 
@@ -1754,6 +1809,7 @@ mod tests {
                         map_dirty.iter().chain(&map_clean),
                         current_age,
                         ages_flushing_now,
+                        NonZeroUsize::new(map_dirty.len() + map_clean.len()).unwrap(),
                     );
                 // Verify that the number of entries selected for eviction matches the expected count.
                 // Test setup: map contains 256 dirty entries and 256 clean entries.
@@ -1803,6 +1859,60 @@ mod tests {
                     );
                 });
             }
+        }
+    }
+
+    #[test]
+    fn test_gather_possible_evictions_with_max_evictions() {
+        let ref_count = 1;
+        let current_age = 100;
+        let ages_flushing_now = 0;
+        let total_entries = 256;
+        let max_evictions = NonZeroUsize::new(5).unwrap();
+
+        // Create a map with 256 entries
+        let map: HashMap<_, _> = (0..total_entries)
+            .map(|i| {
+                let pk = Pubkey::from([i as u8; 32]);
+                let one_element_slot_list = SlotList::from([(0, 0)]);
+                let one_element_slot_list_entry = Box::new(AccountMapEntry::new(
+                    one_element_slot_list,
+                    ref_count,
+                    AccountMapEntryMeta::default(),
+                ));
+                if i % 2 == 0 {
+                    one_element_slot_list_entry.set_dirty(true);
+                }
+                one_element_slot_list_entry.set_age(current_age);
+                (pk, one_element_slot_list_entry)
+            })
+            .collect();
+
+        let (to_flush, to_evict) = InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
+            map.iter(),
+            current_age,
+            ages_flushing_now,
+            max_evictions,
+        );
+
+        let total_selected = to_flush.0.len() + to_evict.0.len();
+        assert_eq!(total_selected, max_evictions.get());
+
+        for key in to_flush.0.iter().chain(&to_evict.0) {
+            let entry = map.get(key).unwrap();
+            assert_eq!(entry.ref_count(), ref_count);
+            assert!(InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
+                current_age,
+                entry,
+                ages_flushing_now,
+            ));
+        }
+
+        for key in &to_flush.0 {
+            assert!(map.get(key).unwrap().dirty());
+        }
+        for key in &to_evict.0 {
+            assert!(!map.get(key).unwrap().dirty());
         }
     }
 

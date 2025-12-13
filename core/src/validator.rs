@@ -5,7 +5,8 @@ use {
     crate::{
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
         banking_stage::{
-            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
+            unified_scheduler::ensure_banking_stage_setup, BankingStage,
         },
         banking_trace::{self, BankingTracer, TraceError},
         cluster_info_vote_listener::VoteTracker,
@@ -143,7 +144,8 @@ use {
         broadcast_stage::BroadcastStageType,
         xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitter},
     },
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::VoteStateV4,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
@@ -199,6 +201,8 @@ impl BlockVerificationMethod {
 #[derive(
     Clone,
     Debug,
+    EnumCount,
+    EnumIter,
     EnumString,
     EnumVariantNames,
     Default,
@@ -215,10 +219,29 @@ pub enum BlockProductionMethod {
     CentralScheduler,
     #[default]
     CentralSchedulerGreedy,
+    UnifiedScheduler,
 }
 
 impl BlockProductionMethod {
-    pub const fn cli_names() -> &'static [&'static str] {
+    pub fn cli_names() -> &'static [&'static str] {
+        // Simply return Self::VARIANTS by removing this code block altogether once after
+        // UnifiedScheduler isn't experimental
+        {
+            use std::sync::LazyLock;
+            static VARIANTS_NO_EXPERIMENTAL: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+                BlockProductionMethod::VARIANTS
+                    .iter()
+                    .filter_map(|&variant| (variant != "unified-scheduler").then_some(variant))
+                    .collect()
+            });
+
+            let disable_experimental =
+                std::env::var("SOLANA_ENABLE_EXPERIMENTAL_BLOCK_PRODUCTION_METHOD").is_err();
+            if disable_experimental {
+                return &VARIANTS_NO_EXPERIMENTAL[..];
+            }
+        }
+
         Self::VARIANTS
     }
 
@@ -291,6 +314,23 @@ impl SchedulerPacing {
             SchedulerPacing::Disabled => None,
             SchedulerPacing::FillTimeMillis(millis) => Some(Duration::from_millis(millis.get())),
         }
+    }
+}
+
+pub fn supported_scheduling_mode(
+    (verification, production): (&BlockVerificationMethod, &BlockProductionMethod),
+) -> SupportedSchedulingMode {
+    match (verification, production) {
+        (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Both
+        }
+        (BlockVerificationMethod::UnifiedScheduler, _) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
+        }
+        (_, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction)
+        }
+        _ => unreachable!("seems unified scheduler is disabled"),
     }
 }
 
@@ -879,6 +919,8 @@ impl Validator {
         )
         .map_err(ValidatorError::Other)?;
 
+        let migration_status = bank_forks.read().unwrap().migration_status();
+
         if !config.no_poh_speed_test {
             check_poh_speed(&bank_forks.read().unwrap().root_bank(), None)?;
         }
@@ -932,6 +974,7 @@ impl Validator {
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
+        migration_status.set_pubkey(cluster_info.id());
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 
@@ -989,9 +1032,11 @@ impl Validator {
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
 
-        // block min prioritization fee cache should be readable by RPC, and writable by validator
-        // (by both replay stage and banking stage)
-        let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::default());
+        let prioritization_fee_cache = if config.rpc_config.full_api {
+            Some(Arc::new(PrioritizationFeeCache::default()))
+        } else {
+            None
+        };
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let (poh_recorder, entry_receiver) = {
@@ -1029,30 +1074,43 @@ impl Validator {
         } else {
             info!("Disabled banking trace");
         }
-        let banking_tracer_channels = banking_tracer.create_channels(false);
+        let banking_tracer_channels = banking_tracer.create_channels();
 
-        match &config.block_verification_method {
-            BlockVerificationMethod::BlockstoreProcessor => {
-                info!("no scheduler pool is installed for block verification...");
-                if let Some(count) = config.unified_scheduler_handler_threads {
-                    warn!(
-                        "--unified-scheduler-handler-threads={count} is ignored because unified \
-                         scheduler isn't enabled"
-                    );
-                }
-            }
-            BlockVerificationMethod::UnifiedScheduler => {
-                let scheduler_pool = DefaultSchedulerPool::new_dyn(
+        match (
+            &config.block_verification_method,
+            &config.block_production_method,
+        ) {
+            methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+            | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+                let scheduler_pool = DefaultSchedulerPool::new(
+                    supported_scheduling_mode(methods),
                     config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
                     Some(replay_vote_sender.clone()),
                     prioritization_fee_cache.clone(),
                 );
+                ensure_banking_stage_setup(
+                    &scheduler_pool,
+                    &bank_forks,
+                    &banking_tracer_channels,
+                    &poh_recorder,
+                    transaction_recorder.clone(),
+                    config.block_production_num_workers,
+                );
                 bank_forks
                     .write()
                     .unwrap()
                     .install_scheduler_pool(scheduler_pool);
+            }
+            _ => {
+                info!("no scheduler pool is installed for block verification/production...");
+                if let Some(count) = config.unified_scheduler_handler_threads {
+                    warn!(
+                        "--unified-scheduler-handler-threads={count} is ignored because unified \
+                         scheduler isn't enabled"
+                    );
+                }
             }
         }
 
@@ -1506,26 +1564,27 @@ impl Validator {
             )
         });
 
-        let (xdp_retransmitter, xdp_sender) =
-            if let Some(xdp_config) = config.retransmit_xdp.clone() {
-                let src_port = node.sockets.retransmit_sockets[0]
-                    .local_addr()
-                    .expect("failed to get local address")
-                    .port();
-                let src_ip = match node.bind_ip_addrs.active() {
-                    IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                    IpAddr::V4(_unspecified) => xdp_config
-                        .interface
-                        .as_ref()
-                        .and_then(|iface| master_ip_if_bonded(iface)),
-                    _ => panic!("IPv6 not supported"),
-                };
-                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip)
-                    .expect("failed to create xdp retransmitter");
-                (Some(rtx), Some(sender))
-            } else {
-                (None, None)
+        let (xdp_retransmitter, xdp_sender) = if let Some(xdp_config) =
+            config.retransmit_xdp.clone()
+        {
+            let src_port = node.sockets.retransmit_sockets[0]
+                .local_addr()
+                .expect("failed to get local address")
+                .port();
+            let src_ip = match node.bind_ip_addrs.active() {
+                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+                IpAddr::V4(_unspecified) => xdp_config
+                    .interface
+                    .as_ref()
+                    .and_then(|iface| master_ip_if_bonded(iface)),
+                _ => panic!("IPv6 not supported"),
             };
+            let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip, exit.clone())
+                .expect("failed to create xdp retransmitter");
+            (Some(rtx), Some(sender))
+        } else {
+            (None, None)
+        };
 
         // disable all2all tests if not allowed for a given cluster type
         let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
@@ -1585,7 +1644,7 @@ impl Validator {
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
-            &prioritization_fee_cache,
+            prioritization_fee_cache.clone(),
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
             turbine_quic_endpoint_receiver,
@@ -1681,7 +1740,7 @@ impl Validator {
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
-            &prioritization_fee_cache,
+            prioritization_fee_cache,
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),

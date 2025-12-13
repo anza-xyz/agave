@@ -2,8 +2,8 @@
 
 use {
     self::points::{
-        calculate_stake_points_and_credits, CalculatedStakePoints, InflationPointCalculationEvent,
-        PointValue, SkippedReason,
+        calculate_stake_points_and_credits, CalculatedStakePoints, DelegatedVoteState,
+        InflationPointCalculationEvent, PointValue, SkippedReason,
     },
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
@@ -12,7 +12,6 @@ use {
         stake_history::StakeHistory,
         state::{Stake, StakeStateV2},
     },
-    solana_vote::vote_state_view::VoteStateView,
 };
 
 pub mod points;
@@ -29,10 +28,11 @@ struct CalculatedStakeRewards {
 /// * Stakers reward
 /// * Voters reward
 /// * Updated stake information
-pub fn redeem_rewards(
+pub(crate) fn redeem_rewards(
     rewarded_epoch: Epoch,
     stake_state: &StakeStateV2,
-    vote_state: &VoteStateView,
+    voter_commission: u8,
+    vote_state: DelegatedVoteState,
     point_value: &PointValue,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
@@ -51,7 +51,7 @@ pub fn redeem_rewards(
                 meta.rent_exempt_reserve,
             ));
             inflation_point_calc_tracer(&InflationPointCalculationEvent::Commission(
-                vote_state.commission(),
+                voter_commission,
             ));
         }
 
@@ -60,6 +60,7 @@ pub fn redeem_rewards(
             rewarded_epoch,
             &mut stake,
             point_value,
+            voter_commission,
             vote_state,
             stake_history,
             inflation_point_calc_tracer,
@@ -78,7 +79,8 @@ fn redeem_stake_rewards(
     rewarded_epoch: Epoch,
     stake: &mut Stake,
     point_value: &PointValue,
-    vote_state: &VoteStateView,
+    voter_commission: u8,
+    vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
@@ -93,6 +95,7 @@ fn redeem_stake_rewards(
         rewarded_epoch,
         stake,
         point_value,
+        voter_commission,
         vote_state,
         stake_history,
         inflation_point_calc_tracer.as_ref(),
@@ -125,7 +128,8 @@ fn calculate_stake_rewards(
     rewarded_epoch: Epoch,
     stake: &Stake,
     point_value: &PointValue,
-    vote_state: &VoteStateView,
+    voter_commission: u8,
+    vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
@@ -195,8 +199,7 @@ fn calculate_stake_rewards(
         }
         return None;
     }
-    let (voter_rewards, staker_rewards, is_split) =
-        commission_split(vote_state.commission(), rewards);
+    let (voter_rewards, staker_rewards, is_split) = commission_split(voter_commission, rewards);
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::SplitRewards(
             rewards,
@@ -300,7 +303,8 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -321,7 +325,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &VoteStateView::from(vote_state),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -352,7 +357,8 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -377,7 +383,8 @@ mod tests {
                     rewards: 2,
                     points: 2 // all his
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -399,7 +406,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -424,7 +432,8 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -447,7 +456,8 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -472,7 +482,8 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -491,7 +502,8 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -507,7 +519,8 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -530,7 +543,8 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -553,7 +567,8 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -568,7 +583,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &VoteStateView::from(vote_state.clone()),
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -587,7 +602,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &VoteStateView::from(vote_state.clone()),
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -603,7 +618,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &VoteStateView::from(vote_state.clone()),
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -627,7 +642,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -651,7 +667,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &VoteStateView::from(vote_state),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -672,7 +689,8 @@ mod tests {
             0,
             &stake,
             &PointValue { rewards, points: 1 },
-            &VoteStateView::from(vote_state.clone()),
+            (vote_state.inflation_rewards_commission_bps / 100) as u8,
+            DelegatedVoteState::from(&vote_state),
             &StakeHistory::default(),
             null_tracer(),
             None,
@@ -702,7 +720,8 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                &VoteStateView::from(vote_state),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,

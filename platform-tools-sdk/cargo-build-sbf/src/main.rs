@@ -199,10 +199,7 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
             &target_rustflags
         ));
     }
-    if config.debug {
-        // Replace with -Zsplit-debuginfo=packed when stabilized.
-        target_rustflags = Cow::Owned(format!("{} -g", &target_rustflags));
-    }
+
     if let Cow::Owned(flags) = target_rustflags {
         env::set_var(&cargo_target, flags);
     }
@@ -224,7 +221,10 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         cargo_build_args.push(toolchain_name.as_str());
     };
 
-    cargo_build_args.append(&mut vec!["build", "--release", "--target", &target_triple]);
+    cargo_build_args.append(&mut vec!["build", "--target", &target_triple]);
+    if !config.debug {
+        cargo_build_args.push("--release");
+    }
     if config.no_default_features {
         cargo_build_args.push("--no-default-features");
     }
@@ -411,12 +411,12 @@ fn main() {
                 .takes_value(false)
                 .help("Disable remap of cwd prefix and preserve full path strings in binaries"),
         )
-        .arg(
-            Arg::new("debug")
-                .long("debug")
-                .takes_value(false)
-                .help("Enable debug symbols"),
-        )
+        .arg(Arg::new("debug").long("debug").takes_value(false).help(
+            "Create debug objects at \
+             `target/deploy/debug`.\n`target/deploy/debug/program.so.debug` contains all debug \
+             information available.\n`target/deploy/debug/program.so` is a stripped version for \
+             execution in the VM.\nThese objects are not optimized for mainnet-beta deployment.",
+        ))
         .arg(
             Arg::new("dump")
                 .long("dump")

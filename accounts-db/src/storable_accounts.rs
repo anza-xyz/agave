@@ -667,7 +667,7 @@ pub mod tests {
             db.storage_access(),
         );
         let storage = Arc::new(data);
-        db.storage.insert(slot, storage.clone());
+        db.storage.insert(storage.clone());
         storage
     }
 

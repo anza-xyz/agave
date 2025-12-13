@@ -66,7 +66,7 @@ pub(crate) enum TransactionLoadResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
+#[cfg_attr(feature = "svm-internal", qualifier_attr::field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
     pub(crate) nonce: Option<NonceInfo>,
     pub(crate) compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
@@ -2265,7 +2265,7 @@ mod tests {
                 1,
                 Arc::new(vec![0; rng.gen_range(0, 128)]),
                 Pubkey::new_unique(),
-                rng.gen(),
+                rng.r#gen(),
                 u64::MAX,
             );
             mock_bank.accounts_map.insert(Pubkey::new_unique(), account);
@@ -2279,7 +2279,7 @@ mod tests {
                 LAMPORTS_PER_SOL,
                 Arc::new(vec![0; rng.gen_range(0, 32)]),
                 system_program::id(),
-                rng.gen(),
+                rng.r#gen(),
                 u64::MAX,
             );
             mock_bank.accounts_map.insert(fee_payer, account);
@@ -2296,7 +2296,7 @@ mod tests {
                     1,
                     Arc::new(vec![0; rng.gen_range(0, 512)]),
                     *loader,
-                    rng.gen(),
+                    rng.r#gen(),
                     u64::MAX,
                 );
 
@@ -2307,7 +2307,7 @@ mod tests {
                 // this will always fail at execution but we are merely testing the data size accounting here
                 if *loader == bpf_loader_upgradeable::id() && account.data().len() >= 64 {
                     let programdata_address = Pubkey::new_unique();
-                    let has_programdata = rng.gen();
+                    let has_programdata = rng.r#gen();
 
                     if has_programdata {
                         let programdata_account =
@@ -2315,7 +2315,7 @@ mod tests {
                                 1,
                                 Arc::new(vec![0; rng.gen_range(0, 512)]),
                                 *loader,
-                                rng.gen(),
+                                rng.r#gen(),
                                 u64::MAX,
                             );
                         programdata_tracker.insert(
@@ -2328,7 +2328,7 @@ mod tests {
                         loader_owned_accounts.push(programdata_address);
                     }
 
-                    if has_programdata || rng.gen() {
+                    if has_programdata || rng.r#gen() {
                         account
                             .set_state(&UpgradeableLoaderState::Program {
                                 programdata_address,
@@ -2372,8 +2372,8 @@ mod tests {
 
                     accounts.push(AccountMeta {
                         pubkey,
-                        is_writable: rng.gen(),
-                        is_signer: rng.gen() && rng.gen(),
+                        is_writable: rng.r#gen(),
+                        is_signer: rng.r#gen() && rng.r#gen(),
                     });
                 }
 

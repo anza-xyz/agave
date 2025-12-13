@@ -1,30 +1,3 @@
-macro_rules! dispatch {
-    ($vis:vis fn $name:ident(&self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
-        #[inline]
-        $vis fn $name(&self $(, $arg:$ty)?) $(-> $out)? {
-            match self {
-                Self::Merkle(shred) => shred.$name($($arg, )?),
-            }
-        }
-    };
-    ($vis:vis fn $name:ident(self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
-        #[inline]
-        $vis fn $name(self $(, $arg:$ty)?) $(-> $out)? {
-            match self {
-                Self::Merkle(shred) => shred.$name($($arg, )?),
-            }
-        }
-    };
-    ($vis:vis fn $name:ident(&mut self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
-        #[inline]
-        $vis fn $name(&mut self $(, $arg:$ty)?) $(-> $out)? {
-            match self {
-                Self::Merkle(shred) => shred.$name($($arg, )?),
-            }
-        }
-    }
-}
-
 macro_rules! impl_shred_common {
     () => {
         #[inline]
@@ -50,4 +23,4 @@ macro_rules! impl_shred_common {
     };
 }
 
-pub(super) use {dispatch, impl_shred_common};
+pub(super) use impl_shred_common;

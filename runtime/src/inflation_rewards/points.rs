@@ -64,9 +64,25 @@ impl From<SkippedReason> for InflationPointCalculationEvent {
     }
 }
 
-pub fn calculate_points(
+// DEVELOPER NOTE: The commission is intentionally not included here because it
+// is determined from past epoch vote state.
+pub(crate) struct DelegatedVoteState<'a> {
+    pub(crate) credits: u64,
+    pub(crate) epoch_credits_iter: Box<dyn Iterator<Item = (Epoch, u64, u64)> + 'a>,
+}
+
+impl<'a> From<&'a VoteStateView> for DelegatedVoteState<'a> {
+    fn from(vote_state: &'a VoteStateView) -> Self {
+        DelegatedVoteState {
+            credits: vote_state.credits(),
+            epoch_credits_iter: Box::new(vote_state.epoch_credits_iter().map(Into::into)),
+        }
+    }
+}
+
+pub(crate) fn calculate_points(
     stake_state: &StakeStateV2,
-    vote_state: &VoteStateView,
+    vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> Result<u128, InstructionError> {
@@ -85,7 +101,7 @@ pub fn calculate_points(
 
 fn calculate_stake_points(
     stake: &Stake,
-    vote_state: &VoteStateView,
+    vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
@@ -105,13 +121,13 @@ fn calculate_stake_points(
 ///   for credits_observed were the points paid
 pub(crate) fn calculate_stake_points_and_credits(
     stake: &Stake,
-    new_vote_state: &VoteStateView,
+    vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
-    let credits_in_vote = new_vote_state.credits();
+    let credits_in_vote = vote_state.credits;
     // if there is no newer credits since observed, return no point
     match credits_in_vote.cmp(&credits_in_stake) {
         Ordering::Less => {
@@ -159,8 +175,8 @@ pub(crate) fn calculate_stake_points_and_credits(
     let mut points = 0;
     let mut new_credits_observed = credits_in_stake;
 
-    for epoch_credits_item in new_vote_state.epoch_credits_iter() {
-        let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item.into();
+    for epoch_credits_item in vote_state.epoch_credits_iter {
+        let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item;
         let stake_amount = u128::from(stake.delegation.stake(
             epoch,
             stake_history,
@@ -214,6 +230,15 @@ mod tests {
         solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
     };
 
+    impl<'a> From<&'a VoteStateV4> for DelegatedVoteState<'a> {
+        fn from(vote_state: &'a VoteStateV4) -> Self {
+            DelegatedVoteState {
+                credits: vote_state.credits(),
+                epoch_credits_iter: Box::new(vote_state.epoch_credits.iter().copied()),
+            }
+        }
+    }
+
     fn new_stake(
         stake: u64,
         voter_pubkey: &Pubkey,
@@ -251,7 +276,7 @@ mod tests {
             u128::from(stake.delegation.stake) * epoch_slots,
             calculate_stake_points(
                 &stake,
-                &VoteStateView::from(vote_state),
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None

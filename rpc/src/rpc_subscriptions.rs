@@ -1987,6 +1987,8 @@ pub(crate) mod tests {
         let mut highest_confirmed_slot: Slot = 0;
         let mut highest_root_slot: Slot = 0;
         let mut last_notified_confirmed_slot: Slot = 0;
+        let prioritization_fee_cache_inner: Option<Arc<PrioritizationFeeCache>> = None;
+        let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
         // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is unfrozen, we expect
         // to see transaction for alice and bob to be notified in order.
         OptimisticallyConfirmedBankTracker::process_notification(
@@ -2002,7 +2004,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
 
@@ -2059,7 +2061,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
 
@@ -2167,6 +2169,8 @@ pub(crate) mod tests {
         let mut highest_confirmed_slot: Slot = 0;
         let mut highest_root_slot: Slot = 0;
         let mut last_notified_confirmed_slot: Slot = 0;
+        let prioritization_fee_cache_inner: Option<Arc<PrioritizationFeeCache>> = None;
+        let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
         // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is not in the bankforks, we do not
         // expect to see any RPC notifications.
         OptimisticallyConfirmedBankTracker::process_notification(
@@ -2182,7 +2186,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
 
@@ -2246,6 +2250,7 @@ pub(crate) mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+
         let mut pending_optimistically_confirmed_banks = HashSet::new();
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -2285,6 +2290,8 @@ pub(crate) mod tests {
         let mut highest_confirmed_slot: Slot = 0;
         let mut highest_root_slot: Slot = 0;
         let mut last_notified_confirmed_slot: Slot = 0;
+        let prioritization_fee_cache_inner: Option<Arc<PrioritizationFeeCache>> = None;
+        let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
         // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is not in the bankforks, we expect
         // to see transaction for alice and bob to be notified only when bank3 is added to the fork and
         // frozen. The notifications should be in the increasing order of the slot.
@@ -2301,7 +2308,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
 
@@ -2360,7 +2367,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
 
@@ -2781,6 +2788,9 @@ pub(crate) mod tests {
         let mut highest_confirmed_slot: Slot = 0;
         let mut highest_root_slot: Slot = 0;
         let mut last_notified_confirmed_slot: Slot = 0;
+        let prioritization_fee_cache_inner: Option<Arc<PrioritizationFeeCache>> = None;
+        let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
+
         OptimisticallyConfirmedBankTracker::process_notification(
             (BankNotification::OptimisticallyConfirmed(2), None),
             &bank_forks,
@@ -2791,7 +2801,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
 
@@ -2810,7 +2820,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
 
@@ -2869,7 +2879,7 @@ pub(crate) mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
         let response = receiver1.recv();
