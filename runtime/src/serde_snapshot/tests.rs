@@ -9,6 +9,7 @@ mod serde_snapshot_tests {
             },
             snapshot_utils::{get_storages_to_serialize, StorageAndNextAccountsFileId},
         },
+        agave_fs::FileInfo,
         bincode::{serialize_into, Error},
         log::info,
         rand::{rng, Rng},
@@ -899,18 +900,27 @@ mod serde_snapshot_tests {
     ) {
         let tmp = tempfile::tempdir().unwrap();
         let old_path = tmp.path().join(format!("123.{old_id}"));
+        let old_file_info = FileInfo {
+            file: File::create(&old_path).unwrap(),
+            path: old_path,
+            size: 0,
+        };
         let expected_remapped_path = tmp.path().join(format!("123.{expected_remapped_id}"));
-        File::create(&old_path).unwrap();
 
         become_ungovernable(tmp.path());
 
         let next_append_vec_id = AtomicAccountsFileId::new(next_id as u32);
         let num_collisions = AtomicUsize::new(0);
-        let (remapped_id, remapped_path) =
-            remap_append_vec_file(123, old_id, &old_path, &next_append_vec_id, &num_collisions)
-                .unwrap();
+        let (remapped_id, remapped_file_info) = remap_append_vec_file(
+            123,
+            old_id,
+            old_file_info,
+            &next_append_vec_id,
+            &num_collisions,
+        )
+        .unwrap();
         assert_eq!(remapped_id as usize, expected_remapped_id);
-        assert_eq!(&remapped_path, &expected_remapped_path);
+        assert_eq!(&remapped_file_info.path, &expected_remapped_path);
         assert_eq!(num_collisions.load(Ordering::Relaxed), expected_collisions);
     }
 
@@ -919,6 +929,12 @@ mod serde_snapshot_tests {
     fn test_remap_append_vec_file_error() {
         let tmp = tempfile::tempdir().unwrap();
         let original_path = tmp.path().join("123.456");
+        // there won't be any file at `original_path`, so rename should generate error
+        let original_file_info = FileInfo {
+            file: File::create(tmp.path().join("wrong_name")).unwrap(),
+            path: original_path,
+            size: 0,
+        };
 
         // In remap_append_vec_file() we want to handle EEXIST (collisions), but we want to return all
         // other errors
@@ -927,7 +943,7 @@ mod serde_snapshot_tests {
         remap_append_vec_file(
             123,
             456,
-            &original_path,
+            original_file_info,
             &next_append_vec_id,
             &num_collisions,
         )
