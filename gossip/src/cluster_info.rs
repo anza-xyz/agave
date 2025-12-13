@@ -2371,8 +2371,6 @@ pub struct Sockets {
     pub ip_echo: Option<TcpListener>,
     pub tvu: Vec<UdpSocket>,
     pub tvu_quic: UdpSocket,
-    pub tpu: Vec<UdpSocket>,
-    pub tpu_forwards: Vec<UdpSocket>,
     pub tpu_vote: Vec<UdpSocket>,
     pub broadcast: Vec<UdpSocket>,
     // Socket sending out local repair requests,
@@ -2872,7 +2870,6 @@ mod tests {
         }
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
-        check_sockets(&node.sockets.tpu, ip, range);
     }
 
     #[test]
@@ -3777,7 +3774,7 @@ mod tests {
         agave_logger::setup();
         // If you change the format of cluster_info_trace or rpc_info_trace, please make sure
         // you read the actual output so the headers lign up with the output.
-        const CLUSTER_INFO_TRACE_LENGTH: usize = 452;
+        const CLUSTER_INFO_TRACE_LENGTH: usize = 461;
         const RPC_INFO_TRACE_LENGTH: usize = 335;
         let keypair43 = Arc::new(
             Keypair::try_from(
