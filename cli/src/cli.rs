@@ -781,6 +781,9 @@ pub fn parse_command(
         ("create-vote-account", Some(matches)) => {
             parse_create_vote_account(matches, default_signer, wallet_manager)
         }
+        ("create-vote-account-v2", Some(matches)) => {
+            parse_create_vote_account_v2(matches, default_signer, wallet_manager)
+        }
         ("vote-update-validator", Some(matches)) => {
             parse_vote_update_validator(matches, default_signer, wallet_manager)
         }

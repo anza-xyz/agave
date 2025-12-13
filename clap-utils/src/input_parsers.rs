@@ -5,7 +5,9 @@ use {
     },
     chrono::DateTime,
     clap::ArgMatches,
-    solana_bls_signatures::Pubkey as BLSPubkey,
+    solana_bls_signatures::{
+        ProofOfPossessionCompressed as BLSProofOfPossessionCompressed, Pubkey as BLSPubkey,
+    },
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -110,6 +112,21 @@ pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPub
         values
             .map(|value| {
                 BLSPubkey::from_str(value).unwrap_or_else(|_| {
+                    panic!("Failed to parse BLS public key from value: {value}")
+                })
+            })
+            .collect()
+    })
+}
+
+pub fn bls_proof_of_possession_of(
+    matches: &ArgMatches<'_>,
+    name: &str,
+) -> Option<Vec<BLSProofOfPossessionCompressed>> {
+    matches.values_of(name).map(|values| {
+        values
+            .map(|value| {
+                BLSProofOfPossessionCompressed::from_str(value).unwrap_or_else(|_| {
                     panic!("Failed to parse BLS public key from value: {value}")
                 })
             })

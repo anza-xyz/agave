@@ -7809,6 +7809,7 @@ dependencies = [
  "solana-account",
  "solana-account-decoder",
  "solana-address-lookup-table-interface",
+ "solana-bls-signatures",
  "solana-borsh",
  "solana-clap-utils",
  "solana-cli-config",

@@ -15,6 +15,7 @@ use {
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
+    solana_bls_signatures::PubkeyCompressed as BLSPubkeyCompressed,
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -549,6 +550,92 @@ pub fn parse_create_vote_account(
             memo,
             fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
             compute_unit_price,
+        },
+        signers: signer_info.signers,
+    })
+}
+
+pub fn parse_create_vote_account_v2(
+    matches: &ArgMatches<'_>,
+    default_signer: &DefaultSigner,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let (vote_account, vote_account_pubkey) = signer_of(matches, "vote_account", wallet_manager)?;
+    let seed = matches.value_of("seed").map(|s| s.to_string());
+    let (identity_account, identity_pubkey) =
+        signer_of(matches, "identity_account", wallet_manager)?;
+    let authorized_voter = pubkey_of_signer(matches, "authorized_voter", wallet_manager)?;
+    let bls_pubkey = bls_pubkeys_of(matches, "bls_pubkey").unwrap()[0];
+    let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
+    let bls_proof_of_possession =
+        bls_proof_of_possession_of(matches, "bls_proof_of_possession").unwrap()[0];
+    let authorized_withdrawer =
+        pubkey_of_signer(matches, "authorized_withdrawer", wallet_manager)?.unwrap();
+    let allow_unsafe = matches.is_present("allow_unsafe_authorized_withdrawer");
+    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+    let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
+    let blockhash_query = BlockhashQuery::new_from_matches(matches);
+    let nonce_account = pubkey_of_signer(matches, NONCE_ARG.name, wallet_manager)?;
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
+    let (nonce_authority, nonce_authority_pubkey) =
+        signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
+    let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
+    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+    let inflation_rewards_commission_bps =
+        value_of(matches, "inflation_rewards_commission_bps").unwrap();
+    let inflation_rewards_collector =
+        pubkey_of_signer(matches, "inflation_rewards_collector", wallet_manager)?;
+    let block_revenue_commission_bps = value_of(matches, "block_revenue_commission_bps").unwrap();
+    let block_revenue_collector =
+        pubkey_of_signer(matches, "block_revenue_collector", wallet_manager)?;
+
+    if !allow_unsafe {
+        if authorized_withdrawer == vote_account_pubkey.unwrap() {
+            return Err(CliError::BadParameter(
+                "Authorized withdrawer pubkey is identical to vote account pubkey, an unsafe \
+                 configuration"
+                    .to_owned(),
+            ));
+        }
+        if authorized_withdrawer == identity_pubkey.unwrap() {
+            return Err(CliError::BadParameter(
+                "Authorized withdrawer pubkey is identical to identity account pubkey, an unsafe \
+                 configuration"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let mut bulk_signers = vec![fee_payer, vote_account, identity_account];
+    if nonce_account.is_some() {
+        bulk_signers.push(nonce_authority);
+    }
+    let signer_info =
+        default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
+
+    Ok(CliCommandInfo {
+        command: CliCommand::CreateVoteAccountV2 {
+            vote_account: signer_info.index_of(vote_account_pubkey).unwrap(),
+            seed,
+            identity_account: signer_info.index_of(identity_pubkey).unwrap(),
+            authorized_voter,
+            bls_pubkey: bls_pubkey_compressed.0,
+            bls_proof_of_possession: bls_proof_of_possession.0,
+            authorized_withdrawer,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority: signer_info.index_of(nonce_authority_pubkey).unwrap(),
+            memo,
+            fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
+            compute_unit_price,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector: inflation_rewards_collector
+                .unwrap_or(vote_account_pubkey.unwrap()),
+            block_revenue_commission_bps,
+            block_revenue_collector: block_revenue_collector
+                .unwrap_or(vote_account_pubkey.unwrap()),
         },
         signers: signer_info.signers,
     })
