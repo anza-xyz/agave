@@ -1,7 +1,10 @@
 use {
     crate::{
         bit_vec::BitVec,
-        shred::{self, Shred, ShredType, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT},
+        shred::{
+            self, merkle_tree::fec_set_root::FecSetRoot, Shred, ShredType,
+            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT,
+        },
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -353,7 +356,7 @@ impl ErasureConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MerkleRootMeta {
     /// The merkle root, `None` for legacy shreds
-    merkle_root: Option<Hash>,
+    merkle_root: Option<FecSetRoot>,
     /// The first received shred index
     first_received_shred_index: u32,
     /// The shred type of the first received shred
@@ -776,7 +779,7 @@ impl MerkleRootMeta {
         }
     }
 
-    pub(crate) fn merkle_root(&self) -> Option<Hash> {
+    pub(crate) fn merkle_root(&self) -> Option<FecSetRoot> {
         self.merkle_root
     }
 

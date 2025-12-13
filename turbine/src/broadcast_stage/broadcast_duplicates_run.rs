@@ -192,7 +192,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             &mut stats,
         );
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
-            self.chained_merkle_root = shred.merkle_root().unwrap();
+            self.chained_merkle_root = Hash::from(shred.merkle_root().unwrap());
         }
         self.next_shred_index += data_shreds.len() as u32;
         if let Some(index) = coding_shreds.iter().map(Shred::index).max() {
