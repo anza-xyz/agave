@@ -12,11 +12,9 @@ use {
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
     solana_bls_signatures::{
-        proof_of_possession::{
-            ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
-            ProofOfPossessionProjective as BLSProofOfPossession,
-        },
-        Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed, VerifiableProofOfPossession,
+        keypair::Keypair as BLSKeypair, ProofOfPossession as BLSProofOfPossession,
+        ProofOfPossessionCompressed as BLSProofOfPossessionCompressed, Pubkey as BLSPubkey,
+        PubkeyCompressed as BLSPubkeyCompressed, VerifiableProofOfPossession,
     },
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
@@ -1283,6 +1281,22 @@ pub fn create_bls_pubkey_and_proof_of_possession_for_test() -> (
     )
 }
 
+pub fn create_bls_pubkey_and_proof_of_possession_for_account(
+    vote_account_pubkey: &Pubkey,
+) -> (
+    [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+    [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+) {
+    let bls_keypair = BLSKeypair::new();
+    let bls_pubkey_compressed: BLSPubkeyCompressed = bls_keypair.public.try_into().unwrap();
+    let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_compressed.0);
+    let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
+    let proof_of_possession: BLSProofOfPossession = proof_of_possession.into();
+    let proof_of_possession_compressed: BLSProofOfPossessionCompressed =
+        proof_of_possession.try_into().unwrap();
+    (bls_pubkey_compressed.0, proof_of_possession_compressed.0)
+}
+
 #[allow(clippy::arithmetic_side_effects)]
 #[cfg(test)]
 mod tests {
@@ -1290,11 +1304,6 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         solana_account::{AccountSharedData, ReadableAccount},
-        solana_bls_signatures::{
-            keypair::Keypair as BLSKeypair, ProofOfPossession as BLSProofOfPossession,
-            ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
-            PubkeyCompressed as BLSPubkeyCompressed,
-        },
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{
@@ -4009,27 +4018,11 @@ mod tests {
         assert_eq!(vote_state.block_revenue_collector, new_node_pubkey);
     }
 
-    fn create_bls_pubkey_and_proof_of_possession_for_test(
-        vote_account_pubkey: &Pubkey,
-    ) -> (
-        [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-        [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
-    ) {
-        let bls_keypair = BLSKeypair::new();
-        let bls_pubkey_compressed: BLSPubkeyCompressed = bls_keypair.public.try_into().unwrap();
-        let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_compressed.0);
-        let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
-        let proof_of_possession: BLSProofOfPossession = proof_of_possession.into();
-        let proof_of_possession_compressed: BLSProofOfPossessionCompressed =
-            proof_of_possession.try_into().unwrap();
-        (bls_pubkey_compressed.0, proof_of_possession_compressed.0)
-    }
-
     #[test]
     fn test_get_and_update_authorized_voter_v4_with_bls() {
         let vote_account_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession_for_test(&vote_account_pubkey);
+            create_bls_pubkey_and_proof_of_possession_for_account(&vote_account_pubkey);
         let node_pubkey = Pubkey::new_unique();
         let authorized_voter = Pubkey::new_unique();
         let authorized_withdrawer = Pubkey::new_unique();
@@ -4096,7 +4089,7 @@ mod tests {
 
         // Test replay attack, can't use someone else's BLS pubkey and PoP
         let (others_bls_pubkey, others_bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession_for_test(&Pubkey::new_unique());
+            create_bls_pubkey_and_proof_of_possession_for_account(&Pubkey::new_unique());
         let new_node_pubkey = solana_pubkey::new_rand();
         let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_node_pubkey]
             .into_iter()
