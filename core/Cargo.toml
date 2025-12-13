@@ -193,7 +193,9 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
-agave-scheduler-bindings = { workspace = true, features = ["dev-context-only-utils"] }
+agave-scheduler-bindings = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 bencher = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
@@ -205,7 +207,10 @@ solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-core = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }

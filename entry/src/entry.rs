@@ -296,7 +296,7 @@ pub fn start_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static
     skip_verification: bool,
     thread_pool: &ThreadPool,
     verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
+        dyn Fn(VersionedTransaction, TransactionVerificationMode, ) -> Result<Tx> + Send + Sync,
     >,
 ) -> Result<EntrySigVerificationState<Tx>> {
     start_verify_transactions_cpu(entries, skip_verification, thread_pool, verify)
@@ -690,6 +690,7 @@ mod tests {
                         SimpleAddressLoader::Disabled,
                         &ReservedAccountKeys::empty_key_set(),
                         true,
+                        None,
                     )
                 }?;
 

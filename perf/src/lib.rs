@@ -11,6 +11,7 @@
 pub mod data_budget;
 pub mod deduper;
 pub mod discard;
+pub mod flow_state;
 pub mod packet;
 pub mod perf_libs;
 pub mod recycled_vec;

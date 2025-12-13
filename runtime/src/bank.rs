@@ -118,6 +118,7 @@ use {
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
     solana_packet::PACKET_DATA_SIZE,
+    solana_perf::flow_state::FlowState,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext,
@@ -4785,6 +4786,15 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        self.verify_transaction_with_flow_state(tx, verification_mode, None)
+    }
+
+    pub fn verify_transaction_with_flow_state(
+        &self,
+        tx: VersionedTransaction,
+        verification_mode: TransactionVerificationMode,
+        flow_state: Option<FlowState>,
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
         let enable_static_instruction_limit = self
             .feature_set
             .is_active(&agave_feature_set::static_instruction_limit::id());
@@ -4808,13 +4818,14 @@ impl Bank {
                 tx.message.hash()
             };
 
-            RuntimeTransaction::try_create(
+            RuntimeTransaction::try_create_with_flow_state(
                 tx,
                 MessageHash::Precomputed(message_hash),
                 None,
                 self,
                 self.get_reserved_account_keys(),
                 enable_static_instruction_limit,
+                flow_state,
             )
         }?;
 
@@ -4825,7 +4836,23 @@ impl Bank {
         &self,
         tx: VersionedTransaction,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
+        self.verify_transaction_with_flow_state(
+            tx,
+            TransactionVerificationMode::FullVerification,
+            None,
+        )
+    }
+
+    pub fn fully_verify_transaction_with_flow_state(
+        &self,
+        tx: VersionedTransaction,
+        flow_state: Option<FlowState>,
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        self.verify_transaction_with_flow_state(
+            tx,
+            TransactionVerificationMode::FullVerification,
+            flow_state,
+        )
     }
 
     /// Checks if the transaction violates the bank's reserved keys.

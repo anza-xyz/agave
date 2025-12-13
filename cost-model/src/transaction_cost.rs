@@ -1,5 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
+#[cfg(feature = "dev-context-only-utils")]
+use solana_perf::flow_state::FlowState;
 use {
     crate::block_cost_limits, solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_meta::StaticMeta,
@@ -305,6 +307,10 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
         unimplemented!("WritableKeysTransaction::to_versioned_transaction")
     }
+
+    fn flow_state(&self) -> Option<FlowState> {
+        unimplemented!("WritableKeysTransaction::flow_state")
+    }
 }
 
 #[cfg(test)]
@@ -351,6 +357,7 @@ mod tests {
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
             true,
+            None,
         )
         .unwrap();
 
@@ -371,6 +378,7 @@ mod tests {
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
             true,
+            None,
         )
         .unwrap();
 

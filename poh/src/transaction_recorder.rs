@@ -7,6 +7,7 @@ use {
     solana_entry::entry::hash_transactions,
     solana_hash::Hash,
     solana_measure::measure_us,
+    solana_perf::flow_state::FlowState,
     solana_transaction::versioned::VersionedTransaction,
     std::num::Saturating,
 };
@@ -49,10 +50,11 @@ impl TransactionRecorder {
 
     /// Hashes `transactions` and sends to PoH service for recording. Waits for response up to 1s.
     /// Panics on unexpected (non-`MaxHeightReached`) errors.
-    pub fn record_transactions(
+    pub fn record_transactions_with_flow_state(
         &self,
         bank_id: BankId,
         transactions: Vec<VersionedTransaction>,
+        flow_state: Vec<Option<FlowState>>,
     ) -> RecordTransactionsSummary {
         let mut record_transactions_timings = RecordTransactionsTimings::default();
         let mut starting_transaction_index = None;
@@ -61,8 +63,12 @@ impl TransactionRecorder {
             let (hash, hash_us) = measure_us!(hash_transactions(&transactions));
             record_transactions_timings.hash_us = Saturating(hash_us);
 
-            let (res, poh_record_us) =
-                measure_us!(self.record(bank_id, vec![hash], vec![transactions]));
+            let (res, poh_record_us) = measure_us!(self.record_with_flow_state(
+                bank_id,
+                vec![hash],
+                vec![transactions],
+                Some(vec![flow_state])
+            ));
             record_transactions_timings.poh_record_us = Saturating(poh_record_us);
 
             match res {
@@ -100,14 +106,36 @@ impl TransactionRecorder {
         }
     }
 
+    pub fn record_transactions(
+        &self,
+        bank_id: BankId,
+        transactions: Vec<VersionedTransaction>,
+    ) -> RecordTransactionsSummary {
+        self.record_transactions(bank_id, transactions)
+    }
+
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
+    pub fn record_with_flow_state(
+        &self,
+        bank_id: BankId,
+        mixins: Vec<Hash>,
+        transaction_batches: Vec<Vec<VersionedTransaction>>,
+        flow_state: Option<Vec<Vec<Option<FlowState>>>>,
+    ) -> Result<Option<usize>, RecordSenderError> {
+        self.record_sender.try_send(Record::new_with_flow_state(
+            mixins,
+            transaction_batches,
+            bank_id,
+            flow_state,
+        ))
+    }
+
     pub fn record(
         &self,
         bank_id: BankId,
         mixins: Vec<Hash>,
         transaction_batches: Vec<Vec<VersionedTransaction>>,
     ) -> Result<Option<usize>, RecordSenderError> {
-        self.record_sender
-            .try_send(Record::new(mixins, transaction_batches, bank_id))
+        self.record_with_flow_state(bank_id, mixins, transaction_batches, None)
     }
 }

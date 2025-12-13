@@ -6,6 +6,7 @@ use {
         transaction_with_meta::TransactionWithMeta,
     },
     solana_message::{AddressLoader, TransactionSignatureDetails},
+    solana_perf::flow_state::FlowState,
     solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction::{
@@ -22,6 +23,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
         sanitized_versioned_tx: SanitizedVersionedTransaction,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
+        flow_state: Option<FlowState>,
     ) -> Result<Self> {
         let message_hash = match message_hash {
             MessageHash::Precomputed(hash) => hash,
@@ -67,6 +69,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                 compute_budget_instruction_details,
                 instruction_data_len,
             },
+            flow_state,
         })
     }
 }
@@ -82,6 +85,26 @@ impl RuntimeTransaction<SanitizedTransaction> {
         reserved_account_keys: &HashSet<Pubkey>,
         enable_static_instruction_limit: bool,
     ) -> Result<Self> {
+        Self::try_create_with_flow_state(
+            tx,
+            message_hash,
+            is_simple_vote_tx,
+            address_loader,
+            reserved_account_keys,
+            enable_static_instruction_limit,
+            None,
+        )
+    }
+
+    pub fn try_create_with_flow_state(
+        tx: VersionedTransaction,
+        message_hash: MessageHash,
+        is_simple_vote_tx: Option<bool>,
+        address_loader: impl AddressLoader,
+        reserved_account_keys: &HashSet<Pubkey>,
+        enable_static_instruction_limit: bool,
+        flow_state: Option<FlowState>,
+    ) -> Result<Self> {
         if enable_static_instruction_limit
             && tx.message.instructions().len()
                 > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
@@ -93,6 +116,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
                 SanitizedVersionedTransaction::try_from(tx)?,
                 message_hash,
                 is_simple_vote_tx,
+                flow_state,
             )?;
         Self::try_from(
             statically_loaded_runtime_tx,
@@ -122,6 +146,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         let mut tx = Self {
             transaction: sanitized_transaction,
             meta: statically_loaded_runtime_tx.meta,
+            flow_state: statically_loaded_runtime_tx.flow_state,
         };
         tx.load_dynamic_metadata()?;
 
@@ -142,6 +167,11 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     #[inline]
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         self.transaction.to_versioned_transaction()
+    }
+
+    #[inline]
+    fn flow_state(&self) -> Option<FlowState> {
+        self.flow_state.clone()
     }
 }
 
@@ -257,6 +287,7 @@ mod tests {
                 svt,
                 MessageHash::Compute,
                 is_simple_vote,
+                None,
             )
             .unwrap()
             .meta
@@ -293,6 +324,7 @@ mod tests {
                 non_vote_sanitized_versioned_transaction(),
                 MessageHash::Precomputed(hash),
                 None,
+                None,
             )
             .unwrap();
 
@@ -327,6 +359,7 @@ mod tests {
                     .add_loaded_accounts_bytes(loaded_accounts_bytes)
                     .to_sanitized_versioned_transaction(),
                 MessageHash::Precomputed(hash),
+                None,
                 None,
             )
             .unwrap();

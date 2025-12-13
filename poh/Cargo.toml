@@ -40,6 +40,7 @@ solana-runtime = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
 thiserror = { workspace = true }
+solana-perf = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }
@@ -49,8 +50,10 @@ criterion = { workspace = true }
 rand = { workspace = true }
 solana-entry = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
-solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
-solana-poh = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-poh = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
