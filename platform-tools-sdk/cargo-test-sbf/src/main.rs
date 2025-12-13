@@ -171,7 +171,10 @@ fn test_solana_package(
     );
 
     // Pass --sbf-out-dir along to the solana-program-test crate
-    env::set_var("SBF_OUT_DIR", sbf_out_dir);
+    // Safety: cargo-test-sbf doesn't spawn any threads, env is updated one-by-one between spawns
+    unsafe {
+        env::set_var("SBF_OUT_DIR", sbf_out_dir);
+    }
 
     cargo_args.insert(0, "test");
 

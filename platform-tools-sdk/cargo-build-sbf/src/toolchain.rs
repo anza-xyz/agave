@@ -169,7 +169,9 @@ fn retrieve_file_from_github_api(
     }
 
     let client = reqwest::blocking::Client::new();
-    let query_url = format!("https://api.github.com/repos/anza-xyz/platform-tools/releases/tags/{platform_tools_version}");
+    let query_url = format!(
+        "https://api.github.com/repos/anza-xyz/platform-tools/releases/tags/{platform_tools_version}"
+    );
 
     let mut query_headers = reqwest::header::HeaderMap::new();
     for item in GITHUB_API_JSON_RESPONSE_HEADERS {
@@ -206,7 +208,9 @@ fn retrieve_file_from_browser_url(
     platform_tools_version: &str,
     download_file_path: &Path,
 ) -> Result<(), String> {
-    let url = format!("https://github.com/anza-xyz/platform-tools/releases/download/{platform_tools_version}/{download_file_name}");
+    let url = format!(
+        "https://github.com/anza-xyz/platform-tools/releases/download/{platform_tools_version}/{download_file_name}"
+    );
     download_file(url.as_str(), download_file_path, true, &mut None)
 }
 
@@ -531,7 +535,8 @@ pub(crate) fn install_and_link_tools(
                 "Removed RUSTC from cargo environment, because it overrides +solana cargo command \
                  line option."
             );
-            env::remove_var("RUSTC")
+            // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
+            unsafe { env::remove_var("RUSTC") }
         }
     }
 
