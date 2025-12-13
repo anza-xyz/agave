@@ -113,7 +113,7 @@ use {
         sanitized::SanitizedTransaction, Transaction, TransactionVerificationMode,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote_interface::state::TowerSync,
+    solana_vote_interface::state::{TowerSync, VoterWithBLSArgs},
     solana_vote_program::{
         vote_instruction,
         vote_state::{
@@ -9889,7 +9889,10 @@ fn test_rent_state_changes_sysvars() {
 
     let validator_pubkey = Pubkey::new_unique();
     let validator_stake_lamports = LAMPORTS_PER_SOL;
-    let validator_vote_account_pubkey = Pubkey::new_unique();
+    let (private_key, bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession_for_test();
+    let validator_vote_account_keypair = Keypair::new_from_array(private_key);
+    let validator_vote_account_pubkey = validator_vote_account_keypair.pubkey();
     let validator_voting_keypair = Keypair::new();
 
     let validator_vote_account = vote_state::create_v4_account_with_authorized(
@@ -9922,7 +9925,10 @@ fn test_rent_state_changes_sysvars() {
             &validator_vote_account_pubkey,
             &validator_voting_keypair.pubkey(),
             &Pubkey::new_unique(),
-            VoteAuthorize::Voter,
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession,
+            }),
         )],
         Some(&mint_keypair.pubkey()),
         &[&mint_keypair, &validator_voting_keypair],
