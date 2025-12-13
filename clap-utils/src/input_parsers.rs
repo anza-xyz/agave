@@ -5,7 +5,7 @@ use {
     },
     chrono::DateTime,
     clap::ArgMatches,
-    solana_bls_signatures::Pubkey as BLSPubkey,
+    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -105,12 +105,18 @@ pub fn pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Pubkey>> {
     })
 }
 
-pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPubkey>> {
+pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPubkeyCompressed>> {
     matches.values_of(name).map(|values| {
         values
             .map(|value| {
-                BLSPubkey::from_str(value).unwrap_or_else(|_| {
-                    panic!("Failed to parse BLS public key from value: {value}")
+                // Most of the case it is just a compressed BLS pubkey string
+                // If the conversion fails, we try to read it as uncompressed BLS pubkey string
+                BLSPubkeyCompressed::from_str(value).unwrap_or_else(|_| {
+                    let bls_pubkey = BLSPubkey::from_str(value)
+                        .expect("Failed to parse BLS pubkey or compressed BLS pubkey from string");
+                    bls_pubkey
+                        .try_into()
+                        .expect("Failed to convert to compressed BLS pubkey")
                 })
             })
             .collect()
@@ -434,6 +440,8 @@ mod tests {
     fn test_bls_pubkeys_of() {
         let bls_pubkey1: BLSPubkey = BLSKeypair::new().public;
         let bls_pubkey2: BLSPubkey = BLSKeypair::new().public;
+        let bls_pubkey1_compressed: BLSPubkeyCompressed = bls_pubkey1.try_into().unwrap();
+        let bls_pubkey2_compressed: BLSPubkeyCompressed = bls_pubkey2.try_into().unwrap();
         let matches = app().get_matches_from(vec![
             "test",
             "--multiple",
@@ -443,7 +451,20 @@ mod tests {
         ]);
         assert_eq!(
             bls_pubkeys_of(&matches, "multiple"),
-            Some(vec![bls_pubkey1, bls_pubkey2])
+            Some(vec![bls_pubkey1_compressed, bls_pubkey2_compressed])
+        );
+
+        // Test that compressed BLS pubkey strings also work
+        let matches = app().get_matches_from(vec![
+            "test",
+            "--multiple",
+            &bls_pubkey1_compressed.to_string(),
+            "--multiple",
+            &bls_pubkey2_compressed.to_string(),
+        ]);
+        assert_eq!(
+            bls_pubkeys_of(&matches, "multiple"),
+            Some(vec![bls_pubkey1_compressed, bls_pubkey2_compressed])
         );
     }
 
