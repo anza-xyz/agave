@@ -1,10 +1,11 @@
 use {
     crate::{
-        cluster_info::{NodeConfig, Sockets},
+        cluster_info::NodeConfig,
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
         },
+        sockets::{Sockets, TpuSockets},
     },
     solana_net_utils::{
         find_available_ports_in_range,
@@ -342,10 +343,19 @@ impl Node {
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tvu_quic,
-            tpu: tpu_sockets,
-            tpu_forwards: tpu_forwards_sockets,
-            tpu_vote: tpu_vote_sockets,
-            broadcast,
+            tpu: TpuSockets {
+                transactions: tpu_sockets,
+                transaction_forwards: tpu_forwards_sockets,
+                vote: tpu_vote_sockets,
+                broadcast,
+                transactions_quic: tpu_quic,
+                transactions_forwards_quic: tpu_forwards_quic,
+                vote_quic: tpu_vote_quic,
+                vote_forwarding_client: tpu_vote_forwarding_client,
+                vortexor_receivers,
+                vote_client_quic: quic_vote_client,
+                transaction_forwarding_clients: tpu_transaction_forwarding_clients,
+            },
             repair,
             repair_quic,
             retransmit_sockets,
@@ -354,15 +364,8 @@ impl Node {
             ip_echo: ip_echo_sockets.into_iter().next(),
             ancestor_hashes_requests,
             ancestor_hashes_requests_quic,
-            tpu_quic,
-            tpu_forwards_quic,
-            tpu_vote_quic,
-            tpu_vote_forwarding_client,
-            quic_vote_client,
-            quic_alpenglow_client,
-            tpu_transaction_forwarding_clients,
+            alpenglow_client_quic: quic_alpenglow_client,
             rpc_sts_client,
-            vortexor_receivers,
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node {
@@ -546,7 +549,7 @@ mod tests {
         let tpu_forwards_quic = node.info.tpu_forwards(QUIC).unwrap();
         let tpu_forwards_udp = node.info.tpu_forwards(UDP).unwrap();
 
-        let actual_quic_port = node.sockets.tpu_forwards_quic[0]
+        let actual_quic_port = node.sockets.tpu.transactions_forwards_quic[0]
             .local_addr()
             .unwrap()
             .port();
