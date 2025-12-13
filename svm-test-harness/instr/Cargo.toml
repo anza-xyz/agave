@@ -39,7 +39,6 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true, features = ["sysvar"] }
 solana-sdk-ids = { workspace = true }
-solana-stable-layout = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-log-collector = { workspace = true }

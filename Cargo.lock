@@ -11159,7 +11159,6 @@ dependencies = [
  "solana-instruction",
  "solana-instruction-error",
  "solana-pubkey 4.0.0",
- "solana-stable-layout",
  "thiserror 2.0.17",
 ]
 
@@ -11186,7 +11185,6 @@ dependencies = [
  "solana-pubkey 4.0.0",
  "solana-rent",
  "solana-sdk-ids",
- "solana-stable-layout",
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-log-collector",
