@@ -801,10 +801,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
 
-    if is_alpenglow {
-        solana_runtime::genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
-    } else {
-        solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+    solana_runtime::genesis_utils::activate_all_features_besides_alpenglow(&mut genesis_config);
+    if !is_alpenglow {
+        genesis_config
+            .accounts
+            .remove(&agave_feature_set::alpenglow::id());
     }
 
     if !features_to_deactivate.is_empty() {

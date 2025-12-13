@@ -9,10 +9,10 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            self, activate_all_features, activate_feature, bootstrap_validator_stake_lamports,
-            create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
-            GenesisConfigInfo, ValidatorVoteKeypairs,
+            self, activate_all_features_besides_alpenglow, activate_feature,
+            bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
+            create_genesis_config_with_vote_accounts, create_lockup_stake_account,
+            genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
         stake_history::StakeHistory,
         stake_utils,
@@ -5622,7 +5622,7 @@ fn test_add_builtin_loader_no_overwrite() {
 fn test_add_builtin_account() {
     for pass in 0..5 {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-        activate_all_features(&mut genesis_config);
+        activate_all_features_besides_alpenglow(&mut genesis_config);
 
         let slot = 123;
         // The account at program_id will be created initially with just 1 lamport.
@@ -5797,7 +5797,7 @@ fn test_add_builtin_account_after_frozen() {
 fn test_add_precompiled_account() {
     for pass in 0..2 {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-        activate_all_features(&mut genesis_config);
+        activate_all_features_besides_alpenglow(&mut genesis_config);
 
         let slot = 123;
         let program_id = solana_pubkey::new_rand();
@@ -8997,7 +8997,7 @@ fn test_verify_and_hash_transaction_sig_len() {
     } = create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
 
     // activate all features
-    activate_all_features(&mut genesis_config);
+    activate_all_features_besides_alpenglow(&mut genesis_config);
     let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
@@ -9172,7 +9172,7 @@ fn test_call_precomiled_program() {
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(42, &Pubkey::new_unique(), 42);
-    activate_all_features(&mut genesis_config);
+    activate_all_features_besides_alpenglow(&mut genesis_config);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // libsecp256k1
@@ -9788,7 +9788,7 @@ fn test_drained_created_account() {
         ..
     } = create_genesis_config_with_leader(100 * LAMPORTS_PER_SOL, &Pubkey::new_unique(), 42);
     genesis_config.rent = Rent::default();
-    activate_all_features(&mut genesis_config);
+    activate_all_features_besides_alpenglow(&mut genesis_config);
 
     let mock_program_id = Pubkey::new_unique();
     // small enough to not pay rent, thus bypassing the data clearing rent
@@ -10314,7 +10314,7 @@ fn test_resize_and_rent() {
         ..
     } = create_genesis_config_with_leader(1_000_000_000, &Pubkey::new_unique(), 42);
     genesis_config.rent = Rent::default();
-    activate_all_features(&mut genesis_config);
+    activate_all_features_besides_alpenglow(&mut genesis_config);
 
     let mock_program_id = Pubkey::new_unique();
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(

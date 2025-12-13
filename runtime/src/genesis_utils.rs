@@ -280,21 +280,12 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     }
 }
 
-pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
-    do_activate_all_features::<true>(genesis_config);
-}
-
-pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
-    do_activate_all_features::<false>(genesis_config);
-}
-
-fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
-    // Activate all features at genesis in development mode
-    for feature_id in FeatureSet::default().inactive() {
-        if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
-            activate_feature(genesis_config, *feature_id);
-        }
-    }
+pub fn activate_all_features_besides_alpenglow(genesis_config: &mut GenesisConfig) {
+    FeatureSet::default()
+        .inactive()
+        .into_iter()
+        .filter(|feature| **feature != agave_feature_set::alpenglow::id())
+        .for_each(|feature| activate_feature(genesis_config, *feature));
 }
 
 pub fn deactivate_features(
@@ -334,7 +325,7 @@ pub fn bls_pubkey_to_compressed_bytes(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn create_genesis_config_with_leader_ex_no_features(
+fn create_genesis_config_with_leader_ex_internal(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
     validator_pubkey: &Pubkey,
@@ -343,19 +334,37 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     validator_bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
     validator_stake_lamports: u64,
     validator_lamports: u64,
+    feature_set: &FeatureSet,
     fee_rate_governor: FeeRateGovernor,
     rent: Rent,
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let validator_vote_account = vote_state::create_v4_account_with_authorized(
-        validator_pubkey,
-        validator_vote_account_pubkey,
-        validator_vote_account_pubkey,
-        validator_bls_pubkey,
-        0,
-        validator_stake_lamports,
-    );
+    let validator_vote_account = if feature_set.is_active(&agave_feature_set::vote_state_v4::id()) {
+        vote_state::create_v4_account_with_authorized(
+            validator_pubkey,
+            validator_vote_account_pubkey,
+            validator_vote_account_pubkey,
+            validator_bls_pubkey,
+            0,
+            validator_stake_lamports,
+        )
+    } else {
+        if validator_bls_pubkey.is_some() {
+            warn!(
+                "Validator BLS public key was provided but Vote State v4 feature is inactive. It \
+                 will not be stored."
+            );
+        }
+
+        vote_state::create_v3_account_with_authorized(
+            validator_pubkey,
+            validator_vote_account_pubkey,
+            validator_vote_account_pubkey,
+            0,
+            validator_stake_lamports,
+        )
+    };
 
     let validator_stake_account = stake_utils::create_stake_account(
         validator_stake_account_pubkey,
@@ -403,7 +412,79 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
 
+    // Add feature accounts based on the provided FeatureSet.
+    for (feature_id, _slot) in feature_set.active() {
+        activate_feature(&mut genesis_config, *feature_id);
+    }
+
     genesis_config
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_genesis_config_with_leader_ex_no_features(
+    mint_lamports: u64,
+    mint_pubkey: &Pubkey,
+    validator_pubkey: &Pubkey,
+    validator_vote_account_pubkey: &Pubkey,
+    validator_stake_account_pubkey: &Pubkey,
+    validator_bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+    validator_stake_lamports: u64,
+    validator_lamports: u64,
+    fee_rate_governor: FeeRateGovernor,
+    rent: Rent,
+    cluster_type: ClusterType,
+    initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+) -> GenesisConfig {
+    create_genesis_config_with_leader_ex_internal(
+        mint_lamports,
+        mint_pubkey,
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_stake_account_pubkey,
+        validator_bls_pubkey,
+        validator_stake_lamports,
+        validator_lamports,
+        &FeatureSet::default(), // No features enabled
+        fee_rate_governor,
+        rent,
+        cluster_type,
+        initial_accounts,
+    )
+}
+
+/// Creates a genesis config with a custom set of features.
+/// Use this when you need fine-grained control over which features are active.
+#[allow(clippy::too_many_arguments)]
+pub fn create_genesis_config_with_leader_ex_with_features(
+    mint_lamports: u64,
+    mint_pubkey: &Pubkey,
+    validator_pubkey: &Pubkey,
+    validator_vote_account_pubkey: &Pubkey,
+    validator_stake_account_pubkey: &Pubkey,
+    validator_bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+    validator_stake_lamports: u64,
+    validator_lamports: u64,
+    feature_set: &FeatureSet,
+    fee_rate_governor: FeeRateGovernor,
+    rent: Rent,
+    cluster_type: ClusterType,
+    initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+) -> GenesisConfig {
+    create_genesis_config_with_leader_ex_internal(
+        mint_lamports,
+        mint_pubkey,
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_stake_account_pubkey,
+        validator_bls_pubkey,
+        validator_stake_lamports,
+        validator_lamports,
+        feature_set,
+        fee_rate_governor,
+        rent,
+        cluster_type,
+        initial_accounts,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -421,7 +502,18 @@ pub fn create_genesis_config_with_leader_ex(
     cluster_type: ClusterType,
     initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+    let feature_set = if cluster_type == ClusterType::Development {
+        let mut fs = FeatureSet::all_enabled();
+
+        // Disable Alpenglow by default for development clusters. To enable it,
+        // use `create_genesis_config_with_leader_ex_with_features`.
+        fs.deactivate(&agave_feature_set::alpenglow::id());
+        fs
+    } else {
+        FeatureSet::default()
+    };
+
+    create_genesis_config_with_leader_ex_internal(
         mint_lamports,
         mint_pubkey,
         validator_pubkey,
@@ -430,17 +522,12 @@ pub fn create_genesis_config_with_leader_ex(
         validator_bls_pubkey,
         validator_stake_lamports,
         validator_lamports,
+        &feature_set,
         fee_rate_governor,
         rent,
         cluster_type,
         initial_accounts,
-    );
-
-    if genesis_config.cluster_type == ClusterType::Development {
-        activate_all_features(&mut genesis_config);
-    }
-
-    genesis_config
+    )
 }
 
 #[allow(deprecated)]

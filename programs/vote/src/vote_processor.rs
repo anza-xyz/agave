@@ -446,7 +446,7 @@ mod tests {
             )
         } else {
             let balance = rent.minimum_balance(vote_state_size_of(vote_state_v4_enabled));
-            vote_state::create_account_with_authorized(
+            vote_state::create_v3_account_with_authorized(
                 &node_pubkey,
                 &vote_pubkey,
                 &vote_pubkey,
@@ -495,7 +495,7 @@ mod tests {
                 100,
             )
         } else {
-            vote_state::create_account_with_authorized(
+            vote_state::create_v3_account_with_authorized(
                 &node_pubkey,
                 authorized_voter,
                 authorized_withdrawer,
@@ -535,7 +535,7 @@ mod tests {
                 100,
             )
         } else {
-            vote_state::create_account_with_authorized(
+            vote_state::create_v3_account_with_authorized(
                 &node_pubkey,
                 &authorized_voter,
                 &authorized_withdrawer,
