@@ -970,7 +970,7 @@ mod tests {
                          {result:?}",
                     );
                     continue;
-                } // Do not add catch-all (_) pattern - compiler should error if uncovered variants are added.
+                } // Do not add catch-all (_) pattern - compiler should error if uncovered variants are added
             };
 
             assert_eq!(
