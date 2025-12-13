@@ -277,13 +277,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !is_bls_pubkey_feature_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let rent =
-                get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 1)?;
+            let rent = invoke_context.get_sysvar_cache().get_rent()?;
             if !rent.is_exempt(me.get_lamports(), me.get_data().len()) {
                 return Err(InstructionError::InsufficientFunds);
             }
-            let clock =
-                get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 2)?;
+            let clock = invoke_context.get_sysvar_cache().get_clock()?;
             vote_state::initialize_account_v2(
                 &mut me,
                 target_version,

@@ -117,8 +117,9 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit, VoteInitV2,
-            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY, create_bls_pubkey_and_proof_of_possession,
+            self, create_bls_pubkey_and_proof_of_possession, create_v4_account_with_authorized,
+            BlockTimestamp, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -8283,7 +8284,8 @@ fn test_vote_epoch_panic() {
     );
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-    let (private_key, bls_pubkey, bls_proof_of_possession) = create_bls_pubkey_and_proof_of_possession();
+    let (private_key, bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession();
     let vote_keypair = Keypair::new_from_array(private_key);
 
     let mut setup_ixs = Vec::new();
