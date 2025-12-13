@@ -9,11 +9,30 @@ pub use log::{debug, error, info, trace, warn};
 #[cfg(feature = "tracing")]
 pub use tracing::{debug, error, info, trace, warn};
 
-#[cfg(not(any(feature = "log", feature = "tracing")))]
-compile_error!("Either 'log' or 'tracing' feature must be enabled");
-
 #[cfg(all(feature = "log", feature = "tracing"))]
 compile_error!("'log' and 'tracing' features are mutually exclusive");
+
+#[cfg(not(any(feature = "log", feature = "tracing")))]
+#[macro_export]
+macro_rules! do_nothing {
+    ($($tt:tt)*) => {
+        // trick compiler to think the tt has been consumed or it complains about unused arguments
+        if false {
+            unreachable!($($tt)*);
+        }
+    };
+}
+
+#[cfg(not(any(feature = "log", feature = "tracing")))]
+pub use do_nothing as debug;
+#[cfg(not(any(feature = "log", feature = "tracing")))]
+pub use do_nothing as error;
+#[cfg(not(any(feature = "log", feature = "tracing")))]
+pub use do_nothing as info;
+#[cfg(not(any(feature = "log", feature = "tracing")))]
+pub use do_nothing as trace;
+#[cfg(not(any(feature = "log", feature = "tracing")))]
+pub use do_nothing as warn;
 
 #[cfg(test)]
 mod tests {

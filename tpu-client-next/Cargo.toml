@@ -16,7 +16,7 @@ agave-unstable-api = []
 default = ["log"]
 dev-context-only-utils = []
 log = ["dep:log"]
-metrics = ["dep:solana-metrics"]
+metrics = ["dep:solana-metrics", "dep:log"]
 tracing = ["dep:tracing"]
 websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"]
 
