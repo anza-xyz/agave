@@ -107,6 +107,7 @@ members = [
     "svm-test-harness",
     "svm-test-harness/fixture",
     "svm-test-harness/instr",
+    "svm-test-harness/syscall",
     "svm-timings",
     "svm-transaction",
     "svm-type-overrides",
@@ -559,6 +560,7 @@ solana-svm-measure = { path = "svm-measure", version = "=4.0.0-alpha.0", feature
 solana-svm-test-harness = { path = "svm-test-harness", version = "=4.0.0-alpha.0" }
 solana-svm-test-harness-fixture = { path = "svm-test-harness/fixture", version = "=4.0.0-alpha.0" }
 solana-svm-test-harness-instr = { path = "svm-test-harness/instr", version = "=4.0.0-alpha.0" }
+solana-svm-test-harness-syscall = { path = "svm-test-harness/syscall", version = "=4.0.0-alpha.0" }
 solana-svm-timings = { path = "svm-timings", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

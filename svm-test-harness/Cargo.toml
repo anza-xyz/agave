@@ -15,6 +15,11 @@ name = "test_exec_instr"
 path = "bin/test_exec_instr.rs"
 required-features = ["fuzz"]
 
+[[bin]]
+name = "test_exec_vm_syscall"
+path = "bin/test_exec_vm_syscall.rs"
+required-features = ["fuzz"]
+
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
@@ -23,6 +28,7 @@ fuzz = [
     "dep:prost",
     "solana-svm-test-harness-fixture/fuzz",
     "solana-svm-test-harness-instr/fuzz",
+    "solana-svm-test-harness-syscall/fuzz",
 ]
 
 [dependencies]
@@ -31,6 +37,7 @@ clap = { version = "4.5.2", features = ["derive"], optional = true }
 prost = { workspace = true, optional = true }
 solana-svm-test-harness-fixture = { workspace = true }
 solana-svm-test-harness-instr = { workspace = true }
+solana-svm-test-harness-syscall = { workspace = true }
 
 [lints]
 workspace = true
