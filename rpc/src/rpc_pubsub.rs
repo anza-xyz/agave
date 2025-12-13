@@ -650,8 +650,9 @@ mod tests {
         solana_vote_interface::{
             instruction::{self as vote_instruction, CreateVoteAccountConfig},
             program as vote_program,
-            state::{Vote, VoteInit, VoteStateV4},
+            state::{Vote, VoteInitV2, VoteStateV4},
         },
+        solana_vote_program::vote_state::create_bls_pubkey_and_proof_of_possession_for_test,
         std::{
             sync::{
                 atomic::{AtomicBool, AtomicU64},
@@ -876,7 +877,9 @@ mod tests {
         let validator = Keypair::new();
         let voter = Keypair::new();
         let from = Keypair::new();
-        let vote_account = Keypair::new();
+        let (private_key, bls_pubkey, bls_proof_of_possesssion) =
+            create_bls_pubkey_and_proof_of_possession_for_test();
+        let vote_account = Keypair::new_from_array(private_key);
         let bank = Bank::new_for_tests(&genesis_config);
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -929,14 +932,16 @@ mod tests {
             0,
             &system_program::id(),
         )];
-        ixs.append(&mut vote_instruction::create_account_with_config(
+        ixs.append(&mut vote_instruction::create_account_with_config_v2(
             &from.pubkey(),
             &vote_account.pubkey(),
-            &VoteInit {
+            &VoteInitV2 {
                 node_pubkey: validator.pubkey(),
                 authorized_voter: voter.pubkey(),
                 authorized_withdrawer: Pubkey::new_unique(),
-                ..VoteInit::default()
+                authorized_voter_bls_pubkey: bls_pubkey,
+                authorized_voter_bls_proof_of_possession: bls_proof_of_possesssion,
+                ..VoteInitV2::default()
             },
             vote_balance,
             CreateVoteAccountConfig {
