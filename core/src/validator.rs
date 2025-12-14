@@ -1710,6 +1710,7 @@ impl Validator {
             entry_notification_sender,
             blockstore.clone(),
             &config.broadcast_stage_type,
+            leader_schedule_cache.clone(),
             turbine_xdp_sender,
             quic_xdp_sender,
             exit.clone(),
