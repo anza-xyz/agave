@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion},
+    criterion::{criterion_group, criterion_main, Criterion},
     rand::Rng,
     solana_entry::entry::Entry,
     solana_hash::Hash,
@@ -9,7 +9,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_transaction::Transaction,
-    std::iter::repeat_with,
+    std::{hint::black_box, iter::repeat_with},
 };
 
 fn make_dummy_hash<R: Rng>(rng: &mut R) -> Hash {

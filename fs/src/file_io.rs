@@ -1,12 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 //! File i/o helper functions.
-use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, BufWriter, Write},
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
+use {
+    crate::{io_setup::IoSetupState, FileInfo},
+    std::{
+        fs::{self, File, OpenOptions},
+        io::{self, BufWriter, Write},
+        ops::Range,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
 };
 
 /// `buffer` contains `valid_bytes` of data at its end.
@@ -135,7 +138,7 @@ pub trait FileCreator {
     ) -> io::Result<()>;
 
     /// Invoke implementation specific logic to handle file creation completion.
-    fn file_complete(&mut self, path: PathBuf);
+    fn file_complete(&mut self, created_file: File, path: PathBuf, file_size: u64);
 
     /// Waits for all operations to be completed
     fn drain(&mut self) -> io::Result<()>;
@@ -143,27 +146,35 @@ pub trait FileCreator {
 
 pub fn file_creator<'a>(
     buf_size: usize,
-    file_complete: impl FnMut(PathBuf) + 'a,
+    io_setup: &IoSetupState,
+    file_complete: impl FnMut(FileInfo) -> Option<File> + 'a,
 ) -> io::Result<Box<dyn FileCreator + 'a>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
 
         if buf_size >= DEFAULT_WRITE_SIZE {
-            let io_uring_creator =
-                IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
+            let io_uring_creator = IoUringFileCreator::with_buffer_capacity(
+                buf_size,
+                io_setup.shared_sqpoll_fd(),
+                file_complete,
+            )?;
             return Ok(Box::new(io_uring_creator));
         }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = io_setup;
     }
     Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
 }
 
 pub struct SyncIoFileCreator<'a> {
-    file_complete: Box<dyn FnMut(PathBuf) + 'a>,
+    file_complete: Box<dyn FnMut(FileInfo) -> Option<File> + 'a>,
 }
 
 impl<'a> SyncIoFileCreator<'a> {
-    fn new(_buf_size: usize, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
+    fn new(_buf_size: usize, file_complete: impl FnMut(FileInfo) -> Option<File> + 'a) -> Self {
         Self {
             file_complete: Box::new(file_complete),
         }
@@ -212,12 +223,14 @@ impl FileCreator for SyncIoFileCreator<'_> {
         #[cfg(not(unix))]
         set_path_permissions(&path, mode)?;
 
-        self.file_complete(path);
+        let file = file_buf.into_inner()?;
+        let file_info = FileInfo::new_from_path_and_file(path, file)?;
+        (self.file_complete)(file_info);
         Ok(())
     }
 
-    fn file_complete(&mut self, path: PathBuf) {
-        (self.file_complete)(path)
+    fn file_complete(&mut self, file: File, path: PathBuf, size: u64) {
+        (self.file_complete)(FileInfo { file, path, size });
     }
 
     fn drain(&mut self) -> io::Result<()> {
@@ -231,7 +244,7 @@ mod tests {
         super::*,
         std::{
             fs,
-            io::{Cursor, Write},
+            io::{Cursor, Read, Write},
         },
         tempfile::tempfile,
     };
@@ -357,8 +370,9 @@ mod tests {
         let mut callback_invoked_path = None;
 
         // Instantiate FileCreator
-        let mut creator = file_creator(2 << 20, |path| {
-            callback_invoked_path.replace(path);
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+            callback_invoked_path.replace(file_info.path);
+            Some(file_info.file)
         })?;
 
         let dir = Arc::new(File::open(temp_dir.path())?);
@@ -382,10 +396,11 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let mut callback_counter = 0;
 
-        let mut creator = file_creator(2 << 20, |path: PathBuf| {
-            let contents = read_file_to_string(&path);
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+            let contents = read_file_to_string(&file_info.path);
             assert!(contents.starts_with("File "));
             callback_counter += 1;
+            Some(file_info.file)
         })?;
 
         let dir = Arc::new(File::open(temp_dir.path())?);
@@ -403,6 +418,43 @@ mod tests {
         drop(creator);
 
         assert_eq!(callback_counter, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_callback_claims_owned_file() -> io::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.txt");
+        let contents = "Hello, world!";
+
+        // Shared state to capture callback invocations
+        let mut callback_provided_file_info = None;
+
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+            callback_provided_file_info = Some(file_info);
+            None
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        creator.schedule_create_at_dir(
+            file_path.clone(),
+            0o644,
+            dir,
+            &mut Cursor::new(contents),
+        )?;
+        creator.drain()?;
+        drop(creator);
+
+        let mut read_buf = String::new();
+        let mut file_info = callback_provided_file_info.unwrap();
+        assert_eq!(
+            file_info.file.metadata().unwrap().len(),
+            contents.len() as u64
+        );
+        assert_eq!(file_info.size, contents.len() as u64);
+        file_info.file.read_to_string(&mut read_buf).unwrap();
+        assert_eq!(&read_buf, contents);
+
         Ok(())
     }
 }

@@ -1040,7 +1040,7 @@ mod tests {
         assert_eq!(bank.epoch(), op.epoch);
         for (vote_address, vote_op) in &op.vote_operations {
             if let Some(balance) = &vote_op.create_with_balance {
-                let vote_state = VoteStateVersions::V4(Box::new(VoteStateV4::new(
+                let vote_state = VoteStateVersions::V4(Box::new(VoteStateV4::new_with_defaults(
                     vote_address,
                     &VoteInit {
                         node_pubkey: Pubkey::new_unique(),

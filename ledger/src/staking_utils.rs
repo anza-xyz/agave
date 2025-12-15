@@ -101,7 +101,7 @@ pub(crate) mod tests {
         for i in 0..3 {
             stakes.push((
                 i,
-                VoteStateV4::new(
+                VoteStateV4::new_with_defaults(
                     &vote_pubkey1,
                     &VoteInit {
                         node_pubkey: node1,
@@ -118,7 +118,7 @@ pub(crate) mod tests {
 
         stakes.push((
             5,
-            VoteStateV4::new(
+            VoteStateV4::new_with_defaults(
                 &vote_pubkey2,
                 &VoteInit {
                     node_pubkey: node2,

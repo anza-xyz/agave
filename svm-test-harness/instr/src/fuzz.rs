@@ -32,6 +32,8 @@ pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
 pub unsafe extern "C" fn sol_compat_fini() {}
 
 pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
+    let cu_avail = input.cu_avail;
+
     let Ok(instr_context) = InstrContext::try_from(input) else {
         return None;
     };
@@ -42,7 +44,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
 
     let compute_budget = {
         let mut budget = ComputeBudget::new_with_defaults(simd_0268_active, simd_0339_active);
-        budget.compute_unit_limit = instr_context.cu_avail;
+        budget.compute_unit_limit = cu_avail;
         budget
     };
 

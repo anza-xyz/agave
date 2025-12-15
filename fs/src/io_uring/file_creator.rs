@@ -5,13 +5,14 @@ use {
         file_io::FileCreator,
         io_uring::{
             memory::{FixedIoBuffer, LargeBuffer},
-            IO_PRIO_BE_HIGHEST,
+            sqpoll, IO_PRIO_BE_HIGHEST,
         },
+        FileInfo,
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
     io_uring::{opcode, squeue, types, IoUring},
-    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_TRUNC, O_WRONLY},
+    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
@@ -19,7 +20,7 @@ use {
         fs::File,
         io::{self, Read},
         mem,
-        os::fd::AsRawFd,
+        os::fd::{AsRawFd, BorrowedFd, FromRawFd as _, IntoRawFd as _, RawFd},
         path::PathBuf,
         pin::Pin,
         sync::Arc,
@@ -62,13 +63,15 @@ pub struct IoUringFileCreator<'a, B = LargeBuffer> {
 impl<'a> IoUringFileCreator<'a, LargeBuffer> {
     /// Create a new `IoUringFileCreator` using internally allocated buffer of specified
     /// `buf_size` and default write size.
-    pub fn with_buffer_capacity<F: FnMut(PathBuf) + 'a>(
+    pub fn with_buffer_capacity<F: FnMut(FileInfo) -> Option<File> + 'a>(
         buf_size: usize,
+        shared_sqpoll_fd: Option<BorrowedFd>,
         file_complete: F,
     ) -> io::Result<Self> {
         Self::with_buffer(
             LargeBuffer::new(buf_size),
             DEFAULT_WRITE_SIZE,
+            shared_sqpoll_fd,
             file_complete,
         )
     }
@@ -76,21 +79,26 @@ impl<'a> IoUringFileCreator<'a, LargeBuffer> {
 
 impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
     /// Create a new `IoUringFileCreator` using provided `buffer` and `file_complete`
-    /// to notify caller when file contents are already persisted.
+    /// to notify caller with already written file.
     ///
     /// `buffer` is the internal buffer used for writing scheduled file contents.
     /// It must be at least `write_capacity` long. The creator will execute multiple
     /// `write_capacity` sized writes in parallel to empty the work queue of files to create.
-    pub fn with_buffer<F: FnMut(PathBuf) + 'a>(
+    ///
+    /// `file_complete` callback receives `FileInfo` with open file and its context, its return
+    /// `Option<File>` allows passing file ownership back such that it's closed as no longer used.
+    pub fn with_buffer<F: FnMut(FileInfo) -> Option<File> + 'a>(
         mut buffer: B,
         write_capacity: usize,
+        shared_sqpoll_fd: Option<BorrowedFd>,
         file_complete: F,
     ) -> io::Result<Self> {
         // Let submission queue hold half of buffers before we explicitly syscall
         // to submit them for writing (lets kernel start processing before we run out of buffers,
         // but also amortizes number of `submit` syscalls made).
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
-        let ring = IoUring::builder().build(ring_qsize)?;
+
+        let ring = sqpoll::io_uring_builder_with(shared_sqpoll_fd).build(ring_qsize)?;
         // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
         // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
         ring.submitter()
@@ -98,7 +106,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         Self::with_buffer_and_ring(ring, buffer, write_capacity, file_complete)
     }
 
-    fn with_buffer_and_ring<F: FnMut(PathBuf) + 'a>(
+    fn with_buffer_and_ring<F: FnMut(FileInfo) -> Option<File> + 'a>(
         ring: IoUring,
         mut backing_buffer: B,
         write_capacity: usize,
@@ -120,11 +128,6 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
         unsafe { FixedIoBuffer::register(buffer, &ring)? };
 
-        // Fixed file descriptor slots. OpenAt will update them to valid fds. Length of registered
-        // slots must match the `state.files` slab whose indices are used as fd slot indices.
-        let fds = vec![-1; MAX_OPEN_FILES];
-        ring.register_files(&fds)?;
-
         Ok(Self {
             ring,
             _backing_buffer: backing_buffer,
@@ -144,8 +147,9 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
         self.write_and_close(contents, file_key)
     }
 
-    fn file_complete(&mut self, path: PathBuf) {
-        (self.ring.context_mut().file_complete)(path)
+    fn file_complete(&mut self, file: File, path: PathBuf, size: u64) {
+        let file_info = FileInfo { file, path, size };
+        (self.ring.context_mut().file_complete)(file_info);
     }
 
     fn drain(&mut self) -> io::Result<()> {
@@ -195,7 +199,7 @@ impl<B> IoUringFileCreator<'_, B> {
             let buf = self.wait_free_buf()?;
 
             let state = self.ring.context_mut();
-            let file = state.files.get_mut(file_key).unwrap();
+            let file_state = state.files.get_mut(file_key).unwrap();
 
             // Safety: the buffer points to the valid memory backed by `self._backing_buffer`.
             // It's obtained from the queue of free buffers and is written to exclusively
@@ -204,21 +208,25 @@ impl<B> IoUringFileCreator<'_, B> {
             let len = src.read(mut_slice)?;
 
             if len == 0 {
-                file.eof = true;
+                file_state.size_on_eof = Some(offset as u64);
 
                 state.buffers.push_front(buf);
-                if file.is_completed() {
-                    (state.file_complete)(mem::take(&mut file.path));
-                    self.ring
-                        .push(FileCreatorOp::Close(CloseOp::new(file_key)))?;
+                if let Some(file_info) = file_state.try_take_completed_file_info() {
+                    match (state.file_complete)(file_info) {
+                        Some(unconsumed_file) => self.ring.push(FileCreatorOp::Close(
+                            CloseOp::new(file_key, unconsumed_file),
+                        ))?,
+                        None => state.mark_file_complete(file_key),
+                    }
                 }
                 break;
             }
 
-            file.writes_started += 1;
-            if file.completed_open {
+            file_state.writes_started += 1;
+            if let Some(file) = &file_state.open_file {
                 let op = WriteOp {
                     file_key,
+                    fd: types::Fd(file.as_raw_fd()),
                     offset,
                     buf,
                     buf_offset: 0,
@@ -227,7 +235,7 @@ impl<B> IoUringFileCreator<'_, B> {
                 state.submitted_writes_size += len;
                 self.ring.push(FileCreatorOp::Write(op))?;
             } else {
-                file.backlog.push((buf, offset, len));
+                file_state.backlog.push((buf, offset, len));
             }
 
             offset += len;
@@ -255,59 +263,68 @@ impl<B> IoUringFileCreator<'_, B> {
 struct FileCreatorState<'a> {
     files: FixedSlab<PendingFile>,
     buffers: VecDeque<FixedIoBuffer>,
-    /// Externally provided callback to be called on paths of files that were written
-    file_complete: Box<dyn FnMut(PathBuf) + 'a>,
-    open_fds: usize,
+    /// Externally provided callback to be called on files that were written
+    file_complete: Box<dyn FnMut(FileInfo) -> Option<File> + 'a>,
+    num_owned_files: usize,
     /// Total write length of submitted writes
     submitted_writes_size: usize,
     stats: FileCreatorStats,
 }
 
 impl<'a> FileCreatorState<'a> {
-    fn new(buffers: VecDeque<FixedIoBuffer>, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
+    fn new(
+        buffers: VecDeque<FixedIoBuffer>,
+        file_complete: impl FnMut(FileInfo) -> Option<File> + 'a,
+    ) -> Self {
         Self {
             files: FixedSlab::with_capacity(MAX_OPEN_FILES),
             buffers,
             file_complete: Box::new(file_complete),
-            open_fds: 0,
+            num_owned_files: 0,
             submitted_writes_size: 0,
             stats: FileCreatorStats::default(),
         }
     }
 
     /// Returns write backlog that needs to be submitted to IO ring
-    fn mark_file_opened(&mut self, file_key: usize) -> BacklogVec {
+    fn mark_file_opened(&mut self, file_key: usize, fd: types::Fd) -> BacklogVec {
         let file = self.files.get_mut(file_key).unwrap();
-        file.completed_open = true;
-        self.open_fds += 1;
+        // Safety: we just received FD from io_uring open, so it's valid, track it in owned File
+        file.open_file = Some(unsafe { File::from_raw_fd(fd.0) });
+        self.num_owned_files += 1;
         if self.buffers.len() * 2 > self.buffers.capacity() {
             self.stats.large_buf_headroom_count += 1;
         }
         mem::take(&mut file.backlog)
     }
 
-    /// Returns true if all of the writes are now done
+    /// Returns owned `File` if all of the writes are done, but the callback didn't claim it
     fn mark_write_completed(
         &mut self,
         file_key: usize,
         write_len: usize,
         buf: FixedIoBuffer,
-    ) -> bool {
+    ) -> Option<File> {
         self.submitted_writes_size -= write_len;
         self.buffers.push_front(buf);
 
-        let file = self.files.get_mut(file_key).unwrap();
-        file.writes_completed += 1;
-        if file.is_completed() {
-            (self.file_complete)(mem::take(&mut file.path));
-            return true;
+        let file_state = self.files.get_mut(file_key).unwrap();
+        file_state.writes_completed += 1;
+        if let Some(file_info) = file_state.try_take_completed_file_info() {
+            return match (self.file_complete)(file_info) {
+                unconsumed_file @ Some(_) => unconsumed_file,
+                None => {
+                    self.mark_file_complete(file_key);
+                    None
+                }
+            };
         }
-        false
+        None
     }
 
-    fn mark_file_closed(&mut self, file_key: usize) {
+    fn mark_file_complete(&mut self, file_key: usize) {
         let _ = self.files.remove(file_key);
-        self.open_fds -= 1;
+        self.num_owned_files -= 1;
     }
 
     fn log_stats(&self) {
@@ -354,28 +371,26 @@ impl OpenOp {
     fn entry(&mut self) -> squeue::Entry {
         let at_dir_fd = types::Fd(self.dir_handle.as_raw_fd());
         opcode::OpenAt::new(at_dir_fd, self.path_cstring.as_ptr() as _)
-            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME)
+            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_RDWR | O_NOATIME)
             .mode(self.mode)
-            .file_index(Some(
-                types::DestinationSlot::try_from_slot_target(self.file_key as u32).unwrap(),
-            ))
             .build()
     }
 
     fn complete(
         &mut self,
         ring: &mut Completion<FileCreatorState, FileCreatorOp>,
-        res: io::Result<i32>,
+        res: io::Result<RawFd>,
     ) -> io::Result<()>
     where
         Self: Sized,
     {
-        res?;
+        let fd = types::Fd(res?);
 
-        let backlog = ring.context_mut().mark_file_opened(self.file_key);
+        let backlog = ring.context_mut().mark_file_opened(self.file_key, fd);
         for (buf, offset, len) in backlog {
             let op = WriteOp {
                 file_key: self.file_key,
+                fd,
                 offset,
                 buf,
                 buf_offset: 0,
@@ -392,15 +407,17 @@ impl OpenOp {
 #[derive(Debug)]
 struct CloseOp {
     file_key: usize,
+    fd: types::Fd,
 }
 
 impl<'a> CloseOp {
-    fn new(file_key: usize) -> Self {
-        Self { file_key }
+    fn new(file_key: usize, file_to_close: File) -> Self {
+        let fd = types::Fd(file_to_close.into_raw_fd());
+        Self { file_key, fd }
     }
 
     fn entry(&mut self) -> squeue::Entry {
-        opcode::Close::new(types::Fixed(self.file_key as u32)).build()
+        opcode::Close::new(self.fd).build()
     }
 
     fn complete(
@@ -412,7 +429,7 @@ impl<'a> CloseOp {
         Self: Sized,
     {
         let _ = res?;
-        ring.context_mut().mark_file_closed(self.file_key);
+        ring.context_mut().mark_file_complete(self.file_key);
         Ok(())
     }
 }
@@ -420,6 +437,7 @@ impl<'a> CloseOp {
 #[derive(Debug)]
 struct WriteOp {
     file_key: usize,
+    fd: types::Fd,
     offset: usize,
     buf: FixedIoBuffer,
     buf_offset: usize,
@@ -429,7 +447,8 @@ struct WriteOp {
 impl<'a> WriteOp {
     fn entry(&mut self) -> squeue::Entry {
         let WriteOp {
-            file_key,
+            file_key: _,
+            fd,
             offset,
             buf,
             buf_offset,
@@ -439,7 +458,7 @@ impl<'a> WriteOp {
         // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
         // reclaimed after completion passed in a call to `mark_write_completed`.
         opcode::WriteFixed::new(
-            types::Fixed(*file_key as u32),
+            *fd,
             unsafe { buf.as_mut_ptr().byte_add(*buf_offset) },
             *write_len as u32,
             buf.io_buf_index()
@@ -448,6 +467,7 @@ impl<'a> WriteOp {
         .offset(*offset as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
         .build()
+        .flags(squeue::Flags::ASYNC)
     }
 
     fn complete(
@@ -468,6 +488,7 @@ impl<'a> WriteOp {
 
         let WriteOp {
             file_key,
+            fd,
             offset,
             buf,
             buf_offset,
@@ -481,6 +502,7 @@ impl<'a> WriteOp {
             log::warn!("short write ({written}/{}), file={}", *write_len, *file_key);
             ring.push(FileCreatorOp::Write(WriteOp {
                 file_key: *file_key,
+                fd: *fd,
                 offset: *offset + written,
                 buf,
                 buf_offset: total_written,
@@ -489,11 +511,14 @@ impl<'a> WriteOp {
             return Ok(());
         }
 
-        if ring
-            .context_mut()
-            .mark_write_completed(*file_key, total_written, buf)
+        if let Some(unconsumed_file) =
+            ring.context_mut()
+                .mark_write_completed(*file_key, total_written, buf)
         {
-            ring.push(FileCreatorOp::Close(CloseOp::new(*file_key)));
+            ring.push(FileCreatorOp::Close(CloseOp::new(
+                *file_key,
+                unconsumed_file,
+            )));
         }
 
         Ok(())
@@ -537,9 +562,9 @@ type PendingWrite = (FixedIoBuffer, usize, usize);
 #[derive(Debug)]
 struct PendingFile {
     path: PathBuf,
-    completed_open: bool,
+    open_file: Option<File>,
     backlog: BacklogVec,
-    eof: bool,
+    size_on_eof: Option<u64>,
     writes_started: usize,
     writes_completed: usize,
 }
@@ -548,11 +573,11 @@ impl PendingFile {
     fn from_path(path: PathBuf) -> Self {
         Self {
             path,
-            completed_open: false,
+            open_file: None,
             backlog: SmallVec::new(),
             writes_started: 0,
             writes_completed: 0,
-            eof: false,
+            size_on_eof: None,
         }
     }
 
@@ -561,7 +586,13 @@ impl PendingFile {
         CString::new(os_str.as_encoded_bytes()).expect("path mustn't contain interior NULs")
     }
 
-    fn is_completed(&self) -> bool {
-        self.eof && self.writes_started == self.writes_completed
+    fn try_take_completed_file_info(&mut self) -> Option<FileInfo> {
+        if self.writes_started != self.writes_completed {
+            return None;
+        }
+        let size = self.size_on_eof?;
+        let file = self.open_file.take()?;
+        let path = mem::take(&mut self.path);
+        Some(FileInfo { file, size, path })
     }
 }

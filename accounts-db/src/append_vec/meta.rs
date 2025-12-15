@@ -21,7 +21,7 @@ pub struct StoredMeta {
 
 /// This struct will be backed by mmapped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct AccountMeta {
     /// lamports in the account
@@ -32,26 +32,6 @@ pub struct AccountMeta {
     pub owner: Pubkey,
     /// this account's data contains a loaded program (and is now read-only)
     pub executable: bool,
-}
-
-impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
-    fn from(account: &'a T) -> Self {
-        Self {
-            lamports: account.lamports(),
-            owner: *account.owner(),
-            executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
-        }
-    }
-}
-
-impl<'a, T: ReadableAccount> From<Option<&'a T>> for AccountMeta {
-    fn from(account: Option<&'a T>) -> Self {
-        match account {
-            Some(account) => AccountMeta::from(account),
-            None => AccountMeta::default(),
-        }
-    }
 }
 
 /// References to account data stored elsewhere. Getting an `Account` requires cloning

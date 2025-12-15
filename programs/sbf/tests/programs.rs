@@ -286,7 +286,6 @@ fn test_program_sbf_sanity() {
             feature_set,
             accounts,
             instruction: instruction.into(),
-            cu_avail: compute_budget.compute_unit_limit,
         };
 
         let effects =
@@ -561,7 +560,6 @@ fn test_program_sbf_error_handling() {
                 feature_set: feature_set.clone(),
                 accounts: accounts.clone(),
                 instruction: instruction.into(),
-                cu_avail: compute_budget.compute_unit_limit,
             };
 
             harness::execute_instr(context, &compute_budget, program_cache, &sysvar_cache)

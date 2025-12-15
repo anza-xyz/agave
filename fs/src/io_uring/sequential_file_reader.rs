@@ -5,6 +5,7 @@ use {
         memory::{FixedIoBuffer, LargeBuffer},
         IO_PRIO_BE_HIGHEST,
     },
+    crate::io_uring::sqpoll,
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -12,7 +13,7 @@ use {
         io::{self, BufRead, Cursor, Read},
         mem,
         os::{
-            fd::{AsRawFd as _, RawFd},
+            fd::{AsRawFd, BorrowedFd, RawFd},
             unix::fs::OpenOptionsExt,
         },
         path::Path,
@@ -28,20 +29,22 @@ const DEFAULT_READ_SIZE: usize = 1024 * 1024;
 const DEFAULT_MAX_IOWQ_WORKERS: u32 = 2;
 
 /// Utility for building `SequentialFileReader` with specified tuning options.
-pub struct SequentialFileReaderBuilder {
+pub struct SequentialFileReaderBuilder<'sp> {
     read_capacity: usize,
     max_iowq_workers: u32,
     ring_squeue_size: Option<u32>,
+    shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
     /// Register buffer as fixed with the kernel
     register_buffer: bool,
 }
 
-impl SequentialFileReaderBuilder {
+impl<'sp> SequentialFileReaderBuilder<'sp> {
     pub fn new() -> Self {
         Self {
             read_capacity: DEFAULT_READ_SIZE,
             max_iowq_workers: DEFAULT_MAX_IOWQ_WORKERS,
             ring_squeue_size: None,
+            shared_sqpoll_fd: None,
             register_buffer: true,
         }
     }
@@ -52,6 +55,12 @@ impl SequentialFileReaderBuilder {
     #[cfg(test)]
     pub fn read_capacity(mut self, read_capacity: usize) -> Self {
         self.read_capacity = read_capacity;
+        self
+    }
+
+    /// Use (or remove) a shared kernel thread to drain submission queue for IO operations
+    pub fn shared_sqpoll(mut self, shared_sqpoll_fd: Option<BorrowedFd<'sp>>) -> Self {
+        self.shared_sqpoll_fd = shared_sqpoll_fd;
         self
     }
 
@@ -119,7 +128,7 @@ impl SequentialFileReaderBuilder {
             .ring_squeue_size
             .unwrap_or((max_inflight_ops / 2).max(1));
         // agave io_uring uses cqsize to define state slab size, so cqsize == max inflight ops
-        let ring = IoUring::builder()
+        let ring = sqpoll::io_uring_builder_with(self.shared_sqpoll_fd)
             .setup_cqsize(max_inflight_ops)
             .build(ring_squeue_size)?;
 
