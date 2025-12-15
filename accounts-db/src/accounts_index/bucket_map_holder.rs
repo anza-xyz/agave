@@ -109,15 +109,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         low_water_mark_ratio: f64,
     ) -> NonZeroUsize {
         let evictions = match self.target_entries_per_bin {
-            None => current_entries.max(1),
+            None => current_entries,
             Some(target_per_bin) => {
                 // Low water mark: flush down to specified ratio of the per-bin threshold
                 let threshold_entries = (target_per_bin as f64 * low_water_mark_ratio) as usize;
-                current_entries.saturating_sub(threshold_entries).max(1)
+                current_entries.saturating_sub(threshold_entries)
             }
         };
         // SAFETY: evictions is ensured to be non-zero above.
-        NonZeroUsize::new(evictions).unwrap()
+        NonZeroUsize::new(evictions.max(1)).unwrap()
     }
 
     pub fn increment_age(&self) {
