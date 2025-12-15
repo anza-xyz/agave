@@ -1124,7 +1124,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // For threshold-based flushing, check if current entry count warrants flushing
         let entries_in_bin = self.map_internal.read().unwrap().len();
-        if !self.storage.should_flush_to_disk(entries_in_bin) {
+        if !self.storage.should_flush(entries_in_bin) {
             // Entry count is below threshold, no need to flush
             // Still mark as aged to avoid infinite scanning
             assert_eq!(current_age, self.storage.current_age());

@@ -93,7 +93,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
     }
 
     /// Check if flushing to disk should occur based on entry count threshold per bin
-    pub fn should_flush_to_disk(&self, entries_in_bin: usize) -> bool {
+    pub fn should_flush(&self, entries_in_bin: usize) -> bool {
         match &self.threshold_entries_per_bin {
             None => self.is_disk_index_enabled(),
             Some(threshold_entries_per_bin) => {
@@ -109,11 +109,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         let evictions = match &self.threshold_entries_per_bin {
             None => current_entries,
             Some(threshold_entries_per_bin) => {
-                // Low water mark: flush down to specified ratio of the per-bin threshold
+                // Low water mark: evict down to specified ratio of the per-bin threshold
                 current_entries.saturating_sub(threshold_entries_per_bin.low_water_mark)
             }
-        };
-        NonZeroUsize::new(evictions.max(1)).unwrap()
+        }
+        .max(1);
+        // SAFETY: evictions is ensured to be non-zero above.
+        NonZeroUsize::new(evictions).unwrap()
     }
 
     pub fn increment_age(&self) {
@@ -601,8 +603,8 @@ pub mod tests {
         assert_eq!(thresholds.high_water_mark, 380);
         assert_eq!(thresholds.low_water_mark, 313);
 
-        assert!(!test.should_flush_to_disk(thresholds.high_water_mark.saturating_sub(200),));
-        assert!(!test.should_flush_to_disk(thresholds.high_water_mark));
+        assert!(!test.should_flush(thresholds.high_water_mark.saturating_sub(200),));
+        assert!(!test.should_flush(thresholds.high_water_mark));
     }
 
     #[test]
@@ -620,8 +622,8 @@ pub mod tests {
 
         let high_water_mark = test.threshold_entries_per_bin.unwrap().high_water_mark;
 
-        assert!(test.should_flush_to_disk(high_water_mark + 1));
-        assert!(test.should_flush_to_disk(high_water_mark + 120));
+        assert!(test.should_flush(high_water_mark + 1));
+        assert!(test.should_flush(high_water_mark + 120));
     }
 
     #[test]
@@ -639,8 +641,8 @@ pub mod tests {
 
         let high_water_mark = test.threshold_entries_per_bin.unwrap().high_water_mark;
 
-        assert!(!test.should_flush_to_disk(high_water_mark));
-        assert!(test.should_flush_to_disk(high_water_mark + 1));
+        assert!(!test.should_flush(high_water_mark));
+        assert!(test.should_flush(high_water_mark + 1));
     }
 
     #[test]
@@ -652,9 +654,9 @@ pub mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        assert!(test.should_flush_to_disk(0));
-        assert!(test.should_flush_to_disk(1000));
-        assert!(test.should_flush_to_disk(usize::MAX));
+        assert!(test.should_flush(0));
+        assert!(test.should_flush(1000));
+        assert!(test.should_flush(usize::MAX));
     }
 
     #[test]
@@ -666,9 +668,9 @@ pub mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        assert!(!test.should_flush_to_disk(0));
-        assert!(!test.should_flush_to_disk(1000));
-        assert!(!test.should_flush_to_disk(usize::MAX));
+        assert!(!test.should_flush(0));
+        assert!(!test.should_flush(1000));
+        assert!(!test.should_flush(usize::MAX));
     }
 
     #[test]
