@@ -614,9 +614,7 @@ pub mod tests {
         assert_eq!(thresholds.low_water_mark, 313);
 
         // Below high water mark
-        assert!(!test.should_flush(
-            thresholds.high_water_mark.saturating_sub(200),
-        ));
+        assert!(!test.should_flush(thresholds.high_water_mark.saturating_sub(200),));
         assert!(!test.should_flush(thresholds.high_water_mark));
 
         // At boundary and above
@@ -686,9 +684,7 @@ pub mod tests {
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
         let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
         assert_eq!(low_water_mark, 313);
-        let expected = Some(
-            NonZeroUsize::new(2000usize.saturating_sub(low_water_mark).max(1)).unwrap(),
-        );
+        let expected = NonZeroUsize::new(2000usize.saturating_sub(low_water_mark).max(1)).unwrap();
         assert_eq!(test.max_evictions_for_threshold(2000), expected);
     }
 
@@ -707,9 +703,7 @@ pub mod tests {
 
         let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
         assert_eq!(low_water_mark, 78);
-        let expected = Some(
-            NonZeroUsize::new(500usize.saturating_sub(low_water_mark).max(1)).unwrap(),
-        );
+        let expected = NonZeroUsize::new(500usize.saturating_sub(low_water_mark).max(1)).unwrap();
         assert_eq!(test.max_evictions_for_threshold(500), expected);
     }
 
