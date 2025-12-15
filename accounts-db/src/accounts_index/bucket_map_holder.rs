@@ -82,7 +82,7 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     pub(crate) startup_stats: Arc<StartupStats>,
 
     /// Precomputed thresholds per bin for flushing and eviction
-    /// None for Minimal/InMemOnly, Some(entries_per_bin) for Threshold
+    /// None for Minimal/InMemOnly, Some(threshold_entries_per_bin) for Threshold
     threshold_entries_per_bin: Option<ThresholdEntriesPerBin>,
 }
 
@@ -120,7 +120,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
                 current_entries.saturating_sub(threshold_entries_per_bin.low_water_mark)
             }
         };
-        // SAFETY: evictions is ensured to be non-zero above.
         NonZeroUsize::new(evictions.max(1)).unwrap()
     }
 
@@ -262,7 +261,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
                 let entries_per_bin = bytes_per_bin
                     / (InMemAccountsIndex::<T, U>::size_of_uninitialized()
                         + InMemAccountsIndex::<T, U>::size_of_single_entry());
-                let target_entries_per_bin = Self::calculate_target_entries_per_bin(entries_per_bin);
+                let target_entries_per_bin =
+                    Self::calculate_target_entries_per_bin(entries_per_bin);
                 let threshold_entries_per_bin =
                     Self::calculate_threshold_entries(target_entries_per_bin);
 
@@ -311,9 +311,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         }
     }
 
-    fn calculate_threshold_entries(
-        target_entries_per_bin: usize,
-    ) -> ThresholdEntriesPerBin {
+    fn calculate_threshold_entries(target_entries_per_bin: usize) -> ThresholdEntriesPerBin {
         ThresholdEntriesPerBin {
             target_entries: target_entries_per_bin,
             high_water_mark: Self::scale_by_percentage(
@@ -598,9 +596,7 @@ pub mod tests {
         assert_eq!(thresholds.high_water_mark, 380);
         assert_eq!(thresholds.low_water_mark, 313);
 
-        assert!(!test.should_flush_to_disk(
-            thresholds.high_water_mark.saturating_sub(200),
-        ));
+        assert!(!test.should_flush_to_disk(thresholds.high_water_mark.saturating_sub(200),));
         assert!(!test.should_flush_to_disk(thresholds.high_water_mark));
     }
 
@@ -617,10 +613,7 @@ pub mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        let high_water_mark = test
-            .threshold_entries_per_bin
-            .unwrap()
-            .high_water_mark;
+        let high_water_mark = test.threshold_entries_per_bin.unwrap().high_water_mark;
 
         assert!(test.should_flush_to_disk(high_water_mark + 1));
         assert!(test.should_flush_to_disk(high_water_mark + 120));
@@ -639,10 +632,7 @@ pub mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        let high_water_mark = test
-            .threshold_entries_per_bin
-            .unwrap()
-            .high_water_mark;
+        let high_water_mark = test.threshold_entries_per_bin.unwrap().high_water_mark;
 
         assert!(!test.should_flush_to_disk(high_water_mark));
         assert!(test.should_flush_to_disk(high_water_mark + 1));
@@ -707,28 +697,35 @@ pub mod tests {
             ..Default::default()
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
-        let low_water_mark = test
-            .threshold_entries_per_bin
-            .unwrap()
-            .low_water_mark;
+        let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
         assert_eq!(low_water_mark, 313);
         let expected_evictions = |current_entries: usize| {
-            NonZeroUsize::new(
-                current_entries
-                    .saturating_sub(low_water_mark)
-                    .max(1),
-            )
-            .unwrap()
+            NonZeroUsize::new(current_entries.saturating_sub(low_water_mark).max(1)).unwrap()
         };
 
-        assert_eq!(test.max_evictions_for_threshold(2000), expected_evictions(2000));
+        assert_eq!(
+            test.max_evictions_for_threshold(2000),
+            expected_evictions(2000)
+        );
 
-        assert_eq!(test.max_evictions_for_threshold(1500), expected_evictions(1500));
+        assert_eq!(
+            test.max_evictions_for_threshold(1500),
+            expected_evictions(1500)
+        );
 
-        assert_eq!(test.max_evictions_for_threshold(896), expected_evictions(896));
+        assert_eq!(
+            test.max_evictions_for_threshold(896),
+            expected_evictions(896)
+        );
 
-        assert_eq!(test.max_evictions_for_threshold(500), expected_evictions(500));
-        assert_eq!(test.max_evictions_for_threshold(100), expected_evictions(100));
+        assert_eq!(
+            test.max_evictions_for_threshold(500),
+            expected_evictions(500)
+        );
+        assert_eq!(
+            test.max_evictions_for_threshold(100),
+            expected_evictions(100)
+        );
         assert_eq!(test.max_evictions_for_threshold(0), expected_evictions(0));
     }
 
@@ -745,27 +742,31 @@ pub mod tests {
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
 
-        let low_water_mark = test
-            .threshold_entries_per_bin
-            .unwrap()
-            .low_water_mark;
+        let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
         assert_eq!(low_water_mark, 78);
         let expected_evictions = |current_entries: usize| {
-            NonZeroUsize::new(
-                current_entries
-                    .saturating_sub(low_water_mark)
-                    .max(1),
-            )
-            .unwrap()
+            NonZeroUsize::new(current_entries.saturating_sub(low_water_mark).max(1)).unwrap()
         };
 
-        assert_eq!(test.max_evictions_for_threshold(500), expected_evictions(500));
+        assert_eq!(
+            test.max_evictions_for_threshold(500),
+            expected_evictions(500)
+        );
 
-        assert_eq!(test.max_evictions_for_threshold(300), expected_evictions(300));
+        assert_eq!(
+            test.max_evictions_for_threshold(300),
+            expected_evictions(300)
+        );
 
-        assert_eq!(test.max_evictions_for_threshold(224), expected_evictions(224));
+        assert_eq!(
+            test.max_evictions_for_threshold(224),
+            expected_evictions(224)
+        );
 
-        assert_eq!(test.max_evictions_for_threshold(100), expected_evictions(100));
+        assert_eq!(
+            test.max_evictions_for_threshold(100),
+            expected_evictions(100)
+        );
         assert_eq!(test.max_evictions_for_threshold(50), expected_evictions(50));
     }
 
