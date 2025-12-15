@@ -35,13 +35,6 @@ const HIGH_WATER_MARK_PERCENTAGE: usize = 85;
 // Evict down to this percent of the target entries when flushing
 const LOW_WATER_MARK_PERCENTAGE: usize = 70;
 
-#[derive(Clone, Copy, Debug)]
-struct ThresholdEntriesPerBin {
-    target_entries: usize,
-    high_water_mark: usize,
-    low_water_mark: usize,
-}
-
 pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub disk: Option<BucketMap<(Slot, U)>>,
 
@@ -467,6 +460,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             self.stats.active_threads.fetch_sub(1, Ordering::Relaxed);
         }
     }
+}
+
+/// Precomputed thresholds derived from the configured per-bin target.
+#[derive(Clone, Copy, Debug)]
+struct ThresholdEntriesPerBin {
+    /// Rounded target entries per bin used as the baseline for thresholds.
+    target_entries: usize,
+    /// Entry count above which a bin triggers flushing to disk and eviction
+    /// from in-memory index.
+    high_water_mark: usize,
+    /// Entry count to reach after flushing/evicting from a bin.
+    low_water_mark: usize,
 }
 
 #[cfg(test)]
