@@ -595,7 +595,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_threshold_flush_below_limit() {
+    fn test_should_flush_below_limit() {
         let bins = 1;
         let threshold_entries = 1000;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
@@ -618,7 +618,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_threshold_flush_above_limit() {
+    fn test_should_flush_above_limit() {
         let bins = 1;
         let threshold_entries = 1000;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
@@ -637,7 +637,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_threshold_flush_at_boundary() {
+    fn test_should_flush_at_boundary() {
         let bins = 1;
         let threshold_entries = 1000;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
@@ -656,7 +656,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_minimal_always_flushes() {
+    fn test_should_flush_minimal_always_flushes() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::Minimal,
@@ -670,7 +670,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_in_mem_only_never_flushes() {
+    fn test_should_flush_in_mem_only_never_flushes() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::InMemOnly,
