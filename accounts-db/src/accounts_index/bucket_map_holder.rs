@@ -30,7 +30,7 @@ const _: () = assert!(std::mem::size_of::<Age>() == std::mem::size_of::<AtomicAg
 //   index is entirely disabled!  But there were concerns about the in-mem index growth behavior.
 // - 2 seconds is much faster, and does also reduce disk iops quite a lot.
 const AGE_MS: u64 = 2_000;
-// Trigger flushing when a bin exceeds this percent of the target entries.
+// Trigger eviction when a bin exceeds this percent of the target entries.
 // 85% strikes a balance: high enough to avoid frequent oscillations yet low enough
 // to catch growth before bins overshoot far past the target.
 const HIGH_WATER_MARK_PERCENTAGE: usize = 85;
