@@ -595,7 +595,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_should_flush_below_limit() {
+    fn test_should_flush_thresholds() {
         let bins = 1;
         let threshold_entries = 1000;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
@@ -613,46 +613,16 @@ pub mod tests {
         assert_eq!(thresholds.high_water_mark, 380);
         assert_eq!(thresholds.low_water_mark, 313);
 
-        assert!(!test.should_flush(thresholds.high_water_mark.saturating_sub(200),));
+        // Below high water mark
+        assert!(!test.should_flush(
+            thresholds.high_water_mark.saturating_sub(200),
+        ));
         assert!(!test.should_flush(thresholds.high_water_mark));
-    }
 
-    #[test]
-    fn test_should_flush_above_limit() {
-        let bins = 1;
-        let threshold_entries = 1000;
-        let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
-            + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-        let limit_bytes = (threshold_entries * bytes_per_entry) as u64;
-        let config = AccountsIndexConfig {
-            index_limit: IndexLimit::Threshold(limit_bytes),
-            ..Default::default()
-        };
-        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
-
-        let high_water_mark = test.threshold_entries_per_bin.unwrap().high_water_mark;
-
-        assert!(test.should_flush(high_water_mark + 1));
-        assert!(test.should_flush(high_water_mark + 120));
-    }
-
-    #[test]
-    fn test_should_flush_at_boundary() {
-        let bins = 1;
-        let threshold_entries = 1000;
-        let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
-            + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-        let limit_bytes = (threshold_entries * bytes_per_entry) as u64;
-        let config = AccountsIndexConfig {
-            index_limit: IndexLimit::Threshold(limit_bytes),
-            ..Default::default()
-        };
-        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
-
-        let high_water_mark = test.threshold_entries_per_bin.unwrap().high_water_mark;
-
-        assert!(!test.should_flush(high_water_mark));
-        assert!(test.should_flush(high_water_mark + 1));
+        // At boundary and above
+        assert!(!test.should_flush(thresholds.high_water_mark));
+        assert!(test.should_flush(thresholds.high_water_mark + 1));
+        assert!(test.should_flush(thresholds.high_water_mark + 120));
     }
 
     #[test]
