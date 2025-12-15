@@ -330,7 +330,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
     }
 
     fn scale_by_percentage(value: usize, percentage: usize) -> usize {
-        value.saturating_mul(percentage) / 100
+        // SAFETY: `value * percentage` is not allowed to overflow
+        value.checked_mul(percentage).unwrap() / 100
     }
 
     // get the next bucket to flush, with the idea that the previous bucket
