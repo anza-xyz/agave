@@ -8,6 +8,7 @@ on:
 jobs:
   add-team-to-ghsa:
     if: github.repository == 'anza-xyz/agave'
+    environment: protected
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout

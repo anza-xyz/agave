@@ -11,6 +11,7 @@ on:
 jobs:
   windows-build:
     runs-on: windows-2022
+    environment: protected
     outputs:
       tag: ${{ steps.build.outputs.tag }}
       channel: ${{ steps.build.outputs.channel }}
