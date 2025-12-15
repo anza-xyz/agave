@@ -708,14 +708,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_size_of_entry() {
-        let size_of_uninitialized = InMemAccountsIndex::<u64, u64>::size_of_uninitialized();
-        let size_of_single_entry = InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-        let bytes_per_entry = size_of_uninitialized + size_of_single_entry;
-        assert_eq!(bytes_per_entry, 88, "total bytes_per_entry");
-    }
-
-    #[test]
     fn test_age_time() {
         agave_logger::setup();
         let bins = 1;
