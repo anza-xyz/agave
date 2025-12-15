@@ -306,6 +306,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         if entries_per_bin == 0 {
             0
         } else {
+            // HashMap capacities grow in powers of 2 and typically trigger a reallocation
+            // when ~7/8 full. Derive the target as the highest power-of-two capacity that
+            // fits within entries_per_bin, then apply the 7/8 factor to stay below the
+            // reallocation threshold.
             let entries_per_bin_log2 = entries_per_bin.ilog2();
             (1usize << entries_per_bin_log2) * 7 / 8
         }
