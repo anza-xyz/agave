@@ -5,7 +5,6 @@
 use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_rent::Rent,
     solana_transaction_context::{IndexOfAccount, TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
 };
@@ -34,22 +33,20 @@ pub enum RentState {
 /// This method has a default implementation that calls into
 /// `check_rent_state_with_account`.
 pub fn check_rent_state(
-    pre_rent_state: Option<&RentState>,
-    post_rent_state: Option<&RentState>,
+    pre_rent_state: &RentState,
+    post_rent_state: &RentState,
     transaction_context: &TransactionContext,
     index: IndexOfAccount,
 ) -> TransactionResult<()> {
-    if let Some((pre_rent_state, post_rent_state)) = pre_rent_state.zip(post_rent_state) {
-        let expect_msg = "account must exist at TransactionContext index if rent-states are Some";
-        check_rent_state_with_account(
-            pre_rent_state,
-            post_rent_state,
-            transaction_context
-                .get_key_of_account_at_index(index)
-                .expect(expect_msg),
-            index,
-        )?;
-    }
+    let expect_msg = "account must exist at TransactionContext index if rent-states are Some";
+    check_rent_state_with_account(
+        pre_rent_state,
+        post_rent_state,
+        transaction_context
+            .get_key_of_account_at_index(index)
+            .expect(expect_msg),
+        index,
+    )?;
     Ok(())
 }
 
@@ -80,13 +77,13 @@ pub fn check_rent_state_with_account(
 /// lamports as uninitialized and uses the implemented `get_rent` to
 /// determine whether an account is rent-exempt.
 pub fn get_account_rent_state(
-    rent: &Rent,
     account_lamports: u64,
     account_size: usize,
+    min_balance: u64,
 ) -> RentState {
     if account_lamports == 0 {
         RentState::Uninitialized
-    } else if rent.is_exempt(account_lamports, account_size) {
+    } else if account_lamports >= min_balance {
         RentState::RentExempt
     } else {
         RentState::RentPaying {

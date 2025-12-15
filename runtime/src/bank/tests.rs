@@ -246,6 +246,7 @@ fn new_executed_processing_result(
                 return_data: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
+                accounts_num_delta: 0,
             },
             programs_modified_by_tx: HashMap::new(),
         },
@@ -9833,11 +9834,14 @@ fn test_drained_created_account() {
         recent_blockhash,
     );
 
+    let net_growth_before = bank.load_accounts_num_delta_on_chain();
     let result = bank.process_transaction(&tx);
     assert!(result.is_ok());
     // account data is not stored because of zero balance even though its
     // data wasn't cleared
     assert!(bank.get_account(&created_keypair.pubkey()).is_none());
+    let net_growth_after = bank.load_accounts_num_delta_on_chain();
+    assert_eq!(net_growth_before, net_growth_after);
 
     // Create and drain a large data size account
     let create_instruction = system_instruction::create_account(
@@ -9864,10 +9868,14 @@ fn test_drained_created_account() {
         recent_blockhash,
     );
 
+    let net_growth_before = bank.load_accounts_num_delta_on_chain();
     let result = bank.process_transaction(&tx);
     assert!(result.is_ok());
     // account data is not stored because of zero balance
     assert!(bank.get_account(&created_keypair.pubkey()).is_none());
+    // check the accounts data size
+    let net_growth_after = bank.load_accounts_num_delta_on_chain();
+    assert_eq!(net_growth_before, net_growth_after);
 }
 
 #[test]
@@ -10230,6 +10238,45 @@ fn test_update_accounts_data_size() {
                 bank.load_accounts_data_size() as i64,
                 initial.saturating_add(delta1).saturating_add(delta2),
             );
+        }
+    }
+}
+
+#[test]
+fn test_update_accounts_net_state_growth() {
+    // Test: zero update is a no-op
+    {
+        let bank = create_simple_test_bank(100);
+        bank.accounts_num_delta_on_chain.store(123, Release);
+        bank.update_accounts_num_delta(0);
+        assert_eq!(bank.accounts_num_delta_on_chain.load(Acquire), 123);
+    }
+
+    // Test: Addition saturates at i64::MAX and subtraction at i64::MIN
+    {
+        let bank = create_simple_test_bank(100);
+        bank.accounts_num_delta_on_chain
+            .store(i64::MAX - 10, Release);
+        bank.update_accounts_num_delta(20);
+        assert_eq!(bank.accounts_num_delta_on_chain.load(Acquire), i64::MAX);
+
+        bank.accounts_num_delta_on_chain
+            .store(i64::MIN + 10, Release);
+        bank.update_accounts_num_delta(-20);
+        assert_eq!(bank.accounts_num_delta_on_chain.load(Acquire), i64::MIN);
+    }
+
+    // Test: Updates work as expected with saturating add
+    {
+        let bank = create_simple_test_bank(100);
+        bank.accounts_num_delta_on_chain.store(0, Release);
+        let mut expected: i64 = 0;
+        let mut rng = rand::thread_rng();
+        for _ in 0..100 {
+            let delta = rng.gen_range(-500..500);
+            bank.update_accounts_num_delta(delta);
+            expected = expected.saturating_add(delta);
+            assert_eq!(bank.accounts_num_delta_on_chain.load(Acquire), expected);
         }
     }
 }

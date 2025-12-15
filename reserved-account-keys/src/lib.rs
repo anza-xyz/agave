@@ -24,6 +24,20 @@ use {
     std::collections::{HashMap, HashSet},
 };
 
+/// Internal sysvars used to persist internal bank fields
+/// TODO: move to sdk crates with other sysvars
+pub mod private_sysvars {
+    use solana_pubkey::Pubkey;
+
+    // Deterministic, reserved pubkeys for internal sysvars.
+    pub const ACCOUNTS_DATA_SIZE_DELTA_ON_CHAIN: Pubkey =
+        Pubkey::from_str_const("SysvarAccountsDataSizeDe1ta1111111111111111");
+    pub const ACCOUNTS_NUM_DELTA_ON_CHAIN: Pubkey =
+        Pubkey::from_str_const("SysvarAccountsNumDe1ta111111111111111111111");
+    pub const RENT_CONTROLLER_INTEGRAL_ID: Pubkey =
+        Pubkey::from_str_const("SysvarRentContro11er1ntegra1111111111111111");
+}
+
 // ReservedAccountKeys is not serialized into or deserialized from bank
 // snapshots but the bank requires this trait to be implemented anyways.
 #[cfg(feature = "frozen-abi")]
@@ -186,6 +200,10 @@ static RESERVED_ACCOUNTS: std::sync::LazyLock<Vec<ReservedAccount>> =
             ReservedAccount::new_active(sysvar::slot_hashes::id()),
             ReservedAccount::new_active(sysvar::slot_history::id()),
             ReservedAccount::new_active(sysvar::stake_history::id()),
+            // private/internal sysvars (reserved to prevent tx write locks)
+            ReservedAccount::new_active(private_sysvars::ACCOUNTS_DATA_SIZE_DELTA_ON_CHAIN),
+            ReservedAccount::new_active(private_sysvars::ACCOUNTS_NUM_DELTA_ON_CHAIN),
+            ReservedAccount::new_active(private_sysvars::RENT_CONTROLLER_INTEGRAL_ID),
             // other
             ReservedAccount::new_active(native_loader::id()),
             ReservedAccount::new_active(sysvar::id()),

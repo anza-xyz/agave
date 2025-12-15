@@ -921,6 +921,10 @@ mod tests {
                 CacheValue::BankNew,
             ),
             (
+                Pubkey::from_str_const("SysvarRent111111111111111111111111111111111"),
+                CacheValue::BankNew,
+            ),
+            (
                 Pubkey::from_str_const("SysvarS1otHashes111111111111111111111111111"),
                 CacheValue::BankNew,
             ),
