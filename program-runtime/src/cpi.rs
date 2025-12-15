@@ -248,13 +248,26 @@ pub struct CallerAccount<'a> {
 impl<'a> CallerAccount<'a> {
     pub fn get_serialized_data(
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
+        check_aligned: bool,
         vm_addr: u64,
-        len: u64,
+        original_data_len: usize,
+        len: usize,
         stricter_abi_and_runtime_constraints: bool,
         account_data_direct_mapping: bool,
     ) -> Result<&'a mut [u8], Error> {
         use crate::memory::translate_slice_mut_for_cpi;
 
+        if stricter_abi_and_runtime_constraints {
+            let is_caller_loader_deprecated = !check_aligned;
+            let address_space_reserved_for_account = if is_caller_loader_deprecated {
+                original_data_len
+            } else {
+                original_data_len.saturating_add(MAX_PERMITTED_DATA_INCREASE)
+            };
+            if len > address_space_reserved_for_account {
+                return Err(InstructionError::InvalidRealloc.into());
+            }
+        }
         if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
             Ok(&mut [])
         } else if stricter_abi_and_runtime_constraints {
@@ -270,14 +283,14 @@ impl<'a> CallerAccount<'a> {
                 Ok(std::slice::from_raw_parts_mut(
                     serialization_ptr
                         .add(vm_addr.saturating_sub(solana_sbpf::ebpf::MM_INPUT_START) as usize),
-                    len as usize,
+                    len,
                 ))
             }
         } else {
             translate_slice_mut_for_cpi::<u8>(
                 memory_mapping,
                 vm_addr,
-                len,
+                len as u64,
                 false, // Don't care since it is byte aligned
             )
         }
@@ -383,16 +396,22 @@ impl<'a> CallerAccount<'a> {
                     return Err(Box::new(CpiError::InvalidPointer));
                 }
             }
+            let ref_to_len_in_vm =
+                translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
             let serialized_data = CallerAccount::get_serialized_data(
                 memory_mapping,
+                check_aligned,
                 vm_data_addr,
-                data.len() as u64,
+                account_metadata.original_data_len,
+                if stricter_abi_and_runtime_constraints {
+                    *ref_to_len_in_vm as usize
+                } else {
+                    data.len()
+                },
                 stricter_abi_and_runtime_constraints,
                 account_data_direct_mapping,
             )?;
-            let ref_to_len_in_vm =
-                translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
@@ -473,14 +492,6 @@ impl<'a> CallerAccount<'a> {
                 .unwrap_or(u64::MAX),
         )?;
 
-        let serialized_data = CallerAccount::get_serialized_data(
-            memory_mapping,
-            account_info.data_addr,
-            account_info.data_len,
-            stricter_abi_and_runtime_constraints,
-            account_data_direct_mapping,
-        )?;
-
         // we already have the host addr we want: &mut account_info.data_len.
         // The account info might be read only in the vm though, so we translate
         // to ensure we can write. This is tested by programs/sbf/rust/ro_modify
@@ -488,8 +499,29 @@ impl<'a> CallerAccount<'a> {
         let vm_len_addr = vm_addr
             .saturating_add(&account_info.data_len as *const u64 as u64)
             .saturating_sub(account_info as *const _ as *const u64 as u64);
+        if stricter_abi_and_runtime_constraints {
+            // In the same vein as the other check_account_info_pointer() checks, we don't lock
+            // this pointer to a specific address but we don't want it to be inside accounts, or
+            // callees might be able to write to the pointed memory.
+            if vm_len_addr >= solana_sbpf::ebpf::MM_INPUT_START {
+                return Err(Box::new(CpiError::InvalidPointer));
+            }
+        }
         let ref_to_len_in_vm =
             translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
+        let serialized_data = CallerAccount::get_serialized_data(
+            memory_mapping,
+            check_aligned,
+            account_info.data_addr,
+            account_metadata.original_data_len,
+            if stricter_abi_and_runtime_constraints {
+                *ref_to_len_in_vm as usize
+            } else {
+                account_info.data_len as usize
+            },
+            stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
+        )?;
 
         Ok(CallerAccount {
             lamports,
@@ -1160,24 +1192,15 @@ fn update_callee_account(
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm as usize;
         if prev_len != post_len {
-            let is_caller_loader_deprecated = !check_aligned;
-            let address_space_reserved_for_account = if is_caller_loader_deprecated {
-                caller_account.original_data_len
-            } else {
-                caller_account
-                    .original_data_len
-                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-            };
-            if post_len > address_space_reserved_for_account {
-                return Err(InstructionError::InvalidRealloc.into());
-            }
             if !account_data_direct_mapping && post_len < prev_len {
                 // If the account has been shrunk, we're going to zero the unused memory
                 // *that was previously used*.
                 let serialized_data = CallerAccount::get_serialized_data(
                     memory_mapping,
+                    check_aligned,
                     caller_account.vm_data_addr,
-                    prev_len as u64,
+                    caller_account.original_data_len,
+                    prev_len,
                     stricter_abi_and_runtime_constraints,
                     account_data_direct_mapping,
                 )?;
@@ -1315,8 +1338,10 @@ fn update_caller_account(
             // Set the length of caller_account.serialized_data to post_len.
             caller_account.serialized_data = CallerAccount::get_serialized_data(
                 memory_mapping,
+                check_aligned,
                 caller_account.vm_data_addr,
-                post_len as u64,
+                caller_account.original_data_len,
+                post_len,
                 stricter_abi_and_runtime_constraints,
                 account_data_direct_mapping,
             )?;
@@ -2344,25 +2369,6 @@ mod tests {
         .unwrap();
         borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"");
-
-        // growing beyond address_space_reserved_for_account
-        *caller_account.ref_to_len_in_vm = (7 + MAX_PERMITTED_DATA_INCREASE) as u64;
-        let result = update_callee_account(
-            &memory_mapping,
-            true, // check_aligned
-            &caller_account,
-            callee_account,
-            stricter_abi_and_runtime_constraints,
-            account_data_direct_mapping,
-        );
-        if stricter_abi_and_runtime_constraints {
-            assert_matches!(
-                result,
-                Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
-            );
-        } else {
-            result.unwrap();
-        }
     }
 
     #[case(false, false)]
