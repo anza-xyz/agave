@@ -217,11 +217,11 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     Some((Arc::new(loaded_program), last_modification_slot))
 }
 
-/// Find the slot in which the program was most recently modified.
+/// Find the slot in which the program was most recently re-/deployed.
 /// Returns slot 0 for programs deployed with v1/v2 loaders, since programs deployed
 /// with those loaders do not retain deployment slot information.
 /// Returns an error if the program's account state can not be found or parsed.
-pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
+pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> TransactionResult<Slot> {
@@ -857,7 +857,7 @@ mod tests {
 
         let key = Pubkey::new_unique();
 
-        let result = get_program_modification_slot(&mock_bank, &key);
+        let result = get_program_deployment_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
 
         let mut account_data = AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
@@ -866,7 +866,7 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data.clone(), 0));
 
-        let result = get_program_modification_slot(&mock_bank, &key);
+        let result = get_program_deployment_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
 
         let state = UpgradeableLoaderState::Program {
@@ -878,7 +878,7 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data.clone(), 0));
 
-        let result = get_program_modification_slot(&mock_bank, &key);
+        let result = get_program_deployment_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
 
         account_data.set_owner(loader_v4::id());
@@ -887,12 +887,12 @@ mod tests {
             .borrow_mut()
             .insert(key, (account_data, 0));
 
-        let result = get_program_modification_slot(&mock_bank, &key);
+        let result = get_program_deployment_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
     }
 
     #[test]
-    fn test_program_modification_slot_success() {
+    fn test_program_deployment_slot_success() {
         let mock_bank = MockBankCallback::default();
 
         let key1 = Pubkey::new_unique();
@@ -925,7 +925,7 @@ mod tests {
             .borrow_mut()
             .insert(key2, (account_data, 0));
 
-        let result = get_program_modification_slot(&mock_bank, &key1);
+        let result = get_program_deployment_slot(&mock_bank, &key1);
         assert_eq!(result.unwrap(), 77);
 
         let state = LoaderV4State {
@@ -945,7 +945,7 @@ mod tests {
             .borrow_mut()
             .insert(key1, (account_data.clone(), 0));
 
-        let result = get_program_modification_slot(&mock_bank, &key1);
+        let result = get_program_deployment_slot(&mock_bank, &key1);
         assert_eq!(result.unwrap(), 58);
 
         account_data.set_owner(Pubkey::new_unique());
@@ -954,7 +954,7 @@ mod tests {
             .borrow_mut()
             .insert(key2, (account_data, 0));
 
-        let result = get_program_modification_slot(&mock_bank, &key2);
+        let result = get_program_deployment_slot(&mock_bank, &key2);
         assert_eq!(result.unwrap(), 0);
     }
 }

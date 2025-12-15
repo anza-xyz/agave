@@ -8,7 +8,7 @@ use {
         account_overrides::AccountOverrides,
         message_processor::process_message,
         nonce_info::NonceInfo,
-        program_loader::{get_program_modification_slot, load_program_with_pubkey},
+        program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
@@ -838,7 +838,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .iter()
                 .map(|(pubkey, last_modification_slot)| {
                     let match_criteria = if check_program_modification_slot {
-                        get_program_modification_slot(account_loader, pubkey)
+                        get_program_deployment_slot(account_loader, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
                                 ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
                             })
