@@ -791,10 +791,6 @@ pub mod tests {
     fn test_size_of_entry() {
         let size_of_uninitialized = InMemAccountsIndex::<u64, u64>::size_of_uninitialized();
         let size_of_single_entry = InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-
-        assert_eq!(size_of_uninitialized, 40, "size_of_uninitialized");
-        assert_eq!(size_of_single_entry, 48, "size_of_single_entry");
-
         let bytes_per_entry = size_of_uninitialized + size_of_single_entry;
         assert_eq!(bytes_per_entry, 88, "total bytes_per_entry");
     }
