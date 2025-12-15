@@ -31,11 +31,19 @@ impl Default for LoopMetrics {
 
 impl LoopMetrics {
     fn is_empty(&self) -> bool {
-        0 == self.loop_count
-            + self.bank_timeout_completion_count
-            + self.window_production_elapsed
-            + self.skipped_window_behind_parent_ready_count
-            + self.bank_timeout_completion_elapsed_hist.entries()
+        let Self {
+            loop_count,
+            bank_timeout_completion_count,
+            window_production_elapsed,
+            skipped_window_behind_parent_ready_count,
+            bank_timeout_completion_elapsed_hist,
+            last_report: _,
+        } = self;
+        0 == *loop_count
+            + *bank_timeout_completion_count
+            + *window_production_elapsed
+            + *skipped_window_behind_parent_ready_count
+            + bank_timeout_completion_elapsed_hist.entries()
     }
 
     pub(crate) fn report(&mut self, report_interval: Duration) {
@@ -44,62 +52,57 @@ impl LoopMetrics {
             return;
         }
 
-        if self.last_report.elapsed() > report_interval {
+        let Self {
+            loop_count,
+            bank_timeout_completion_count,
+            window_production_elapsed,
+            skipped_window_behind_parent_ready_count,
+            bank_timeout_completion_elapsed_hist,
+            last_report,
+        } = self;
+
+        if last_report.elapsed() > report_interval {
             datapoint_info!(
                 "block-creation-loop-metrics",
-                ("loop_count", self.loop_count, i64),
+                ("loop_count", *loop_count, i64),
                 (
                     "bank_timeout_completion_count",
-                    self.bank_timeout_completion_count,
+                    *bank_timeout_completion_count,
                     i64
                 ),
-                (
-                    "window_production_elapsed",
-                    self.window_production_elapsed,
-                    i64
-                ),
+                ("window_production_elapsed", *window_production_elapsed, i64),
                 (
                     "skipped_window_behind_parent_ready_count",
-                    self.skipped_window_behind_parent_ready_count,
+                    *skipped_window_behind_parent_ready_count,
                     i64
                 ),
                 (
                     "bank_timeout_completion_elapsed_90pct",
-                    self.bank_timeout_completion_elapsed_hist
+                    bank_timeout_completion_elapsed_hist
                         .percentile(90.0)
                         .unwrap_or(0),
                     i64
                 ),
                 (
                     "bank_timeout_completion_elapsed_mean",
-                    self.bank_timeout_completion_elapsed_hist
-                        .mean()
-                        .unwrap_or(0),
+                    bank_timeout_completion_elapsed_hist.mean().unwrap_or(0),
                     i64
                 ),
                 (
                     "bank_timeout_completion_elapsed_min",
-                    self.bank_timeout_completion_elapsed_hist
-                        .minimum()
-                        .unwrap_or(0),
+                    bank_timeout_completion_elapsed_hist.minimum().unwrap_or(0),
                     i64
                 ),
                 (
                     "bank_timeout_completion_elapsed_max",
-                    self.bank_timeout_completion_elapsed_hist
-                        .maximum()
-                        .unwrap_or(0),
+                    bank_timeout_completion_elapsed_hist.maximum().unwrap_or(0),
                     i64
                 ),
             );
 
             // reset metrics
-            self.reset();
+            *self = Self::default();
         }
-    }
-
-    fn reset(&mut self) {
-        *self = Self::default();
     }
 }
 
@@ -117,62 +120,63 @@ pub(crate) struct SlotMetrics {
 }
 
 impl SlotMetrics {
-    pub(crate) fn report(&mut self) {
+    pub(crate) fn report(&self) {
+        let Self {
+            slot,
+            attempt_start_leader_count,
+            replay_is_behind_count,
+            already_have_bank_count,
+            replay_is_behind_cumulative_wait_elapsed,
+            replay_is_behind_wait_elapsed_hist,
+            slot_delay_hist,
+        } = self;
         datapoint_info!(
             "slot-metrics",
-            ("slot", self.slot, i64),
-            ("attempt_count", self.attempt_start_leader_count, i64),
-            ("replay_is_behind_count", self.replay_is_behind_count, i64),
-            ("already_have_bank_count", self.already_have_bank_count, i64),
+            ("slot", *slot, i64),
+            ("attempt_count", *attempt_start_leader_count, i64),
+            ("replay_is_behind_count", *replay_is_behind_count, i64),
+            ("already_have_bank_count", *already_have_bank_count, i64),
             (
                 "slot_delay_90pct",
-                self.slot_delay_hist.percentile(90.0).unwrap_or(0),
+                slot_delay_hist.percentile(90.0).unwrap_or(0),
                 i64
             ),
-            (
-                "slot_delay_mean",
-                self.slot_delay_hist.mean().unwrap_or(0),
-                i64
-            ),
+            ("slot_delay_mean", slot_delay_hist.mean().unwrap_or(0), i64),
             (
                 "slot_delay_min",
-                self.slot_delay_hist.minimum().unwrap_or(0),
+                slot_delay_hist.minimum().unwrap_or(0),
                 i64
             ),
             (
                 "slot_delay_max",
-                self.slot_delay_hist.maximum().unwrap_or(0),
+                slot_delay_hist.maximum().unwrap_or(0),
                 i64
             ),
             (
                 "replay_is_behind_cumulative_wait_elapsed",
-                self.replay_is_behind_cumulative_wait_elapsed,
+                *replay_is_behind_cumulative_wait_elapsed,
                 i64
             ),
             (
                 "replay_is_behind_wait_elapsed_90pct",
-                self.replay_is_behind_wait_elapsed_hist
+                replay_is_behind_wait_elapsed_hist
                     .percentile(90.0)
                     .unwrap_or(0),
                 i64
             ),
             (
                 "replay_is_behind_wait_elapsed_mean",
-                self.replay_is_behind_wait_elapsed_hist.mean().unwrap_or(0),
+                replay_is_behind_wait_elapsed_hist.mean().unwrap_or(0),
                 i64
             ),
             (
                 "replay_is_behind_wait_elapsed_min",
-                self.replay_is_behind_wait_elapsed_hist
-                    .minimum()
-                    .unwrap_or(0),
+                replay_is_behind_wait_elapsed_hist.minimum().unwrap_or(0),
                 i64
             ),
             (
                 "replay_is_behind_wait_elapsed_max",
-                self.replay_is_behind_wait_elapsed_hist
-                    .maximum()
-                    .unwrap_or(0),
+                replay_is_behind_wait_elapsed_hist.maximum().unwrap_or(0),
                 i64
             ),
         );
