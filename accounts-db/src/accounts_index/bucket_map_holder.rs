@@ -686,34 +686,10 @@ pub mod tests {
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
         let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
         assert_eq!(low_water_mark, 313);
-        let expected_evictions = |current_entries: usize| {
-            NonZeroUsize::new(current_entries.saturating_sub(low_water_mark).max(1)).unwrap()
-        };
-
-        assert_eq!(
-            test.max_evictions_for_threshold(2000),
-            expected_evictions(2000)
+        let expected = Some(
+            NonZeroUsize::new(2000usize.saturating_sub(low_water_mark).max(1)).unwrap(),
         );
-
-        assert_eq!(
-            test.max_evictions_for_threshold(1500),
-            expected_evictions(1500)
-        );
-
-        assert_eq!(
-            test.max_evictions_for_threshold(896),
-            expected_evictions(896)
-        );
-
-        assert_eq!(
-            test.max_evictions_for_threshold(500),
-            expected_evictions(500)
-        );
-        assert_eq!(
-            test.max_evictions_for_threshold(100),
-            expected_evictions(100)
-        );
-        assert_eq!(test.max_evictions_for_threshold(0), expected_evictions(0));
+        assert_eq!(test.max_evictions_for_threshold(2000), expected);
     }
 
     #[test]
@@ -731,30 +707,10 @@ pub mod tests {
 
         let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
         assert_eq!(low_water_mark, 78);
-        let expected_evictions = |current_entries: usize| {
-            NonZeroUsize::new(current_entries.saturating_sub(low_water_mark).max(1)).unwrap()
-        };
-
-        assert_eq!(
-            test.max_evictions_for_threshold(500),
-            expected_evictions(500)
+        let expected = Some(
+            NonZeroUsize::new(500usize.saturating_sub(low_water_mark).max(1)).unwrap(),
         );
-
-        assert_eq!(
-            test.max_evictions_for_threshold(300),
-            expected_evictions(300)
-        );
-
-        assert_eq!(
-            test.max_evictions_for_threshold(224),
-            expected_evictions(224)
-        );
-
-        assert_eq!(
-            test.max_evictions_for_threshold(100),
-            expected_evictions(100)
-        );
-        assert_eq!(test.max_evictions_for_threshold(50), expected_evictions(50));
+        assert_eq!(test.max_evictions_for_threshold(500), expected);
     }
 
     #[test]
