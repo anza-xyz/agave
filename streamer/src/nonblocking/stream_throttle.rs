@@ -342,9 +342,10 @@ pub mod test {
         ));
         // 50K packets per ms * 20% / 500 max unstaked connections
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Unstaked,
                 10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             20
         );
@@ -370,9 +371,10 @@ pub mod test {
         // ema_load = 20K, stake = 15, total_stake = 10K
         // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 20K) * 15 / 10K  = 60
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(15),
                 10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             60
         );
@@ -380,9 +382,10 @@ pub mod test {
         // ema_load = 20K, stake = 1K, total_stake = 10K
         // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 20K) * 1K / 10K  = 4K
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1000),
                 10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             4000
         );
@@ -391,9 +394,10 @@ pub mod test {
         // ema_load = 5K, stake = 15, total_stake = 10K
         // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 5K) * 15 / 10K  = 240
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(15),
                 10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             240
         );
@@ -401,9 +405,10 @@ pub mod test {
         // ema_load = 5K, stake = 1K, total_stake = 10K
         // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 5K) * 1K / 10K  = 16000
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1000),
                 10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             16000
         );
@@ -413,18 +418,20 @@ pub mod test {
         load_ema.current_load_ema.store(4000, Ordering::Relaxed);
         // function = ((20K * 20K) / 25% of 20K) * stake / total_stake
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(15),
                 10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             240
         );
 
         // function = ((20K * 20K) / 25% of 20K) * stake / total_stake
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1000),
                 10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             16000
         );
@@ -432,9 +439,10 @@ pub mod test {
         // At 1/40000 stake weight, and minimum load, it should still allow
         // max_unstaked_load_in_throttling_window + 1 streams.
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1),
                 40000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             load_ema
                 .max_unstaked_load_in_throttling_window
@@ -463,58 +471,64 @@ pub mod test {
         // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 20K) * 15 / 10K  = 93.75
         // Loss of precision occurs here because max streams is computed for 50ms window and then doubled.
         assert!(
-            (92u64..=94).contains(&load_ema.available_load_capacity_in_throttling_duration(
+            (92u64..=94).contains(&load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(15),
-                10000
+                10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ))
         );
 
         // ema_load = 20K, stake = 1K, total_stake = 10K
         // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 20K) * 1K / 10K  = 6250
-        assert!((6249u64..=6250).contains(
-            &load_ema.available_load_capacity_in_throttling_duration(
+        assert!(
+            (6249u64..=6250).contains(&load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1000),
-                10000
-            )
-        ));
+                10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
+            ))
+        );
 
         load_ema.current_load_ema.store(10000, Ordering::Relaxed);
         // ema_load = 10K, stake = 15, total_stake = 10K
         // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 10K) * 15 / 10K  = 187.5
         // Loss of precision occurs here because max streams is computed for 50ms window and then doubled.
         assert!(
-            (186u64..=188).contains(&load_ema.available_load_capacity_in_throttling_duration(
+            (186u64..=188).contains(&load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(15),
-                10000
+                10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ))
         );
 
         // ema_load = 10K, stake = 1K, total_stake = 10K
         // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 10K) * 1K / 10K  = 12500
-        assert!((12499u64..=12500).contains(
-            &load_ema.available_load_capacity_in_throttling_duration(
+        assert!(
+            (12499u64..=12500).contains(&load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1000),
-                10000
-            )
-        ));
+                10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
+            ))
+        );
 
         // At 4000, the load is less than 25% of max_load (25K).
         // Test that we cap it to 25%, yielding the same result as if load was 25K/4.
         load_ema.current_load_ema.store(4000, Ordering::Relaxed);
         // function = ((20K * 20K) / 25% of 25K) * stake / total_stake
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(15),
-                10000
+                10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             300
         );
 
         // function = ((25K * 25K) / 25% of 25K) * stake / total_stake
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1000),
-                10000
+                10000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             20000
         );
@@ -522,9 +536,10 @@ pub mod test {
         // At 1/400000 stake weight, and minimum load, it should still allow
         // max_unstaked_load_in_throttling_window + 1 streams.
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
+            load_ema.available_throttled_load_capacity(
                 ConnectionPeerType::Staked(1),
-                400000
+                400000,
+                load_ema.current_load_ema.load(Ordering::Relaxed)
             ),
             load_ema
                 .max_unstaked_load_in_throttling_window
