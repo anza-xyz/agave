@@ -533,7 +533,7 @@ dependencies = [
  "histogram",
  "itertools 0.14.0",
  "log",
- "lru",
+ "lru 0.16.2",
  "parking_lot 0.12.3",
  "qualifier_attr",
  "rand 0.9.2",
@@ -3182,6 +3182,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "foreign-types"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3568,7 +3574,7 @@ checksum = "3a9bfc1af68b1726ea47d3d5109de126281def866b33970e10fbab11b5dafab3"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.1.5",
 ]
 
 [[package]]
@@ -3576,6 +3582,11 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "headers"
@@ -4676,6 +4687,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e999beba7b6e8345721bd280141ed958096a2e4abdf74f67ff4ce49b4b54e47a"
 dependencies = [
  "hashbrown 0.12.3",
+]
+
+[[package]]
+name = "lru"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96051b46fc183dc9cd4a223960ef37b9af631b55191852a8274bfef064cda20f"
+dependencies = [
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -6138,7 +6158,7 @@ dependencies = [
  "cc",
  "libc",
  "libm",
- "lru",
+ "lru 0.7.8",
  "parking_lot 0.11.2",
  "smallvec",
  "spin",
@@ -8275,7 +8295,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "lru",
+ "lru 0.16.2",
  "min-max-heap",
  "num_cpus",
  "num_enum",
@@ -8938,7 +8958,7 @@ dependencies = [
  "indexmap 2.12.1",
  "itertools 0.14.0",
  "log",
- "lru",
+ "lru 0.16.2",
  "num-traits",
  "num_cpus",
  "rand 0.8.5",
@@ -9217,7 +9237,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru",
+ "lru 0.16.2",
  "mockall",
  "num_cpus",
  "num_enum",
@@ -11543,7 +11563,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "log",
- "lru",
+ "lru 0.16.2",
  "quinn",
  "rustls 0.23.35",
  "serde_json",
@@ -11773,7 +11793,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru",
+ "lru 0.16.2",
  "quinn",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
