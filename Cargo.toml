@@ -442,7 +442,7 @@ solana-config-interface = "2.0.0"
 solana-connection-cache = { path = "connection-cache", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-core = { path = "core", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-cost-model = { path = "cost-model", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-cpi = "3.0.0"
+solana-cpi = "3.1.0"
 solana-curve25519 = { path = "curves/curve25519", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-define-syscall = "4.0.1"
 solana-derivation-path = "3.0.0"
