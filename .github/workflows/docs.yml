@@ -113,7 +113,7 @@ jobs:
           node-version: 24
 
       - name: Download artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: docs-build
           path: ./docs/build
