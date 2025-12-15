@@ -125,7 +125,7 @@ solana-cli-output = { path = "../../cli-output", version = "=4.0.0-alpha.0" }
 solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.0.0-alpha.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.0.0-alpha.0" }
-solana-cpi = "=3.0.0"
+solana-cpi = "=3.1.0"
 solana-curve25519 = { path = "../../curves/curve25519", version = "=4.0.0-alpha.0" }
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=4.0.0-alpha.0" }
