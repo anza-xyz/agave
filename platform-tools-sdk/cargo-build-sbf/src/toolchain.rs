@@ -1,16 +1,18 @@
 use {
     crate::{home_dir, utils::spawn, Config},
     bzip2::bufread::BzDecoder,
-    log::{debug, error, warn},
+    log::{debug, error, info, warn},
     regex::Regex,
     serde::{Deserialize, Serialize},
     solana_file_download::{download_file, download_file_with_headers},
     std::{
         env,
+        ffi::OsString,
         fs::{self, File},
-        io::BufReader,
+        io::{BufRead, BufReader, ErrorKind},
         path::{Path, PathBuf},
-        process::exit,
+        process::{exit, Command},
+        sync::OnceLock,
     },
     tar::Archive,
 };
@@ -315,9 +317,16 @@ pub(crate) fn install_if_missing(
         let zip = File::open(&download_file_path).map_err(|err| err.to_string())?;
         let tar = BzDecoder::new(BufReader::new(zip));
         let mut archive = Archive::new(tar);
-        archive.unpack(target_path).map_err(|err| err.to_string())?;
-        fs::remove_file(download_file_path).map_err(|err| err.to_string())?;
+        archive
+            .unpack(target_path)
+            .map_err(|err| format!("could not unpack downloaded archive: {err}"))?;
+        fs::remove_file(download_file_path)
+            .map_err(|err| format!("could not remove downloaded archive: {err}"))?;
+        if should_fix_bins_and_dylibs(config) {
+            let _ = fix_all_bins_and_dylibs(target_path);
+        }
     }
+
     // Make a symbolic link source_path -> target_path in the
     // platform-tools-sdk/sbf/dependencies directory if no valid link found.
     let source_base = config.sbf_sdk.join("dependencies");
@@ -568,4 +577,148 @@ pub(crate) fn rust_target_triple(config: &Config) -> String {
     } else {
         format!("sbpf{}-solana-solana", config.arch)
     }
+}
+
+fn fix_all_bins_and_dylibs(path: &Path) -> Result<(), std::io::Error> {
+    for libdir in [path.join("llvm/lib"), path.join("rust/lib")] {
+        for candidate in std::fs::read_dir(libdir)? {
+            let Ok(candidate) = candidate else { continue };
+            if path_is_dylib(&candidate.path()) {
+                fix_bin_or_dylib(path, &candidate.path());
+            }
+        }
+    }
+    for bindir in [path.join("llvm/bin"), path.join("rust/bin")] {
+        for candidate in std::fs::read_dir(bindir)? {
+            let Ok(candidate) = candidate else { continue };
+            fix_bin_or_dylib(path, &candidate.path());
+        }
+    }
+    for targetdir in std::fs::read_dir(path.join("rust/lib/rustlib"))? {
+        let targetdir = targetdir?;
+        for bindir in ["bin", "bin/gcc-ld"] {
+            let Ok(bindir_candidates) = std::fs::read_dir(targetdir.path().join(bindir)) else {
+                continue;
+            };
+            for candidate in bindir_candidates {
+                let Ok(candidate) = candidate else { continue };
+                fix_bin_or_dylib(path, &candidate.path());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn fix_bin_or_dylib(out: &Path, fname: &Path) {
+    debug!("attempting to patch {}", fname.display());
+    // Only build `.nix-deps` once.
+    static NIX_DEPS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let mut nix_build_succeeded = true;
+    let nix_deps_dir = NIX_DEPS_DIR.get_or_init(|| {
+        // Run `nix-build` to "build" each dependency (which will likely reuse the existing
+        // `/nix/store` copy, or at most download a pre-built copy).
+        //
+        // Importantly, we create a gc-root called `.nix-deps` in the target directory, but still
+        // reference the actual `/nix/store` path in the rpath as it makes it significantly more
+        // robust against changes to the location of the `.nix-deps` location.
+        //
+        // bintools: Needed for the path of `ld-linux.so` (via `nix-support/dynamic-linker`).
+        // zlib: Needed as a system dependency of various LLVM tools.
+        // patchelf: Needed for patching ELF binaries.
+        // libgcc.lib: libstdc++
+        let nix_deps_dir = out.join(".nix-deps");
+        const NIX_EXPR: &str = "
+        with (import <nixpkgs> {});
+        symlinkJoin {
+            name = \"solana-sbf-dependencies\";
+            paths = [
+                zlib
+                patchelf
+                stdenv.cc.bintools
+                libgcc.lib
+            ];
+        }
+        ";
+        nix_build_succeeded = Command::new("nix-build")
+            .args([
+                Path::new("-E"),
+                Path::new(NIX_EXPR),
+                Path::new("-o"),
+                &nix_deps_dir,
+            ])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        nix_deps_dir
+    });
+    if !nix_build_succeeded {
+        return;
+    }
+
+    let mut patchelf = Command::new(nix_deps_dir.join("bin/patchelf"));
+    patchelf.args(&[
+        OsString::from("--add-rpath"),
+        OsString::from(fs::canonicalize(nix_deps_dir).unwrap().join("lib")),
+    ]);
+    if !path_is_dylib(fname) {
+        // Finally, set the correct .interp for binaries
+        let dynamic_linker_path = nix_deps_dir.join("nix-support/dynamic-linker");
+        let dynamic_linker = fs::read_to_string(dynamic_linker_path).unwrap();
+        patchelf.args(["--set-interpreter", dynamic_linker.trim_end()]);
+    }
+    patchelf.arg(fname);
+    let _ = patchelf.output();
+}
+
+fn path_is_dylib(path: &Path) -> bool {
+    // The .so is not necessarily the extension, it might be libLLVM.so.18.1
+    path.to_str().is_some_and(|path| path.contains(".so"))
+}
+
+fn should_fix_bins_and_dylibs(config: &Config) -> bool {
+    static SHOULD_FIX_BINS_AND_DYLIBS: OnceLock<bool> = OnceLock::new();
+    let val = *SHOULD_FIX_BINS_AND_DYLIBS.get_or_init(|| {
+        let uname = Command::new("uname").arg("-s").output();
+        let Ok(output) = uname else {
+            return false;
+        };
+        let output = output.stdout;
+        if !output.starts_with(b"Linux") {
+            return false;
+        }
+        // If the user has asked binaries to be patched for Nix, then
+        // don't check for NixOS or `/lib`.
+        // NOTE: this intentionally comes after the Linux check:
+        // - patchelf only works with ELF files, so no need to run it on Mac or Windows
+        // - On other Unix systems, there is no stable syscall interface, so Nix doesn't manage the
+        // global libc.
+        if let Some(explicit_value) = config.patch_binaries_for_nix {
+            return explicit_value;
+        }
+
+        // Use `/etc/os-release` instead of `/etc/NIXOS`.
+        // The latter one does not exist on NixOS when using tmpfs as root.
+        let is_nixos = match File::open("/etc/os-release") {
+            Err(e) if e.kind() == ErrorKind::NotFound => false,
+            Err(e) => panic!("failed to access /etc/os-release: {e}"),
+            Ok(os_release) => BufReader::new(os_release).lines().any(|l| {
+                let l = l.expect("reading /etc/os-release");
+                matches!(l.trim(), "ID=nixos" | "ID='nixos'" | "ID=\"nixos\"")
+            }),
+        };
+        if !is_nixos {
+            let in_nix_shell = env::var("IN_NIX_SHELL");
+            if let Ok(in_nix_shell) = in_nix_shell {
+                info!(
+                    "The IN_NIX_SHELL environment variable is `{in_nix_shell}`; you may need to \
+                     set the --patch-binaries-for-nix argument"
+                );
+            }
+        }
+        is_nixos
+    });
+    if val {
+        info!("You seem to be using Nix.");
+    }
+    val
 }
