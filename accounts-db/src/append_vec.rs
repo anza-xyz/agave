@@ -381,8 +381,9 @@ impl AppendVec {
         std::sync::atomic::fence(Ordering::AcqRel);
 
         // The file should have already been sanitized. Don't need to check when we open the file again.
+        let file_info = FileInfo::new_from_path(&self.path).ok()?;
         let mut new =
-            AppendVec::new_from_file_unchecked(self.path.clone(), self.len(), StorageAccess::File)
+            AppendVec::new_from_file_info_unchecked(file_info, self.len(), StorageAccess::File)
                 .ok()?;
         if self.is_dirty.swap(false, Ordering::AcqRel) {
             // *move* the dirty-ness to the new append vec
@@ -417,8 +418,10 @@ impl AppendVec {
         current_len: usize,
         storage_access: StorageAccess,
     ) -> Result<(Self, usize)> {
-        let path = path.into();
-        let new = Self::new_from_file_unchecked(path, current_len, storage_access)?;
+        #[allow(deprecated)]
+        let is_writable = storage_access == StorageAccess::Mmap;
+        let file_info = FileInfo::new_from_path_writable(path, is_writable)?;
+        let new = Self::new_from_file_info_unchecked(file_info, current_len, storage_access)?;
 
         let num_accounts = new.sanitize_layout_and_length()?;
         Ok((new, num_accounts))
@@ -461,22 +464,6 @@ impl AppendVec {
             let _num_accounts = new.sanitize_layout_and_length()?;
             Ok(new)
         }
-    }
-
-    /// Creates an appendvec in read-only mode from `path` and without full data checks
-    ///
-    /// Validation of account data and counting the number of accounts is skipped.
-    pub fn new_from_file_unchecked(
-        path: impl Into<PathBuf>,
-        current_len: usize,
-        storage_access: StorageAccess,
-    ) -> Result<Self> {
-        // AppendVec is in read-only mode, but mmap access requires file to be writable
-        #[allow(deprecated)]
-        let is_writable = storage_access == StorageAccess::Mmap;
-
-        let file_info = FileInfo::new_from_path_writable(path.into(), is_writable)?;
-        Self::new_from_file_info_unchecked(file_info, current_len, storage_access)
     }
 
     /// Creates an appendvec in read-only mode from existing `FileInfo` and without full data checks
@@ -537,9 +524,9 @@ impl AppendVec {
     /// Opens the AppendVec at `path` for use by `store-tool`
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_store_tool(path: impl Into<PathBuf>) -> Result<Self> {
-        let path = path.into();
-        let file_size = std::fs::metadata(&path)?.len();
-        Self::new_from_file_unchecked(path, file_size as usize, StorageAccess::default())
+        let file_info = FileInfo::new_from_path(path)?;
+        let file_size = file_info.size;
+        Self::new_from_file_info_unchecked(file_info, file_size as usize, StorageAccess::default())
     }
 
     /// Checks that all accounts layout is correct and returns the number of accounts.
@@ -1714,8 +1701,9 @@ mod tests {
             panic!("append vec must be mmap");
         }
 
+        let file_info = FileInfo::new_from_path(&path.path).unwrap();
         let av_file =
-            AppendVec::new_from_file_unchecked(&path.path, av_current_len, StorageAccess::File)
+            AppendVec::new_from_file_info_unchecked(file_info, av_current_len, StorageAccess::File)
                 .unwrap();
         let mut reader = new_scan_accounts_reader();
         for av in [&av_mmap, &av_file] {
@@ -2083,8 +2071,13 @@ mod tests {
 
         // Truncate the AppendVec to PAGESIZE. This will cause get_account* to fail to load the account.
         let truncated_accounts_len: usize = PAGE_SIZE;
-        let av = AppendVec::new_from_file_unchecked(path, truncated_accounts_len, storage_access)
-            .unwrap();
+        let file_info = FileInfo::new_from_path(path).unwrap();
+        let av = AppendVec::new_from_file_info_unchecked(
+            file_info,
+            truncated_accounts_len,
+            storage_access,
+        )
+        .unwrap();
         let account = av.get_account_shared_data(0);
         assert!(account.is_none()); // Expect None to be returned.
 
@@ -2190,8 +2183,11 @@ mod tests {
         let total_stored_size = modify_fn(&temp_file.path, total_stored_size);
         // now open the append vec with the given storage access method
         // then perform the scan and check it is correct
+        #[allow(deprecated)]
+        let is_writable = storage_access == StorageAccess::Mmap;
+        let file_info = FileInfo::new_from_path_writable(&temp_file.path, is_writable).unwrap();
         let append_vec = ManuallyDrop::new(
-            AppendVec::new_from_file_unchecked(&temp_file.path, total_stored_size, storage_access)
+            AppendVec::new_from_file_info_unchecked(file_info, total_stored_size, storage_access)
                 .unwrap(),
         );
 
