@@ -267,9 +267,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
                     Self::calculate_threshold_entries(target_entries_per_bin);
 
                 info!(
-                    "AccountsIndex threshold configured: limit_bytes={limit_bytes}, target_bytes={}, \
-                     bytes_per_bin={bytes_per_bin}, entries_per_bin={entries_per_bin}, \
-                     target_entries_per_bin={}, high_water_mark={}, low_water_mark={}",
+                    "AccountsIndex threshold configured: limit_bytes={limit_bytes}, \
+                     target_bytes={}, bytes_per_bin={bytes_per_bin}, \
+                     entries_per_bin={entries_per_bin}, target_entries_per_bin={}, \
+                     high_water_mark={}, low_water_mark={}",
                     target_entries_per_bin * bins * bytes_per_entry,
                     threshold_entries_per_bin.target_entries,
                     threshold_entries_per_bin.high_water_mark,
