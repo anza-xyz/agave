@@ -305,8 +305,6 @@ macro_rules! dispatch {
     };
 }
 
-use dispatch;
-
 impl MigrationStatus {
     /// Create a new MigrationStatus with a default pubkey at the appropriate phase
     fn new(phase: MigrationPhase) -> Self {
