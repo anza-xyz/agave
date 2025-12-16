@@ -9,7 +9,7 @@
 )]
 use {
     solana_bincode::limited_deserialize,
-    solana_bpf_loader_program::{deploy_program, execute},
+    solana_bpf_loader_program::execute,
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::{
@@ -18,6 +18,7 @@ use {
         state::{LoaderV4State, LoaderV4Status},
     },
     solana_program_runtime::{
+        deploy_program,
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
     },
