@@ -104,7 +104,7 @@ elf = "0.0.10"
 getrandom = "0.2.10"
 itertools = "0.13.0"
 libsecp256k1 = { version = "0.7.0", default-features = false }
-log = "0.4.11"
+log = "0.4.29"
 miow = "0.3.6"
 net2 = "0.2.37"
 num-derive = "0.4.2"
