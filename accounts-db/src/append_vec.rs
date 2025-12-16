@@ -418,6 +418,7 @@ impl AppendVec {
         current_len: usize,
         storage_access: StorageAccess,
     ) -> Result<(Self, usize)> {
+        // AppendVec is in read-only mode, but mmap access requires file to be writable
         #[allow(deprecated)]
         let is_writable = storage_access == StorageAccess::Mmap;
         let file_info = FileInfo::new_from_path_writable(path, is_writable)?;
@@ -2071,7 +2072,9 @@ mod tests {
 
         // Truncate the AppendVec to PAGESIZE. This will cause get_account* to fail to load the account.
         let truncated_accounts_len: usize = PAGE_SIZE;
-        let file_info = FileInfo::new_from_path(path).unwrap();
+        #[allow(deprecated)]
+        let is_writable = storage_access == StorageAccess::Mmap;
+        let file_info = FileInfo::new_from_path_writable(path, is_writable).unwrap();
         let av = AppendVec::new_from_file_info_unchecked(
             file_info,
             truncated_accounts_len,
