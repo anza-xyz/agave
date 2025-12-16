@@ -23,11 +23,12 @@ pub type Age = u8;
 pub type AtomicAge = AtomicU8;
 const _: () = assert!(std::mem::size_of::<Age>() == std::mem::size_of::<AtomicAge>());
 
-// - 400 milliseconds was causing excessive disk iops due to flushing the index to disk very often.
-// - 4 seconds was tried and showed a large reduction in disk iops, almost as good as when the disk
-//   index is entirely disabled!  But there were concerns about the in-mem index growth behavior.
-// - 2 seconds is much faster, and does also reduce disk iops quite a lot.
-const AGE_MS: u64 = 2_000;
+// Originally AGE_MS was 400 ms, but we increased it to 2s to reduce disk IOPS
+// when the index was flushed on a timer. Now that eviction is threshold-based
+// instead of time-based, the frequent flushes won't cause excessive I/O
+// anymore. so we can safely revert AGE_MS back to 400 ms to make the age
+// tracking more responsive.
+const AGE_MS: u64 = 400;
 
 pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub disk: Option<BucketMap<(Slot, U)>>,
