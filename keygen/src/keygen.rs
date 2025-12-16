@@ -1007,7 +1007,7 @@ mod tests {
         ])
         .unwrap();
 
-        process_test_command(&[
+        let result = process_test_command(&[
             "solana-keygen",
             "verify",
             &correct_pubkey.to_string(),
