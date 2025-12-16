@@ -806,17 +806,24 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                 total_matches_found += 1;
                                 continue;
                             }
-                            if (!grind_matches_thread_safe[i].starts.is_empty()
-                                && grind_matches_thread_safe[i].ends.is_empty()
-                                && pubkey.starts_with(&grind_matches_thread_safe[i].starts))
-                                || (grind_matches_thread_safe[i].starts.is_empty()
-                                    && !grind_matches_thread_safe[i].ends.is_empty()
-                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends))
-                                || (!grind_matches_thread_safe[i].starts.is_empty()
-                                    && !grind_matches_thread_safe[i].ends.is_empty()
-                                    && pubkey.starts_with(&grind_matches_thread_safe[i].starts)
-                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends))
-                            {
+
+                            // A check immediately after arg parsing ensures that some keypair
+                            // search criteria is supplied. That is, one of `.starts` or `.ends`
+                            // will be a non-empty `String`. If the search criteria only specifies
+                            // one of these parameters, an empty `String` is used for the other.
+                            //
+                            // `String::starts_with("")` and `String::ends_with("")` return true for
+                            // for all strings so calling those two functions with the match strings
+                            // is sufficient for evaluating a candidate keypair.
+                            //
+                            // Note that the below logic works if no search criteria is given - no
+                            // search criteria means any pubkey will match
+                            let pubkey_matches_start =
+                                pubkey.starts_with(&grind_matches_thread_safe[i].starts);
+                            let pubkey_matches_end =
+                                pubkey.ends_with(&grind_matches_thread_safe[i].ends);
+
+                            if pubkey_matches_start && pubkey_matches_end {
                                 let _found = found.fetch_add(1, Ordering::Relaxed);
                                 grind_matches_thread_safe[i]
                                     .count
