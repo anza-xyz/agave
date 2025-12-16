@@ -27,7 +27,7 @@ const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
 const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 10;
 const EMA_WINDOW_MS: u64 = STREAM_LOAD_EMA_INTERVAL_MS * STREAM_LOAD_EMA_INTERVAL_COUNT;
 
-const STAKED_STREAM_THROTTLING_LOAD_THRESHOLD_PERCENT: u64 = 50;
+const STAKED_STREAM_THROTTLING_LOAD_THRESHOLD_PERCENT: u64 = 90;
 
 // Unstaked nodes must contribute to the EMA load for this threshold to be meaningful.
 // See increment_load().
@@ -170,7 +170,11 @@ impl StakedStreamLoadEMA {
         peer_type: ConnectionPeerType,
         total_stake: u64,
     ) -> u64 {
-        let current_load = self.current_load_ema.load(Ordering::Relaxed);
+        let current_load = self
+            .current_load_ema
+            .load(Ordering::Relaxed)
+            // translating from streams/STREAM_LOAD_EMA_INTERVAL_MS to streams/EMA_WINDOW_MS
+            .saturating_mul(STREAM_LOAD_EMA_INTERVAL_COUNT);
         match peer_type {
             ConnectionPeerType::Unstaked => {
                 if current_load < self.unstaked_stream_throttling_load_threshold {
