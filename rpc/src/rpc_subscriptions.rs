@@ -415,7 +415,7 @@ fn filter_program_results(
     params: &ProgramSubscriptionParams,
     last_notified_slot: Slot,
     bank: Arc<Bank>,
-) -> (impl Iterator<Item = RpcKeyedAccount>, Slot) {
+) -> (impl Iterator<Item = RpcKeyedAccount> + use<>, Slot) {
     let accounts_is_empty = accounts.is_empty();
     let encoding = params.encoding;
     let filters = params.filters.clone();
@@ -445,7 +445,7 @@ fn filter_logs_results(
     _params: &LogsSubscriptionParams,
     last_notified_slot: Slot,
     _bank: Arc<Bank>,
-) -> (impl Iterator<Item = RpcLogsResponse>, Slot) {
+) -> (impl Iterator<Item = RpcLogsResponse> + use<>, Slot) {
     let responses = logs.into_iter().flatten().map(|log| RpcLogsResponse {
         signature: log.signature.to_string(),
         err: log.result.err().map(Into::into),

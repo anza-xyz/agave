@@ -3965,9 +3965,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lru"
@@ -4133,9 +4133,9 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47a586be3f2f7e70a9d302c621447dba612d42069f3901258b2cf8ce96d855b1"
+checksum = "2956e537fc68236d2aa048f55704f231cc93f1c4de42fe1ecb5bd7938061fc4a"
 dependencies = [
  "modular-bitfield-impl",
  "static_assertions",
@@ -4143,9 +4143,9 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield-impl"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8462d3cc74eaf4194f6c0bd7b18c6f3fa6293297f4bdb60fe4c4b022ea366e12"
+checksum = "59b43b4fd69e3437618106f7754f34021b831a514f9e1a98ae863cabcd8d8dad"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5259,9 +5259,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.25"
+version = "0.12.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6eff9328d40131d43bd911d42d79eb6a47312002a4daefc9e37f17e74a7701a"
+checksum = "3b4c14b2d9afca6a60277086b0cc6a6ae0b568f6f7916c943a8cdc79f8be240f"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5306,7 +5306,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http 1.3.1",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "serde",
  "thiserror 1.0.69",
  "tower-service",
@@ -7006,15 +7006,15 @@ dependencies = [
 
 [[package]]
 name = "solana-cpi"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16238feb63d1cbdf915fb287f29ef7a7ebf81469bd6214f8b72a53866b593f8f"
+checksum = "4dea26709d867aada85d0d3617db0944215c8bb28d3745b912de7db13a23280c"
 dependencies = [
  "solana-account-info",
- "solana-define-syscall 3.0.0",
+ "solana-define-syscall 4.0.1",
  "solana-instruction",
  "solana-program-error",
- "solana-pubkey 3.0.0",
+ "solana-pubkey 4.0.0",
  "solana-stable-layout",
 ]
 
@@ -7901,7 +7901,7 @@ dependencies = [
  "crossbeam-channel",
  "gethostname",
  "log",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "solana-cluster-type",
  "solana-sha256-hasher",
  "solana-time-utils",
@@ -8511,7 +8511,7 @@ dependencies = [
  "futures 0.3.31",
  "indicatif 0.18.3",
  "log",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "reqwest-middleware",
  "semver",
  "serde",
@@ -8544,7 +8544,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "reqwest-middleware",
  "serde",
  "serde_json",
