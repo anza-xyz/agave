@@ -185,7 +185,7 @@ impl StakedStreamLoadEMA {
             }
             ConnectionPeerType::Staked(_) => {
                 if current_load < self.staked_stream_throttling_load_threshold {
-                    self.max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS
+                    self.max_staked_load_in_ema_window
                 } else {
                     self.available_throttled_load_capacity(peer_type, total_stake, current_load)
                 }
