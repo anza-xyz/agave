@@ -50,7 +50,7 @@ solana create-stake-account --from <KEYPAIR> stake-account.json <AMOUNT> \
 `<AMOUNT>` tokens are transferred from the account at the "from" `<KEYPAIR>` to
 a new stake account at the public key of stake-account.json.
 
-Instead of a numeric amount, you can also use the keyword `ALL` to send all available SOL from the `--from` account, leaving only the minimum rent-exempt balance.
+Instead of a numeric amount, you can also use the keyword `ALL` to send all available SOL from the `--from` account.
 
 The stake-account.json file can now be discarded. To authorize additional
 actions, you will use the `--stake-authority` or `--withdraw-authority` keypair,
