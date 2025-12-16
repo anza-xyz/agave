@@ -446,7 +446,7 @@ mod tests {
         let mut slots = Uncompressed::new(4);
         let data = [6940, 6971];
         slots.add(&data);
-        assert!(Flate2::deflate(slots).is_err());
+        assert_eq!(Flate2::deflate(slots), Err(Error::CompressError));
     }
 
     #[test]
