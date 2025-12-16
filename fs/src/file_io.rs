@@ -5,7 +5,7 @@ use {
     crate::{io_setup::IoSetupState, FileInfo},
     std::{
         fs::{self, File, OpenOptions},
-        io::{self, BufWriter, Write},
+        io::{self, BufWriter, Seek, Write},
         ops::Range,
         path::{Path, PathBuf},
         sync::Arc,
@@ -210,7 +210,7 @@ impl FileCreator for SyncIoFileCreator<'_> {
     ) -> io::Result<()> {
         // Open for writing (also allows overwrite) and apply `mode`
         let mut options = OpenOptions::new();
-        options.create(true).truncate(true).write(true);
+        options.create(true).truncate(true).read(true).write(true);
 
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
@@ -223,7 +223,8 @@ impl FileCreator for SyncIoFileCreator<'_> {
         #[cfg(not(unix))]
         set_path_permissions(&path, mode)?;
 
-        let file = file_buf.into_inner()?;
+        let mut file = file_buf.into_inner()?;
+        file.rewind()?;
         let file_info = FileInfo::new_from_path_and_file(path, file)?;
         (self.file_complete)(file_info);
         Ok(())
@@ -247,6 +248,7 @@ mod tests {
             io::{Cursor, Read, Write},
         },
         tempfile::tempfile,
+        test_case::test_case,
     };
 
     #[test]
@@ -421,8 +423,10 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_create_callback_claims_owned_file() -> io::Result<()> {
+    // Test sync io (small buf size) and io-uring (large buf size) file creator
+    #[test_case(1024)]
+    #[test_case(2 * 1024 * 1024)]
+    fn test_create_callback_claims_owned_file(buf_size: usize) -> io::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let file_path = temp_dir.path().join("test.txt");
         let contents = "Hello, world!";
@@ -430,7 +434,7 @@ mod tests {
         // Shared state to capture callback invocations
         let mut callback_provided_file_info = None;
 
-        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+        let mut creator = file_creator(buf_size, &IoSetupState::default(), |file_info| {
             callback_provided_file_info = Some(file_info);
             None
         })?;
