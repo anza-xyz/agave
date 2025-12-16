@@ -378,13 +378,14 @@ impl<'a> CallerAccount<'a> {
                     account_metadata.vm_data_addr,
                     "data",
                 )?;
+            } else {
+                // Moved to translate_accounts_common() via feature gate.
+                invoke_context.consume_checked(
+                    (data.len() as u64)
+                        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                        .unwrap_or(u64::MAX),
+                )?;
             }
-
-            invoke_context.consume_checked(
-                (data.len() as u64)
-                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
 
             let vm_len_addr = (account_info.data.as_ptr() as *const u64 as u64)
                 .saturating_add(std::mem::size_of::<u64>() as u64);
@@ -485,12 +486,15 @@ impl<'a> CallerAccount<'a> {
             check_aligned,
         )?;
 
-        invoke_context.consume_checked(
-            account_info
-                .data_len
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
+        if !stricter_abi_and_runtime_constraints {
+            // Moved to translate_accounts_common() via feature gate.
+            invoke_context.consume_checked(
+                account_info
+                    .data_len
+                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                    .unwrap_or(u64::MAX),
+            )?;
+        }
 
         // we already have the host addr we want: &mut account_info.data_len.
         // The account info might be read only in the vm though, so we translate
@@ -1123,6 +1127,13 @@ where
                 )?;
 
             let update_caller = if stricter_abi_and_runtime_constraints {
+                // Moved from do_translate() via feature gate.
+                consume_compute_meter(
+                    invoke_context,
+                    (*caller_account.ref_to_len_in_vm)
+                        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                        .unwrap_or(u64::MAX),
+                )?;
                 true
             } else {
                 // before initiating CPI, the caller may have modified the
