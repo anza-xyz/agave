@@ -604,7 +604,7 @@ impl From<UiConfirmedBlock> for EncodedConfirmedBlock {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncodedConfirmedTransactionWithStatusMeta {
     pub slot: u64,
