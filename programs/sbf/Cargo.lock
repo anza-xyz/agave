@@ -5226,9 +5226,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.25"
+version = "0.12.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6eff9328d40131d43bd911d42d79eb6a47312002a4daefc9e37f17e74a7701a"
+checksum = "3b4c14b2d9afca6a60277086b0cc6a6ae0b568f6f7916c943a8cdc79f8be240f"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5273,7 +5273,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http 1.2.0",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "serde",
  "thiserror 1.0.69",
  "tower-service",
@@ -7615,7 +7615,7 @@ dependencies = [
  "crossbeam-channel",
  "gethostname",
  "log",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "solana-cluster-type",
  "solana-sha256-hasher",
  "solana-time-utils",
@@ -8266,7 +8266,7 @@ dependencies = [
  "futures 0.3.31",
  "indicatif 0.18.3",
  "log",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "reqwest-middleware",
  "semver",
  "serde",
@@ -8299,7 +8299,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "reqwest-middleware",
  "serde",
  "serde_json",
