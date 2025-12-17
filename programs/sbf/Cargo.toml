@@ -125,7 +125,7 @@ solana-cli-output = { path = "../../cli-output", version = "=4.0.0-alpha.0" }
 solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.0.0-alpha.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.0.0-alpha.0" }
-solana-cpi = "=3.0.0"
+solana-cpi = "=3.1.0"
 solana-curve25519 = { path = "../../curves/curve25519", version = "=4.0.0-alpha.0" }
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=4.0.0-alpha.0" }
@@ -156,9 +156,9 @@ solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.0.0-alp
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.0.0-alpha.0" }
 solana-sbpf = "=0.13.1"
 solana-sdk-ids = "=3.0.0"
-solana-secp256k1-recover = "=3.0.0"
+solana-secp256k1-recover = "=3.1.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
-solana-stake-interface = { version = "=2.0.1", features = ["bincode"] }
+solana-stake-interface = { version = "=2.0.2", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.0.0-alpha.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=4.0.0-alpha.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.0.0-alpha.0" }
@@ -168,7 +168,7 @@ solana-svm-timings = { path = "../../svm-timings", version = "=4.0.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.0.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.0.0-alpha.0" }
 solana-system-interface = { version = "=2.0", features = ["bincode"] }
-solana-sysvar = "=3.0.0"
+solana-sysvar = "=3.1.1"
 solana-transaction-context = { path = "../../transaction-context", version = "=4.0.0-alpha.0" }
 solana-transaction-status = { path = "../../transaction-status", version = "=4.0.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.0.0-alpha.0" }
@@ -239,7 +239,7 @@ solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "3.0.0"
 solana-signer = "3.0.0"
-solana-stake-interface = "2.0.1"
+solana-stake-interface = "2.0.2"
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
@@ -249,7 +249,7 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = "2.0"
-solana-sysvar = "3.0.0"
+solana-sysvar = "3.1.1"
 solana-transaction = "3.0.2"
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",

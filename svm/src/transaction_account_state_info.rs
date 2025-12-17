@@ -2,7 +2,6 @@ use {
     crate::rent_calculator::{check_rent_state, get_account_rent_state, RentState},
     solana_account::ReadableAccount,
     solana_rent::Rent,
-    solana_sdk_ids::native_loader,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, TransactionContext},
     solana_transaction_error::TransactionResult as Result,
@@ -26,10 +25,6 @@ impl TransactionAccountStateInfo {
                         .accounts()
                         .try_borrow(i as IndexOfAccount)
                     {
-                        // Native programs appear to be RentPaying because they carry low lamport
-                        // balances; however they will never be loaded as writable
-                        debug_assert!(!native_loader::check_id(account.owner()));
-
                         Some(get_account_rent_state(
                             rent,
                             account.lamports(),

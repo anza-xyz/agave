@@ -71,6 +71,7 @@ use {
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
+        env,
         fs::{self, File},
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
@@ -92,6 +93,12 @@ pub fn execute(
     solana_version: &str,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Debugging panics is easier with a backtrace
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        // Safety: env update is made before any spawned threads might access the environment
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
+    }
+
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
@@ -122,6 +129,10 @@ pub fn execute(
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
+
+    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
+    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
+    solana_entry::entry::init_poh();
 
     solana_core::validator::report_target_features();
 
@@ -892,9 +903,6 @@ pub fn execute(
         }
     }
 
-    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
-    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
-    solana_entry::entry::init_poh();
     snapshot_utils::remove_tmp_snapshot_archives(
         &validator_config.snapshot_config.full_snapshot_archives_dir,
     );
