@@ -26,9 +26,8 @@ pub const STREAM_THROTTLING_INTERVAL: Duration =
 const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
 // EMA smoothing window (in 5ms buckets). Increased from 10→40 to make the load signal less
 // sensitive to short bursts (e.g. at the start of a leader slot) and only trigger
-// throttling when load is sustained near saturation.
+// throttling when load is sustained near saturation. See ema_function().
 const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
-const EMA_WINDOW_MS: u64 = STREAM_LOAD_EMA_INTERVAL_MS * STREAM_LOAD_EMA_INTERVAL_COUNT;
 
 // Throttling with hysteresis.
 const STAKED_THROTTLING_ON_LOAD_THRESHOLD_PERCENT: u64 = 95;
@@ -39,16 +38,10 @@ pub(crate) struct StakedStreamLoadEMA {
     load_in_recent_interval: AtomicU64,
     last_update: RwLock<Instant>,
     stats: Arc<StreamerStats>,
-    // Maximum number of streams for a staked connection in EMA window
-    // Note: EMA window can be different than stream throttling window. EMA is being calculated
-    //       specifically for staked connections. Unstaked connections have fixed limit on
-    //       stream load, which is tracked by `max_unstaked_load_in_throttling_window` field.
-    max_staked_load_in_ema_window: u64,
-    // Maximum number of streams for a staked and unstaked connection in stream throttling window
     max_staked_load_in_throttling_window: u64,
     max_unstaked_load_in_throttling_window: u64,
     max_streams_per_ms: u64,
-
+    // These values are in streams/STREAM_LOAD_EMA_INTERVAL_MS.
     staked_throttling_on_load_threshold: u64,
     staked_throttling_off_load_threshold: u64,
     staked_throttling: AtomicBool,
@@ -68,7 +61,7 @@ impl StakedStreamLoadEMA {
             max_streams_per_ms
         };
 
-        let max_staked_load_in_ema_window = max_staked_load_in_ms * EMA_WINDOW_MS;
+        let max_staked_load_in_ema_interval = max_staked_load_in_ms * STREAM_LOAD_EMA_INTERVAL_MS;
         let max_staked_load_in_throttling_window =
             max_staked_load_in_ms * STREAM_THROTTLING_INTERVAL_MS;
 
@@ -80,18 +73,17 @@ impl StakedStreamLoadEMA {
 
         let staked_throttling_on_load_threshold =
             Percentage::from(STAKED_THROTTLING_ON_LOAD_THRESHOLD_PERCENT)
-                .apply_to(max_staked_load_in_ema_window);
+                .apply_to(max_staked_load_in_ema_interval);
 
         let staked_throttling_off_load_threshold =
             Percentage::from(STAKED_THROTTLING_OFF_LOAD_THRESHOLD_PERCENT)
-                .apply_to(max_staked_load_in_ema_window);
+                .apply_to(max_staked_load_in_ema_interval);
 
         Self {
             current_load_ema: AtomicU64::default(),
             load_in_recent_interval: AtomicU64::default(),
             last_update: RwLock::new(Instant::now()),
             stats,
-            max_staked_load_in_ema_window,
             max_staked_load_in_throttling_window,
             max_unstaked_load_in_throttling_window,
             max_streams_per_ms,
@@ -148,7 +140,6 @@ impl StakedStreamLoadEMA {
         };
 
         if self.staked_throttling_on_load_threshold > 0 {
-            let updated_load_ema = updated_load_ema.saturating_mul(STREAM_LOAD_EMA_INTERVAL_COUNT);
             if updated_load_ema >= self.staked_throttling_on_load_threshold {
                 self.staked_throttling.store(true, Ordering::Relaxed);
             } else if updated_load_ema <= self.staked_throttling_off_load_threshold {
@@ -184,7 +175,7 @@ impl StakedStreamLoadEMA {
         self.update_ema_if_needed();
     }
 
-    pub(crate) fn available_load_capacity(
+    pub(crate) fn available_load_capacity_in_throttling_duration(
         &self,
         peer_type: ConnectionPeerType,
         total_stake: u64,
@@ -200,7 +191,7 @@ impl StakedStreamLoadEMA {
                         self.max_unstaked_load_in_throttling_window + 1,
                     )
                 } else {
-                    self.max_staked_load_in_ema_window
+                    self.max_staked_load_in_throttling_window
                 }
             }
         }
@@ -312,7 +303,10 @@ pub mod test {
         ));
         // 50K packets per ms * 20% / 500 max unstaked connections
         assert_eq!(
-            load_ema.available_load_capacity(ConnectionPeerType::Unstaked, 10000),
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Unstaked,
+                10000
+            ),
             20
         );
     }

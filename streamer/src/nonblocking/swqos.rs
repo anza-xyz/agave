@@ -281,7 +281,10 @@ impl SwQos {
 
     fn max_streams_per_throttling_interval(&self, conn_context: &SwQosConnectionContext) -> u64 {
         self.staked_stream_load_ema
-            .available_load_capacity(conn_context.peer_type, conn_context.total_stake)
+            .available_load_capacity_in_throttling_duration(
+                conn_context.peer_type,
+                conn_context.total_stake,
+            )
     }
 }
 
