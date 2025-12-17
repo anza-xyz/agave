@@ -11077,14 +11077,24 @@ name = "solana-svm-test-harness-fixture"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-precompiles",
  "bincode",
  "prost",
  "prost-build",
  "protosol",
  "solana-account",
+ "solana-address-lookup-table-interface",
+ "solana-fee-structure",
+ "solana-hash 3.1.0",
  "solana-instruction",
  "solana-instruction-error",
+ "solana-message",
  "solana-pubkey 4.0.0",
+ "solana-signature",
+ "solana-stable-layout",
+ "solana-svm-transaction",
+ "solana-transaction",
+ "solana-transaction-error",
  "thiserror 2.0.17",
 ]
 

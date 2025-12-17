@@ -1171,7 +1171,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -4363,9 +4363,9 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "openssl"
-version = "0.10.75"
+version = "0.10.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08838db121398ad17ab8531ce9de97b244589089e290a384c900cb9ff7434328"
+checksum = "24ad14dd45412269e1a30f52ad8f0664f0f4f4a89ee8fe28c3b3527021ebb654"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if 1.0.4",
@@ -4404,9 +4404,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.111"
+version = "0.9.110"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82cab2d520aa75e3c58898289429321eb788c3106963d0dc886ec7a5f4adc321"
+checksum = "0a9f0075ba3c21b09f8e8b2026584b1d18d49388648f2fbbf3c97ea8deced8e2"
 dependencies = [
  "cc",
  "libc",
@@ -9729,10 +9729,16 @@ name = "solana-svm-test-harness-fixture"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "bincode",
  "solana-account",
+ "solana-fee-structure",
+ "solana-hash 3.1.0",
  "solana-instruction",
  "solana-instruction-error",
  "solana-pubkey 4.0.0",
+ "solana-stable-layout",
+ "solana-transaction",
+ "solana-transaction-error",
  "thiserror 2.0.17",
 ]
 
@@ -11978,9 +11984,9 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f67e680788539097c13ae4311dc36e850624b62b2f481271621adef0fbac6062"
+checksum = "6a57af7f5cf2c575dd1ebd558b80e09545240b703faa2ac8cab94ebcd23a89a8"
 dependencies = [
  "proc-macro2",
  "quote",
