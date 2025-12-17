@@ -20,8 +20,11 @@ pub type Block = (Slot, Hash);
 /// A consensus vote.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "5eorzdc18a1sNEUDLAKPgrHCqHmA8ssuTwKSGsZLwBqR")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "5eorzdc18a1sNEUDLAKPgrHCqHmA8ssuTwKSGsZLwBqR",
+        abi_digest = "EqdzDfJcBpJoN1FtahpDAR8Tmg3tbwo87RcwwsbwE28h"
+    )
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
@@ -34,11 +37,29 @@ pub struct VoteMessage {
     pub rank: u16,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<VoteMessage>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> VoteMessage {
+        VoteMessage {
+            vote: rng.random(),
+            signature: solana_bls_signatures::signature::Signature(std::array::from_fn(|_| {
+                rng.random::<u8>()
+            })),
+            rank: rng.random(),
+        }
+    }
+}
+
 /// The different types of certificates and their relevant state.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CazjewshYYizgQuCgBBRv6gzasJpUvFVKoSeEirWRKgA")
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        api_digest = "CazjewshYYizgQuCgBBRv6gzasJpUvFVKoSeEirWRKgA",
+        abi_digest = "2Hbsm8EV5Z4TtN5JnbxEWfuZWiqsaGV6zMdRjCud97PX"
+    )
 )]
 #[derive(
     Debug,
@@ -67,6 +88,23 @@ pub enum CertificateType {
     Skip(Slot),
     /// Genesis certificate
     Genesis(Slot, Hash),
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<CertificateType>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CertificateType {
+        match rng.random_range(0..5) {
+            0 => CertificateType::Finalize(rng.random()),
+            1 => CertificateType::FinalizeFast(rng.random(), Hash::new_from_array(rng.random())),
+            2 => CertificateType::Notarize(rng.random(), Hash::new_from_array(rng.random())),
+            3 => {
+                CertificateType::NotarizeFallback(rng.random(), Hash::new_from_array(rng.random()))
+            }
+            _ => CertificateType::Skip(rng.random()),
+        }
+    }
 }
 
 impl CertificateType {
@@ -206,8 +244,11 @@ impl CertificateType {
 /// BLS vote message, we need rank to look up pubkey
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "B5NsoWZr2Lpbbjqj8udwEKvae6bA37Pm4R92udZHxwfU")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "B5NsoWZr2Lpbbjqj8udwEKvae6bA37Pm4R92udZHxwfU",
+        abi_digest = "DBrDWdZoYysGgUczvszC7Evvo5kHr68affmwsisMKjxJ"
+    )
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Certificate {
@@ -221,11 +262,29 @@ pub struct Certificate {
     pub bitmap: Vec<u8>,
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<Certificate>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Certificate {
+        Certificate {
+            cert_type: rng.random(),
+            signature: solana_bls_signatures::signature::Signature(std::array::from_fn(|_| {
+                rng.random::<u8>()
+            })),
+            bitmap: (0..1000).map(|_| rng.random()).collect(),
+        }
+    }
+}
+
 /// A consensus message sent between validators.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "BdKT6dbkLnTeGNMS8XtQkg6HTeHSQ6Z41Btc1rJ117PB")
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        api_digest = "BdKT6dbkLnTeGNMS8XtQkg6HTeHSQ6Z41Btc1rJ117PB",
+        abi_digest = "3DsaRkNcyQjFX7A5WkJScYyLyCA9QzgrDBE1fhuib2ur"
+    )
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 #[allow(clippy::large_enum_variant)]
@@ -234,6 +293,18 @@ pub enum ConsensusMessage {
     Vote(VoteMessage),
     /// A certificate aggregating votes from multiple parties.
     Certificate(Certificate),
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<ConsensusMessage>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> ConsensusMessage {
+        match rng.random_range(0..1) {
+            0 => ConsensusMessage::Vote(rng.random()),
+            _ => ConsensusMessage::Certificate(rng.random()),
+        }
+    }
 }
 
 impl ConsensusMessage {
