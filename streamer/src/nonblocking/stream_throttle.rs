@@ -284,14 +284,10 @@ pub(crate) async fn throttle_stream(
 pub mod test {
     use {
         super::*,
-        crate::{
-            nonblocking::stream_throttle::STREAM_LOAD_EMA_INTERVAL_MS,
-            quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS},
+        crate::quic::{
+            StreamerStats, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
-        std::{
-            sync::{atomic::Ordering, Arc},
-            time::{Duration, Instant},
-        },
+        std::sync::Arc,
     };
 
     #[test]
