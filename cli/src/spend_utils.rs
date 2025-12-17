@@ -122,14 +122,15 @@ where
             .value
             .unwrap_or_default();
         let mut from_balance = account.lamports;
-        let from_rent_exempt_minimum =
-            if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
-                rpc_client
-                    .get_minimum_balance_for_rent_exemption(account.data.len())
-                    .await?
-            } else {
-                0
-            };
+        let from_rent_exempt_minimum = if amount == SpendAmount::RentExempt
+            || (amount == SpendAmount::Available && account.owner == solana_sdk_ids::stake::id())
+        {
+            rpc_client
+                .get_minimum_balance_for_rent_exemption(account.data.len())
+                .await?
+        } else {
+            0
+        };
         if amount == SpendAmount::Available && account.owner == solana_sdk_ids::stake::id() {
             let state = stake::get_account_stake_state(
                 rpc_client,
