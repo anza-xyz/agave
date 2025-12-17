@@ -15,6 +15,7 @@ use {
     bincode::{self, config::Options, Error},
     log::*,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
+    smallvec::SmallVec,
     solana_accounts_db::{
         accounts::Accounts,
         accounts_db::{
@@ -74,7 +75,7 @@ const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AccountsDbFields<T>(
-    HashMap<Slot, Vec<T>>,
+    HashMap<Slot, SmallVec<[T; 1]>>,
     u64, // obsolete, formerly write_version
     Slot,
     BankHashInfo,
