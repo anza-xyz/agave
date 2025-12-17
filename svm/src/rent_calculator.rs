@@ -5,6 +5,7 @@
 use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
 };
@@ -91,6 +92,35 @@ pub fn get_account_rent_state(
             lamports: account_lamports,
         }
     }
+}
+
+/// Check whether a transition from the pre_exec_balance to the
+/// post_exec_balance is valid for an account that hasn't changed owner
+/// or data size.
+pub fn check_static_account_rent_state_transition(
+    pre_exec_balance: u64,
+    post_exec_balance: u64,
+    data_size: usize,
+    rent: &Rent,
+) -> bool {
+    let pre_state = if pre_exec_balance == 0 {
+        RentState::Uninitialized
+    } else {
+        RentState::RentExempt
+    };
+    let rent_min_balance = rent.minimum_balance(data_size);
+    let post_state = match (post_exec_balance, &pre_state) {
+        (0, _) => RentState::Uninitialized,
+        (post_balance, _) if post_balance >= rent_min_balance => RentState::RentExempt,
+        (post_balance, RentState::RentExempt) if post_balance >= pre_exec_balance => {
+            RentState::RentExempt
+        }
+        (post_balance, _) => RentState::RentPaying {
+            data_size,
+            lamports: post_balance,
+        },
+    };
+    transition_allowed(&pre_state, &post_state)
 }
 
 /// Check whether a transition from the pre_rent_state to the
