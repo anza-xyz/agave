@@ -1,7 +1,7 @@
 fn main() -> Result<(), std::io::Error> {
     const PROTOC_ENVAR: &str = "PROTOC";
     if std::env::var(PROTOC_ENVAR).is_err() {
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), feature = "protobuf-src"))]
         std::env::set_var(PROTOC_ENVAR, protobuf_src::protoc());
     }
 

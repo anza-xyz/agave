@@ -17,7 +17,9 @@ crate-type = ["lib"]
 name = "solana_storage_proto"
 
 [features]
+default = ["protobuf-src"]
 agave-unstable-api = []
+protobuf-src = ["dep:protobuf-src"]
 
 [dependencies]
 bincode = { workspace = true }
@@ -39,10 +41,12 @@ solana-transaction-status = { workspace = true }
 [build-dependencies]
 tonic-build = { workspace = true }
 
-# windows users should install the protobuf compiler manually and set the PROTOC
-# envar to point to the installed binary
+# The protobuf-src feature compiles the protobuf compiler from source.
+# As an alternative, set the PROTOC envar to a pre-installed protoc binary.
+# Windows users should install the protobuf compiler manually and set the PROTOC
+# envar to point to the installed binary.
 [target."cfg(not(windows))".build-dependencies]
-protobuf-src = { workspace = true }
+protobuf-src = { workspace = true, optional = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }
