@@ -1588,6 +1588,47 @@ mod tests {
     }
 
     #[test]
+    fn test_flush_internal_flushes_dirty_entry_and_evicts_from_cache() {
+        let accounts_index = new_disk_buckets_for_test::<u64>();
+        let pubkey = solana_pubkey::new_rand();
+        let slot = 123;
+        let info = 42;
+
+        let entry = AccountMapEntry::new(
+            SlotList::from([(slot, info)]),
+            1,
+            AccountMapEntryMeta::new_dirty(&accounts_index.storage, false),
+        );
+        entry.set_age(accounts_index.storage.current_age());
+
+        accounts_index
+            .map_internal
+            .write()
+            .unwrap()
+            .insert(pubkey, Box::new(entry));
+
+        accounts_index
+            .remaining_ages_to_skip_flushing
+            .store(0, Ordering::Release);
+
+        accounts_index.flush(false);
+
+        // Dirty entry should be flushed to disk.
+        let (slot_list, ref_count) = accounts_index
+            .load_from_disk(&pubkey)
+            .expect("entry should be written to disk");
+        assert_eq!(slot_list, SlotList::from([(slot, info)]));
+        assert_eq!(ref_count, 1);
+
+        // Flushed entry should be evicted from the in-mem cache.
+        let mut found_in_mem = false;
+        accounts_index.get_only_in_mem(&pubkey, false, |entry| {
+            found_in_mem = entry.is_some();
+        });
+        assert!(!found_in_mem);
+    }
+
+    #[test]
     #[should_panic(
         expected = "assertion `left != right` failed: Callback must insert item into slot list"
     )]
