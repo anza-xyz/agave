@@ -26,8 +26,11 @@ impl HashInfo {
 /// Low memory overhead, so can be cloned for every checkpoint
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6")
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6",
+        abi_digest = "CGD97vsYSQpPbYkzYnHmrwRZc4BbHqTEvP5vz4jg8jzU"
+    )
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockhashQueue {
@@ -143,6 +146,38 @@ impl BlockhashQueue {
     pub fn get_max_age(&self) -> usize {
         #[allow(deprecated)]
         self.max_age
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<BlockhashQueue>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> BlockhashQueue {
+        let seed1: u64 = rng.random();
+        let seed2: u64 = rng.random();
+        let seed3: u64 = rng.random();
+        let seed4: u64 = rng.random();
+
+        let mut hashes =
+            HashMap::with_hasher(ahash::RandomState::with_seeds(seed1, seed2, seed3, seed4));
+        hashes.insert(
+            Hash::new_from_array(rng.random()),
+            HashInfo {
+                fee_calculator: FeeCalculator {
+                    lamports_per_signature: rng.random(),
+                },
+                hash_index: rng.random(),
+                timestamp: rng.random(),
+            },
+        );
+
+        BlockhashQueue {
+            last_hash_index: rng.random(),
+            last_hash: Some(Hash::new_from_array(rng.random())),
+            hashes,
+            max_age: rng.random_range(0..MAX_RECENT_BLOCKHASHES),
+        }
     }
 }
 #[cfg(test)]
