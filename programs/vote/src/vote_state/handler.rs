@@ -19,8 +19,8 @@ use {
         authorized_voters::AuthorizedVoters,
         error::VoteError,
         state::{
-            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
-            VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteInitV2, VoteState1_14_11,
+            VoteStateV3, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
             MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY, VOTE_CREDITS_GRACE_SLOTS,
             VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
@@ -41,6 +41,7 @@ pub trait VoteStateHandle {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
@@ -92,6 +93,8 @@ pub trait VoteStateHandle {
         self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError>;
+
+    fn has_bls_pubkey(&self) -> bool;
 
     fn credits_for_vote_at_index(&self, index: usize) -> u64 {
         let latency = self
@@ -265,11 +268,19 @@ impl VoteStateHandle for VoteStateV3 {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
         F: Fn(Pubkey) -> Result<(), InstructionError>,
     {
+        if bls_pubkey.is_some() {
+            // We should not be able to reach here because we only call this function
+            // when both Vote State V4 and BLS features are enabled.
+            // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
+            return Err(InstructionError::InvalidAccountData);
+        }
+
         let epoch_authorized_voter = self.get_and_update_authorized_voter(current_epoch)?;
         verify(epoch_authorized_voter)?;
 
@@ -432,6 +443,10 @@ impl VoteStateHandle for VoteStateV3 {
         // Vote account is large enough to store the newest version of vote state
         vote_account.set_state(&VoteStateVersions::V3(Box::new(self)))
     }
+
+    fn has_bls_pubkey(&self) -> bool {
+        false
+    }
 }
 
 impl VoteStateHandle for VoteStateV4 {
@@ -452,6 +467,7 @@ impl VoteStateHandle for VoteStateV4 {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
@@ -473,6 +489,10 @@ impl VoteStateHandle for VoteStateV4 {
 
         self.authorized_voters
             .insert(target_epoch, *authorized_pubkey);
+
+        if bls_pubkey.is_some() {
+            self.bls_pubkey_compressed = bls_pubkey.copied();
+        }
 
         Ok(())
     }
@@ -592,47 +612,9 @@ impl VoteStateHandle for VoteStateV4 {
         // Vote account is large enough to store the newest version of vote state
         vote_account.set_state(&VoteStateVersions::V4(Box::new(self)))
     }
-}
 
-/// Default block revenue commission rate in basis points (100%) per SIMD-0185.
-const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
-
-/// Create a new VoteStateV4 from `VoteInit` with proper SIMD-0185 defaults.
-/// Note this is a temporary substitute for `VoteStateV4::new`.
-#[allow(clippy::arithmetic_side_effects)]
-pub(crate) fn create_new_vote_state_v4(
-    vote_pubkey: &Pubkey,
-    vote_init: &VoteInit,
-    clock: &Clock,
-) -> VoteStateV4 {
-    VoteStateV4 {
-        node_pubkey: vote_init.node_pubkey,
-        authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
-        authorized_withdrawer: vote_init.authorized_withdrawer,
-        inflation_rewards_commission_bps: (vote_init.commission as u16) * 100, // u16::MAX > u8::MAX * 100
-        // Per SIMD-0185, set default collectors and commission
-        inflation_rewards_collector: *vote_pubkey,
-        block_revenue_collector: vote_init.node_pubkey,
-        block_revenue_commission_bps: DEFAULT_BLOCK_REVENUE_COMMISSION_BPS,
-        ..VoteStateV4::default()
-    }
-}
-
-/// (Alpenglow) Create a test-only `VoteStateV4` with the provided values.
-pub(crate) fn create_new_vote_state_v4_for_tests(
-    node_pubkey: &Pubkey,
-    authorized_voter: &Pubkey,
-    authorized_withdrawer: &Pubkey,
-    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
-    inflation_rewards_commission_bps: u16,
-) -> VoteStateV4 {
-    VoteStateV4 {
-        node_pubkey: *node_pubkey,
-        authorized_voters: AuthorizedVoters::new(0, *authorized_voter),
-        authorized_withdrawer: *authorized_withdrawer,
-        bls_pubkey_compressed,
-        inflation_rewards_commission_bps,
-        ..VoteStateV4::default()
+    fn has_bls_pubkey(&self) -> bool {
+        self.bls_pubkey_compressed.is_some()
     }
 }
 
@@ -689,18 +671,27 @@ impl VoteStateHandle for VoteStateHandler {
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
         target_epoch: Epoch,
+        bls_pubkey: Option<&[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
         verify: F,
     ) -> Result<(), InstructionError>
     where
         F: Fn(Pubkey) -> Result<(), InstructionError>,
     {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => {
-                v3.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
-            }
-            TargetVoteState::V4(v4) => {
-                v4.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
-            }
+            TargetVoteState::V3(v3) => v3.set_new_authorized_voter(
+                authorized_pubkey,
+                current_epoch,
+                target_epoch,
+                bls_pubkey,
+                verify,
+            ),
+            TargetVoteState::V4(v4) => v4.set_new_authorized_voter(
+                authorized_pubkey,
+                current_epoch,
+                target_epoch,
+                bls_pubkey,
+                verify,
+            ),
         }
     }
 
@@ -849,6 +840,13 @@ impl VoteStateHandle for VoteStateHandler {
             TargetVoteState::V4(v4) => v4.set_vote_account_state(vote_account),
         }
     }
+
+    fn has_bls_pubkey(&self) -> bool {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.has_bls_pubkey(),
+            TargetVoteState::V4(v4) => v4.has_bls_pubkey(),
+        }
+    }
 }
 
 impl VoteStateHandler {
@@ -863,7 +861,28 @@ impl VoteStateHandler {
                 VoteStateV3::new(vote_init, clock).set_vote_account_state(vote_account)
             }
             VoteStateTargetVersion::V4 => {
-                let vote_state = create_new_vote_state_v4(vote_account.get_key(), vote_init, clock);
+                let vote_state =
+                    VoteStateV4::new_with_defaults(vote_account.get_key(), vote_init, clock);
+                vote_state.set_vote_account_state(vote_account)
+            }
+        }
+    }
+
+    pub fn init_vote_account_state_v2(
+        vote_account: &mut BorrowedInstructionAccount,
+        vote_init: &VoteInitV2,
+        clock: &Clock,
+        target_version: VoteStateTargetVersion,
+    ) -> Result<(), InstructionError> {
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                // We should not be able to reach here because we only call this function
+                // when both Vote State V4 and BLS features are enabled.
+                // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
+                Err(InstructionError::InvalidInstructionData)
+            }
+            VoteStateTargetVersion::V4 => {
+                let vote_state = VoteStateV4::new(vote_init, clock);
                 vote_state.set_vote_account_state(vote_account)
             }
         }
@@ -1025,11 +1044,17 @@ mod tests {
         },
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
+            state::{
+                BlockTimestamp, VoteInit, BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE,
+                MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+            },
         },
         std::collections::VecDeque,
         test_case::test_case,
     };
+
+    /// Default block revenue commission rate in basis points (100%) per SIMD-0185.
+    const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
 
     fn mock_transaction_context(
         vote_pubkey: Pubkey,
@@ -1093,7 +1118,7 @@ mod tests {
         let new_voter = Pubkey::new_unique();
         // Set a new authorized voter
         vote_state
-            .set_new_authorized_voter(&new_voter, 0, epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter, 0, epoch_offset, None, |_| Ok(()))
             .unwrap();
 
         if let Some(prior_voters_last) = prior_voters_last_callback {
@@ -1105,19 +1130,19 @@ mod tests {
 
         // Trying to set authorized voter for same epoch again should fail
         assert_eq!(
-            vote_state.set_new_authorized_voter(&new_voter, 0, epoch_offset, |_| Ok(())),
+            vote_state.set_new_authorized_voter(&new_voter, 0, epoch_offset, None, |_| Ok(())),
             Err(VoteError::TooSoonToReauthorize.into())
         );
 
         // Setting the same authorized voter again should succeed
         vote_state
-            .set_new_authorized_voter(&new_voter, 2, 2 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter, 2, 2 + epoch_offset, None, |_| Ok(()))
             .unwrap();
 
         // Set a third and fourth authorized voter
         let new_voter2 = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_voter2, 3, 3 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter2, 3, 3 + epoch_offset, None, |_| Ok(()))
             .unwrap();
         if let Some(prior_voters_last) = prior_voters_last_callback {
             assert_eq!(
@@ -1128,7 +1153,7 @@ mod tests {
 
         let new_voter3 = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_voter3, 6, 6 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&new_voter3, 6, 6 + epoch_offset, None, |_| Ok(()))
             .unwrap();
         if let Some(prior_voters_last) = prior_voters_last_callback {
             assert_eq!(
@@ -1139,7 +1164,7 @@ mod tests {
 
         // Check can set back to original voter
         vote_state
-            .set_new_authorized_voter(&original_voter, 9, 9 + epoch_offset, |_| Ok(()))
+            .set_new_authorized_voter(&original_voter, 9, 9 + epoch_offset, None, |_| Ok(()))
             .unwrap();
 
         // Run with these voters for a while, check the ranges of authorized
@@ -1202,7 +1227,7 @@ mod tests {
         );
 
         // Now try with v4. No `prior_voters` to check.
-        let mut vote_state = create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock);
+        let mut vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
 
         set_new_authorized_voter_and_assert(&mut vote_state, original_voter, epoch_offset, None);
     }
@@ -1216,7 +1241,7 @@ mod tests {
         // explicitly set before
         let new_voter = Pubkey::new_unique();
         assert_eq!(
-            vote_state.set_new_authorized_voter(&new_voter, 1, 1, |_| Ok(())),
+            vote_state.set_new_authorized_voter(&new_voter, 1, 1, None, |_| Ok(())),
             Err(VoteError::TooSoonToReauthorize.into())
         );
         assert_eq!(
@@ -1225,14 +1250,14 @@ mod tests {
         );
         // Set a new authorized voter for a future epoch
         assert_eq!(
-            vote_state.set_new_authorized_voter(&new_voter, 1, 2, |_| Ok(())),
+            vote_state.set_new_authorized_voter(&new_voter, 1, 2, None, |_| Ok(())),
             Ok(())
         );
         // Test that it's not possible to set a new authorized
         // voter within the same epoch, even if none has been
         // explicitly set before
         assert_eq!(
-            vote_state.set_new_authorized_voter(original_voter, 3, 3, |_| Ok(())),
+            vote_state.set_new_authorized_voter(original_voter, 3, 3, None, |_| Ok(())),
             Err(VoteError::TooSoonToReauthorize.into())
         );
         assert_eq!(
@@ -1259,7 +1284,7 @@ mod tests {
         assert_authorized_voter_is_locked_within_epoch(&mut vote_state, &original_voter);
 
         // Now v4.
-        let mut vote_state = create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock);
+        let mut vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         assert_authorized_voter_is_locked_within_epoch(&mut vote_state, &original_voter);
     }
 
@@ -1309,7 +1334,7 @@ mod tests {
         // Set an authorized voter change at slot 7
         let new_authorized_voter = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_authorized_voter, 5, 7, |_| Ok(()))
+            .set_new_authorized_voter(&new_authorized_voter, 5, 7, None, |_| Ok(()))
             .unwrap();
 
         // Try to get the authorized voter for epoch 6, unchanged
@@ -1335,7 +1360,7 @@ mod tests {
     fn test_get_and_update_authorized_voter_v4() {
         let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = create_new_vote_state_v4(
+        let mut vote_state = VoteStateV4::new_with_defaults(
             &vote_pubkey,
             &VoteInit {
                 node_pubkey: original_voter,
@@ -1402,7 +1427,7 @@ mod tests {
         // Set an authorized voter change at epoch 9.
         let new_authorized_voter = Pubkey::new_unique();
         vote_state
-            .set_new_authorized_voter(&new_authorized_voter, 7, 9, |_| Ok(()))
+            .set_new_authorized_voter(&new_authorized_voter, 7, 9, None, |_| Ok(()))
             .unwrap();
 
         // Try to get the authorized voter for epoch 8, unchanged
@@ -1463,6 +1488,7 @@ mod tests {
                     &Pubkey::new_unique(),
                     i,
                     i + MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
+                    None,
                     |_| Ok(()),
                 )
                 .unwrap();
@@ -2193,5 +2219,68 @@ mod tests {
         );
 
         assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn test_bls_pubkey_handling() {
+        let bls_pubkey_compressed = [1u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
+        let vote_state_v4 = VoteStateV4::new(
+            &VoteInitV2 {
+                node_pubkey: Pubkey::new_unique(),
+                authorized_voter: Pubkey::new_unique(),
+                authorized_withdrawer: Pubkey::new_unique(),
+                block_revenue_commission_bps: 500,
+                block_revenue_collector: Pubkey::new_unique(),
+                inflation_rewards_commission_bps: 1000,
+                inflation_rewards_collector: Pubkey::new_unique(),
+                authorized_voter_bls_pubkey: bls_pubkey_compressed,
+                authorized_voter_bls_proof_of_possession: [2u8;
+                    BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+            },
+            &Clock::default(),
+        );
+        assert_eq!(
+            vote_state_v4.bls_pubkey_compressed,
+            Some(bls_pubkey_compressed)
+        );
+        assert!(vote_state_v4.has_bls_pubkey());
+    }
+
+    #[test]
+    fn test_get_and_update_authorized_voter_v4_with_bls() {
+        let vote_pubkey = Pubkey::new_unique();
+        let original_voter = Pubkey::new_unique();
+        let mut vote_state = VoteStateV4::new_with_defaults(
+            &vote_pubkey,
+            &VoteInit {
+                node_pubkey: original_voter,
+                authorized_voter: original_voter,
+                authorized_withdrawer: original_voter,
+                commission: 0,
+            },
+            &Clock::default(),
+        );
+
+        // It has some initial authorized voter but no BLS pubkey.
+        assert_eq!(vote_state.authorized_voters().len(), 1);
+        assert_eq!(
+            *vote_state.authorized_voters().first().unwrap().1,
+            original_voter
+        );
+        assert!(!vote_state.has_bls_pubkey());
+
+        // Update authorized voter with BLS pubkey.
+        let new_voter = Pubkey::new_unique();
+        let bls_pubkey_compressed = [3u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
+        vote_state
+            .set_new_authorized_voter(&new_voter, 0, 1, Some(&bls_pubkey_compressed), |_| Ok(()))
+            .unwrap();
+        assert_eq!(vote_state.authorized_voters().len(), 2);
+        assert_eq!(*vote_state.authorized_voters().last().unwrap().1, new_voter);
+        assert_eq!(
+            vote_state.bls_pubkey_compressed,
+            Some(bls_pubkey_compressed)
+        );
+        assert!(vote_state.has_bls_pubkey());
     }
 }

@@ -63,7 +63,7 @@ use {
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
-    solana_keypair::{keypair_from_seed, Keypair},
+    solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
@@ -113,12 +113,13 @@ use {
         sanitized::SanitizedTransaction, Transaction, TransactionVerificationMode,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote_interface::state::TowerSync,
+    solana_vote_interface::state::{TowerSync, VoterWithBLSArgs},
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
-            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            self, create_bls_pubkey_and_proof_of_possession, create_v4_account_with_authorized,
+            BlockTimestamp, VoteAuthorize, VoteInitV2, VoteStateV4, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -3232,14 +3233,19 @@ fn test_bank_vote_accounts() {
                                         // to have a vote account
 
     let vote_keypair = Keypair::new();
-    let instructions = vote_instruction::create_account_with_config(
+    let vote_pubkey = vote_keypair.pubkey();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+    let instructions = vote_instruction::create_account_with_config_v2(
         &mint_keypair.pubkey(),
-        &vote_keypair.pubkey(),
-        &VoteInit {
+        &vote_pubkey,
+        &VoteInitV2 {
             node_pubkey: mint_keypair.pubkey(),
-            authorized_voter: vote_keypair.pubkey(),
-            authorized_withdrawer: vote_keypair.pubkey(),
-            commission: 0,
+            authorized_voter: vote_pubkey,
+            authorized_withdrawer: vote_pubkey,
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            ..VoteInitV2::default()
         },
         10,
         vote_instruction::CreateVoteAccountConfig {
@@ -3314,14 +3320,19 @@ fn test_bank_cloned_stake_delegations() {
     };
 
     let vote_keypair = Keypair::new();
-    let mut instructions = vote_instruction::create_account_with_config(
+    let vote_pubkey = vote_keypair.pubkey();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+    let mut instructions = vote_instruction::create_account_with_config_v2(
         &mint_keypair.pubkey(),
-        &vote_keypair.pubkey(),
-        &VoteInit {
+        &vote_pubkey,
+        &VoteInitV2 {
             node_pubkey: mint_keypair.pubkey(),
-            authorized_voter: vote_keypair.pubkey(),
-            authorized_withdrawer: vote_keypair.pubkey(),
-            commission: 0,
+            authorized_voter: vote_pubkey,
+            authorized_withdrawer: vote_pubkey,
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            ..VoteInitV2::default()
         },
         vote_balance,
         vote_instruction::CreateVoteAccountConfig {
@@ -3620,13 +3631,18 @@ fn test_add_builtin() {
     assert!(bank.get_account(&mock_vote_program_id()).is_some());
 
     let mock_account = Keypair::new();
+    let vote_pubkey = mock_account.pubkey();
     let mock_validator_identity = Keypair::new();
-    let mut instructions = vote_instruction::create_account_with_config(
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+    let mut instructions = vote_instruction::create_account_with_config_v2(
         &mint_keypair.pubkey(),
-        &mock_account.pubkey(),
-        &VoteInit {
+        &vote_pubkey,
+        &VoteInitV2 {
             node_pubkey: mock_validator_identity.pubkey(),
-            ..VoteInit::default()
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            ..VoteInitV2::default()
         },
         1,
         vote_instruction::CreateVoteAccountConfig {
@@ -3667,13 +3683,18 @@ fn test_add_duplicate_static_program() {
     });
 
     let mock_account = Keypair::new();
+    let vote_pubkey = mock_account.pubkey();
     let mock_validator_identity = Keypair::new();
-    let instructions = vote_instruction::create_account_with_config(
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+    let instructions = vote_instruction::create_account_with_config_v2(
         &mint_keypair.pubkey(),
-        &mock_account.pubkey(),
-        &VoteInit {
+        &vote_pubkey,
+        &VoteInitV2 {
             node_pubkey: mock_validator_identity.pubkey(),
-            ..VoteInit::default()
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            ..VoteInitV2::default()
         },
         1,
         vote_instruction::CreateVoteAccountConfig {
@@ -8283,17 +8304,25 @@ fn test_vote_epoch_panic() {
     );
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-    let vote_keypair = keypair_from_seed(&[1u8; 32]).unwrap();
+    let vote_keypair = Keypair::new();
+    let vote_pubkey = vote_keypair.pubkey();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
 
     let mut setup_ixs = Vec::new();
-    setup_ixs.extend(vote_instruction::create_account_with_config(
+    setup_ixs.extend(vote_instruction::create_account_with_config_v2(
         &mint_keypair.pubkey(),
-        &vote_keypair.pubkey(),
-        &VoteInit {
+        &vote_pubkey,
+        &VoteInitV2 {
             node_pubkey: mint_keypair.pubkey(),
-            authorized_voter: vote_keypair.pubkey(),
+            authorized_voter: vote_pubkey,
             authorized_withdrawer: mint_keypair.pubkey(),
-            commission: 0,
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            inflation_rewards_commission_bps: 0,
+            inflation_rewards_collector: Pubkey::default(),
+            block_revenue_commission_bps: 0,
+            block_revenue_collector: Pubkey::default(),
         },
         1_000_000_000,
         vote_instruction::CreateVoteAccountConfig {
@@ -9881,7 +9910,10 @@ fn test_rent_state_changes_sysvars() {
 
     let validator_pubkey = Pubkey::new_unique();
     let validator_stake_lamports = LAMPORTS_PER_SOL;
-    let validator_vote_account_pubkey = Pubkey::new_unique();
+    let validator_vote_account_keypair = Keypair::new();
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&validator_vote_account_keypair.pubkey());
+    let validator_vote_account_pubkey = validator_vote_account_keypair.pubkey();
     let validator_voting_keypair = Keypair::new();
 
     let validator_vote_account = vote_state::create_v4_account_with_authorized(
@@ -9914,7 +9946,10 @@ fn test_rent_state_changes_sysvars() {
             &validator_vote_account_pubkey,
             &validator_voting_keypair.pubkey(),
             &Pubkey::new_unique(),
-            VoteAuthorize::Voter,
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession,
+            }),
         )],
         Some(&mint_keypair.pubkey()),
         &[&mint_keypair, &validator_voting_keypair],
@@ -12298,6 +12333,70 @@ fn test_rehash_accounts_unmodified() {
     bank.rehash();
     let post_bank_hash = bank.hash();
     assert_eq!(post_bank_hash, prev_bank_hash);
+}
+
+#[test]
+fn test_should_use_vote_keyed_leader_schedule() {
+    let genesis_config = genesis_utils::create_genesis_config(10_000).genesis_config;
+    let epoch_schedule = &genesis_config.epoch_schedule;
+    let create_test_bank = |bank_epoch: Epoch, feature_activation_slot: Option<Slot>| -> Bank {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.epoch = bank_epoch;
+        let mut feature_set = FeatureSet::default();
+        if let Some(feature_activation_slot) = feature_activation_slot {
+            let feature_activation_epoch = bank.epoch_schedule().get_epoch(feature_activation_slot);
+            assert!(feature_activation_epoch <= bank_epoch);
+            feature_set.activate(
+                &agave_feature_set::enable_vote_address_leader_schedule::id(),
+                feature_activation_slot,
+            );
+        }
+        bank.feature_set = Arc::new(feature_set);
+        bank
+    };
+
+    // Test feature activation at genesis
+    let test_bank = create_test_bank(0, Some(0));
+    for epoch in 0..10 {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(true),
+        );
+    }
+
+    // Test feature activated in previous epoch
+    let slot_in_prev_epoch = epoch_schedule.get_first_slot_in_epoch(1);
+    let test_bank = create_test_bank(2, Some(slot_in_prev_epoch));
+    for epoch in 0..=(test_bank.epoch + 1) {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(epoch >= test_bank.epoch),
+        );
+    }
+
+    // Test feature activated in current epoch
+    let current_epoch_slot = epoch_schedule.get_last_slot_in_epoch(1);
+    let test_bank = create_test_bank(1, Some(current_epoch_slot));
+    for epoch in 0..=(test_bank.epoch + 1) {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(epoch > test_bank.epoch),
+        );
+    }
+
+    // Test feature not activated yet
+    let test_bank = create_test_bank(1, None);
+    let max_cached_leader_schedule = epoch_schedule.get_leader_schedule_epoch(test_bank.slot());
+    for epoch in 0..=(max_cached_leader_schedule + 1) {
+        if epoch <= max_cached_leader_schedule {
+            assert_eq!(
+                test_bank.should_use_vote_keyed_leader_schedule(epoch),
+                Some(false),
+            );
+        } else {
+            assert_eq!(test_bank.should_use_vote_keyed_leader_schedule(epoch), None);
+        }
+    }
 }
 
 #[test]

@@ -175,6 +175,8 @@ impl FeatureSet {
             fix_alt_bn128_pairing_length_check: self
                 .is_active(&fix_alt_bn128_pairing_length_check::id()),
             alt_bn128_little_endian: self.is_active(&alt_bn128_little_endian::id()),
+            bls_pubkey_management_in_vote_account: self
+                .is_active(&bls_pubkey_management_in_vote_account::id()),
         }
     }
 }
@@ -1209,6 +1211,10 @@ pub mod alt_bn128_little_endian {
     solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
 }
 
+pub mod bls_pubkey_management_in_vote_account {
+    solana_pubkey::declare_id!("EGJLweNUVskAPEwpjvNB7JT6uUi6h4mFhowNYXVSrimG");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2167,6 +2173,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alt_bn128_little_endian::id(),
             "SIMD-0284: Add little-endian compatibility for alt_bn128",
+        ),
+        (
+            bls_pubkey_management_in_vote_account::id(),
+            "SIMD-0387: BLS Pubkey Management in Vote Account",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
