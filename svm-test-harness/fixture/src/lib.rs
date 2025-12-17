@@ -9,6 +9,9 @@ pub mod error;
 pub mod feature_set;
 pub mod instr_context;
 pub mod instr_effects;
+pub mod message;
+pub mod txn_context;
+pub mod txn_result;
 
 #[cfg(feature = "fuzz")]
 pub mod proto {
