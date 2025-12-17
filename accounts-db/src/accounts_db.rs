@@ -5974,12 +5974,14 @@ impl AccountsDb {
         (0..accounts_and_meta_to_store.len())
             .map(|index| {
                 let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
-                accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
+                accounts_and_meta_to_store.account(index, |account| {
                     let account_shared_data = account.take_account();
                     let pubkey = account.pubkey();
                     let account_info =
                         AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
 
+                    // if geyser is enabled, send the account update notification
+                    // with the original version of the account
                     self.notify_account_at_accounts_update(
                         slot,
                         &account_shared_data,
@@ -5989,7 +5991,14 @@ impl AccountsDb {
                     );
                     current_write_version = current_write_version.saturating_add(1);
 
-                    self.accounts_cache.store(slot, pubkey, account_shared_data);
+                    // ...but when actually storing the account, if its balance is zero,
+                    // use the default, which zeroes out all the account fields
+                    let account_to_store = if account.is_zero_lamport() {
+                        AccountSharedData::default()
+                    } else {
+                        account_shared_data
+                    };
+                    self.accounts_cache.store(slot, pubkey, account_to_store);
                     account_info
                 })
             })
