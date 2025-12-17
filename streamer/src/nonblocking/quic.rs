@@ -588,6 +588,7 @@ async fn setup_connection<Q, C>(
                 {
                     tasks.spawn(handle_connection(
                         packet_sender.clone(),
+                        from,
                         new_connection,
                         stats,
                         server_params.wait_for_chunk_timeout,
@@ -800,6 +801,7 @@ fn track_streamer_fetch_packet_performance(
 
 async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketAccumulator>,
+    remote_address: SocketAddr,
     connection: Connection,
     stats: Arc<StreamerStats>,
     wait_for_chunk_timeout: Duration,
@@ -811,10 +813,9 @@ async fn handle_connection<Q, C>(
     C: ConnectionContext + Send + Sync + 'static,
 {
     let peer_type = context.peer_type();
-    let remote_addr = connection.remote_address();
     debug!(
         "quic new connection {} streams: {} connections: {}",
-        remote_addr,
+        remote_address,
         stats.active_streams.load(Ordering::Relaxed),
         stats.total_connections.load(Ordering::Relaxed),
     );
@@ -840,7 +841,7 @@ async fn handle_connection<Q, C>(
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
         let mut meta = Meta::default();
-        meta.set_socket_addr(&remote_addr);
+        meta.set_socket_addr(&remote_address);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
         let mut accum = PacketAccumulator::new(meta);
 
