@@ -251,7 +251,7 @@ impl ConnectionWorker {
             ConnectionError::VersionMismatch | ConnectionError::LocallyClosed => {
                 ConnectionState::Closing
             }
-            _ => ConnectionState::Retry(0),
+            _ => ConnectionState::Retry(1),
         };
     }
 
@@ -280,7 +280,7 @@ impl ConnectionWorker {
             // Check connection health before each send
             if connection.close_reason().is_some() {
                 debug!("Connection closed during transaction batch sending");
-                self.connection = ConnectionState::Retry(0);
+                self.connection = ConnectionState::Retry(1);
                 break;
             }
 
@@ -292,7 +292,7 @@ impl ConnectionWorker {
                     self.peer
                 );
                 record_error(error, &self.send_txs_stats);
-                self.connection = ConnectionState::Retry(0);
+                self.connection = ConnectionState::Retry(1);
                 // Exit early since connection is likely broken
                 break;
             } else {

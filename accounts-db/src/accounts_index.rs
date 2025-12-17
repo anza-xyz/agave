@@ -228,13 +228,15 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
     Indexed(IndexKey),
 }
 
-/// specification of how much memory the in-mem portion of account index can use
+/// specification of how much memory the in-mem portion of account index can hold
 #[derive(Debug, Copy, Clone)]
 pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
+    /// evict from in-mem when usage exceeds threshold in bytes
+    Threshold(u64),
 }
 
 #[derive(Debug, Clone)]

@@ -978,7 +978,7 @@ mod tests {
         assert_eq!(result, expected);
 
         // fail case using a config file
-        process_test_command(&[
+        let result = process_test_command(&[
             "solana-keygen",
             "verify",
             &incorrect_pubkey.to_string(),
@@ -1007,7 +1007,7 @@ mod tests {
         ])
         .unwrap();
 
-        process_test_command(&[
+        let result = process_test_command(&[
             "solana-keygen",
             "verify",
             &correct_pubkey.to_string(),
@@ -1018,7 +1018,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        let expected = format!("Verification for public key: {incorrect_pubkey}: Failed");
+        let expected = format!("Verification for public key: {correct_pubkey}: Failed");
         assert_eq!(result, expected);
     }
 

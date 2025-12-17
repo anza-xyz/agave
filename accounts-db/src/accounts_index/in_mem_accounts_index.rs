@@ -966,7 +966,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let (possible_evictions, m) = {
             let map = self.map_internal.read().unwrap();
             let m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
-            let max_evictions = NonZeroUsize::new(map.len().max(1)).unwrap();
+            let max_evictions = self.storage.max_evictions_for_threshold(map.len());
             let possible_evictions = Self::gather_possible_evictions(
                 map.iter(),
                 current_age,
@@ -1122,6 +1122,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // from this point forward, we know iterate_for_age == true
         debug_assert!(iterate_for_age);
+
+        // For threshold-based flushing, check if current entry count warrants flushing
+        let entries_in_bin = self.map_internal.read().unwrap().len();
+        if !self.storage.should_flush(entries_in_bin) {
+            // Entry count is below threshold, no need to flush
+            // Still mark as aged to avoid infinite scanning
+            assert_eq!(current_age, self.storage.current_age());
+            self.set_has_aged(current_age, can_advance_age);
+            return;
+        }
 
         let ages_flushing_now = {
             let old_value = self

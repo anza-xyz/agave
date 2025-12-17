@@ -10,10 +10,12 @@ use {
         stake_account::StakeAccount,
         stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
     },
+    agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
     bincode::{self, config::Options, Error},
     log::*,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
+    smallvec::SmallVec,
     solana_accounts_db::{
         accounts::Accounts,
         accounts_db::{
@@ -73,7 +75,7 @@ const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AccountsDbFields<T>(
-    HashMap<Slot, Vec<T>>,
+    HashMap<Slot, SmallVec<[T; 1]>>,
     u64, // obsolete, formerly write_version
     Slot,
     BankHashInfo,
@@ -885,8 +887,11 @@ pub(crate) fn reconstruct_single_storage(
         (current_len, ObsoleteAccounts::default())
     };
 
+    #[allow(deprecated)]
+    let append_vec_file_info =
+        FileInfo::new_from_path_writable(append_vec_path, storage_access == StorageAccess::Mmap)?;
     let accounts_file =
-        AccountsFile::new_for_startup(append_vec_path, current_len, storage_access)?;
+        AccountsFile::new_for_startup(append_vec_file_info, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         id,

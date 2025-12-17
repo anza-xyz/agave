@@ -113,6 +113,11 @@ impl PendingSnapshotPackages {
             (None, None) => None,
         }
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn is_empty(&self) -> bool {
+        self.incremental.is_none() && self.full.is_none() && self.fastboot.is_none()
+    }
 }
 
 #[cfg(test)]

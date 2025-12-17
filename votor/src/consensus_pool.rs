@@ -16,7 +16,7 @@ use {
         consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
         vote::Vote,
     },
-    log::{error, trace},
+    log::trace,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
