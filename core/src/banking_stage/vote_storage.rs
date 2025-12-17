@@ -214,6 +214,16 @@ impl VoteStorage {
             {
                 continue;
             }
+
+            if self
+                .cached_epoch_stakes
+                .epoch_authorized_voters()
+                .get(&vote.vote_pubkey())
+                .is_none_or(|authorized| authorized != &vote.authorized_voter_pubkey())
+            {
+                continue;
+            }
+
             if let Some(vote) = self.update_latest_vote(vote, should_replenish_taken_votes) {
                 match vote.source() {
                     VoteSource::Gossip => num_dropped_gossip += 1,

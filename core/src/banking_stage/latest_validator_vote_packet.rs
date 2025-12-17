@@ -23,6 +23,7 @@ pub struct LatestValidatorVotePacket {
     vote_source: VoteSource,
     vote_pubkey: Pubkey,
     vote: Option<Arc<ImmutableDeserializedPacket>>,
+    authorized_voter_pubkey: Pubkey,
     slot: Slot,
     hash: Hash,
     timestamp: Option<UnixTimestamp>,
@@ -55,17 +56,29 @@ impl LatestValidatorVotePacket {
             Ok(vote_state_update_instruction)
                 if instruction_filter(&vote_state_update_instruction) =>
             {
-                let vote_account_index = instruction
-                    .accounts
-                    .first()
-                    .copied()
-                    .ok_or(DeserializedPacketError::VoteTransactionError)?;
-                let vote_pubkey = message
-                    .message
-                    .static_account_keys()
-                    .get(vote_account_index as usize)
-                    .copied()
-                    .ok_or(DeserializedPacketError::VoteTransactionError)?;
+                let ix_key = |offset: usize| {
+                    let index = instruction
+                        .accounts
+                        .get(offset)
+                        .copied()
+                        .ok_or(DeserializedPacketError::VoteTransactionError)?;
+                    let pubkey = message
+                        .message
+                        .static_account_keys()
+                        .get(index as usize)
+                        .copied()
+                        .ok_or(DeserializedPacketError::VoteTransactionError)?;
+                    let signed = message.message.is_signer(index as usize);
+
+                    Ok::<(Pubkey, bool), DeserializedPacketError>((pubkey, signed))
+                };
+
+                let (vote_pubkey, _) = ix_key(0)?;
+                let (authorized_voter_pubkey, authorized_voter_signed) = ix_key(1)?;
+                if !authorized_voter_signed {
+                    return Err(DeserializedPacketError::VoteTransactionError);
+                }
+
                 let slot = vote_state_update_instruction.last_voted_slot().unwrap_or(0);
                 let hash = vote_state_update_instruction.hash();
                 let timestamp = vote_state_update_instruction.timestamp();
@@ -75,6 +88,7 @@ impl LatestValidatorVotePacket {
                     slot,
                     hash,
                     vote_pubkey,
+                    authorized_voter_pubkey,
                     vote_source,
                     timestamp,
                 })
@@ -99,6 +113,10 @@ impl LatestValidatorVotePacket {
 
     pub fn vote_pubkey(&self) -> Pubkey {
         self.vote_pubkey
+    }
+
+    pub fn authorized_voter_pubkey(&self) -> Pubkey {
+        self.authorized_voter_pubkey
     }
 
     pub fn slot(&self) -> Slot {
