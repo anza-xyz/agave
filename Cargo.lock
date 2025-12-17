@@ -79,7 +79,7 @@ name = "agave-cargo-registry"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.5.53",
  "flate2",
  "hex",
  "hyper 0.14.32",
@@ -156,7 +156,7 @@ dependencies = [
  "bincode",
  "bzip2",
  "chrono",
- "clap 2.33.3",
+ "clap 4.5.53",
  "console 0.16.1",
  "crossbeam-channel",
  "ctrlc",
@@ -316,7 +316,7 @@ dependencies = [
 name = "agave-store-histogram"
 version = "4.0.0-alpha.0"
 dependencies = [
- "clap 2.33.3",
+ "clap 4.5.53",
  "solana-version",
 ]
 
@@ -426,7 +426,7 @@ dependencies = [
  "agave-snapshots",
  "assert_cmd",
  "chrono",
- "clap 2.33.3",
+ "clap 4.5.53",
  "console 0.16.1",
  "core_affinity",
  "crossbeam-channel",
@@ -602,7 +602,7 @@ name = "agave-watchtower"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.5.53",
  "humantime",
  "log",
  "solana-clap-utils",
@@ -1984,9 +1984,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.31"
+version = "4.5.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027bb0d98429ae334a8698531da7077bdf906419543a35a55c2cb1b66437d767"
+checksum = "c9e340e012a1bf4935f5282ed1436d1489548e8f72308207ea5df0e23d2d03f8"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1994,9 +1994,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.31"
+version = "4.5.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5589e0cba072e0f3d23791efac0fd8627b49c829c196a492e88168e6a669d863"
+checksum = "d76b5d13eaa18c901fd2f7fca939fefe3a0727a953561fefdf3b2922b8569d00"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2006,9 +2006,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.28"
+version = "4.5.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf4ced95c6f4a675af3da73304b9ac4ed991640c36374e4b46795c49e17cf1ed"
+checksum = "2a0b5487afeab2deb2ff4e03a807ad1a03ac532ff5a2cee5d86884440c7f7671"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2216,7 +2216,7 @@ dependencies = [
  "anes",
  "cast 0.3.0",
  "ciborium",
- "clap 4.5.31",
+ "clap 4.5.53",
  "criterion-plot",
  "itertools 0.13.0",
  "num-traits",
@@ -7130,7 +7130,7 @@ name = "solana-accounts-cluster-bench"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.5.53",
  "log",
  "rand 0.9.2",
  "rayon",
@@ -7411,7 +7411,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "bincode",
- "clap 2.33.3",
+ "clap 4.5.53",
  "crossbeam-channel",
  "solana-clap-utils",
  "solana-client",
@@ -7763,7 +7763,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bs58",
- "clap 2.33.3",
+ "clap 4.5.53",
  "console 0.16.1",
  "const_format",
  "criterion-stats",
@@ -8593,7 +8593,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "bincode",
- "clap 2.33.3",
+ "clap 4.5.53",
  "crossbeam-channel",
  "log",
  "serde",
@@ -8725,7 +8725,7 @@ dependencies = [
  "agave-snapshots",
  "base64 0.22.1",
  "bincode",
- "clap 2.33.3",
+ "clap 4.5.53",
  "itertools 0.14.0",
  "serde",
  "serde_json",
@@ -8851,7 +8851,7 @@ dependencies = [
  "bincode",
  "bs58",
  "bv",
- "clap 2.33.3",
+ "clap 4.5.53",
  "criterion",
  "crossbeam-channel",
  "flate2",
@@ -8919,7 +8919,7 @@ name = "solana-gossip-bin"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.5.53",
  "log",
  "solana-clap-utils",
  "solana-gossip",
@@ -10785,7 +10785,7 @@ dependencies = [
 name = "solana-stake-accounts"
 version = "4.0.0-alpha.0"
 dependencies = [
- "clap 2.33.3",
+ "clap 4.5.53",
  "solana-account",
  "solana-clap-utils",
  "solana-cli-config",
@@ -10913,7 +10913,7 @@ dependencies = [
  "assert_matches",
  "bytes",
  "chrono",
- "clap 4.5.31",
+ "clap 4.5.53",
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.31",
@@ -11060,7 +11060,7 @@ name = "solana-svm-test-harness"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 4.5.31",
+ "clap 4.5.53",
  "prost",
  "solana-svm-test-harness-fixture",
  "solana-svm-test-harness-instr",
@@ -11542,7 +11542,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "bincode",
- "clap 2.33.3",
+ "clap 4.5.53",
  "log",
  "rand 0.9.2",
  "rayon",
@@ -11835,7 +11835,7 @@ dependencies = [
  "agave-logger",
  "assert_matches",
  "bytes",
- "clap 4.5.31",
+ "clap 4.5.53",
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.31",
