@@ -576,7 +576,7 @@ impl Default for TransactionStatusMeta {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncodedConfirmedBlock {
     pub previous_blockhash: String,
