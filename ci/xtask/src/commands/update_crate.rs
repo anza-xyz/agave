@@ -25,12 +25,8 @@ pub fn run(args: CommandArgs) -> Result<()> {
     let all_cargo_tomls = common::recursive_find_files(&args.root_path, "Cargo.toml", |_| true)?;
 
     'MAIN_LOOP: for cargo_toml in all_cargo_tomls {
-        let content = fs::read_to_string(&cargo_toml)?;
-        let mut doc = content.parse::<DocumentMut>()?;
-
-        let mut need_to_write = false;
-
         info!("[{}]", cargo_toml.display());
+
         for exclude_path in &args.exclude_paths {
             if cargo_toml
                 .to_string_lossy()
@@ -40,6 +36,10 @@ pub fn run(args: CommandArgs) -> Result<()> {
                 continue 'MAIN_LOOP;
             }
         }
+
+        let content = fs::read_to_string(&cargo_toml)?;
+        let mut doc = content.parse::<DocumentMut>()?;
+        let mut need_to_write = false;
 
         // update workspace.dependencies
         if let Some(workspace_deps) = doc
