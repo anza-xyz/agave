@@ -231,11 +231,19 @@ impl CostModel {
                     SystemProgramAccountAllocation::Some(space)
                 }
             }
+            SystemInstruction::Assign { .. }
+            | SystemInstruction::Transfer { .. }
+            | SystemInstruction::AdvanceNonceAccount
+            | SystemInstruction::WithdrawNonceAccount(..)
+            | SystemInstruction::InitializeNonceAccount(..)
+            | SystemInstruction::AuthorizeNonceAccount(..)
+            | SystemInstruction::UpgradeNonceAccount
+            | SystemInstruction::AssignWithSeed { .. }
+            | SystemInstruction::TransferWithSeed { .. } => SystemProgramAccountAllocation::None,
             SystemInstruction::CreateAccountAllowPrefund { space: _, .. } => {
                 // pending feature-gated implementation
                 SystemProgramAccountAllocation::Failed
             }
-            _ => SystemProgramAccountAllocation::None,
         }
     }
 
@@ -950,7 +958,7 @@ mod tests {
                 | SystemInstruction::TransferWithSeed { .. } => {
                     SystemProgramAccountAllocation::None
                 }
-                // New allocating instructions must return `Failed` until feature-gated.
+                // New instructions (allocating or non-allocating) must return `Failed` until feature-gated.
                 // For example:
                 //
                 // ```
