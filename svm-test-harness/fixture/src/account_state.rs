@@ -3,7 +3,7 @@
 #![cfg(feature = "fuzz")]
 
 use {
-    super::{error::FixtureError, proto::AcctState as ProtoAccount},
+    crate::{error::FixtureError, proto::AcctState as ProtoAccount},
     solana_account::Account,
     solana_pubkey::Pubkey,
 };

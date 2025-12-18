@@ -25,7 +25,7 @@ use {
         },
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
-        validator::{BlockVerificationMethod, ValidatorConfig},
+        validator::{BlockProductionMethod, BlockVerificationMethod, ValidatorConfig},
     },
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
@@ -5796,9 +5796,41 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
 
     // Overwrite block_verification_method with shuffled variants
     let mut methods = BlockVerificationMethod::iter().collect::<Vec<_>>();
-    methods.shuffle(&mut rand::thread_rng());
+    methods.shuffle(&mut rand::rng());
     for (validator_config, method) in config.validator_configs.iter_mut().zip_eq(methods) {
         validator_config.block_verification_method = method;
+    }
+
+    let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    cluster_tests::spend_and_verify_all_nodes(
+        &local.entry_point_info,
+        &local.funding_keypair,
+        num_nodes,
+        HashSet::new(),
+        SocketAddrSpace::Unspecified,
+        &local.connection_cache,
+    );
+}
+
+#[test]
+#[serial]
+fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
+    // tailored logging just to see two block production methods are working correctly
+    agave_logger::setup_with_default(
+        "solana_metrics::metrics=warn,solana_core=warn,\
+         solana_runtime::installed_scheduler_pool=trace,solana_ledger::blockstore_processor=debug,\
+         info",
+    );
+
+    let num_nodes = BlockProductionMethod::COUNT;
+    let mut config =
+        ClusterConfig::new_with_equal_stakes(num_nodes, DEFAULT_MINT_LAMPORTS, DEFAULT_NODE_STAKE);
+
+    // Overwrite block_production_method with shuffled variants
+    let mut methods = BlockProductionMethod::iter().collect::<Vec<_>>();
+    methods.shuffle(&mut rand::rng());
+    for (validator_config, method) in config.validator_configs.iter_mut().zip_eq(methods) {
+        validator_config.block_production_method = method;
     }
 
     let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);

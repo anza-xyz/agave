@@ -55,7 +55,7 @@ agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
-rand = { workspace = true }
+rand = "0.8.5"
 serial_test = { workspace = true }
 solana-entry = { workspace = true }
 solana-keypair = { workspace = true }

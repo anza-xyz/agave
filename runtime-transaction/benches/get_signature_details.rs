@@ -1,9 +1,10 @@
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{criterion_group, criterion_main, Criterion, Throughput},
     solana_message::compiled_instruction::CompiledInstruction,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::signature_details::get_precompile_signature_details,
     solana_svm_transaction::instruction::SVMInstruction,
+    std::hint::black_box,
 };
 
 fn bench_get_signature_details_empty(c: &mut Criterion) {

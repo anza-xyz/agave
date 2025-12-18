@@ -140,7 +140,7 @@ impl ReceiveAndBufferCreator for TransactionViewReceiveAndBuffer {
     ) -> Self {
         TransactionViewReceiveAndBuffer {
             receiver,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
         }
     }
 }

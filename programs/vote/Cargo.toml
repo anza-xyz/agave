@@ -17,7 +17,6 @@ crate-type = ["lib"]
 name = "solana_vote_program"
 
 [features]
-default = ["metrics"]
 agave-unstable-api = []
 dev-context-only-utils = []
 frozen-abi = [
@@ -26,7 +25,6 @@ frozen-abi = [
     "solana-program-runtime/frozen-abi",
     "solana-vote-interface/frozen-abi",
 ]
-metrics = ["dep:solana-metrics"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -48,7 +46,6 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-metrics = { workspace = true, optional = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["curve25519"] }
@@ -75,7 +72,7 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-svm-feature-set = { workspace = true }
-solana-vote-program = { path = ".", features = ["agave-unstable-api"] }
+solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [[bench]]

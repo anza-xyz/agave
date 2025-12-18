@@ -297,8 +297,6 @@ fn check_and_filter_proposed_vote_state(
             proposed_hash,
             slot_hashes[slot_hashes_index].1
         );
-        #[cfg(feature = "metrics")]
-        inc_new_counter_info!("dropped-vote-hash", 1);
         return Err(VoteError::SlotHashMismatch);
     }
 
@@ -756,6 +754,10 @@ pub fn authorize<S: std::hash::BuildHasher>(
             verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
             vote_state.set_authorized_withdrawer(*authorized);
         }
+        // VoterWithBLS not yet implemented.
+        VoteAuthorize::VoterWithBLS(_) => {
+            return Err(InstructionError::InvalidInstructionData);
+        }
     }
 
     vote_state.set_vote_account_state(vote_account)
@@ -795,16 +797,17 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
+    disable_commission_update_rule: bool,
 ) -> Result<(), InstructionError> {
     let vote_state_result = get_vote_state_handler_checked(
         vote_account,
         PreserveBehaviorInHandlerHelper::new(target_version, false),
     );
-    let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
-        commission > decoded_vote_state.commission()
-    } else {
-        true
-    };
+    let enforce_commission_update_rule = !disable_commission_update_rule
+        && match vote_state_result.as_ref() {
+            Ok(decoded_vote_state) => commission > decoded_vote_state.commission(),
+            Err(_) => true,
+        };
 
     if enforce_commission_update_rule && !is_commission_update_allowed(clock.slot, epoch_schedule) {
         return Err(VoteError::CommissionUpdateTooLate.into());
@@ -1132,7 +1135,7 @@ mod tests {
             instruction_accounts::InstructionAccount, TransactionContext,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     const MAX_RECENT_VOTES: usize = 16;
@@ -1377,9 +1380,14 @@ mod tests {
         assert_eq!(vote_state.votes().len(), 2);
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
-    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
-    fn test_update_commission(target_version: VoteStateTargetVersion) {
+    #[test_matrix(
+        [VoteStateTargetVersion::V3, VoteStateTargetVersion::V4],
+        [true, false]
+    )]
+    fn test_update_commission(
+        target_version: VoteStateTargetVersion,
+        disable_commission_update_rule: bool,
+    ) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
         let node_pubkey = *vote_state.node_pubkey();
         let withdrawer_pubkey = *vote_state.authorized_withdrawer();
@@ -1450,6 +1458,7 @@ mod tests {
                 &signers,
                 &epoch_schedule,
                 &first_half_clock,
+                disable_commission_update_rule,
             ),
             Ok(())
         );
@@ -1463,29 +1472,31 @@ mod tests {
             11
         );
 
-        // Increase commission in second half of epoch -- disallowed
-        assert_matches!(
-            update_commission(
-                &mut borrowed_account,
-                target_version,
-                12,
-                &signers,
-                &epoch_schedule,
-                &second_half_clock,
-            ),
-            Err(_)
+        // Increase commission in second half of epoch -- disallowed if update rule is enabled
+        let result = update_commission(
+            &mut borrowed_account,
+            target_version,
+            12,
+            &signers,
+            &epoch_schedule,
+            &second_half_clock,
+            disable_commission_update_rule,
         );
-        assert_eq!(
-            get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap()
-            .commission(),
-            11
-        );
+        let state_commission = get_vote_state_handler_checked(
+            &borrowed_account,
+            PreserveBehaviorInHandlerHelper::new(target_version, true),
+        )
+        .unwrap()
+        .commission();
+        if disable_commission_update_rule {
+            assert_matches!(result, Ok(()));
+            assert_eq!(state_commission, 12);
+        } else {
+            assert_matches!(result, Err(_));
+            assert_eq!(state_commission, 11);
+        }
 
-        // Decrease commission in first half of epoch -- allowed
+        // Decrease commission in first half of epoch -- always allowed
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
@@ -1494,6 +1505,7 @@ mod tests {
                 &signers,
                 &epoch_schedule,
                 &first_half_clock,
+                disable_commission_update_rule,
             ),
             Ok(())
         );
@@ -1517,6 +1529,7 @@ mod tests {
             10
         );
 
+        // Decrease commission in second half of epoch -- always allowed
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
@@ -1525,6 +1538,7 @@ mod tests {
                 &signers,
                 &epoch_schedule,
                 &second_half_clock,
+                disable_commission_update_rule,
             ),
             Ok(())
         );

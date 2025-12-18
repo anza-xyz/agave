@@ -14,7 +14,10 @@
 //! When reading full accounts data whose sizes exceed the small stack buffer, the `BufReaderWithOverflow`
 //! should be used, which supports dynamically allocated buffer for preparing contiguous data slices.
 use {
-    crate::file_io::{read_into_buffer, read_more_buffer},
+    crate::{
+        file_io::{read_into_buffer, read_more_buffer},
+        io_setup::IoSetupState,
+    },
     std::{
         fs::File,
         io::{self, BufRead},
@@ -386,19 +389,25 @@ impl<R: BufRead> RequiredLenBufRead for BufReaderWithOverflow<R> {
 
 /// Open file at `path` with buffering reader using `buf_size` memory and doing
 /// read-ahead IO reads (if `io_uring` is supported by the platform)
-pub fn large_file_buf_reader(path: &Path, buf_size: usize) -> io::Result<impl BufRead + use<>> {
+pub fn large_file_buf_reader(
+    path: &Path,
+    buf_size: usize,
+    io_setup: &IoSetupState,
+) -> io::Result<impl BufRead + use<>> {
     #[cfg(target_os = "linux")]
     {
         assert!(agave_io_uring::io_uring_supported());
-        use crate::io_uring::sequential_file_reader::{SequentialFileReader, DEFAULT_READ_SIZE};
+        use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 
-        let buf_size = buf_size.max(DEFAULT_READ_SIZE);
-        SequentialFileReader::with_capacity(buf_size, path)
+        SequentialFileReaderBuilder::new()
+            .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .build(path, buf_size)
     }
     #[cfg(not(target_os = "linux"))]
     {
         use std::io::BufReader;
         let file = File::open(path)?;
+        let _ = io_setup;
         Ok(BufReader::with_capacity(buf_size, file))
     }
 }
@@ -414,8 +423,8 @@ mod tests {
     #[inline(always)]
     fn rand_bytes<const N: usize>() -> [u8; N] {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
-        std::array::from_fn(|_| rng.r#gen::<u8>())
+        let mut rng = rand::rng();
+        std::array::from_fn(|_| rng.random::<u8>())
     }
 
     #[test]

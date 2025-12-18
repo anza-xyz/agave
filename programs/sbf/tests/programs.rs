@@ -71,15 +71,12 @@ use {
     },
     test_case::test_matrix,
 };
-#[cfg(all(
-    any(feature = "sbf_c", feature = "sbf_rust"),
-    not(feature = "sbf_sanity_list")
-))]
+#[cfg(feature = "sbf_rust")]
 use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
-    solana_svm_test_harness::{self as harness, fixture::instr_context::InstrContext},
+    solana_svm_test_harness_instr::{self as harness, fixture::instr_context::InstrContext},
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -289,16 +286,11 @@ fn test_program_sbf_sanity() {
             feature_set,
             accounts,
             instruction: instruction.into(),
-            cu_avail: compute_budget.compute_unit_limit,
         };
 
-        let effects = harness::instr::execute_instr(
-            context,
-            &compute_budget,
-            &mut program_cache,
-            &sysvar_cache,
-        )
-        .unwrap();
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
 
         let result = match effects.result {
             Some(err) => Err(err),
@@ -518,96 +510,102 @@ fn test_program_sbf_error_handling() {
     for program in programs.iter() {
         println!("Test program: {:?}", program);
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank);
-        let authority_keypair = Keypair::new();
+        let feature_set = FeatureSet::all_enabled();
 
-        let (_bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let pubkey1 = Pubkey::new_unique();
+
+        let accounts = vec![
+            (
+                program_id,
+                Account {
+                    owner: loader_v4::id(),
+                    ..Default::default()
+                },
+            ),
+            (pubkey1, Account::default()),
+        ];
+
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let mut program_cache =
+            harness::program_cache::new_with_builtins(&feature_set, /* slot */ 0);
+        harness::program_cache::add_program(
+            &mut program_cache,
+            &program_id,
+            &loader_v4::id(),
+            &program_elf,
+            &feature_set,
+            &compute_budget,
         );
 
-        let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
+        let mut sysvar_cache = SysvarCache::default();
+        sysvar_cache.fill_missing_entries(|pubkey, callback| {
+            if pubkey == &rent::id() {
+                let rent = Rent::default();
+                let rent_data = bincode::serialize(&rent).unwrap();
+                callback(&rent_data);
+            }
+        });
 
-        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
+        // Helper to execute an instruction with the given data byte.
+        let execute = |data: &[u8],
+                       program_cache: &mut solana_program_runtime::loaded_programs::ProgramCacheForTxBatch| {
+            let account_metas = vec![AccountMeta::new(pubkey1, true)];
+            let instruction = Instruction::new_with_bytes(program_id, data, account_metas);
 
-        let instruction = Instruction::new_with_bytes(program_id, &[2], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidAccountData)
+            let context = InstrContext {
+                feature_set: feature_set.clone(),
+                accounts: accounts.clone(),
+                instruction: instruction.into(),
+            };
+
+            harness::execute_instr(context, &compute_budget, program_cache, &sysvar_cache)
+                .unwrap()
+        };
+
+        let effects = execute(&[1], &mut program_cache);
+        assert!(effects.result.is_none(), "{:?}", effects.result);
+
+        let effects = execute(&[2], &mut program_cache);
+        assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
+
+        let effects = execute(&[3], &mut program_cache);
+        assert_eq!(effects.result, Some(InstructionError::Custom(0)));
+
+        let effects = execute(&[4], &mut program_cache);
+        assert_eq!(effects.result, Some(InstructionError::Custom(42)));
+
+        let effects = execute(&[5], &mut program_cache);
+        assert!(
+            effects.result == Some(InstructionError::InvalidInstructionData)
+                || effects.result == Some(InstructionError::InvalidError)
         );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[3], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::Custom(0))
+        let effects = execute(&[6], &mut program_cache);
+        assert!(
+            effects.result == Some(InstructionError::InvalidInstructionData)
+                || effects.result == Some(InstructionError::InvalidError)
         );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[4], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::Custom(42))
+        let effects = execute(&[7], &mut program_cache);
+        assert!(
+            effects.result == Some(InstructionError::InvalidInstructionData)
+                || effects.result == Some(InstructionError::AccountBorrowFailed)
         );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[5], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let result = result.unwrap_err().unwrap();
-        if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
-        {
-            assert_eq!(
-                result,
-                TransactionError::InstructionError(0, InstructionError::InvalidError)
-            );
-        }
-
-        let instruction = Instruction::new_with_bytes(program_id, &[6], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let result = result.unwrap_err().unwrap();
-        if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
-        {
-            assert_eq!(
-                result,
-                TransactionError::InstructionError(0, InstructionError::InvalidError)
-            );
-        }
-
-        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let result = result.unwrap_err().unwrap();
-        if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
-        {
-            assert_eq!(
-                result,
-                TransactionError::InstructionError(0, InstructionError::AccountBorrowFailed)
-            );
-        }
-
-        let instruction = Instruction::new_with_bytes(program_id, &[8], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        let effects = execute(&[8], &mut program_cache);
         assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+            effects.result,
+            Some(InstructionError::InvalidInstructionData)
         );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[9], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        let effects = execute(&[9], &mut program_cache);
         assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::MaxSeedLengthExceeded)
+            effects.result,
+            Some(InstructionError::MaxSeedLengthExceeded)
         );
     }
 }
@@ -3606,6 +3604,40 @@ fn test_program_sbf_realloc_invoke() {
             );
         }
     }
+
+    // Realloc shrink, then CPI, then realloc extend
+    let mut invoke_account = AccountSharedData::new(100_000_000, 10, &realloc_invoke_program_id);
+    invoke_account.set_data(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    bank.store_account(&invoke_pubkey, &invoke_account);
+    let mut instruction_data = vec![];
+    instruction_data.extend_from_slice(&[INVOKE_REALLOC_SHRINK_THEN_CPI_THEN_REALLOC_EXTEND, 1]);
+    instruction_data.extend_from_slice(&5_u64.to_le_bytes());
+    instruction_data.extend_from_slice(&10_u64.to_le_bytes());
+    let result = bank_client.send_and_confirm_message(
+        signer,
+        Message::new(
+            &[
+                Instruction::new_with_bytes(
+                    realloc_invoke_program_id,
+                    &instruction_data,
+                    vec![
+                        AccountMeta::new(invoke_pubkey, false),
+                        AccountMeta::new_readonly(realloc_invoke_program_id, false),
+                    ],
+                ),
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
+                    LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
+                ),
+            ],
+            Some(&mint_pubkey),
+        ),
+    );
+    assert!(result.is_ok());
+    let data = bank_client
+        .get_account_data(&invoke_pubkey)
+        .unwrap()
+        .unwrap();
+    assert_eq!(data, &[0, 1, 2, 3, 4, 0, 0, 0, 0, 0]);
 
     // Realloc invoke max twice
     let invoke_account = AccountSharedData::new(42, 0, &realloc_program_id);

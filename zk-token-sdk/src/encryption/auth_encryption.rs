@@ -48,7 +48,7 @@ impl AuthenticatedEncryption {
     /// This function is randomized. It internally samples a 128-bit key using `OsRng`.
     #[cfg(not(target_os = "solana"))]
     fn keygen() -> AeKey {
-        AeKey(OsRng.gen::<[u8; AE_KEY_LEN]>())
+        AeKey(OsRng.r#gen::<[u8; AE_KEY_LEN]>())
     }
 
     /// On input of an authenticated encryption key and an amount, the function returns a
@@ -56,7 +56,7 @@ impl AuthenticatedEncryption {
     #[cfg(not(target_os = "solana"))]
     fn encrypt(key: &AeKey, balance: u64) -> AeCiphertext {
         let mut plaintext = balance.to_le_bytes();
-        let nonce: Nonce = OsRng.gen::<[u8; NONCE_LEN]>();
+        let nonce: Nonce = OsRng.r#gen::<[u8; NONCE_LEN]>();
 
         // The balance and the nonce have fixed length and therefore, encryption should not fail.
         let ciphertext = Aes128GcmSiv::new(&key.0.into())

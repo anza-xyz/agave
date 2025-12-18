@@ -2,8 +2,9 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        vm_slice::VmSlice, IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
-        MAX_ACCOUNT_DATA_LEN,
+        vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_REGION_SIZE},
+        vm_slice::VmSlice,
+        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
@@ -15,9 +16,6 @@ use {
         sync::Arc,
     },
 };
-
-const GUEST_REGION_SIZE: u64 = 1 << 32;
-const GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS: u64 = 9 * GUEST_REGION_SIZE;
 
 /// This struct is shared with programs. Do not alter its fields.
 #[repr(C)]

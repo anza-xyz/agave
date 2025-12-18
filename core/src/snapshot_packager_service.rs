@@ -2,7 +2,7 @@ mod snapshot_gossip_manager;
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes,
+        snapshot_hash::StartingSnapshotHashes, SnapshotKind,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::accounts_db::AccountStorageEntry,
@@ -12,7 +12,9 @@ use {
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
         accounts_background_service::PendingSnapshotPackages,
-        snapshot_controller::SnapshotController, snapshot_package::SnapshotPackage, snapshot_utils,
+        snapshot_controller::SnapshotController,
+        snapshot_package::{BankSnapshotPackage, SnapshotPackage},
+        snapshot_utils,
     },
     std::{
         sync::{
@@ -58,7 +60,7 @@ impl SnapshotPackagerService {
                 let mut teardown_state = None;
                 loop {
                     if exit.load(Ordering::Relaxed) {
-                        if let Some(teardown_state) = &teardown_state {
+                        if let Some(teardown_state) = teardown_state {
                             info!("Received exit request, tearing down...");
                             let (_, dur) = meas_dur!(Self::teardown(
                                 teardown_state,
@@ -87,31 +89,75 @@ impl SnapshotPackagerService {
                         // With exit backpressure, we will delay flushing snapshot storages
                         // until we receive a graceful exit request.
                         // Save the snapshot storages here, so we can flush later (as needed).
-                        teardown_state = Some(TeardownState {
-                            snapshot_slot: snapshot_package.slot,
-                            snapshot_storages: snapshot_package.snapshot_storages.clone(),
-                        });
+                        // For fastboot snapshot packages, the bank snapshot is saved and
+                        // the rest of the snapshotting process is skipped
+                        if snapshot_kind == SnapshotKind::Fastboot {
+                            teardown_state = Some(TeardownState {
+                                snapshot_slot: snapshot_package.slot,
+                                snapshot_storages: snapshot_package.snapshot_storages.clone(),
+                                bank_snapshot_package: Some(snapshot_package.bank_snapshot_package),
+                            });
+
+                            let handling_time = measure_handling.end_as_us();
+                            datapoint_info!(
+                                "snapshot_packager_service",
+                                ("enqueued_time_us", enqueued_time.as_micros(), i64),
+                                ("handling_time_us", handling_time, i64),
+                            );
+
+                            continue;
+                        } else {
+                            teardown_state = Some(TeardownState {
+                                snapshot_slot: snapshot_package.slot,
+                                snapshot_storages: snapshot_package.snapshot_storages.clone(),
+                                bank_snapshot_package: None,
+                            });
+                        }
                     }
 
-                    // Archiving the snapshot package is not allowed to fail.
-                    // AccountsBackgroundService calls `clean_accounts()` with a value for
-                    // latest_full_snapshot_slot that requires this archive call to succeed.
-                    let (archive_result, archive_time_us) =
-                        measure_us!(snapshot_utils::serialize_and_archive_snapshot_package(
-                            snapshot_package,
-                            snapshot_config,
-                            // Without exit backpressure, always flush the snapshot storages,
-                            // which is required for fastboot.
-                            exit_backpressure.is_none(),
-                        ));
-                    if let Err(err) = archive_result {
+                    let archive_time = Instant::now();
+                    // Serializing the snapshot package is not allowed to fail, as archiving is
+                    // not allowed to fail (see comment on archive_snapshot_package below
+                    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+                        &snapshot_config.bank_snapshots_dir,
+                        snapshot_config.snapshot_version,
+                        snapshot_package.bank_snapshot_package,
+                        snapshot_package.snapshot_storages.as_slice(),
+                        exit_backpressure.is_none(),
+                    );
+
+                    let Ok(bank_snapshot_info) = bank_snapshot_info else {
+                        let err = bank_snapshot_info.unwrap_err();
                         error!(
-                            "Stopping {}! Fatal error while archiving snapshot package: {err}",
+                            "Stopping {}! Fatal error while serializing snapshot for slot \
+                             {snapshot_slot}: {err}",
                             Self::NAME,
                         );
                         exit.store(true, Ordering::Relaxed);
                         break;
+                    };
+
+                    if let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind {
+                        // Archiving the snapshot package is not allowed to fail.
+                        // AccountsBackgroundService calls `clean_accounts()` with a value for
+                        // latest_full_snapshot_slot that requires this archive call to succeed.
+                        if let Err(err) = snapshot_utils::archive_snapshot_package(
+                            snapshot_archive_kind,
+                            snapshot_slot,
+                            snapshot_hash,
+                            &bank_snapshot_info.snapshot_dir,
+                            snapshot_package.snapshot_storages,
+                            snapshot_config,
+                        ) {
+                            error!(
+                                "Stopping {}! Fatal error while archiving snapshot package: {err}",
+                                Self::NAME,
+                            );
+                            exit.store(true, Ordering::Relaxed);
+                            break;
+                        }
                     }
+                    let archive_time_us = archive_time.elapsed().as_micros();
 
                     if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
                         snapshot_gossip_manager
@@ -174,10 +220,38 @@ impl SnapshotPackagerService {
     }
 
     /// Performs final operations before gracefully shutting down
-    fn teardown(state: &TeardownState, snapshot_config: &SnapshotConfig) {
+    fn teardown(state: TeardownState, snapshot_config: &SnapshotConfig) {
+        let TeardownState {
+            snapshot_slot,
+            snapshot_storages,
+            bank_snapshot_package,
+        } = state;
+
+        if let Some(bank_snapshot_package) = bank_snapshot_package {
+            info!("Serializing bank snapshot...");
+            let start = Instant::now();
+            let result = snapshot_utils::serialize_snapshot(
+                &snapshot_config.bank_snapshots_dir,
+                snapshot_config.snapshot_version,
+                bank_snapshot_package,
+                snapshot_storages.as_slice(),
+                false,
+            );
+            if let Err(err) = result {
+                warn!(
+                    "Failed to serialize bank '{}': {err}",
+                    snapshot_config.bank_snapshots_dir.as_path().display(),
+                );
+                // If serializing the bank fails, we do *NOT* want to write
+                // the mark_bank_snapshot_as_loadable file, so return early.
+                return;
+            }
+            info!("Serializing bank snapshot... Done in {:?}", start.elapsed());
+        }
+
         info!("Flushing account storages...");
         let start = Instant::now();
-        for storage in &state.snapshot_storages {
+        for storage in &snapshot_storages {
             let result = storage.flush();
             if let Err(err) = result {
                 warn!(
@@ -193,15 +267,15 @@ impl SnapshotPackagerService {
 
         let bank_snapshot_dir = snapshot_paths::get_bank_snapshot_dir(
             &snapshot_config.bank_snapshots_dir,
-            state.snapshot_slot,
+            snapshot_slot,
         );
 
         info!("Hard linking account storages...");
         let start = Instant::now();
         let result = snapshot_utils::hard_link_storages_to_snapshot(
             &bank_snapshot_dir,
-            state.snapshot_slot,
-            &state.snapshot_storages,
+            snapshot_slot,
+            &snapshot_storages,
         );
         if let Err(err) = result {
             warn!("Failed to hard link account storages: {err}");
@@ -218,8 +292,8 @@ impl SnapshotPackagerService {
         let start = Instant::now();
         let result = snapshot_utils::write_obsolete_accounts_to_snapshot(
             &bank_snapshot_dir,
-            &state.snapshot_storages,
-            state.snapshot_slot,
+            &snapshot_storages,
+            snapshot_slot,
         );
         if let Err(err) = result {
             warn!("Failed to serialize obsolete accounts: {err}");
@@ -243,4 +317,10 @@ struct TeardownState {
     snapshot_slot: Slot,
     /// The storages of the latest snapshot
     snapshot_storages: Vec<Arc<AccountStorageEntry>>,
+    /// For fastboot snapshots archiving is not required so serialization of the bank snapshot
+    /// can be deferred until teardown. In this case `bank_snapshot_package` will be `Some` and
+    /// during teardown the bank snapshot will be serialized to storage. For other snapshot types
+    /// `bank_snapshot_package` will be `None` because the serialization would have already occurred
+    /// when the snapshot archive was written.
+    bank_snapshot_package: Option<BankSnapshotPackage>,
 }

@@ -11,7 +11,7 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
     solana_svm_type_overrides::{
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, Condvar, Mutex, RwLock,
@@ -1273,7 +1273,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             candidates: &[(Pubkey, Arc<ProgramCacheEntry>)],
             now: Slot,
         ) -> (usize, u64) {
-            let mut rng = thread_rng();
+            let mut rng = rng();
+            // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
+            // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
+            #[allow(deprecated)]
             let index = rng.gen_range(0..candidates.len());
             let usage_counter = candidates
                 .get(index)
@@ -1839,7 +1842,7 @@ mod tests {
         use rand::prelude::SliceRandom;
         const EXPECTED_ENTRIES: [(u64, u64); 7] =
             [(1, 2), (5, 5), (5, 6), (5, 10), (9, 10), (10, 10), (3, 12)];
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let program_id = Pubkey::new_unique();
         let envs = get_mock_envs();
         for _ in 0..1000 {

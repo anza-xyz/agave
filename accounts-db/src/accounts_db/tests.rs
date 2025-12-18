@@ -4,9 +4,7 @@ use {
     crate::{
         accounts_file::AccountsFileProvider,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
-        append_vec::{
-            aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredMeta,
-        },
+        append_vec::{aligned_stored_size, test_utils::TempFile, AppendVec},
         storable_accounts::AccountForStorage,
     },
     itertools::Itertools,
@@ -1906,53 +1904,6 @@ fn test_accounts_db_purge1() {
 }
 
 #[test]
-#[ignore]
-fn test_store_account_stress() {
-    let slot = 42;
-    let num_threads = 2;
-
-    let min_file_bytes = std::mem::size_of::<StoredMeta>() + std::mem::size_of::<AccountMeta>();
-
-    let db = Arc::new(AccountsDb {
-        file_size: min_file_bytes as u64,
-        ..AccountsDb::new_single_for_tests()
-    });
-
-    db.add_root(slot);
-    let thread_hdls: Vec<_> = (0..num_threads)
-        .map(|_| {
-            let db = db.clone();
-            std::thread::Builder::new()
-                .name("account-writers".to_string())
-                .spawn(move || {
-                    let pubkey = solana_pubkey::new_rand();
-                    let mut account = AccountSharedData::new(1, 0, &pubkey);
-                    let mut i = 0;
-                    loop {
-                        let account_bal = rng().random_range(1..99);
-                        account.set_lamports(account_bal);
-                        db.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
-
-                        let (account, slot) = db
-                            .load_without_fixed_root(&Ancestors::default(), &pubkey)
-                            .unwrap_or_else(|| {
-                                panic!("Could not fetch stored account {pubkey}, iter {i}")
-                            });
-                        assert_eq!(slot, slot);
-                        assert_eq!(account.lamports(), account_bal);
-                        i += 1;
-                    }
-                })
-                .unwrap()
-        })
-        .collect();
-
-    for t in thread_hdls {
-        t.join().unwrap();
-    }
-}
-
-#[test]
 fn test_accountsdb_scan_accounts() {
     agave_logger::setup();
     let db = AccountsDb::new_single_for_tests();
@@ -2588,7 +2539,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store1_slot, Arc::clone(&store1));
+    db.storage.insert(Arc::clone(&store1));
     store1.alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
@@ -2601,7 +2552,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store2_slot, Arc::clone(&store2));
+    db.storage.insert(Arc::clone(&store2));
     store2
         .alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
@@ -2616,7 +2567,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store3_slot, Arc::clone(&store3));
+    db.storage.insert(Arc::clone(&store3));
     store3
         .alive_bytes
         .store(store_file_size as usize, Ordering::Release);
@@ -2655,7 +2606,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store1_slot, Arc::clone(&store1));
+    db.storage.insert(Arc::clone(&store1));
     store1.alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
 
@@ -2668,7 +2619,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store2_slot, Arc::clone(&store2));
+    db.storage.insert(Arc::clone(&store2));
     store2
         .alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
@@ -2683,7 +2634,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store3_slot, Arc::clone(&store3));
+    db.storage.insert(Arc::clone(&store3));
     store3
         .alive_bytes
         .store(store_file_size as usize, Ordering::Release);
@@ -2719,7 +2670,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store1_slot, Arc::clone(&store1));
+    db.storage.insert(Arc::clone(&store1));
     store1
         .alive_bytes
         .store(store_file_size as usize / 4, Ordering::Release);
@@ -2734,7 +2685,7 @@ fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess
         AccountsFileProvider::AppendVec,
         storage_access,
     ));
-    db.storage.insert(store2_slot, Arc::clone(&store2));
+    db.storage.insert(Arc::clone(&store2));
     store2
         .alive_bytes
         .store(store_file_size as usize / 2, Ordering::Release);
@@ -6305,7 +6256,7 @@ fn test_handle_dropped_roots_for_ancient() {
 }
 
 fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
-    db.storage.insert(append_vec.slot(), append_vec);
+    db.storage.insert(append_vec);
 }
 
 #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]

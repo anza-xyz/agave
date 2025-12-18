@@ -8,11 +8,12 @@ use {
             SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
             SnapshotStreams,
         },
-        snapshot_package::{BankSnapshotPackage, SnapshotPackage},
+        snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
+    agave_fs::buffered_writer::large_file_buf_writer,
     agave_snapshots::{
         archive_snapshot,
         error::{
@@ -26,10 +27,10 @@ use {
             SnapshotArchiveInfoGetter,
         },
         snapshot_config::SnapshotConfig,
-        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotKind,
-        SnapshotVersion,
+        snapshot_hash::SnapshotHash,
+        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion,
     },
-    crossbeam_channel::{Receiver, Sender},
+    crossbeam_channel::Receiver,
     log::*,
     regex::Regex,
     semver::Version,
@@ -45,12 +46,13 @@ use {
         cmp::Ordering,
         collections::{HashMap, HashSet},
         fs,
-        io::{self, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
+        io::{self, BufReader, Error as IoError, Read, Seek, Write},
         mem,
         num::NonZeroUsize,
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, LazyLock},
+        thread,
     },
     tempfile::TempDir,
 };
@@ -435,36 +437,20 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
     }
 }
 
-/// Serializes and archives a snapshot package
-pub fn serialize_and_archive_snapshot_package(
-    snapshot_package: SnapshotPackage,
+/// Creates an archive based on the bank snapshot and snapshot storages
+pub fn archive_snapshot_package(
+    snapshot_archive_kind: SnapshotArchiveKind,
+    snapshot_slot: Slot,
+    snapshot_hash: SnapshotHash,
+    bank_snapshot_dir: impl AsRef<Path>,
+    mut snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     snapshot_config: &SnapshotConfig,
-    should_flush_and_hard_link_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
-    let SnapshotPackage {
-        snapshot_kind,
-        slot: snapshot_slot,
-        hash: snapshot_hash,
-        mut snapshot_storages,
-        bank_snapshot_package,
-        enqueued: _,
-    } = snapshot_package;
-
-    let bank_snapshot_info = serialize_snapshot(
-        &snapshot_config.bank_snapshots_dir,
-        snapshot_config.snapshot_version,
-        bank_snapshot_package,
-        &snapshot_storages,
-        should_flush_and_hard_link_storages,
-    )?;
-
-    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind;
-
     let snapshot_archive_path = match snapshot_archive_kind {
         SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
             &snapshot_config.full_snapshot_archives_dir,
-            snapshot_package.slot,
-            &snapshot_package.hash,
+            snapshot_slot,
+            &snapshot_hash,
             snapshot_config.archive_format,
         ),
         SnapshotArchiveKind::Incremental(incremental_snapshot_base_slot) => {
@@ -474,8 +460,8 @@ pub fn serialize_and_archive_snapshot_package(
             snapshot_paths::build_incremental_snapshot_archive_path(
                 &snapshot_config.incremental_snapshot_archives_dir,
                 incremental_snapshot_base_slot,
-                snapshot_package.slot,
-                &snapshot_package.hash,
+                snapshot_slot,
+                &snapshot_hash,
                 snapshot_config.archive_format,
             )
         }
@@ -486,7 +472,7 @@ pub fn serialize_and_archive_snapshot_package(
         snapshot_slot,
         snapshot_hash,
         snapshot_storages.as_slice(),
-        &bank_snapshot_info.snapshot_dir,
+        &bank_snapshot_dir,
         snapshot_archive_path,
         snapshot_config.archive_format,
     )?;
@@ -495,7 +481,7 @@ pub fn serialize_and_archive_snapshot_package(
 }
 
 /// Serializes a snapshot into `bank_snapshots_dir`
-fn serialize_snapshot(
+pub fn serialize_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     snapshot_version: SnapshotVersion,
     bank_snapshot_package: BankSnapshotPackage,
@@ -533,7 +519,7 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let bank_snapshot_serializer = move |stream: &mut BufWriter<fs::File>| -> Result<()> {
+        let bank_snapshot_serializer = move |stream: &mut dyn Write| -> Result<()> {
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let extra_fields = ExtraFieldsToSerialize {
                 lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
@@ -715,8 +701,7 @@ fn serialize_obsolete_accounts(
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
-    let obsolete_accounts_file = fs::File::create(&obsolete_accounts_path)?;
-    let mut file_stream = BufWriter::new(obsolete_accounts_file);
+    let mut file_stream = large_file_buf_writer(&obsolete_accounts_path)?;
 
     serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map)?;
 
@@ -763,7 +748,7 @@ fn deserialize_obsolete_accounts(
 
 pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
 where
-    F: FnOnce(&mut BufWriter<std::fs::File>) -> Result<()>,
+    F: FnOnce(&mut dyn Write) -> Result<()>,
 {
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
@@ -809,10 +794,9 @@ fn serialize_snapshot_data_file_capped<F>(
     serializer: F,
 ) -> Result<u64>
 where
-    F: FnOnce(&mut BufWriter<std::fs::File>) -> Result<()>,
+    F: FnOnce(&mut dyn Write) -> Result<()>,
 {
-    let data_file = fs::File::create(data_file_path)?;
-    let mut data_file_stream = BufWriter::new(data_file);
+    let mut data_file_stream = large_file_buf_writer(data_file_path)?;
     serializer(&mut data_file_stream)?;
     data_file_stream.flush()?;
 
@@ -1344,24 +1328,33 @@ fn unarchive_snapshot(
     snapshot_result
 }
 
-/// Streams snapshot dir files across channel
+/// Spawn thread that streams snapshot dir files across channel
+///
 /// Follow the flow of streaming_unarchive_snapshot(), but handle the from_dir case.
-fn streaming_snapshot_dir_files(
-    file_sender: Sender<PathBuf>,
-    snapshot_file_path: impl Into<PathBuf>,
-    snapshot_version_path: impl Into<PathBuf>,
+fn spawn_streaming_snapshot_dir_files(
+    snapshot_file_path: PathBuf,
+    snapshot_version_path: PathBuf,
     account_paths: &[PathBuf],
-) -> Result<()> {
-    file_sender.send(snapshot_file_path.into())?;
-    file_sender.send(snapshot_version_path.into())?;
+) -> (Receiver<PathBuf>, thread::JoinHandle<Result<()>>) {
+    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
+    let account_paths = account_paths.to_vec();
 
-    for account_path in account_paths {
-        for file in fs::read_dir(account_path)? {
-            file_sender.send(file?.path())?;
-        }
-    }
+    let handle = thread::Builder::new()
+        .name("solSnapDirFiles".to_string())
+        .spawn(move || {
+            file_sender.send(snapshot_file_path)?;
+            file_sender.send(snapshot_version_path)?;
 
-    Ok(())
+            for account_path in account_paths {
+                for file in fs::read_dir(account_path)? {
+                    file_sender.send(file?.path())?;
+                }
+            }
+            Ok::<_, SnapshotError>(())
+        })
+        .expect("should spawn thread");
+
+    (file_receiver, handle)
 }
 
 /// Performs the common tasks when deserializing a snapshot
@@ -1449,15 +1442,13 @@ pub fn rebuild_storages_from_snapshot_dir(
         }
     }
 
-    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let snapshot_file_path = &snapshot_info.snapshot_path();
+    let snapshot_file_path = snapshot_info.snapshot_path();
     let snapshot_version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    streaming_snapshot_dir_files(
-        file_sender,
+    let (file_receiver, stream_files_handle) = spawn_streaming_snapshot_dir_files(
         snapshot_file_path,
         snapshot_version_path,
         account_paths,
-    )?;
+    );
 
     let SnapshotFieldsBundle {
         bank_fields,
@@ -1477,7 +1468,9 @@ pub fn rebuild_storages_from_snapshot_dir(
         storage_access,
         obsolete_accounts,
     )?;
-
+    stream_files_handle
+        .join()
+        .expect("should join file stream thread")?;
     Ok((storage, bank_fields, accounts_db_fields))
 }
 
@@ -1923,8 +1916,8 @@ mod tests {
             &temp_dir.path().join("data-file"),
             expected_consumed_size * 2,
             |stream| {
-                serialize_into(stream.by_ref(), &expected_data)?;
-                serialize_into(stream.by_ref(), &expected_data)?;
+                serialize_into(&mut *stream, &expected_data)?;
+                serialize_into(&mut *stream, &expected_data)?;
                 Ok(())
             },
         )

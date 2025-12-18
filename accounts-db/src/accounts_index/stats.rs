@@ -2,9 +2,8 @@ use {
     super::{
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         in_mem_accounts_index::InMemAccountsIndex,
-        DiskIndexValue, IndexValue,
+        DiskIndexValue, IndexValue, SlotListItem,
     },
-    solana_clock::Slot,
     solana_time_utils::AtomicInterval,
     std::{
         fmt::Debug,
@@ -17,6 +16,8 @@ const STATS_INTERVAL_MS: u64 = 10_000;
 
 #[derive(Debug, Default)]
 pub struct HeldInMemStats {
+    pub clean: AtomicU64,
+    pub age: AtomicU64,
     pub ref_count: AtomicU64,
     pub slot_list_len: AtomicU64,
     pub slot_list_cached: AtomicU64,
@@ -183,9 +184,12 @@ impl Stats {
     /// The result is also an estimate because 'held_in_mem' is based on a stat that is swapped out when stats are reported.
     pub fn get_remaining_items_to_flush_estimate(&self) -> usize {
         let in_mem = self.count_in_mem.load(Ordering::Relaxed) as u64;
+        // Note, `held_in_mem.clean` is purposely not included in this
+        // summation because clean items do not need to be flushed.
         let held_in_mem = self.held_in_mem.slot_list_cached.load(Ordering::Relaxed)
             + self.held_in_mem.slot_list_len.load(Ordering::Relaxed)
-            + self.held_in_mem.ref_count.load(Ordering::Relaxed);
+            + self.held_in_mem.ref_count.load(Ordering::Relaxed)
+            + self.held_in_mem.age.load(Ordering::Relaxed);
         in_mem.saturating_sub(held_in_mem) as usize
     }
 
@@ -260,9 +264,13 @@ impl Stats {
                     ),
                 );
             }
+            let held_in_mem_clean = self.held_in_mem.clean.swap(0, Ordering::Relaxed);
+            let held_in_mem_age = self.held_in_mem.age.swap(0, Ordering::Relaxed);
             let held_in_mem_ref_count = self.held_in_mem.ref_count.swap(0, Ordering::Relaxed);
             let held_in_mem_slot_list_len =
                 self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
+            let held_in_mem_slot_list_cached =
+                self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed);
             // If an entry is held in-mem due to ref count or slot list length,
             // then assume it has two slot list entries.
             // Since `approx_size_of_one_entry()` assumes 'regular' entries
@@ -278,7 +286,7 @@ impl Stats {
                 // and for entries held in mem due to ref count or slot list length, assume
                 // conservatively a slot list with two entries
                 + (held_in_mem_ref_count + held_in_mem_slot_list_len) as usize
-                    * size_of::<(Slot, T)>() // <-- size of one slot list entry
+                    * size_of::<SlotListItem<T>>() // <-- size of one slot list entry
                     * 2; // <-- and assume there are two entries
             datapoint_info!(
                 datapoint_name,
@@ -307,11 +315,17 @@ impl Stats {
                     ),
                     f64
                 ),
-                ("slot_list_len", held_in_mem_slot_list_len, i64),
-                ("ref_count", held_in_mem_ref_count, i64),
+                ("num_not_flushed_clean", held_in_mem_clean, i64),
+                ("num_not_flushed_age", held_in_mem_age, i64),
+                ("num_not_flushed_ref_count", held_in_mem_ref_count, i64),
                 (
-                    "slot_list_cached",
-                    self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed),
+                    "num_not_flushed_slot_list_len",
+                    held_in_mem_slot_list_len,
+                    i64
+                ),
+                (
+                    "num_not_flushed_slot_list_cached",
+                    held_in_mem_slot_list_cached,
                     i64
                 ),
                 ("min_in_bin_disk", disk_stats.0, i64),

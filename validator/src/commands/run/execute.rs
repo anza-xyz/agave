@@ -14,7 +14,7 @@ use {
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
-    rand::{seq::SliceRandom, thread_rng},
+    rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
@@ -71,6 +71,7 @@ use {
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
+        env,
         fs::{self, File},
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
@@ -92,6 +93,12 @@ pub fn execute(
     solana_version: &str,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Debugging panics is easier with a backtrace
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        // Safety: env update is made before any spawned threads might access the environment
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
+    }
+
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
@@ -122,6 +129,10 @@ pub fn execute(
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
+
+    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
+    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
+    solana_entry::entry::init_poh();
 
     solana_core::validator::report_target_features();
 
@@ -504,7 +515,6 @@ pub fn execute(
         logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
-        halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
@@ -665,6 +675,16 @@ pub fn execute(
         }
         BlockVerificationMethod::UnifiedScheduler => {}
     }
+    if matches!(
+        validator_config.block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        warn!(
+            "Currently, the unified-scheduler method is experimental for block-production. It has \
+             known security issues and should be used only for developing and benchmarking \
+             purposes"
+        );
+    }
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")
@@ -726,7 +746,7 @@ pub fn execute(
         bind_addresses.active()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
-        order.shuffle(&mut thread_rng());
+        order.shuffle(&mut rng());
 
         order
             .into_iter()
@@ -883,9 +903,6 @@ pub fn execute(
         }
     }
 
-    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
-    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
-    solana_entry::entry::init_poh();
     snapshot_utils::remove_tmp_snapshot_archives(
         &validator_config.snapshot_config.full_snapshot_archives_dir,
     );
@@ -1064,7 +1081,7 @@ fn validators_set(
 fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -> Option<u16> {
     let entrypoints = {
         let mut index: Vec<_> = (0..entrypoints.len()).collect();
-        index.shuffle(&mut rand::thread_rng());
+        index.shuffle(&mut rand::rng());
         index.into_iter().map(|i| &entrypoints[i])
     };
     for entrypoint in entrypoints {

@@ -73,8 +73,9 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     num_initial_accounts: None,
 };
 pub type ScanResult<T> = Result<T, ScanError>;
-pub type SlotList<T> = SmallVec<[(Slot, T); 1]>;
-pub type ReclaimsSlotList<T> = Vec<(Slot, T)>;
+pub type SlotList<T> = SmallVec<[SlotListItem<T>; 1]>;
+pub type ReclaimsSlotList<T> = Vec<SlotListItem<T>>;
+pub type SlotListItem<T> = (Slot, T);
 
 // The ref count cannot be higher than the total number of storages, and we should never have more
 // than 1 million storages. A 32-bit ref count should be *significantly* more than enough.
@@ -227,13 +228,15 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
     Indexed(IndexKey),
 }
 
-/// specification of how much memory the in-mem portion of account index can use
+/// specification of how much memory the in-mem portion of account index can hold
 #[derive(Debug, Copy, Clone)]
 pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
+    /// evict from in-mem when usage exceeds threshold in bytes
+    Threshold(u64),
 }
 
 #[derive(Debug, Clone)]
@@ -806,7 +809,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         ancestors: Option<&Ancestors>,
         max_root: Option<Slot>,
         should_add_to_in_mem_cache: bool,
-        callback: impl FnOnce((Slot, T)) -> R,
+        callback: impl FnOnce(SlotListItem<T>) -> R,
     ) -> Option<R> {
         self.get_and_then(pubkey, |entry| {
             let callback_result = entry.and_then(|entry| {
@@ -823,7 +826,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         entry: &AccountMapEntry<T>,
         ancestors: Option<&Ancestors>,
         max_root: Option<Slot>,
-        callback: impl FnOnce((Slot, T)) -> R,
+        callback: impl FnOnce(SlotListItem<T>) -> R,
     ) -> Option<R> {
         let slot_list = entry.slot_list_read_lock();
         self.latest_slot(ancestors, &slot_list, max_root)
@@ -927,7 +930,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     pub fn get_rooted_entries(
         &self,
-        slot_list: &[(Slot, T)],
+        slot_list: &[SlotListItem<T>],
         max_inclusive: Option<Slot>,
     ) -> SlotList<T> {
         let max_inclusive = max_inclusive.unwrap_or(Slot::MAX);
@@ -971,7 +974,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub(crate) fn latest_slot(
         &self,
         ancestors: Option<&Ancestors>,
-        slot_list: &[(Slot, T)],
+        slot_list: &[SlotListItem<T>],
         max_root_inclusive: Option<Slot>,
     ) -> Option<usize> {
         let mut current_max = 0;
@@ -1049,7 +1052,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         avoid_callback_result: Option<AccountsIndexScanResult>,
         filter: ScanFilter,
     ) where
-        F: FnMut(&'a Pubkey, Option<(&[(Slot, T)], RefCount)>) -> AccountsIndexScanResult,
+        F: FnMut(&'a Pubkey, Option<(&[SlotListItem<T>], RefCount)>) -> AccountsIndexScanResult,
         I: Iterator<Item = &'a Pubkey>,
     {
         let mut lock = None;
@@ -1162,7 +1165,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // Get the maximum root <= `max_allowed_root` from the given `slot_list`
     fn get_newest_root_in_slot_list(
         alive_roots: &RollingBitField,
-        slot_list: &[(Slot, T)],
+        slot_list: &[SlotListItem<T>],
         max_allowed_root_inclusive: Option<Slot>,
     ) -> Slot {
         slot_list
@@ -1748,7 +1751,7 @@ pub mod tests {
     use {
         super::{bucket_map_holder::BucketMapHolder, *},
         crate::accounts_index::account_map_entry::AccountMapEntryMeta,
-        solana_account::{AccountSharedData, WritableAccount},
+        solana_account::AccountSharedData,
         solana_pubkey::PUBKEY_BYTES,
         spl_generic_token::{spl_token_ids, token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
         std::ops::{
@@ -3124,9 +3127,9 @@ pub mod tests {
                 *slot,
                 &account_key,
                 // Make sure these accounts are added to secondary index
-                &AccountSharedData::create(
+                &AccountSharedData::create_from_existing_shared_data(
                     0,
-                    account_data.to_vec(),
+                    Arc::new(account_data.to_vec()),
                     spl_generic_token::token::id(),
                     false,
                     0,
@@ -3513,7 +3516,13 @@ pub mod tests {
             0,
             0,
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), Pubkey::default(), false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data.to_vec()),
+                Pubkey::default(),
+                false,
+                0,
+            ),
             &secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3527,7 +3536,13 @@ pub mod tests {
             0,
             0,
             &account_key,
-            &AccountSharedData::create(0, account_data[1..].to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data[1..].to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             &secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3542,7 +3557,13 @@ pub mod tests {
         for _ in 0..2 {
             index.update_secondary_indexes(
                 &account_key,
-                &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+                &AccountSharedData::create_from_existing_shared_data(
+                    0,
+                    Arc::new(account_data.to_vec()),
+                    *token_id,
+                    false,
+                    0,
+                ),
                 &secondary_indexes,
             );
             check_secondary_index_mapping_correct(secondary_index, &[index_key], &account_key);
@@ -3560,7 +3581,13 @@ pub mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             &secondary_indexes,
         );
         assert!(!secondary_index.index.is_empty());
@@ -3576,7 +3603,13 @@ pub mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             &secondary_indexes,
         );
         assert!(!secondary_index.index.is_empty());
@@ -3652,7 +3685,13 @@ pub mod tests {
             slot,
             slot,
             &account_key,
-            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data1.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3664,7 +3703,13 @@ pub mod tests {
             slot,
             slot,
             &account_key,
-            &AccountSharedData::create(0, account_data2.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data2.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3684,7 +3729,13 @@ pub mod tests {
             later_slot,
             later_slot,
             &account_key,
-            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data1.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),

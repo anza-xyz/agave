@@ -40,7 +40,7 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = "=3.0.0"
 solana-cluster-type = "=3.0.0"
-solana-commitment-config = "=3.0.0"
+solana-commitment-config = "=3.1.0"
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=3.0.0"
 solana-feature-gate-interface = "=3.0.0"
@@ -48,19 +48,19 @@ solana-fee-calculator = "=3.0.0"
 solana-genesis-config = "=3.0.0"
 solana-genesis-utils = { workspace = true }
 solana-inflation = "=3.0.0"
-solana-keypair = "=3.0.1"
+solana-keypair = "=3.1.0"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
 solana-native-token = "=3.0.0"
 solana-poh-config = "=3.0.0"
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-rent = "=3.0.0"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = "=3.0.0"
 solana-signer = "=3.0.0"
-solana-stake-interface = { version = "=2.0.1", features = ["borsh"] }
+solana-stake-interface = { version = "=2.0.2", features = ["borsh"] }
 solana-time-utils = "3.0.0"
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }

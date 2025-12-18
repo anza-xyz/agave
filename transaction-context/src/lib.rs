@@ -30,6 +30,7 @@ use {solana_account::WritableAccount, solana_rent::Rent};
 pub mod instruction;
 pub mod instruction_accounts;
 pub mod transaction_accounts;
+mod vm_addresses;
 pub mod vm_slice;
 
 pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
@@ -70,6 +71,13 @@ static_assertions::const_assert_eq!(
 /// Index of an account inside of the transaction or an instruction.
 pub type IndexOfAccount = u16;
 
+/// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
+pub type InstructionTrace<'ix_data> = (
+    Vec<InstructionFrame>,
+    Vec<Box<[InstructionAccount]>>,
+    Vec<Cow<'ix_data, [u8]>>,
+);
+
 /// Loaded transaction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a transaction being processed.
@@ -79,11 +87,21 @@ pub struct TransactionContext<'ix_data> {
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
-    instruction_trace: Vec<InstructionFrame<'ix_data>>,
+    instruction_trace: Vec<InstructionFrame>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
     rent: Rent,
+    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
+    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
+    /// This is a vector of u8s to save memory, since many entries may be unused.
+    /// Each deduplication map contains 256 entries and is concatenated to `deduplication_maps`.
+    deduplication_maps: Vec<u16>,
+    /// Each entry in `instruction_data` represents the array of accounts for each instruction.
+    instruction_accounts: Vec<Box<[InstructionAccount]>>,
+    /// Each entry in `instruction_data` represents the data for instruction at the corresponding
+    /// index.
+    instruction_data: Vec<Cow<'ix_data, [u8]>>,
 }
 
 impl<'ix_data> TransactionContext<'ix_data> {
@@ -104,6 +122,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             rent,
+            instruction_accounts: Vec::with_capacity(
+                MAX_ACCOUNTS_PER_INSTRUCTION.saturating_mul(instruction_trace_capacity),
+            ),
+            deduplication_maps: Vec::with_capacity(
+                MAX_ACCOUNTS_PER_TRANSACTION.saturating_mul(instruction_trace_capacity),
+            ),
+            instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
     }
 
@@ -176,14 +201,31 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .instruction_trace
             .get(index_in_trace)
             .ok_or(InstructionError::CallDepth)?;
+
+        // These commands will return a default empty slice if we are retrieving an instruction
+        // that hasn't been configured yet.
+        let instruction_accounts = self
+            .instruction_accounts
+            .get(index_in_trace)
+            .map(|item| item.as_ref())
+            .unwrap_or_default();
+        let dedup_map = self
+            .deduplication_maps
+            .get(InstructionFrame::deduplication_map_range(index_in_trace))
+            .unwrap_or_default();
+        let instruction_data = self
+            .instruction_data
+            .get(index_in_trace)
+            .map(|item| item.as_ref())
+            .unwrap_or_default();
         Ok(InstructionContext {
             transaction_context: self,
             index_in_trace,
             nesting_level: instruction.nesting_level,
             program_account_index_in_tx: instruction.program_account_index_in_tx,
-            instruction_accounts: &instruction.instruction_accounts,
-            dedup_map: &instruction.dedup_map,
-            instruction_data: &instruction.instruction_data,
+            instruction_accounts,
+            dedup_map,
+            instruction_data,
         })
     }
 
@@ -248,14 +290,25 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_data: Cow<'ix_data, [u8]>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
+        let trace_len = self.instruction_trace.len();
+        let instruction_index = trace_len.saturating_sub(1);
+
         let instruction = self
             .instruction_trace
             .last_mut()
             .ok_or(InstructionError::CallDepth)?;
+
         instruction.program_account_index_in_tx = program_index;
-        instruction.instruction_accounts = instruction_accounts;
-        instruction.instruction_data = instruction_data;
-        instruction.dedup_map = deduplication_map;
+        instruction.configure_vm_slices(
+            instruction_index as u64,
+            instruction_accounts.len(),
+            instruction_data.len() as u64,
+        );
+        self.deduplication_maps
+            .extend_from_slice(&deduplication_map);
+        self.instruction_accounts
+            .push(instruction_accounts.into_boxed_slice());
+        self.instruction_data.push(instruction_data);
         Ok(())
     }
 
@@ -444,11 +497,15 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Take ownership of the instruction trace
-    pub fn take_instruction_trace(&mut self) -> Vec<InstructionFrame<'_>> {
+    pub fn take_instruction_trace(&mut self) -> InstructionTrace<'_> {
         // The last frame is a placeholder for the next instruction to be executed, so it
         // is empty.
         self.instruction_trace.pop();
-        std::mem::take(&mut self.instruction_trace)
+        (
+            std::mem::take(&mut self.instruction_trace),
+            std::mem::take(&mut self.instruction_accounts),
+            std::mem::take(&mut self.instruction_data),
+        )
     }
 }
 
@@ -565,5 +622,124 @@ mod tests {
 
         let result = instruction_context.get_program_owner();
         assert_eq!(result.err(), Some(InstructionError::MissingAccount));
+    }
+
+    #[test]
+    fn test_instruction_shared_items() {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 10];
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20);
+
+        let instruction_accounts_1 = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(3, true, false),
+        ];
+        transaction_context
+            .configure_next_instruction_for_tests(
+                1,
+                instruction_accounts_1.clone(),
+                vec![1, 2, 3, 4],
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+
+        let instruction_accounts_2 = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(3, true, false),
+            InstructionAccount::new(5, false, false),
+        ];
+        transaction_context
+            .configure_next_instruction_for_tests(
+                1,
+                instruction_accounts_2.clone(),
+                vec![5, 6, 7, 8, 9],
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+
+        let instruction_accounts_3 = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(3, true, false),
+            InstructionAccount::new(5, false, false),
+            InstructionAccount::new(3, false, false),
+            InstructionAccount::new(10, false, false),
+        ];
+        transaction_context
+            .configure_next_instruction_for_tests(1, instruction_accounts_3.clone(), vec![10, 11])
+            .unwrap();
+        transaction_context.push().unwrap();
+
+        let first_ix_context = transaction_context
+            .get_instruction_context_at_index_in_trace(0)
+            .unwrap();
+        assert_eq!(
+            instruction_accounts_1.as_slice(),
+            first_ix_context.instruction_accounts
+        );
+        assert_eq!(
+            *first_ix_context.instruction_data,
+            **transaction_context.instruction_data.first().unwrap()
+        );
+        for (idx_in_ix, acc) in instruction_accounts_1.iter().enumerate() {
+            assert_eq!(
+                *first_ix_context
+                    .dedup_map
+                    .get(acc.index_in_transaction as usize)
+                    .unwrap(),
+                idx_in_ix as u16
+            );
+        }
+
+        let second_ix_context = transaction_context
+            .get_instruction_context_at_index_in_trace(1)
+            .unwrap();
+        assert_eq!(
+            instruction_accounts_2.as_slice(),
+            second_ix_context.instruction_accounts
+        );
+        assert_eq!(
+            *second_ix_context.instruction_data,
+            **transaction_context.instruction_data.get(1).unwrap()
+        );
+        for (idx_in_ix, acc) in instruction_accounts_2.iter().enumerate() {
+            assert_eq!(
+                *second_ix_context
+                    .dedup_map
+                    .get(acc.index_in_transaction as usize)
+                    .unwrap(),
+                idx_in_ix as u16
+            );
+        }
+
+        let third_ix_context = transaction_context
+            .get_instruction_context_at_index_in_trace(2)
+            .unwrap();
+        assert_eq!(
+            instruction_accounts_3.as_slice(),
+            third_ix_context.instruction_accounts
+        );
+        assert_eq!(
+            *third_ix_context.instruction_data,
+            **transaction_context.instruction_data.get(2).unwrap()
+        );
+        for (idx_in_ix, acc) in instruction_accounts_3.iter().enumerate() {
+            if idx_in_ix == 3 {
+                assert_eq!(
+                    *third_ix_context
+                        .dedup_map
+                        .get(acc.index_in_transaction as usize)
+                        .unwrap(),
+                    1
+                );
+            } else {
+                assert_eq!(
+                    *third_ix_context
+                        .dedup_map
+                        .get(acc.index_in_transaction as usize)
+                        .unwrap(),
+                    idx_in_ix as u16
+                );
+            }
+        }
     }
 }

@@ -1,7 +1,4 @@
-//! Solana SVM test harness for instructions.
-//!
-//! This entrypoint provides an API for Agave's program runtime in order to
-//! execute program instructions directly against the VM.
+//! Instruction harness.
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
@@ -25,7 +22,7 @@ use {
         instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
         IndexOfAccount, TransactionContext,
     },
-    std::sync::Arc,
+    std::{rc::Rc, sync::Arc},
 };
 
 /// Implement the callback trait so that the SVM API can be used to load
@@ -59,6 +56,7 @@ fn compile_accounts<'a>(
     input: &'a InstrContext,
     compute_budget: &ComputeBudget,
     rent: Rent,
+    loader_key: &Pubkey,
 ) -> (Vec<InstructionAccount>, TransactionContext<'a>) {
     let mut transaction_accounts: Vec<KeyedAccountSharedData> = input
         .accounts
@@ -71,7 +69,10 @@ fn compile_accounts<'a>(
         .iter()
         .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
     {
-        transaction_accounts.push((input.instruction.program_id, AccountSharedData::default()));
+        transaction_accounts.push((
+            input.instruction.program_id,
+            AccountSharedData::new(0, 0, loader_key),
+        ));
     }
 
     let transaction_context = TransactionContext::new(
@@ -113,8 +114,12 @@ pub fn execute_instr(
     let runtime_features = input.feature_set.runtime_features();
 
     let rent = sysvar_cache.get_rent().unwrap();
+    let loader_key = program_cache
+        .find(&input.instruction.program_id)?
+        .account_owner();
+
     let (instruction_accounts, mut transaction_context) =
-        compile_accounts(&input, compute_budget, (*rent).clone());
+        compile_accounts(&input, compute_budget, (*rent).clone(), &loader_key);
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
@@ -181,8 +186,15 @@ pub fn execute_instr(
         }
     };
 
-    let cu_avail = input.cu_avail.saturating_sub(compute_units_consumed);
+    let cu_avail = compute_budget
+        .compute_unit_limit
+        .saturating_sub(compute_units_consumed);
     let return_data = transaction_context.get_return_data().1.to_vec();
+
+    let logs = Rc::try_unwrap(log_collector)
+        .ok()
+        .map(|cell| cell.into_inner().into_messages())
+        .unwrap_or_default();
 
     let account_keys: Vec<Pubkey> = (0..transaction_context.get_number_of_accounts())
         .map(|index| {
@@ -213,6 +225,7 @@ pub fn execute_instr(
             .collect(),
         cu_avail,
         return_data,
+        logs,
     })
 }
 
@@ -325,7 +338,6 @@ mod tests {
                 ]
                 .into(),
             },
-            cu_avail,
         };
 
         // Set up the Compute Budget.

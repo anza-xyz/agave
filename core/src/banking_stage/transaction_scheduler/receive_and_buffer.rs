@@ -26,7 +26,10 @@ use {
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
     solana_message::v0::LoadedAddresses,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{
+        bank::Bank,
+        bank_forks::{BankPair, SharableBanks},
+    },
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
         transaction_with_meta::TransactionWithMeta,
@@ -35,10 +38,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
-    std::{
-        sync::{Arc, RwLock},
-        time::Instant,
-    },
+    std::time::Instant,
 };
 
 #[derive(Debug)]
@@ -104,7 +104,7 @@ pub(crate) trait ReceiveAndBuffer {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct TransactionViewReceiveAndBuffer {
     pub receiver: BankingPacketReceiver,
-    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub sharable_banks: SharableBanks,
 }
 
 impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
@@ -116,12 +116,10 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         container: &mut Self::Container,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        let (root_bank, working_bank) = {
-            let bank_forks = self.bank_forks.read().unwrap();
-            let root_bank = bank_forks.root_bank();
-            let working_bank = bank_forks.working_bank();
-            (root_bank, working_bank)
-        };
+        let BankPair {
+            root_bank,
+            working_bank,
+        } = self.sharable_banks.load();
 
         // Receive packet batches.
         const TIMEOUT: Duration = Duration::from_millis(10);
@@ -412,6 +410,7 @@ impl TransactionViewReceiveAndBuffer {
     ) -> Result<TransactionViewState, PacketHandlingError> {
         let (view, deactivation_slot) = translate_to_runtime_view(
             bytes,
+            working_bank,
             root_bank,
             enable_static_instruction_limit,
             transaction_account_lock_limit,
@@ -445,7 +444,8 @@ impl TransactionViewReceiveAndBuffer {
 /// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
 pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     data: D,
-    bank: &Bank,
+    working_bank: &Bank,
+    root_bank: &Bank,
     enable_static_instruction_limit: bool,
     transaction_account_lock_limit: usize,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
@@ -465,7 +465,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     };
 
     // Discard non-vote packets if in vote-only mode.
-    if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
+    if working_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
         return Err(PacketHandlingError::Sanitization);
     }
 
@@ -473,12 +473,12 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         return Err(PacketHandlingError::LockValidation);
     }
 
-    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
+    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, root_bank)?;
 
     let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
         view,
         loaded_addresses,
-        bank.get_reserved_account_keys(),
+        root_bank.get_reserved_account_keys(),
     ) else {
         return Err(PacketHandlingError::Sanitization);
     };
@@ -585,10 +585,12 @@ mod tests {
         solana_packet::{Meta, PACKET_DATA_SIZE},
         solana_perf::packet::{to_packet_batches, Packet, PacketBatch, RecycledPacketBatch},
         solana_pubkey::Pubkey,
+        solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction::transfer,
         solana_transaction::versioned::VersionedTransaction,
+        std::sync::{Arc, RwLock},
     };
 
     fn test_bank_forks() -> (Arc<RwLock<BankForks>>, Keypair) {
@@ -613,7 +615,7 @@ mod tests {
     ) {
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
         };
         let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
         (receive_and_buffer, container)

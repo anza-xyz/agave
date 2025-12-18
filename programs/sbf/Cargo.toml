@@ -115,7 +115,7 @@ serde_json = "1.0.56"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 solana-account-decoder = { path = "../../account-decoder", version = "=4.0.0-alpha.0" }
-solana-account-info = "=3.0.0"
+solana-account-info = "=3.1.0"
 solana-accounts-db = { path = "../../accounts-db", version = "=4.0.0-alpha.0" }
 solana-big-mod-exp = "=3.0.0"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
@@ -125,7 +125,7 @@ solana-cli-output = { path = "../../cli-output", version = "=4.0.0-alpha.0" }
 solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.0.0-alpha.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.0.0-alpha.0" }
-solana-cpi = "=3.0.0"
+solana-cpi = "=3.1.0"
 solana-curve25519 = { path = "../../curves/curve25519", version = "=4.0.0-alpha.0" }
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=4.0.0-alpha.0" }
@@ -138,11 +138,11 @@ solana-measure = { path = "../../measure", version = "=4.0.0-alpha.0" }
 solana-msg = "=3.0.0"
 solana-poseidon = { path = "../../poseidon/", version = "=4.0.0-alpha.0" }
 solana-program = "=3.0.0"
-solana-program-entrypoint = "=3.1.0"
+solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.0"
 solana-program-memory = "=3.0.0"
 solana-program-runtime = { path = "../../program-runtime", version = "=4.0.0-alpha.0" }
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-runtime = { path = "../../runtime", version = "=4.0.0-alpha.0" }
 solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.0.0-alpha.0" }
 solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.0.0-alpha.0" }
@@ -156,19 +156,19 @@ solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.0.0-alp
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.0.0-alpha.0" }
 solana-sbpf = "=0.13.1"
 solana-sdk-ids = "=3.0.0"
-solana-secp256k1-recover = "=3.0.0"
+solana-secp256k1-recover = "=3.1.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
-solana-stake-interface = { version = "=2.0.1", features = ["bincode"] }
+solana-stake-interface = { version = "=2.0.2", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.0.0-alpha.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=4.0.0-alpha.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.0.0-alpha.0" }
 solana-svm-log-collector = { path = "../../svm-log-collector", version = "=4.0.0-alpha.0" }
-solana-svm-test-harness = { path = "../../svm-test-harness", version = "=4.0.0-alpha.0" }
+solana-svm-test-harness-instr = { path = "../../svm-test-harness/instr", version = "=4.0.0-alpha.0" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.0.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.0.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.0.0-alpha.0" }
 solana-system-interface = { version = "=2.0", features = ["bincode"] }
-solana-sysvar = "=3.0.0"
+solana-sysvar = "=3.1.1"
 solana-transaction-context = { path = "../../transaction-context", version = "=4.0.0-alpha.0" }
 solana-transaction-status = { path = "../../transaction-status", version = "=4.0.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.0.0-alpha.0" }
@@ -200,7 +200,7 @@ miow = { workspace = true }
 net2 = { workspace = true }
 solana-account = "3.2.0"
 solana-account-decoder = { workspace = true }
-solana-account-info = "3.0.0"
+solana-account-info = "3.1.0"
 solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-cli-output = { workspace = true }
@@ -225,9 +225,9 @@ solana-loader-v4-interface = "3.1.0"
 solana-measure = { workspace = true }
 solana-message = "3.0.0"
 solana-program = { workspace = true }
-solana-program-entrypoint = "3.1.0"
+solana-program-entrypoint = "3.1.1"
 solana-program-runtime = { workspace = true }
-solana-pubkey = "3.0.0"
+solana-pubkey = "4.0.0"
 solana-rent = "3.0.0"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
@@ -239,17 +239,17 @@ solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "3.0.0"
 solana-signer = "3.0.0"
-solana-stake-interface = "2.0.1"
+solana-stake-interface = "2.0.2"
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-svm-test-harness = { workspace = true }
+solana-svm-test-harness-instr = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = "2.0"
-solana-sysvar = "3.0.0"
+solana-sysvar = "3.1.1"
 solana-transaction = "3.0.2"
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",

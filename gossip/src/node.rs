@@ -140,7 +140,7 @@ impl Node {
 
         let (tpu_port_quic, tpu_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-                .expect("tpu_socket primary bind");
+                .expect("tpu_quic primary bind");
         let mut tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
             .expect("tpu_quic bind");
 
@@ -158,7 +158,7 @@ impl Node {
             .expect("tpu_forwards multi_bind");
         let (tpu_forwards_quic_port, tpu_forwards_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-                .expect("tpu_forwards primary bind");
+                .expect("tpu_forwards_quic primary bind");
         let mut tpu_forwards_quic =
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints.get(), socket_config)
                 .expect("tpu_forwards_quic multi_bind");
@@ -306,7 +306,7 @@ impl Node {
         info.set_tpu_forwards(
             QUIC,
             public_tpu_forwards_addr
-                .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_forwards_port)),
+                .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_forwards_quic_port)),
         )
         .unwrap();
         info.set_tpu_vote(UDP, (advertised_ip, tpu_vote_port))
@@ -528,3 +528,39 @@ mod multihoming {
 }
 
 pub use multihoming::*;
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::contact_info::Protocol::{QUIC, UDP},
+    };
+
+    /// Regression test for fix where tpu_forwards_quic was incorrectly
+    /// using tpu_forwards_port (UDP) instead of tpu_forwards_quic_port (QUIC)
+    #[test]
+    fn test_tpu_forwards_quic_uses_correct_port() {
+        let pubkey = solana_pubkey::new_rand();
+        let node = Node::new_localhost_with_pubkey(&pubkey);
+
+        let tpu_forwards_quic = node.info.tpu_forwards(QUIC).unwrap();
+        let tpu_forwards_udp = node.info.tpu_forwards(UDP).unwrap();
+
+        let actual_quic_port = node.sockets.tpu_forwards_quic[0]
+            .local_addr()
+            .unwrap()
+            .port();
+
+        assert_eq!(
+            tpu_forwards_quic.port(),
+            actual_quic_port,
+            "TPU forwards QUIC advertised port should match actual bound QUIC socket"
+        );
+
+        assert_ne!(
+            tpu_forwards_quic.port(),
+            tpu_forwards_udp.port(),
+            "TPU forwards QUIC and UDP should use different ports"
+        );
+    }
+}

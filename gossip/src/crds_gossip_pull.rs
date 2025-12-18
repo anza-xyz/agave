@@ -125,10 +125,7 @@ impl CrdsFilter {
         u64::from_le_bytes(buf)
     }
     fn test_mask(&self, item: &Hash) -> bool {
-        // only consider the highest mask_bits bits from the hash and set the rest to 1.
-        let ones = (!0u64).checked_shr(self.mask_bits).unwrap_or(!0u64);
-        let bits = Self::hash_as_u64(item) | ones;
-        bits == self.mask
+        Self::hash_matches_mask_prefix(self.mask, self.mask_bits, Self::hash_as_u64(item))
     }
     #[cfg(test)]
     fn add(&mut self, item: &Hash) {
@@ -145,6 +142,21 @@ impl CrdsFilter {
     }
     fn filter_contains(&self, item: &Hash) -> bool {
         self.filter.contains(item)
+    }
+    #[inline]
+    fn lsb_mask(mask_bits: u32) -> u64 {
+        // Mask with all least-significant (64 - mask_bits) bits set to 1.
+        (!0u64).checked_shr(mask_bits).unwrap_or(0)
+    }
+    #[inline]
+    pub(crate) fn canonical_mask(mask: u64, mask_bits: u32) -> u64 {
+        // Normalize a mask so that all bits below mask_bits are 1s
+        mask | Self::lsb_mask(mask_bits)
+    }
+    #[inline]
+    pub(crate) fn hash_matches_mask_prefix(mask: u64, mask_bits: u32, hash_u64: u64) -> bool {
+        let lsb_mask = Self::lsb_mask(mask_bits);
+        (hash_u64 | lsb_mask) == Self::canonical_mask(mask, mask_bits)
     }
 }
 
@@ -1575,5 +1587,114 @@ pub(crate) mod tests {
             assert_eq!(get_max_bloom_filter_bytes(&caller), 1155);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
+    }
+
+    #[test]
+    fn test_lsb_mask() {
+        assert_eq!(CrdsFilter::lsb_mask(0), !0u64);
+        assert_eq!(CrdsFilter::lsb_mask(1), !0u64 >> 1);
+        assert_eq!(CrdsFilter::lsb_mask(4), !0u64 >> 4);
+        assert_eq!(CrdsFilter::lsb_mask(64), 0);
+        assert_eq!(CrdsFilter::lsb_mask(65), 0);
+    }
+
+    #[test]
+    fn test_canonical_mask_normalizes_low_bits() {
+        let mask_bits = 8;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+
+        // Construct a mask with some garbage in the low bits
+        let prefix: u64 = 0b1010_1100;
+        let high = prefix << (64 - mask_bits);
+        let garbage_low = 0x1234_5678_u64;
+        let raw_mask = high | garbage_low;
+
+        let canonical = CrdsFilter::canonical_mask(raw_mask, mask_bits);
+
+        // High bits (prefix) are preserved
+        assert_eq!(canonical >> (64 - mask_bits), prefix);
+        // Low bits are all 1
+        assert_eq!(canonical & lsb, lsb);
+    }
+
+    #[test]
+    fn test_hash_matches_mask_prefix_positive_and_negative() {
+        let mask_bits = 4;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+
+        // Prefix 0b1010 for the high 4 bits
+        let prefix: u64 = 0b1010;
+        let high = prefix << (64 - mask_bits);
+        let canonical_mask = CrdsFilter::canonical_mask(high, mask_bits);
+
+        // Hash with same high 4 bits -> should match
+        let hash_match: u64 = high | 0x1234;
+        assert!(CrdsFilter::hash_matches_mask_prefix(
+            canonical_mask,
+            mask_bits,
+            hash_match
+        ));
+
+        // Hash with different high 4 bits -> should not match
+        let other_prefix: u64 = 0b1011;
+        let other_high = other_prefix << (64 - mask_bits);
+        let hash_nomatch: u64 = other_high | 0x1234;
+        assert!(!CrdsFilter::hash_matches_mask_prefix(
+            canonical_mask,
+            mask_bits,
+            hash_nomatch
+        ));
+
+        // Test malformed mask: same high bits,
+        // but low bits cleared instead of all 1s
+        let malformed_mask = canonical_mask & !lsb;
+        // Should be the same after canonicalization
+        assert!(CrdsFilter::hash_matches_mask_prefix(
+            malformed_mask,
+            mask_bits,
+            hash_match
+        ));
+        assert!(!CrdsFilter::hash_matches_mask_prefix(
+            malformed_mask,
+            mask_bits,
+            hash_nomatch
+        ));
+    }
+
+    #[test]
+    fn test_mask_prefix_matching_with_malformed_mask() {
+        let mask_bits = 5;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+        let prefix: u64 = 0b1_0011;
+        let high = prefix << (64 - mask_bits);
+        // canonical mask = high | lsb = 0b1_0011_1111...111 (5 prefix bits, 59 ones)
+        let canonical_mask = CrdsFilter::canonical_mask(high, mask_bits);
+
+        let mut filter = CrdsFilter {
+            mask_bits,
+            mask: canonical_mask,
+            ..Default::default()
+        };
+
+        // Build a Hash whose u64 view has the correct prefix
+        let h_u64 = high | 0x55u64; //random low bits
+        let mut arr = [0u8; HASH_BYTES];
+        arr[..8].copy_from_slice(&h_u64.to_le_bytes());
+        let hash = arr.into();
+
+        // Positive case: canonical mask
+        assert!(filter.test_mask(&hash));
+
+        // Negative case: flip a high bit -> hash with a different prefix bit
+        let bad_u64 = h_u64 ^ (1u64 << (64 - mask_bits)); // flip one of the prefix bits
+        let mut bad_arr = [0u8; HASH_BYTES];
+        bad_arr[..8].copy_from_slice(&bad_u64.to_le_bytes());
+        let bad_hash = bad_arr.into();
+        assert!(!filter.test_mask(&bad_hash));
+
+        // Malformed mask: clear low bits -> should still match the hash with the correct prefix
+        filter.mask = canonical_mask & !lsb;
+        assert!(filter.test_mask(&hash));
+        assert!(!filter.test_mask(&bad_hash));
     }
 }

@@ -2,7 +2,7 @@
 pub(crate) mod tests {
     use {
         rand::Rng,
-        solana_account::{AccountSharedData, WritableAccount},
+        solana_account::AccountSharedData,
         solana_clock::Clock,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
@@ -20,6 +20,7 @@ pub(crate) mod tests {
             vote_instruction,
             vote_state::{VoteInit, VoteStateV4, VoteStateVersions},
         },
+        std::sync::Arc,
     };
 
     pub(crate) fn setup_vote_and_stake_accounts(
@@ -79,9 +80,9 @@ pub(crate) mod tests {
             StakeFlags::default(),
         );
 
-        let account = AccountSharedData::create(
+        let account = AccountSharedData::create_from_existing_shared_data(
             1,
-            bincode::serialize(&stake_account).unwrap(),
+            Arc::new(bincode::serialize(&stake_account).unwrap()),
             stake_program::id(),
             false,
             u64::MAX,
@@ -100,7 +101,7 @@ pub(crate) mod tests {
         for i in 0..3 {
             stakes.push((
                 i,
-                VoteStateV4::new(
+                VoteStateV4::new_with_defaults(
                     &vote_pubkey1,
                     &VoteInit {
                         node_pubkey: node1,
@@ -117,7 +118,7 @@ pub(crate) mod tests {
 
         stakes.push((
             5,
-            VoteStateV4::new(
+            VoteStateV4::new_with_defaults(
                 &vote_pubkey2,
                 &VoteInit {
                     node_pubkey: node2,

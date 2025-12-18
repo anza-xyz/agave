@@ -1,5 +1,7 @@
 use {
-    agave_votor_messages::{consensus_message::CertificateType, vote::Vote},
+    agave_votor_messages::{
+        consensus_message::CertificateType, migration::GENESIS_VOTE_THRESHOLD, vote::Vote,
+    },
     std::time::Duration,
 };
 
@@ -13,6 +15,7 @@ pub enum VoteType {
     NotarizeFallback,
     Skip,
     SkipFallback,
+    Genesis,
 }
 
 impl VoteType {
@@ -23,6 +26,7 @@ impl VoteType {
             Vote::Skip(_) => VoteType::Skip,
             Vote::SkipFallback(_) => VoteType::SkipFallback,
             Vote::Finalize(_) => VoteType::Finalize,
+            Vote::Genesis(_) => VoteType::Genesis,
         }
     }
 
@@ -56,6 +60,11 @@ pub(crate) fn certificate_limits_and_votes(
             Vote::new_skip_vote(*slot),
             Some(Vote::new_skip_fallback_vote(*slot)),
         ),
+        CertificateType::Genesis(slot, block_id) => (
+            GENESIS_VOTE_THRESHOLD,
+            Vote::new_genesis_vote(*slot, *block_id),
+            None,
+        ),
     }
 }
 
@@ -75,6 +84,7 @@ pub fn vote_to_certificate_ids(vote: &Vote) -> Vec<CertificateType> {
         Vote::Finalize(vote) => vec![CertificateType::Finalize(vote.slot)],
         Vote::Skip(vote) => vec![CertificateType::Skip(vote.slot)],
         Vote::SkipFallback(vote) => vec![CertificateType::Skip(vote.slot)],
+        Vote::Genesis(vote) => vec![CertificateType::Genesis(vote.slot, vote.block_id)],
     }
 }
 

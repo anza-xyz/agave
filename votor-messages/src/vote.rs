@@ -10,7 +10,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "6NFC2nmHc5VdjYKn6cbiskj9cLyk7jsWErJinojzYQhX")
+    frozen_abi(digest = "AgKoR2cpjUSVCW7Cpihob5nDiPcFt1PXmoPKWJg3zuSB")
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
@@ -24,6 +24,8 @@ pub enum Vote {
     NotarizeFallback(NotarizationFallbackVote),
     /// A skip fallback vote
     SkipFallback(SkipFallbackVote),
+    /// A genesis vote, only used during the TowerBFT -> Alpenglow Migration
+    Genesis(GenesisVote),
 }
 
 impl Vote {
@@ -52,6 +54,11 @@ impl Vote {
         Self::from(SkipFallbackVote { slot })
     }
 
+    /// Create a new skip fallback vote
+    pub fn new_genesis_vote(slot: Slot, block_id: Hash) -> Self {
+        Self::from(GenesisVote { slot, block_id })
+    }
+
     /// The slot which was voted for
     pub fn slot(&self) -> Slot {
         match self {
@@ -60,6 +67,7 @@ impl Vote {
             Self::Skip(vote) => vote.slot,
             Self::NotarizeFallback(vote) => vote.slot,
             Self::SkipFallback(vote) => vote.slot,
+            Self::Genesis(vote) => vote.slot,
         }
     }
 
@@ -68,6 +76,7 @@ impl Vote {
         match self {
             Self::Notarize(vote) => Some(&vote.block_id),
             Self::NotarizeFallback(vote) => Some(&vote.block_id),
+            Self::Genesis(vote) => Some(&vote.block_id),
             Self::Finalize(_) | Self::Skip(_) | Self::SkipFallback(_) => None,
         }
     }
@@ -101,6 +110,11 @@ impl Vote {
     pub fn is_notarization_or_finalization(&self) -> bool {
         matches!(self, Self::Notarize(_) | Self::Finalize(_))
     }
+
+    /// Whether the vote is a genesis vote
+    pub fn is_genesis_vote(&self) -> bool {
+        matches!(self, Self::Genesis(_))
+    }
 }
 
 impl From<NotarizationVote> for Vote {
@@ -130,6 +144,12 @@ impl From<NotarizationFallbackVote> for Vote {
 impl From<SkipFallbackVote> for Vote {
     fn from(vote: SkipFallbackVote) -> Self {
         Self::SkipFallback(vote)
+    }
+}
+
+impl From<GenesisVote> for Vote {
+    fn from(vote: GenesisVote) -> Self {
+        Self::Genesis(vote)
     }
 }
 
@@ -197,4 +217,18 @@ pub struct NotarizationFallbackVote {
 pub struct SkipFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
+}
+
+/// A genesis vote. Only used during the migration from TowerBFT
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "2JAiHmnnKHCzhkyCY3Bej6rAaVkMHsXgRcz1TPCNqAJ9")
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct GenesisVote {
+    /// The slot this genesis vote is for
+    pub slot: Slot,
+    /// The block hash being voted on
+    pub block_id: Hash,
 }
