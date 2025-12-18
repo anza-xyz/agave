@@ -13727,9 +13727,9 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d814d39f8894e2f0b7c6dac8a4bf1f36bf40c9415c2ff02146d6f777a91e11d3"
+checksum = "f67e680788539097c13ae4311dc36e850624b62b2f481271621adef0fbac6062"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13740,9 +13740,9 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a73ae1f9280de1c129b7baa5899ff75682ac67da1224d82d1b473a2ad1cbb49a"
+checksum = "bfe3057b011c49fd74405e08c867f8bb945a9c6bebfc81e086252483c95524d6"
 dependencies = [
  "darling",
  "proc-macro2",
