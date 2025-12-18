@@ -124,7 +124,7 @@ impl PohService {
                 if poh_config.hashes_per_tick.is_none() {
                     if poh_config.target_tick_count.is_none() {
                         Self::low_power_tick_producer(
-                            poh_recorder.clone(),
+                            poh_recorder,
                             &poh_config,
                             &poh_exit,
                             &mut record_receiver,
@@ -134,7 +134,7 @@ impl PohService {
                         )
                     } else {
                         Self::short_lived_low_power_tick_producer(
-                            poh_recorder.clone(),
+                            poh_recorder,
                             &poh_config,
                             &poh_exit,
                             &mut record_receiver,
@@ -154,7 +154,7 @@ impl PohService {
                         poh_config.target_tick_duration.as_nanos() as u64,
                     );
                     Self::tick_producer(
-                        poh_recorder.clone(),
+                        poh_recorder,
                         &poh_exit,
                         ticks_per_slot,
                         hashes_per_batch,
