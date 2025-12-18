@@ -67,12 +67,17 @@ impl LatestValidatorVote {
                         .get(index as usize)
                         .copied()
                         .ok_or(DeserializedPacketError::VoteTransaction)?;
+                    let signed = index < vote.num_required_signatures();
 
-                    Ok(pubkey)
+                    Ok((pubkey, signed))
                 };
 
-                let vote_pubkey = ix_key(0)?;
-                let authorized_voter_pubkey = ix_key(1)?;
+                let (vote_pubkey, _) = ix_key(0)?;
+                let (authorized_voter_pubkey, authorized_voter_signed) = ix_key(1)?;
+                if !authorized_voter_signed {
+                    return Err(DeserializedPacketError::VoteTransaction);
+                }
+
                 let slot = vote_state_update_instruction.last_voted_slot().unwrap_or(0);
                 let hash = vote_state_update_instruction.hash();
                 let timestamp = vote_state_update_instruction.timestamp();
