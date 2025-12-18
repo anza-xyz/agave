@@ -126,7 +126,7 @@ impl<'de> SchemaRead<'de> for VersionedMsg {
         // as calling `LegacyMessage::read` will miss the first field.
         // Builder is used to ensure any partially initialized data is dropped on errors.
         let mut msg_builder = LegacyMessageUninitBuilder::from_maybe_uninit_mut(&mut msg);
-        // SAFETY: initializer function uses header builder and initialie all fields
+        // SAFETY: initializer function uses header builder and initialize all fields
         unsafe {
             msg_builder.init_header_with(|uninit_header| {
                 let mut header_builder =
