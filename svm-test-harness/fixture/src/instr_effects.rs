@@ -9,10 +9,21 @@ pub struct InstrEffects {
     pub modified_accounts: Vec<(Pubkey, Account)>,
     pub cu_avail: u64,
     pub return_data: Vec<u8>,
+    pub logs: Vec<String>,
+}
+
+impl InstrEffects {
+    /// Returns the modified account for the given pubkey, if it exists.
+    pub fn get_account(&self, pubkey: &Pubkey) -> Option<&Account> {
+        self.modified_accounts
+            .iter()
+            .find(|(pk, _)| pk == pubkey)
+            .map(|(_, acc)| acc)
+    }
 }
 
 #[cfg(feature = "fuzz")]
-use {super::proto::InstrEffects as ProtoInstrEffects, bincode};
+use {crate::proto::InstrEffects as ProtoInstrEffects, bincode};
 
 #[cfg(feature = "fuzz")]
 impl From<InstrEffects> for ProtoInstrEffects {

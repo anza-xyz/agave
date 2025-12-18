@@ -487,7 +487,7 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_slots: Arc<MaxSlots>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
-    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub rpc_tpu_client_args: RpcTpuClientArgs<'a>,
 }
 
@@ -583,7 +583,7 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         client: Client,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<TokioRuntime>,
     ) -> Result<Self, String> {
         info!("rpc bound to {rpc_addr:?}");
@@ -903,7 +903,7 @@ mod tests {
             Arc::new(LeaderScheduleCache::default()),
             client,
             Arc::new(AtomicU64::default()),
-            Arc::new(PrioritizationFeeCache::default()),
+            Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
         )
         .expect("assume successful JsonRpcService start");

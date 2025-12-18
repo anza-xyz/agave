@@ -4394,14 +4394,8 @@ impl AccountsDb {
         paths: &[PathBuf],
     ) -> Arc<AccountStorageEntry> {
         let store = self.create_store(slot, size, from, paths);
-        let store_for_index = store.clone();
-
-        self.insert_store(slot, store_for_index);
+        self.storage.insert(store.clone());
         store
-    }
-
-    fn insert_store(&self, slot: Slot, store: Arc<AccountStorageEntry>) {
-        self.storage.insert(slot, store)
     }
 
     pub fn enable_bank_drop_callback(&self) {
@@ -5822,7 +5816,7 @@ impl AccountsDb {
         let infos = self.write_accounts_to_cache(accounts.target_slot(), &accounts, transactions);
         store_accounts_time.stop();
         self.stats
-            .store_accounts
+            .store_accounts_to_cache_us
             .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
 
         // Update the index
@@ -5854,7 +5848,7 @@ impl AccountsDb {
     pub fn store_accounts_frozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
         self._store_accounts_frozen(
@@ -5871,7 +5865,7 @@ impl AccountsDb {
     fn _store_accounts_frozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         reclaim_handling: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
@@ -5892,7 +5886,7 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         store_accounts_time.stop();
         self.stats
-            .store_accounts
+            .store_accounts_to_storage_us
             .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
 
         self.mark_zero_lamport_single_ref_accounts(&infos, storage, reclaim_handling);
@@ -6106,8 +6100,17 @@ impl AccountsDb {
             datapoint_info!(
                 "accounts_db_store_timings",
                 (
-                    "store_accounts",
-                    self.stats.store_accounts.swap(0, Ordering::Relaxed),
+                    "store_accounts_to_cache_us",
+                    self.stats
+                        .store_accounts_to_cache_us
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "store_accounts_to_storage_us",
+                    self.stats
+                        .store_accounts_to_storage_us
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (

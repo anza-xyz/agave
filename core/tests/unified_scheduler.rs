@@ -30,7 +30,6 @@ use {
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
         installed_scheduler_pool::SchedulingContext,
-        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm_timings::ExecuteTimings,
@@ -84,13 +83,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
     // Setup bankforks with unified scheduler enabled
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
-    let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
-        None,
-        None,
-        None,
-        None,
-        ignored_prioritization_fee_cache,
+    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
+        None, None, None, None, None,
     );
     let pool = pool_raw.clone();
     bank_forks.write().unwrap().install_scheduler_pool(pool);
@@ -219,7 +213,6 @@ fn test_scheduler_producing_blocks() {
     // Setup bank_forks with block-producing unified scheduler enabled
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
-    let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let genesis_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     genesis_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&genesis_bank));
@@ -236,10 +229,10 @@ fn test_scheduler_producing_blocks() {
         None,
         Some(leader_schedule_cache),
     );
-    let pool = DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+    let pool = DefaultSchedulerPool::new_for_production(None, None, None, None, None);
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
-        banking_tracer.create_channels(true)
+        banking_tracer.create_channels()
     };
     ensure_banking_stage_setup(
         &pool,
@@ -281,7 +274,7 @@ fn test_scheduler_producing_blocks() {
 
     // Now, send transaction
     channels
-        .unified_sender()
+        .sender_for_unified_scheduler()
         .send(banking_packet_batch)
         .unwrap();
 

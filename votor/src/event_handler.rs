@@ -256,7 +256,7 @@ impl EventHandler {
                     // the block is seen so the recording would essentially record 0.
                     // hence we skip it.
                     consensus_metrics_events.push(ConsensusMetricsEvent::BlockHashSeen {
-                        leader: *bank.collector_id(),
+                        leader: *bank.leader_id(),
                         slot,
                     });
                 }

@@ -33,7 +33,7 @@ use {
     solana_test_validator::*,
     std::{
         collections::{HashMap, HashSet},
-        fs, io,
+        env, fs, io,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         process::exit,
@@ -51,6 +51,12 @@ enum Output {
 }
 
 fn main() {
+    // Debugging panics is easier with a backtrace
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        // Safety: env update is made before any spawned threads might access the environment
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
+    }
+
     let default_args = cli::DefaultTestArgs::new();
     let version = solana_version::version!();
     let matches = cli::test_app(version, &default_args).get_matches();

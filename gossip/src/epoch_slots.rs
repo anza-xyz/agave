@@ -115,13 +115,20 @@ impl Flate2 {
         let num = unc.num;
         let block_len = unc.slots.block_len();
         let bits = Arc::unwrap_or_clone(unc.slots).into_boxed_slice();
-        compressor.compress_vec(&bits[0..block_len], &mut compressed, FlushCompress::Finish)?;
+        let status =
+            compressor.compress_vec(&bits[0..block_len], &mut compressed, FlushCompress::Finish)?;
+        if status != flate2::Status::StreamEnd {
+            return Err(Error::CompressError);
+        }
         let rv = Self {
             first_slot,
             num,
             compressed: Arc::new(compressed),
         };
-        let _ = rv.inflate()?;
+        let new_uncompressed = rv.inflate()?;
+        if new_uncompressed.slots.block_len() != block_len {
+            return Err(Error::CompressError);
+        }
         Ok(rv)
     }
 
@@ -432,6 +439,14 @@ mod tests {
         assert_eq!(slots.first_slot, 1);
         assert_eq!(slots.num, 701);
         assert_eq!(slots.to_slots(1), vec![1, 2, 701]);
+    }
+
+    #[test]
+    fn test_epoch_slots_compressed_fails_when_input_smaller_than_output() {
+        let mut slots = Uncompressed::new(4);
+        let data = [6940, 6971];
+        slots.add(&data);
+        assert_eq!(Flate2::deflate(slots), Err(Error::CompressError));
     }
 
     #[test]

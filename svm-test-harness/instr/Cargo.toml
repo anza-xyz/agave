@@ -1,0 +1,52 @@
+[package]
+name = "solana-svm-test-harness-instr"
+description = "Solana SVM test harness for instruction execution."
+documentation = "https://docs.rs/solana-svm-test-harness-instr"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = []
+dummy-for-ci-check = ["fuzz"]
+fuzz = [
+    "dep:prost",
+    "solana-pubkey/default",
+    "solana-svm-test-harness-fixture/fuzz",
+]
+
+[dependencies]
+agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
+agave-precompiles = { workspace = true }
+agave-syscalls = { workspace = true }
+bincode = { workspace = true }
+prost = { workspace = true, optional = true }
+solana-account = { workspace = true }
+solana-builtins = { workspace = true }
+solana-clock = { workspace = true, features = ["sysvar"] }
+solana-compute-budget = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["sysvar"] }
+solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true, features = ["serde"] }
+solana-last-restart-slot = { workspace = true, features = ["sysvar"] }
+solana-precompile-error = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true, features = ["sysvar"] }
+solana-sdk-ids = { workspace = true }
+solana-stable-layout = { workspace = true }
+solana-svm = { workspace = true }
+solana-svm-callback = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-test-harness-fixture = { workspace = true }
+solana-svm-timings = { workspace = true }
+solana-sysvar-id = { workspace = true }
+solana-transaction-context = { workspace = true }
+
+[lints]
+workspace = true

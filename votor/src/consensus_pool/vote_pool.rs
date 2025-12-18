@@ -56,6 +56,8 @@ struct InternalVotePool {
     ///
     /// Per validator, we store a map of which block ids the validator has voted notar fallback on.
     notar_fallback: BTreeMap<Pubkey, BTreeMap<Hash, VoteMessage>>,
+    /// Genesis votes are stored in map indexed by validator.
+    genesis: BTreeMap<Pubkey, VoteMessage>,
 }
 
 impl InternalVotePool {
@@ -67,6 +69,7 @@ impl InternalVotePool {
             finalize: BTreeMap::default(),
             notar: BTreeMap::default(),
             notar_fallback: BTreeMap::default(),
+            genesis: BTreeMap::default(),
         }
     }
 
@@ -143,6 +146,22 @@ impl InternalVotePool {
                 }
                 insert_vote(&mut self.finalize, voter, vote)
             }
+            Vote::Genesis(genesis) => {
+                match self.genesis.entry(voter) {
+                    Entry::Occupied(e) => {
+                        // unwrap should be safe as we should only store genesis type votes here
+                        if e.get().vote.block_id().unwrap() == &genesis.block_id {
+                            Err(AddVoteError::Duplicate)
+                        } else {
+                            Err(AddVoteError::Invalid)
+                        }
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(vote);
+                        Ok(())
+                    }
+                }
+            }
         }
     }
 
@@ -169,6 +188,15 @@ impl InternalVotePool {
                 .collect(),
             Vote::Skip(_) => self.skip.values().cloned().collect(),
             Vote::SkipFallback(_) => self.skip_fallback.values().cloned().collect(),
+            Vote::Genesis(genesis) => self
+                .genesis
+                .values()
+                .filter(|vote| {
+                    // unwrap should be safe as we should only store genesis votes here
+                    vote.vote.block_id().unwrap() == &genesis.block_id
+                })
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -191,6 +219,8 @@ struct Stakes {
     /// A single validator may vote for upto 3 blocks and different validators can vote for different blocks.
     /// Hence, this tracks stake per block id.
     notar_fallback: BTreeMap<Hash, Stake>,
+    /// Stake that has voted genesis.
+    genesis: BTreeMap<Hash, Stake>,
 }
 
 impl Stakes {
@@ -202,6 +232,7 @@ impl Stakes {
             finalize: 0,
             notar: BTreeMap::default(),
             notar_fallback: BTreeMap::default(),
+            genesis: BTreeMap::default(),
         }
     }
 
@@ -233,6 +264,11 @@ impl Stakes {
                 self.finalize = self.finalize.saturating_add(voter_stake);
                 self.finalize
             }
+            Vote::Genesis(genesis) => {
+                let stake = self.genesis.entry(genesis.block_id).or_default();
+                *stake = (*stake).saturating_add(voter_stake);
+                *stake
+            }
         }
     }
 
@@ -244,6 +280,7 @@ impl Stakes {
             Vote::Skip(_) => self.skip,
             Vote::SkipFallback(_) => self.skip_fallback,
             Vote::Finalize(_) => self.finalize,
+            Vote::Genesis(genesis) => *self.genesis.get(&genesis.block_id).unwrap_or(&0),
         }
     }
 }

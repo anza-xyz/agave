@@ -968,10 +968,7 @@ pub(crate) fn try_convert_to_vote_state_v4(
     vote_pubkey: &Pubkey,
 ) -> Result<VoteStateV4, InstructionError> {
     match versioned {
-        VoteStateVersions::V0_23_5(_) => {
-            // V0_23_5 not supported.
-            Err(InstructionError::UninitializedAccount)
-        }
+        VoteStateVersions::Uninitialized => Err(InstructionError::UninitializedAccount),
         VoteStateVersions::V1_14_11(state) => Ok(VoteStateV4 {
             node_pubkey: state.node_pubkey,
             authorized_withdrawer: state.authorized_withdrawer,
@@ -1767,10 +1764,13 @@ mod tests {
         let account_data = vote_account.get_data();
         assert!(account_data.iter().all(|&b| b == 0),);
 
-        // Vote account was completely zeroed, so this should deserialize as a
-        // v1, but it should be uninitialized.
+        // Vote account was completely zeroed, so this should deserialize as
+        // uninitialized.
         let vote_state_versions = vote_account.get_state::<VoteStateVersions>().unwrap();
-        assert!(matches!(vote_state_versions, VoteStateVersions::V0_23_5(_)));
+        assert!(matches!(
+            vote_state_versions,
+            VoteStateVersions::Uninitialized
+        ));
         assert!(vote_state_versions.is_uninitialized());
     }
 

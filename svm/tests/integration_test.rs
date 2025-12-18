@@ -3609,7 +3609,7 @@ mod balance_collector {
             for _ in 0..50 {
                 // failures result in no balance changes (note we use a separate fee-payer)
                 // we mix some in with the successes to test that we never record changes for failures
-                let expected_status = match rng.gen::<f64>() {
+                let expected_status = match rng.r#gen::<f64>() {
                     n if n < 0.85 => ExecutionStatus::Succeeded,
                     n if n < 0.90 => ExecutionStatus::ExecutedFailed,
                     n if n < 0.95 => ExecutionStatus::ProcessedFailed,

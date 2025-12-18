@@ -206,7 +206,7 @@ impl VoteAccount {
             leader_schedule_epoch: rng.random(),
             unix_timestamp: rng.random(),
         };
-        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
+        let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         let account = AccountSharedData::new_data(
             rng.random(), // lamports
             &VoteStateVersions::new_v4(vote_state.clone()),
@@ -580,7 +580,7 @@ mod tests {
             leader_schedule_epoch: rng.random(),
             unix_timestamp: rng.random(),
         };
-        let mut vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
+        let mut vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         if fill_bls_pubkey {
             vote_state.bls_pubkey_compressed = Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         }

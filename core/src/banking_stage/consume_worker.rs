@@ -2122,8 +2122,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-            vote_sender_types::ReplayVoteReceiver,
+            bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver,
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
@@ -2184,11 +2183,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
+        let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 

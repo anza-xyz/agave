@@ -124,16 +124,27 @@ impl<'de> SchemaRead<'de> for VersionedMsg {
         // the `num_required_signatures` field.
         // As such, we need to write the remaining fields into the message manually,
         // as calling `LegacyMessage::read` will miss the first field.
-        let header_uninit = LegacyMessage::uninit_header_mut(&mut msg);
-
-        MessageHeader::write_uninit_num_required_signatures(variant, header_uninit);
-        MessageHeader::read_num_readonly_signed_accounts(reader, header_uninit)?;
-        MessageHeader::read_num_readonly_unsigned_accounts(reader, header_uninit)?;
-
-        LegacyMessage::read_account_keys(reader, &mut msg)?;
-        LegacyMessage::read_recent_blockhash(reader, &mut msg)?;
-        LegacyMessage::read_instructions(reader, &mut msg)?;
-
+        // Builder is used to ensure any partially initialized data is dropped on errors.
+        let mut msg_builder = LegacyMessageUninitBuilder::from_maybe_uninit_mut(&mut msg);
+        // SAFETY: initializer function uses header builder and initialize all fields
+        unsafe {
+            msg_builder.init_header_with(|uninit_header| {
+                let mut header_builder =
+                    MessageHeaderUninitBuilder::from_maybe_uninit_mut(uninit_header);
+                header_builder.write_num_required_signatures(variant);
+                header_builder.read_num_readonly_signed_accounts(reader)?;
+                header_builder.read_num_readonly_unsigned_accounts(reader)?;
+                debug_assert!(header_builder.is_init());
+                header_builder.finish();
+                Ok(())
+            })?;
+        }
+        msg_builder.read_account_keys(reader)?;
+        msg_builder.read_recent_blockhash(reader)?;
+        msg_builder.read_instructions(reader)?;
+        debug_assert!(msg_builder.is_init());
+        // SAFETY: All fields are initialized, safe to close the builder and assume initialized.
+        msg_builder.finish();
         let msg = unsafe { msg.assume_init() };
         dst.write(solana_message::VersionedMessage::Legacy(msg));
 

@@ -1,5 +1,8 @@
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-use std::ffi::{CStr, CString};
+use std::{
+    ffi::{CStr, CString},
+    path::Path,
+};
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
@@ -10,10 +13,12 @@ use {
         stake_account::StakeAccount,
         stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
     },
+    agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
     bincode::{self, config::Options, Error},
     log::*,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
+    smallvec::SmallVec,
     solana_accounts_db::{
         accounts::Accounts,
         accounts_db::{
@@ -42,8 +47,8 @@ use {
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
-        io::{self, BufReader, BufWriter, Read, Write},
-        path::{Path, PathBuf},
+        io::{self, BufReader, Read, Write},
+        path::PathBuf,
         result::Result,
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -73,7 +78,7 @@ const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AccountsDbFields<T>(
-    HashMap<Slot, Vec<T>>,
+    HashMap<Slot, SmallVec<[T; 1]>>,
     u64, // obsolete, formerly write_version
     Slot,
     BankHashInfo,
@@ -137,7 +142,7 @@ struct DeserializableVersionedBank {
     slot: Slot,
     epoch: Epoch,
     block_height: u64,
-    collector_id: Pubkey,
+    leader_id: Pubkey,
     collector_fees: u64,
     _fee_calculator: FeeCalculator,
     fee_rate_governor: FeeRateGovernor,
@@ -178,7 +183,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             slot: dvb.slot,
             epoch: dvb.epoch,
             block_height: dvb.block_height,
-            collector_id: dvb.collector_id,
+            leader_id: dvb.leader_id,
             collector_fees: dvb.collector_fees,
             fee_rate_governor: dvb.fee_rate_governor,
             rent_collector: dvb.rent_collector,
@@ -217,7 +222,7 @@ struct SerializableVersionedBank {
     slot: Slot,
     epoch: Epoch,
     block_height: u64,
-    collector_id: Pubkey,
+    leader_id: Pubkey,
     collector_fees: u64,
     fee_calculator: FeeCalculator,
     fee_rate_governor: FeeRateGovernor,
@@ -255,7 +260,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             slot: rhs.slot,
             epoch: rhs.epoch,
             block_height: rhs.block_height,
-            collector_id: rhs.collector_id,
+            leader_id: rhs.leader_id,
             collector_fees: rhs.collector_fees,
             fee_calculator: FeeCalculator::default(),
             fee_rate_governor: rhs.fee_rate_governor,
@@ -598,7 +603,7 @@ where
 
 #[cfg(test)]
 pub(crate) fn bank_to_stream<W>(
-    stream: &mut BufWriter<W>,
+    stream: &mut io::BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
 ) -> Result<(), Error>
@@ -615,17 +620,14 @@ where
 }
 
 /// Serializes bank snapshot into `stream` with bincode
-pub fn serialize_bank_snapshot_into<W>(
-    stream: &mut BufWriter<W>,
+pub fn serialize_bank_snapshot_into(
+    stream: &mut dyn Write,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
     write_version: u64,
-) -> Result<(), Error>
-where
-    W: Write,
-{
+) -> Result<(), Error> {
     let mut serializer = bincode::Serializer::new(
         stream,
         bincode::DefaultOptions::new().with_fixint_encoding(),
@@ -865,7 +867,7 @@ where
 
 pub(crate) fn reconstruct_single_storage(
     slot: &Slot,
-    append_vec_path: &Path,
+    append_vec_file_info: FileInfo,
     current_len: usize,
     id: AccountsFileId,
     storage_access: StorageAccess,
@@ -889,7 +891,7 @@ pub(crate) fn reconstruct_single_storage(
     };
 
     let accounts_file =
-        AccountsFile::new_for_startup(append_vec_path, current_len, storage_access)?;
+        AccountsFile::new_for_startup(append_vec_file_info, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         id,
@@ -904,14 +906,14 @@ pub(crate) fn reconstruct_single_storage(
 pub(crate) fn remap_append_vec_file(
     slot: Slot,
     old_append_vec_id: SerializedAccountsFileId,
-    append_vec_path: &Path,
+    append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
-) -> io::Result<(AccountsFileId, PathBuf)> {
+) -> io::Result<(AccountsFileId, FileInfo)> {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    let append_vec_path_cstr = cstring_from_path(append_vec_path)?;
+    let append_vec_path_cstr = cstring_from_path(&append_vec_file_info.path)?;
 
-    let mut remapped_append_vec_path = append_vec_path.to_path_buf();
+    let mut remapped_append_vec_path = append_vec_file_info.path.to_path_buf();
 
     // Break out of the loop in the following situations:
     // 1. The new ID is the same as the original ID.  This means we do not need to
@@ -927,7 +929,10 @@ pub(crate) fn remap_append_vec_file(
         }
 
         let remapped_file_name = AccountsFile::file_name(slot, remapped_append_vec_id);
-        remapped_append_vec_path = append_vec_path.parent().unwrap().join(remapped_file_name);
+        remapped_append_vec_path = remapped_append_vec_path
+            .parent()
+            .unwrap()
+            .join(remapped_file_name);
 
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         {
@@ -965,31 +970,37 @@ pub(crate) fn remap_append_vec_file(
         all(target_os = "linux", not(target_env = "gnu"))
     ))]
     if old_append_vec_id != remapped_append_vec_id as SerializedAccountsFileId {
-        std::fs::rename(append_vec_path, &remapped_append_vec_path)?;
+        std::fs::rename(&append_vec_file_info.path, &remapped_append_vec_path)?;
     }
 
-    Ok((remapped_append_vec_id, remapped_append_vec_path))
+    Ok((
+        remapped_append_vec_id,
+        FileInfo {
+            path: remapped_append_vec_path,
+            ..append_vec_file_info
+        },
+    ))
 }
 
 pub(crate) fn remap_and_reconstruct_single_storage(
     slot: Slot,
     old_append_vec_id: SerializedAccountsFileId,
     current_len: usize,
-    append_vec_path: &Path,
+    append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
     storage_access: StorageAccess,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    let (remapped_append_vec_id, remapped_append_vec_path) = remap_append_vec_file(
+    let (remapped_append_vec_id, remapped_append_vec_file_info) = remap_append_vec_file(
         slot,
         old_append_vec_id,
-        append_vec_path,
+        append_vec_file_info,
         next_append_vec_id,
         num_collisions,
     )?;
     let storage = reconstruct_single_storage(
         &slot,
-        &remapped_append_vec_path,
+        remapped_append_vec_file_info,
         current_len,
         remapped_append_vec_id,
         storage_access,

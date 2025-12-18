@@ -116,6 +116,7 @@ mod tests {
             sigverify,
             test_tx::test_tx,
         },
+        agave_random::range::random_u64_range,
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
         solana_packet::{Meta, PACKET_DATA_SIZE},
@@ -248,7 +249,7 @@ mod tests {
         let mut packet = Packet::new([0u8; PACKET_DATA_SIZE], Meta::default());
         let mut dup_count = 0usize;
         for _ in 0..num_packets {
-            let size = rng.gen_range(0..PACKET_DATA_SIZE);
+            let size = random_u64_range(&mut rng, 0..PACKET_DATA_SIZE as u64) as usize;
             packet.meta_mut().size = size;
             rng.fill(&mut packet.buffer_mut()[0..size]);
             if deduper.dedup(packet.data(..).unwrap()) {

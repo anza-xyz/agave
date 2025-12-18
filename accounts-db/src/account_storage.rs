@@ -81,13 +81,18 @@ impl AccountStorage {
     pub fn get_slot_storage_entry(&self, slot: Slot) -> Option<Arc<AccountStorageEntry>> {
         assert!(
             self.no_shrink_in_progress(),
-            "self.no_shrink_in_progress(): {slot}"
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
         );
         self.get_slot_storage_entry_shrinking_in_progress_ok(slot)
     }
 
     pub(super) fn all_storages(&self) -> Vec<Arc<AccountStorageEntry>> {
-        assert!(self.no_shrink_in_progress());
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
         self.map
             .iter()
             .map(|item| Arc::clone(item.value()))
@@ -115,7 +120,11 @@ impl AccountStorage {
     }
 
     pub(crate) fn all_slots(&self) -> Vec<Slot> {
-        assert!(self.no_shrink_in_progress());
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
         self.map.iter().map(|iter_item| *iter_item.key()).collect()
     }
 
@@ -124,7 +133,8 @@ impl AccountStorage {
     pub(crate) fn is_empty_entry(&self, slot: Slot) -> bool {
         assert!(
             self.no_shrink_in_progress(),
-            "self.no_shrink_in_progress(): {slot}"
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
         );
         self.map.get(&slot).is_none()
     }
@@ -132,7 +142,11 @@ impl AccountStorage {
     /// initialize the storage map to 'all_storages'
     pub fn initialize(&mut self, all_storages: AccountStorageMap) {
         assert!(self.map.is_empty());
-        assert!(self.no_shrink_in_progress());
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
         self.map = all_storages;
     }
 
@@ -149,16 +163,21 @@ impl AccountStorage {
 
     /// iterate through all (slot, append-vec)
     pub(crate) fn iter(&self) -> AccountStorageIter<'_> {
-        assert!(self.no_shrink_in_progress());
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
         AccountStorageIter::new(self)
     }
 
-    pub(crate) fn insert(&self, slot: Slot, store: Arc<AccountStorageEntry>) {
+    pub(crate) fn insert(&self, store: Arc<AccountStorageEntry>) {
         assert!(
             self.no_shrink_in_progress(),
-            "self.no_shrink_in_progress(): {slot}"
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
         );
-        assert!(self.map.insert(slot, store).is_none());
+        assert!(self.map.insert(store.slot, store).is_none());
     }
 
     /// called when shrinking begins on a slot and append vec.
@@ -214,7 +233,11 @@ impl AccountStorage {
         &self,
         predicate: impl Fn(&Slot, &AccountStorageEntry) -> bool,
     ) -> Box<[(Slot, Arc<AccountStorageEntry>)]> {
-        assert!(self.no_shrink_in_progress());
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
         self.map
             .iter()
             .filter_map(|entry| {
@@ -554,7 +577,7 @@ pub(crate) mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "self.no_shrink_in_progress()")]
+    #[should_panic(expected = "shrink is in progress!")]
     fn test_get_slot_storage_entry_fail(storage_access: StorageAccess) {
         let storage = AccountStorage::default();
         storage
@@ -567,7 +590,7 @@ pub(crate) mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "self.no_shrink_in_progress()")]
+    #[should_panic(expected = "shrink is in progress!")]
     fn test_all_slots_fail(storage_access: StorageAccess) {
         let storage = AccountStorage::default();
         storage
@@ -580,7 +603,7 @@ pub(crate) mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "self.no_shrink_in_progress()")]
+    #[should_panic(expected = "shrink is in progress!")]
     fn test_initialize_fail(storage_access: StorageAccess) {
         let mut storage = AccountStorage::default();
         storage
@@ -608,7 +631,7 @@ pub(crate) mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "self.no_shrink_in_progress()")]
+    #[should_panic(expected = "shrink is in progress!")]
     fn test_iter_fail(storage_access: StorageAccess) {
         let storage = AccountStorage::default();
         storage
@@ -621,7 +644,7 @@ pub(crate) mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "self.no_shrink_in_progress()")]
+    #[should_panic(expected = "shrink is in progress!")]
     fn test_insert_fail(storage_access: StorageAccess) {
         let storage = AccountStorage::default();
         let sample = storage.get_test_storage(storage_access);
@@ -630,7 +653,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .insert(0, sample.clone());
-        storage.insert(0, sample);
+        storage.insert(sample);
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
@@ -791,7 +814,7 @@ pub(crate) mod tests {
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "self.no_shrink_in_progress()")]
+    #[should_panic(expected = "shrink is in progress!")]
     fn test_get_if_fail(storage_access: StorageAccess) {
         let storage = AccountStorage::default();
         storage

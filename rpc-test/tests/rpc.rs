@@ -25,10 +25,7 @@ use {
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
-    solana_tpu_client_next::{
-        client_builder::ClientBuilder, connection_workers_scheduler::NonblockingBroadcaster,
-        leader_updater::LeaderUpdater,
-    },
+    solana_tpu_client_next::{client_builder::ClientBuilder, leader_updater::LeaderUpdater},
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     std::{
@@ -448,7 +445,7 @@ fn test_rpc_subscriptions() {
         ClientBuilder::new(leader_updater)
             .bind_socket(bind_socket)
             .identity(&alice)
-            .build::<NonblockingBroadcaster>()
+            .build()
             .expect("Failed to build TPU client")
     });
 
@@ -547,7 +544,7 @@ fn test_run_tpu_send_transaction() {
         ClientBuilder::new(leader_updater)
             .bind_socket(bind_socket)
             .identity(&mint_keypair)
-            .build::<NonblockingBroadcaster>()
+            .build()
             .expect("Failed to build TPU client")
     });
 
