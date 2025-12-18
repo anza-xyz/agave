@@ -1,6 +1,7 @@
 //! Information about points calculation based on stake state.
 
 use {
+    crate::stake_delegation::stake_effective,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -85,6 +86,7 @@ pub(crate) fn calculate_points(
     vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
 ) -> Result<u128, InstructionError> {
     if let StakeStateV2::Stake(_meta, stake, _stake_flags) = stake_state {
         Ok(calculate_stake_points(
@@ -93,6 +95,7 @@ pub(crate) fn calculate_points(
             stake_history,
             null_tracer(),
             new_rate_activation_epoch,
+            use_fixed_point_stake_math,
         ))
     } else {
         Err(InstructionError::InvalidAccountData)
@@ -105,6 +108,7 @@ fn calculate_stake_points(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
 ) -> u128 {
     calculate_stake_points_and_credits(
         stake,
@@ -112,6 +116,7 @@ fn calculate_stake_points(
         stake_history,
         inflation_point_calc_tracer,
         new_rate_activation_epoch,
+        use_fixed_point_stake_math,
     )
     .points
 }
@@ -125,6 +130,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = vote_state.credits;
@@ -177,10 +183,12 @@ pub(crate) fn calculate_stake_points_and_credits(
 
     for epoch_credits_item in vote_state.epoch_credits_iter {
         let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item;
-        let stake_amount = u128::from(stake.delegation.stake(
+        let stake_amount = u128::from(stake_effective(
+            stake,
             epoch,
             stake_history,
             new_rate_activation_epoch,
+            use_fixed_point_stake_math,
         ));
 
         // figure out how much this stake has seen that
@@ -228,6 +236,7 @@ mod tests {
         super::*,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
+        test_case::test_case,
     };
 
     impl<'a> From<&'a VoteStateV4> for DelegatedVoteState<'a> {
@@ -251,8 +260,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_stake_state_calculate_points_with_typical_values() {
+    #[test_case(false; "legacy_float")]
+    #[test_case(true; "fixed_point")]
+    fn test_stake_state_calculate_points_with_typical_values(use_fixed_point: bool) {
         let mut vote_state = VoteStateV4::default();
 
         // bootstrap means fully-vested stake at epoch 0 with
@@ -279,7 +289,8 @@ mod tests {
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
-                None
+                None,
+                use_fixed_point,
             )
         );
     }

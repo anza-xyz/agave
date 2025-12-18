@@ -139,7 +139,7 @@ solana-sdk-ids = "3.0.0"
 solana-shred-version = "3.0.0"
 solana-signature = { version = "3.1.0", default-features = false }
 solana-signer = "3.0.0"
-solana-stake-interface = "2.0.2"
+solana-stake-interface = { workspace = true }
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-callback = { path = "../svm-callback", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -223,3 +223,4 @@ opt-level = 3
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
 solana-curve25519 = { path = "../curves/curve25519" }
+solana-stake-interface = { git = "https://github.com/solana-program/stake", rev = "5f3fe65d94213f7514a0cc45662a5fe0cc2dbe15" }
