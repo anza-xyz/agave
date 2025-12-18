@@ -177,8 +177,6 @@ impl XdpRetransmitter {
                             Err(TryRecvError::Disconnected) => break,
                         }
                     }
-                    // move the ebpf program here so it stays attached until we exit
-                    drop(ebpf);
                 })
                 .unwrap(),
         );
