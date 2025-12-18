@@ -3184,6 +3184,12 @@ impl Blockstore {
         }
     }
 
+    /// Finds a transaction by signature in the given slot and returns it along with its index.
+    ///
+    /// The index represents the transaction's 0-based position in the flattened list of all
+    /// transactions across all entries in this slot. This matches the `transaction_index`
+    /// stored in `AddressSignatures` when `write_transaction_status` is called during block
+    /// processing.
     fn find_transaction_in_slot(
         &self,
         slot: Slot,
