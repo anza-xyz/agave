@@ -1,10 +1,8 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
-#[cfg(feature = "dev-context-only-utils")]
-use bytes::{BufMut, BytesMut};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bincode::config::Options,
-    bytes::Bytes,
+    bytes::{BufMut, Bytes, BytesMut},
     rayon::{
         iter::{IndexedParallelIterator, ParallelIterator},
         prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
@@ -61,7 +59,6 @@ impl BytesPacket {
         Self { buffer, meta }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
     pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
     where
         T: solana_packet::Encode,

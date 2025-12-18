@@ -17,7 +17,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::swqos::SwQosConfig,
-        packet::PacketBatchRecycler,
         quic::{
             spawn_stake_wighted_qos_server, QuicStreamerConfig,
             DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
@@ -251,7 +250,6 @@ fn main() -> Result<()> {
 
         let mut read_channels = Vec::new();
         let mut read_threads = Vec::new();
-        let recycler = PacketBatchRecycler::default();
         let config = SocketConfig::default();
         let (port, read_sockets) = multi_bind_in_range_with_config(
             ip_addr,
@@ -302,10 +300,8 @@ fn main() -> Result<()> {
                     Arc::new(read),
                     exit.clone(),
                     s_reader,
-                    recycler.clone(),
                     stats.clone(),
                     None,  // coalesce
-                    true,  // use_pinned_memory
                     None,  // in_vote_only_mode
                     false, // is_staked_service
                 ));

@@ -13,18 +13,42 @@ use {
     },
 };
 use {
-    crate::packet::{Meta, Packet},
-    std::{cmp, io, net::UdpSocket},
+    crate::packet::{Meta, RecvBuffer},
+    solana_perf::packet::{BytesPacket, BytesPacketBatch},
+    std::{io, net::UdpSocket},
 };
 
 #[cfg(not(target_os = "linux"))]
-pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
-    debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
+pub fn recv_mmsg(
+    socket: &UdpSocket,
+    packet_batch: &mut BytesPacketBatch,
+    buffer: &mut RecvBuffer,
+    is_staked_service: bool,
+) -> io::Result</*num packets:*/ usize> {
+    use solana_perf::packet::PACKET_DATA_SIZE;
+
+    let count = packet_batch.capacity() - packet_batch.len();
+    debug_assert!(
+        buffer.capacity_packets() >= count,
+        "expected `buffer` packet capacity ({}) to be greater or equal to
+the `count` of packets we intend to receive ({})",
+        buffer.capacity_packets(),
+        count
+    );
+
     let mut i = 0;
-    let count = cmp::min(PACKETS_PER_BATCH, packets.len());
-    for p in packets.iter_mut().take(count) {
-        p.meta_mut().size = 0;
-        match socket.recv_from(p.buffer_mut()) {
+    for chunk_buffer in buffer.spare_capacity_chunks_mut().take(count) {
+        // There is no `UdpSocket::recv*` method that works with `&mut [MaybeUninit<u8>]`.
+        // They only accept initialized slices `&mut [u8]`.
+        // Given that we never use non-Linux systems on production, so we don't
+        // care about performance on them, let's just initailize the chunks of
+        // `buffer` with zeros.
+        for b in chunk_buffer.iter_mut() {
+            b.write(0);
+        }
+        // SAFETY: All elements were initialized above.
+        let chunk_buffer = unsafe { mem::transmute::<_, &mut [u8]>(chunk_buffer) };
+        match socket.recv_from(chunk_buffer) {
             Err(_) if i > 0 => {
                 break;
             }
@@ -32,11 +56,17 @@ pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num
                 return Err(e);
             }
             Ok((nrecv, from)) => {
-                p.meta_mut().size = nrecv;
-                p.meta_mut().set_socket_addr(&from);
+                let mut meta = Meta::default();
+                meta.size = nrecv;
+                meta.set_socket_addr(&from);
+                meta.set_from_staked_node(is_staked_service);
                 if i == 0 {
                     socket.set_nonblocking(true)?;
                 }
+                // SAFETY: We are sure that the `nrecv` bytes of the buffer are
+                // initialized.
+                let chunk = unsafe { buffer.split_to_packet_bytes(nrecv) };
+                packet_batch.push(BytesPacket::new(chunk, meta));
             }
         }
         i += 1;
@@ -91,14 +121,24 @@ this function
  prior to calling this function if you require this to actually time out after 1 second.
 */
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
-    // Should never hit this, but bail if the caller didn't provide any Packets
-    // to receive into
-    if packets.is_empty() {
+pub fn recv_mmsg(
+    sock: &UdpSocket,
+    packet_batch: &mut BytesPacketBatch,
+    buffer: &mut RecvBuffer,
+    is_staked_service: bool,
+) -> io::Result</*num packets:*/ usize> {
+    // Should never hit this, but bail if the packet batch has no capacity.
+    if packet_batch.capacity() == 0 {
         return Ok(0);
     }
-    // Assert that there are no leftovers in packets.
-    debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
+    let count = packet_batch.capacity() - packet_batch.len();
+    debug_assert!(
+        buffer.capacity_packets() >= count,
+        "expected `buffer` packet capacity ({}) to be greater or equal to
+the `count` of packets we intend to receive ({})",
+        buffer.capacity_packets(),
+        count
+    );
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
     let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
@@ -106,12 +146,15 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
 
     let sock_fd = sock.as_raw_fd();
-    let count = cmp::min(iovs.len(), packets.len());
 
-    for (packet, hdr, iov, addr) in
-        izip!(packets.iter_mut(), &mut hdrs, &mut iovs, &mut addrs).take(count)
+    for (buffer, hdr, iov, addr) in izip!(
+        buffer.spare_capacity_chunks_mut(),
+        &mut hdrs,
+        &mut iovs,
+        &mut addrs
+    )
+    .take(count)
     {
-        let buffer = packet.buffer_mut();
         iov.write(iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),
@@ -145,7 +188,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     } else {
         usize::try_from(nrecv).unwrap()
     };
-    for (addr, hdr, pkt) in izip!(addrs, hdrs, packets.iter_mut()).take(nrecv) {
+    for (addr, hdr) in izip!(addrs, hdrs).take(nrecv) {
         // SAFETY: We initialized `count` elements of `hdrs` above. `count` is
         // passed to recvmmsg() as the limit of messages that can be read. So,
         // `nrevc <= count` which means we initialized this `hdr` and
@@ -154,10 +197,17 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         // SAFETY: Similar to above, we initialized this `addr` and recvmmsg()
         // will have populated it
         let addr_ref = unsafe { addr.assume_init_ref() };
-        pkt.meta_mut().size = hdr_ref.msg_len as usize;
+        let size = hdr_ref.msg_len as usize;
+        // SAFETY: We are sure that the `msg_len` bytes of the buffer are
+        // initialized.
+        let chunk = unsafe { buffer.split_to_packet_bytes(size) };
+        let mut meta = Meta::default();
+        meta.size = size;
         if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
-            pkt.meta_mut().set_socket_addr(&addr);
+            meta.set_socket_addr(&addr);
         }
+        meta.set_from_staked_node(is_staked_service);
+        packet_batch.push(BytesPacket::new(chunk, meta));
     }
 
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
@@ -223,10 +273,11 @@ mod tests {
                 sender.send_to(&data[..], addr).unwrap();
             }
 
-            let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-            let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+            let mut packets = BytesPacketBatch::with_capacity(TEST_NUM_MSGS);
+            let mut buffer = RecvBuffer::new(TEST_NUM_MSGS);
+            let recv = recv_mmsg(&reader, &mut packets, &mut buffer, false).unwrap();
             assert_eq!(sent, recv);
-            for packet in packets.iter().take(recv) {
+            for packet in packets.iter() {
                 assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
                 assert_eq!(packet.meta().socket_addr(), saddr);
             }
@@ -249,18 +300,18 @@ mod tests {
                 sender.send_to(&data[..], addr).unwrap();
             }
 
-            let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-            let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+            let mut packets = BytesPacketBatch::with_capacity(TEST_NUM_MSGS);
+            let mut buffer = RecvBuffer::new(TEST_NUM_MSGS);
+            let recv = recv_mmsg(&reader, &mut packets, &mut buffer, false).unwrap();
             assert_eq!(TEST_NUM_MSGS, recv);
             for packet in packets.iter().take(recv) {
                 assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
                 assert_eq!(packet.meta().socket_addr(), saddr);
             }
 
-            packets
-                .iter_mut()
-                .for_each(|pkt| *pkt.meta_mut() = Meta::default());
-            let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+            packets.clear();
+            buffer.reserve_packets(TEST_NUM_MSGS);
+            let recv = recv_mmsg(&reader, &mut packets, &mut buffer, false).unwrap();
             assert_eq!(sent - TEST_NUM_MSGS, recv);
             for packet in packets.iter().take(recv) {
                 assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
@@ -289,8 +340,9 @@ mod tests {
         }
 
         let start = Instant::now();
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let mut packets = BytesPacketBatch::with_capacity(TEST_NUM_MSGS);
+        let mut buffer = RecvBuffer::new(TEST_NUM_MSGS);
+        let recv = recv_mmsg(&reader, &mut packets, &mut buffer, false).unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
@@ -298,10 +350,9 @@ mod tests {
         }
         reader.set_nonblocking(true).unwrap();
 
-        packets
-            .iter_mut()
-            .for_each(|pkt| *pkt.meta_mut() = Meta::default());
-        let _recv = recv_mmsg(&reader, &mut packets[..]);
+        packets.clear();
+        buffer.reserve_packets(TEST_NUM_MSGS);
+        let _recv = recv_mmsg(&reader, &mut packets, &mut buffer, false);
         assert!(start.elapsed().as_secs() < 5);
     }
 
@@ -335,9 +386,10 @@ mod tests {
             sender2.send_to(&data[..], reader_addr).unwrap();
         }
 
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+        let mut packets = BytesPacketBatch::with_capacity(TEST_NUM_MSGS);
+        let mut buffer = RecvBuffer::new(TEST_NUM_MSGS);
 
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let recv = recv_mmsg(&reader, &mut packets, &mut buffer, false).unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(sent1) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
@@ -348,10 +400,9 @@ mod tests {
             assert_eq!(packet.meta().socket_addr(), sender_addr);
         }
 
-        packets
-            .iter_mut()
-            .for_each(|pkt| *pkt.meta_mut() = Meta::default());
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        packets.clear();
+        buffer.reserve_packets(TEST_NUM_MSGS);
+        let recv = recv_mmsg(&reader, &mut packets, &mut buffer, false).unwrap();
         assert_eq!(sent1 + sent2 - TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
