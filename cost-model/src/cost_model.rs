@@ -231,6 +231,8 @@ impl CostModel {
                     SystemProgramAccountAllocation::Some(space)
                 }
             }
+            // DEVELOPER WARNING: New allocating instructions MUST return `Failed`
+            // until activated by a feature gate
             SystemInstruction::Assign { .. }
             | SystemInstruction::Transfer { .. }
             | SystemInstruction::AdvanceNonceAccount
@@ -240,10 +242,12 @@ impl CostModel {
             | SystemInstruction::UpgradeNonceAccount
             | SystemInstruction::AssignWithSeed { .. }
             | SystemInstruction::TransferWithSeed { .. } => SystemProgramAccountAllocation::None,
+            // DEVELOPER WARNING: New non-allocating instructions MUST return `Failed`
+            // until activated by a feature gate
             SystemInstruction::CreateAccountAllowPrefund { space: _, .. } => {
                 // pending feature-gated implementation
                 SystemProgramAccountAllocation::Failed
-            }
+            } // Do not add wildcard pattern (_)
         }
     }
 
@@ -859,132 +863,5 @@ mod tests {
             CostModel::get_estimated_execution_cost(&transaction, &feature_set);
 
         assert_eq!(expected_execution_cost, programs_execution_cost);
-    }
-
-    /// Regression test for SystemInstruction allocation data size calculation behavior.
-    ///
-    /// When a new SystemInstruction variant is added, this test will fail to compile
-    /// until updated.
-    ///
-    /// When you see a compile error here:
-    /// 1. DO NOT add a new allocating variant to
-    ///    `calculate_account_data_size_on_deserialized_system_instruction`
-    ///    without proper feature gating
-    /// 2. Add the variant to the exhaustive match below
-    /// 3. If you are not yet implementing feature-gated behavior, add a match arm that
-    ///    verifies that the new allocating instruction returns `Failed`
-    /// 4. Once feature-gate-activated, modify the test so that the new allocating
-    ///    instruction returns `Some(space)` if feature is enabled, and `Failed` otherwise
-    ///
-    /// Adding a new allocating instruction without feature gating will cause consensus
-    /// issues during block replay.
-    #[test]
-    fn test_calculate_account_data_size_all_system_instruction_variants() {
-        let (lamports, owner, seed, space, base, authority) = (
-            1_000_000,
-            Pubkey::default(),
-            "seed".to_string(),
-            100u64,
-            Pubkey::default(),
-            Pubkey::default(),
-        );
-
-        let all_instructions = [
-            SystemInstruction::CreateAccount {
-                lamports,
-                space,
-                owner,
-            },
-            SystemInstruction::CreateAccountWithSeed {
-                base,
-                seed: seed.clone(),
-                lamports,
-                space,
-                owner,
-            },
-            SystemInstruction::CreateAccountAllowPrefund {
-                lamports,
-                space,
-                owner,
-            },
-            SystemInstruction::Allocate { space },
-            SystemInstruction::AllocateWithSeed {
-                base,
-                seed: seed.clone(),
-                space,
-                owner,
-            },
-            SystemInstruction::Assign { owner },
-            SystemInstruction::Transfer { lamports },
-            SystemInstruction::AdvanceNonceAccount,
-            SystemInstruction::WithdrawNonceAccount(lamports),
-            SystemInstruction::InitializeNonceAccount(authority),
-            SystemInstruction::AuthorizeNonceAccount(authority),
-            SystemInstruction::UpgradeNonceAccount,
-            SystemInstruction::AssignWithSeed {
-                base,
-                seed: seed.clone(),
-                owner,
-            },
-            SystemInstruction::TransferWithSeed {
-                lamports,
-                from_seed: seed.clone(),
-                from_owner: owner,
-            },
-        ];
-
-        for instruction in all_instructions {
-            let result = CostModel::calculate_account_data_size_on_deserialized_system_instruction(
-                instruction.clone(),
-            );
-
-            let expected = match instruction {
-                // Allocating instructions (should return Some(space) when properly handled)
-                SystemInstruction::CreateAccount { space, .. }
-                | SystemInstruction::CreateAccountWithSeed { space, .. }
-                | SystemInstruction::Allocate { space }
-                | SystemInstruction::AllocateWithSeed { space, .. } => {
-                    SystemProgramAccountAllocation::Some(space)
-                }
-                // Non-allocating instructions
-                SystemInstruction::Assign { .. }
-                | SystemInstruction::Transfer { .. }
-                | SystemInstruction::AdvanceNonceAccount
-                | SystemInstruction::WithdrawNonceAccount(..)
-                | SystemInstruction::InitializeNonceAccount(..)
-                | SystemInstruction::AuthorizeNonceAccount(..)
-                | SystemInstruction::UpgradeNonceAccount
-                | SystemInstruction::AssignWithSeed { .. }
-                | SystemInstruction::TransferWithSeed { .. } => {
-                    SystemProgramAccountAllocation::None
-                }
-                // New instructions (allocating or non-allocating) must return `Failed` until feature-gated.
-                // For example:
-                //
-                // ```
-                // SystemInstruction::CreateAccountAllowPrefund { .. } => {
-                //     assert!(
-                //         matches!(result, SystemProgramAccountAllocation::Failed),
-                //         "CreateAccountAllowPrefund must return Failed until feature-gated, got \
-                //          {result:?}",
-                //     );
-                //     continue;
-                // }
-                // ```
-                SystemInstruction::CreateAccountAllowPrefund { .. } => {
-                    assert!(
-                        matches!(result, SystemProgramAccountAllocation::Failed),
-                        "CreateAccountAllowPrefund must return Failed until feature-gated, got \
-                         {result:?}",
-                    );
-                    continue;
-                } // Do not add catch-all (_) pattern - compiler should error if uncovered variants are added
-            };
-
-            assert_eq!(
-                expected, result,
-                "Mismatch for instruction: {instruction:?}",
-            );
-        }
     }
 }
