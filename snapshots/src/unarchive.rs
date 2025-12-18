@@ -1,9 +1,9 @@
 use {
     crate::{
-        hardened_unpack::{self, UnpackError},
         ArchiveFormat, ArchiveFormatDecompressor,
+        hardened_unpack::{self, UnpackError},
     },
-    agave_fs::{buffered_reader, file_io::file_creator, io_setup::IoSetupState, FileInfo},
+    agave_fs::{FileInfo, buffered_reader, file_io::file_creator, io_setup::IoSetupState},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     std::{
@@ -112,12 +112,12 @@ pub fn unpack_genesis_archive(
     Ok(())
 }
 
-fn decompressed_tar_reader(
+fn decompressed_tar_reader<T: AsRef<Path>>(
     archive_format: ArchiveFormat,
-    archive_path: impl AsRef<Path>,
+    archive_path: T,
     buf_size: u64,
     io_setup: &IoSetupState,
-) -> io::Result<ArchiveFormatDecompressor<impl BufRead>> {
+) -> io::Result<ArchiveFormatDecompressor<impl BufRead + use<T>>> {
     let buf_reader =
         buffered_reader::large_file_buf_reader(archive_path.as_ref(), buf_size as usize, io_setup)?;
     ArchiveFormatDecompressor::new(archive_format, buf_reader)
