@@ -426,6 +426,16 @@ struct ExtraFieldsToDeserialize {
     versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     #[serde(deserialize_with = "default_on_eof")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
+    /// In order to maintain snapshot compatibility between adjacent versions
+    /// (edge <-> beta, and beta <-> stable), we must be able to deserialize
+    /// (and ignore) this new field (block id) in adjacent versions *before*
+    /// we serialize the new field into snapshots.
+    /// Hence the annotation to allow dead code.
+    /// This code is not truly dead though, as it enables newer versions to
+    /// populate this field and have older versions still load the snapshot.
+    #[allow(dead_code)]
+    #[serde(deserialize_with = "default_on_eof")]
+    block_id: Option<Hash>,
 }
 
 /// Extra fields that are serialized at the end of snapshots.
@@ -474,6 +484,7 @@ where
         _obsolete_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,
+        block_id: _,
     } = extra_fields;
 
     bank_fields.fee_rate_governor = bank_fields
