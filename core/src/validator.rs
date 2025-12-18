@@ -668,7 +668,7 @@ pub struct Validator {
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
     completed_data_sets_service: Option<CompletedDataSetsService>,
-    snapshot_packager_service: Option<SnapshotPackagerService>,
+    snapshot_packager_service: SnapshotPackagerService,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     poh_service: PohService,
     tpu: Tpu,
@@ -986,29 +986,20 @@ impl Validator {
         ));
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let snapshot_packager_service = if snapshot_controller
-            .snapshot_config()
-            .should_generate_snapshots()
-        {
-            let exit_backpressure = config
-                .validator_exit_backpressure
-                .get(SnapshotPackagerService::NAME)
-                .cloned();
-            let enable_gossip_push = true;
-            let snapshot_packager_service = SnapshotPackagerService::new(
-                pending_snapshot_packages.clone(),
-                starting_snapshot_hashes,
-                exit.clone(),
-                exit_backpressure,
-                cluster_info.clone(),
-                snapshot_controller.clone(),
-                enable_gossip_push,
-            );
-            Some(snapshot_packager_service)
-        } else {
-            None
-        };
-
+        let exit_backpressure = config
+            .validator_exit_backpressure
+            .get(SnapshotPackagerService::NAME)
+            .cloned();
+        let enable_gossip_push = true;
+        let snapshot_packager_service = SnapshotPackagerService::new(
+            pending_snapshot_packages.clone(),
+            starting_snapshot_hashes,
+            exit.clone(),
+            exit_backpressure,
+            cluster_info.clone(),
+            snapshot_controller.clone(),
+            enable_gossip_push,
+        );
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
@@ -1965,9 +1956,9 @@ impl Validator {
                 .expect("entry_notifier_service");
         }
 
-        if let Some(s) = self.snapshot_packager_service {
-            s.join().expect("snapshot_packager_service");
-        }
+        self.snapshot_packager_service
+            .join()
+            .expect("snapshot_packager_service");
 
         self.gossip_service.join().expect("gossip_service");
         self.repair_quic_endpoints
