@@ -1590,22 +1590,40 @@ mod tests {
     #[test]
     fn test_flush_internal_flushes_dirty_entry_and_evicts_from_cache() {
         let accounts_index = new_disk_buckets_for_test::<u64>();
-        let pubkey = solana_pubkey::new_rand();
+        let pubkey_flush = solana_pubkey::new_rand();
+        let pubkey_no_flush = solana_pubkey::new_rand();
         let slot = 123;
         let info = 42;
 
-        let entry = AccountMapEntry::new(
+        assert!(accounts_index.load_from_disk(&pubkey_flush).is_none());
+        assert!(accounts_index.load_from_disk(&pubkey_no_flush).is_none());
+
+        let entry_flush = AccountMapEntry::new(
             SlotList::from([(slot, info)]),
             1,
             AccountMapEntryMeta::new_dirty(&accounts_index.storage, false),
         );
-        entry.set_age(accounts_index.storage.current_age());
+        assert!(entry_flush.dirty());
+        entry_flush.set_age(accounts_index.storage.current_age());
+
+        // A dirty entry outside the eviction age window should not be flushed or evicted.
+        // A new entry's age is initialized to the future flush age, which won't be eligible
+        // for flushing/eviction at `current_age == 0`.
+        let entry_no_flush = AccountMapEntry::new(
+            SlotList::from([(slot + 1, info + 1)]),
+            1,
+            AccountMapEntryMeta::new_dirty(&accounts_index.storage, false),
+        );
+        assert!(entry_no_flush.dirty());
 
         accounts_index
             .map_internal
             .write()
             .unwrap()
-            .insert(pubkey, Box::new(entry));
+            .extend([
+                (pubkey_flush, Box::new(entry_flush)),
+                (pubkey_no_flush, Box::new(entry_no_flush)),
+            ]);
 
         accounts_index
             .remaining_ages_to_skip_flushing
@@ -1615,17 +1633,24 @@ mod tests {
 
         // Dirty entry should be flushed to disk.
         let (slot_list, ref_count) = accounts_index
-            .load_from_disk(&pubkey)
+            .load_from_disk(&pubkey_flush)
             .expect("entry should be written to disk");
         assert_eq!(slot_list, SlotList::from([(slot, info)]));
         assert_eq!(ref_count, 1);
 
         // Flushed entry should be evicted from the in-mem cache.
         let mut found_in_mem = false;
-        accounts_index.get_only_in_mem(&pubkey, false, |entry| {
+        accounts_index.get_only_in_mem(&pubkey_flush, false, |entry| {
             found_in_mem = entry.is_some();
         });
         assert!(!found_in_mem);
+
+        // Dirty entry outside the age window should not be written to disk or evicted.
+        assert!(accounts_index.load_from_disk(&pubkey_no_flush).is_none());
+        accounts_index.get_only_in_mem(&pubkey_no_flush, false, |entry| {
+            let entry = entry.expect("entry should remain in memory");
+            assert!(entry.dirty());
+        });
     }
 
     #[test]
