@@ -1616,14 +1616,10 @@ mod tests {
         );
         assert!(entry_no_flush.dirty());
 
-        accounts_index
-            .map_internal
-            .write()
-            .unwrap()
-            .extend([
-                (pubkey_flush, Box::new(entry_flush)),
-                (pubkey_no_flush, Box::new(entry_no_flush)),
-            ]);
+        accounts_index.map_internal.write().unwrap().extend([
+            (pubkey_flush, Box::new(entry_flush)),
+            (pubkey_no_flush, Box::new(entry_no_flush)),
+        ]);
 
         accounts_index
             .remaining_ages_to_skip_flushing
