@@ -76,7 +76,7 @@ pub fn run(args: CommandArgs) -> Result<()> {
 fn update_dependency_spec(dep_spec: &mut Item, from: &str, to: &str) -> bool {
     debug!("dep_spec: {dep_spec:?}");
     if let Some(current_version) = dep_spec.as_str() {
-        if current_version == from || current_version == format!("={}", from) {
+        if current_version == from || current_version == format!("={from}") {
             let new_version = current_version.replace(from, to);
             *dep_spec = value(&new_version);
             return true;
@@ -85,7 +85,7 @@ fn update_dependency_spec(dep_spec: &mut Item, from: &str, to: &str) -> bool {
         .as_inline_table()
         .and_then(|table| table.get("version").and_then(|version| version.as_str()))
     {
-        if current_version == from || current_version == format!("={}", from) {
+        if current_version == from || current_version == format!("={from}") {
             let new_version = current_version.replace(from, to);
             dep_spec["version"] = value(&new_version);
             return true;
