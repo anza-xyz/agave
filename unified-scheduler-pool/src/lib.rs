@@ -1104,6 +1104,14 @@ where
     }
 
     fn toggle_block_production_mode(&self, enable: bool) -> bool {
+        if matches!(
+            self.banking_stage_status(),
+            Some(BankingStageStatus::Exited)
+        ) {
+            warn!("toggle_block_production_mode: ignoring toggling due to node exiting: {enable}");
+            return true;
+        }
+
         if !self.block_production_supported() {
             info!("toggle_block_production_mode: unsupported: enable: {enable}");
             // block production isn't supported to begin with.
