@@ -1573,10 +1573,7 @@ impl Validator {
                 .port();
             let src_ip = match node.bind_ip_addrs.active() {
                 IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                IpAddr::V4(_unspecified) => xdp_config
-                    .interface
-                    .as_ref()
-                    .and_then(|iface| master_ip_if_bonded(iface)),
+                IpAddr::V4(_unspecified) => master_ip_if_bonded(&xdp_config.network_device.if_name),
                 _ => panic!("IPv6 not supported"),
             };
             let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip, exit.clone())
