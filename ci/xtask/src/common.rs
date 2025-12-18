@@ -27,6 +27,7 @@ pub fn recursive_find_files(
     let mut results = vec![];
     for result in WalkBuilder::new(path)
         .hidden(false)
+        .git_ignore(true)
         .build()
         .filter_map(Result::ok)
     {
