@@ -1430,6 +1430,9 @@ impl Validator {
         // Pass RecordReceiver from PohService to BlockCreationLoop when shutting down. Gives us a strong guarentee
         // that both block producers are not running at the same time
         let (record_receiver_sender, record_receiver_receiver) = bounded(1);
+        // Sender for notifications about our leader window. We allow for a maximum of 7 leader windows in case we have
+        // consecutive leader windows and are slow. There is an early give up if our leader window is skipped because we
+        // are too slow, so in practice this channel should never be full.
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(7);
         let poh_service = PohService::new(
             poh_recorder.clone(),
