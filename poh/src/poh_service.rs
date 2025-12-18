@@ -102,7 +102,7 @@ impl PohService {
         ticks_per_slot: u64,
         pinned_cpu_core: usize,
         hashes_per_batch: u64,
-        record_receiver: RecordReceiver,
+        mut record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         migration_status: Arc<MigrationStatus>,
         record_receiver_sender: Sender<RecordReceiver>,
@@ -121,13 +121,13 @@ impl PohService {
                     }
                     return;
                 }
-                let record_receiver = if poh_config.hashes_per_tick.is_none() {
+                if poh_config.hashes_per_tick.is_none() {
                     if poh_config.target_tick_count.is_none() {
                         Self::low_power_tick_producer(
                             poh_recorder.clone(),
                             &poh_config,
                             &poh_exit,
-                            record_receiver,
+                            &mut record_receiver,
                             poh_service_receiver,
                             &migration_status.shutdown_poh,
                             ticks_per_slot,
@@ -137,7 +137,7 @@ impl PohService {
                             poh_recorder.clone(),
                             &poh_config,
                             &poh_exit,
-                            record_receiver,
+                            &mut record_receiver,
                             poh_service_receiver,
                             ticks_per_slot,
                         )
@@ -158,12 +158,12 @@ impl PohService {
                         &poh_exit,
                         ticks_per_slot,
                         hashes_per_batch,
-                        record_receiver,
+                        &mut record_receiver,
                         poh_service_receiver,
                         target_ns_per_tick,
                         &migration_status.shutdown_poh,
                     )
-                };
+                }
 
                 if poh_exit.load(Ordering::Relaxed)
                     || !migration_status.shutdown_poh.load(Ordering::Acquire)
@@ -210,11 +210,11 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        mut record_receiver: RecordReceiver,
+        record_receiver: &mut RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         shutdown_poh: &AtomicBool,
         ticks_per_slot: u64,
-    ) -> RecordReceiver {
+    ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick = Instant::now();
         let mut should_shutdown_for_test_producers =
@@ -224,14 +224,14 @@ impl PohService {
         }
         while !poh_exit.load(Ordering::Relaxed) && !shutdown_poh.load(Ordering::Relaxed) {
             let service_message =
-                Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
+                Self::check_for_service_message(&poh_service_receiver, record_receiver);
             loop {
                 let remaining_tick_time = poh_config
                     .target_tick_duration
                     .saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
-                    &mut record_receiver,
+                    record_receiver,
                     remaining_tick_time,
                     ticks_per_slot,
                 );
@@ -264,14 +264,14 @@ impl PohService {
                     }
 
                     // Check if we can break the inner loop to handle a service message.
-                    if Self::can_process_service_message(&service_message, &record_receiver) {
+                    if Self::can_process_service_message(&service_message, record_receiver) {
                         break;
                     }
                 }
             }
 
             if let Some(service_message) = service_message {
-                Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -284,12 +284,11 @@ impl PohService {
         while !record_receiver.is_safe_to_restart() {
             Self::read_record_receiver_and_process(
                 &poh_recorder,
-                &mut record_receiver,
+                record_receiver,
                 Duration::ZERO,
                 ticks_per_slot,
             );
         }
-        record_receiver
     }
 
     pub fn read_record_receiver_and_process(
@@ -323,10 +322,10 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        mut record_receiver: RecordReceiver,
+        record_receiver: &mut RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         ticks_per_slot: u64,
-    ) -> RecordReceiver {
+    ) {
         let mut warned = false;
         let mut elapsed_ticks = 0;
         let mut last_tick = Instant::now();
@@ -340,7 +339,7 @@ impl PohService {
 
         while elapsed_ticks < num_ticks {
             let service_message =
-                Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
+                Self::check_for_service_message(&poh_service_receiver, record_receiver);
 
             loop {
                 let remaining_tick_time = poh_config
@@ -348,7 +347,7 @@ impl PohService {
                     .saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
-                    &mut record_receiver,
+                    record_receiver,
                     Duration::from_millis(0),
                     ticks_per_slot,
                 );
@@ -383,7 +382,7 @@ impl PohService {
                 }
 
                 // Check if we can break the inner loop to handle a service message.
-                if Self::can_process_service_message(&service_message, &record_receiver) {
+                if Self::can_process_service_message(&service_message, record_receiver) {
                     break;
                 }
             }
@@ -393,7 +392,7 @@ impl PohService {
                 warn!("exit signal is ignored because PohService is scheduled to exit soon");
             }
             if let Some(service_message) = service_message {
-                Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -406,12 +405,11 @@ impl PohService {
         while !record_receiver.is_safe_to_restart() {
             Self::read_record_receiver_and_process(
                 &poh_recorder,
-                &mut record_receiver,
+                record_receiver,
                 Duration::ZERO,
                 ticks_per_slot,
             );
         }
-        record_receiver
     }
 
     /// Returns true if the receiver should be shutdown. This is for test variants of the poh service.
@@ -538,11 +536,11 @@ impl PohService {
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
-        mut record_receiver: RecordReceiver,
+        record_receiver: &mut RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         target_ns_per_tick: u64,
         shutdown_poh: &AtomicBool,
-    ) -> RecordReceiver {
+    ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
@@ -560,13 +558,13 @@ impl PohService {
             }
 
             let service_message =
-                Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
+                Self::check_for_service_message(&poh_service_receiver, record_receiver);
             loop {
                 let should_tick = Self::record_or_hash(
                     &mut next_record,
                     &poh_recorder,
                     &mut timing,
-                    &mut record_receiver,
+                    record_receiver,
                     hashes_per_batch,
                     &poh,
                     target_ns_per_tick,
@@ -591,7 +589,7 @@ impl PohService {
 
                 // Check if we can break the inner loop to handle a service message.
                 if next_record.is_none()
-                    && Self::can_process_service_message(&service_message, &record_receiver)
+                    && Self::can_process_service_message(&service_message, record_receiver)
                 {
                     break;
                 }
@@ -599,11 +597,7 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 if !should_exit {
-                    Self::handle_service_message(
-                        &poh_recorder,
-                        service_message,
-                        &mut record_receiver,
-                    );
+                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
                 }
             }
 
@@ -612,7 +606,6 @@ impl PohService {
                 break;
             }
         }
-        record_receiver
     }
 
     /// Check for a service message and shutdown the channel if there is one.
