@@ -59,6 +59,7 @@ pub fn streaming_unarchive_snapshot(
                             err.0.path.display(),
                         );
                     }
+                    // Don't pass `File` back to file creator, so it's not closed (owned by channel now)
                     None
                 })?,
             )

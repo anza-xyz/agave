@@ -1508,8 +1508,7 @@ fn snapshot_version_from_file(mut file_info: FileInfo) -> io::Result<String> {
                 "failed to read snapshot version from file '{}': {err}",
                 file_info.path.display()
             ))
-        })
-        .unwrap();
+        })?;
 
     Ok(snapshot_version.trim().to_string())
 }

@@ -64,7 +64,7 @@ impl SnapshotStorageRebuilder {
     /// Synchronously spawns threads to rebuild snapshot storages
     pub(crate) fn rebuild_storage(
         accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
-        append_vecs_files: Vec<FileInfo>,
+        append_vec_files: Vec<FileInfo>,
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
@@ -79,7 +79,7 @@ impl SnapshotStorageRebuilder {
             num_threads,
             next_append_vec_id,
             snapshot_storage_lengths,
-            append_vecs_files,
+            append_vec_files,
             snapshot_from,
             storage_access,
             obsolete_accounts,
