@@ -360,11 +360,11 @@ pub(crate) fn install_if_missing(
     };
     if invalid_link {
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&target_path, &source_path).map_err(|err| {
+        std::os::unix::fs::symlink(target_path, &source_path).map_err(|err| {
             format!("could not symlink {source_path:?} -> {target_path:?}: {err}")
         })?;
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&target_path, &source_path).map_err(|err| {
+        std::os::windows::fs::symlink_dir(target_path, &source_path).map_err(|err| {
             format!("could not symlink {source_path:?} -> {target_path:?}: {err}")
         })?;
     }
