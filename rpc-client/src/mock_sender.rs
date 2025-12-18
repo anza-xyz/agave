@@ -430,6 +430,7 @@ impl RpcSender for MockSender {
                     memo: None,
                     block_time: None,
                     confirmation_status: Some(TransactionConfirmationStatus::Finalized),
+                    idx_in_block: 0,
                 }])?
             }
             "getBlockTime" => serde_json::to_value(UnixTimestamp::default())?,

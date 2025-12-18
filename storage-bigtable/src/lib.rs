@@ -880,6 +880,7 @@ impl LedgerStorage {
                         err: tx_by_addr_info.err,
                         memo: tx_by_addr_info.memo,
                         block_time: tx_by_addr_info.block_time,
+                        index: tx_by_addr_info.index,
                     },
                     tx_by_addr_info.index,
                 ));

@@ -3222,9 +3222,9 @@ impl Blockstore {
         &self,
         pubkey: Pubkey,
         slot: Slot,
-    ) -> Result<Vec<(Slot, Signature)>> {
+    ) -> Result<Vec<(Slot, Signature, u32)>> {
         let (lock, lowest_available_slot) = self.ensure_lowest_cleanup_slot();
-        let mut signatures: Vec<(Slot, Signature)> = vec![];
+        let mut signatures: Vec<(Slot, Signature, u32)> = vec![];
         if slot < lowest_available_slot {
             return Ok(signatures);
         }
@@ -3239,11 +3239,11 @@ impl Blockstore {
                     ),
                     IteratorDirection::Forward,
                 ))?;
-        for ((address, transaction_slot, _transaction_index, signature), _) in index_iterator {
+        for ((address, transaction_slot, transaction_index, signature), _) in index_iterator {
             if transaction_slot > slot || address != pubkey {
                 break;
             }
-            signatures.push((slot, signature));
+            signatures.push((slot, signature, transaction_index));
         }
         drop(lock);
         Ok(signatures)
@@ -3346,7 +3346,7 @@ impl Blockstore {
         get_until_slot_timer.stop();
 
         // Fetch the list of signatures that affect the given address
-        let mut address_signatures = vec![];
+        let mut address_signatures: Vec<(Slot, Signature, u32)> = vec![];
 
         // Get signatures in `slot`
         let mut get_initial_slot_timer = Measure::start("get_initial_slot_timer");
@@ -3356,7 +3356,7 @@ impl Blockstore {
             address_signatures.extend(
                 signatures
                     .into_iter()
-                    .filter(|(_, signature)| !excluded_signatures.contains(signature)),
+                    .filter(|(_, signature, _)| !excluded_signatures.contains(signature)),
             )
         } else {
             address_signatures.append(&mut signatures);
@@ -3378,13 +3378,13 @@ impl Blockstore {
 
         // Iterate until limit is reached
         while address_signatures.len() < limit {
-            if let Some(((key_address, slot, _transaction_index, signature), _)) = iterator.next() {
+            if let Some(((key_address, slot, transaction_index, signature), _)) = iterator.next() {
                 if slot < lowest_slot {
                     break;
                 }
                 if key_address == address {
                     if self.is_root(slot) || confirmed_unrooted_slots.contains(&slot) {
-                        address_signatures.push((slot, signature));
+                        address_signatures.push((slot, signature, transaction_index));
                     }
                     continue;
                 }
@@ -3395,13 +3395,13 @@ impl Blockstore {
 
         let address_signatures_iter = address_signatures
             .into_iter()
-            .filter(|(_, signature)| !until_excluded_signatures.contains(signature))
+            .filter(|(_, signature, _)| !until_excluded_signatures.contains(signature))
             .take(limit);
 
         // Fill in the status information for each found transaction
         let mut get_status_info_timer = Measure::start("get_status_info_timer");
         let mut infos = vec![];
-        for (slot, signature) in address_signatures_iter {
+        for (slot, signature, index) in address_signatures_iter {
             let transaction_status =
                 self.get_transaction_status(signature, &confirmed_unrooted_slots)?;
             let err = transaction_status.and_then(|(_slot, status)| status.status.err());
@@ -3413,6 +3413,7 @@ impl Blockstore {
                 err,
                 memo,
                 block_time,
+                index,
             });
         }
         get_status_info_timer.stop();
@@ -9135,25 +9136,28 @@ pub mod tests {
         let slot1_signatures = blockstore
             .find_address_signatures_for_slot(address0, 1)
             .unwrap();
-        for (i, (slot, signature)) in slot1_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot1_signatures.iter().enumerate() {
             assert_eq!(*slot, slot1);
             assert_eq!(*signature, Signature::from([i as u8 + 1; 64]));
+            assert_eq!(*index, (i + 1) as u32);
         }
 
         let slot2_signatures = blockstore
             .find_address_signatures_for_slot(address0, 2)
             .unwrap();
-        for (i, (slot, signature)) in slot2_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot2_signatures.iter().enumerate() {
             assert_eq!(*slot, slot2);
             assert_eq!(*signature, Signature::from([i as u8 + 5; 64]));
+            assert_eq!(*index, (i + 5) as u32);
         }
 
         let slot3_signatures = blockstore
             .find_address_signatures_for_slot(address0, 3)
             .unwrap();
-        for (i, (slot, signature)) in slot3_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot3_signatures.iter().enumerate() {
             assert_eq!(*slot, slot3);
             assert_eq!(*signature, Signature::from([i as u8 + 9; 64]));
+            assert_eq!(*index, (i + 9) as u32);
         }
     }
 
