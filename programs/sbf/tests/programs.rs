@@ -417,92 +417,99 @@ fn test_program_sbf_duplicate_accounts() {
     for program in programs.iter() {
         println!("Test program: {:?}", program);
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
-
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let authority_keypair = Keypair::new();
-
-        let (bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
+        let feature_set = FeatureSet::all_enabled();
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let mut program_cache = default_program_cache_with_program(
+            &program_id,
+            &program_elf,
+            &feature_set,
+            &compute_budget,
         );
-        let payee_account = AccountSharedData::new(10, 1, &program_id);
-        let payee_pubkey = Pubkey::new_unique();
-        bank.store_account(&payee_pubkey, &payee_account);
-        let account = AccountSharedData::new(10, 1, &program_id);
+        let sysvar_cache = default_sysvar_cache();
 
+        let payer_pubkey = Pubkey::new_unique();
+        let payee_pubkey = Pubkey::new_unique();
         let pubkey = Pubkey::new_unique();
+        let account = Account::new(10, 1, &program_id);
+
         let account_metas = vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
+            AccountMeta::new(payer_pubkey, true),
             AccountMeta::new(payee_pubkey, false),
             AccountMeta::new(pubkey, false),
             AccountMeta::new(pubkey, false),
         ];
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert!(result.is_ok());
+        let mut execute = |data: &[u8]| {
+            let accounts = vec![
+                (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
+                (payee_pubkey, Account::new(10, 1, &program_id)),
+                (pubkey, account.clone()),
+            ];
+            let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
+            let context = InstrContext {
+                feature_set: feature_set.clone(),
+                accounts,
+                instruction,
+            };
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap()
+        };
+
+        let effects = execute(&[1]);
+        assert!(effects.result.is_none());
+        let data = effects.get_account(&pubkey).unwrap().data.clone();
         assert_eq!(data[0], 1);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[2], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[2]);
+        assert!(effects.result.is_none());
+        let data = effects.get_account(&pubkey).unwrap().data.clone();
         assert_eq!(data[0], 2);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[3], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[3]);
+        assert!(effects.result.is_none());
+        let data = effects.get_account(&pubkey).unwrap().data.clone();
         assert_eq!(data[0], 3);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[4], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let lamports = bank_client.get_balance(&pubkey).unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[4]);
+        assert!(effects.result.is_none());
+        let lamports = effects.get_account(&pubkey).unwrap().lamports;
         assert_eq!(lamports, 11);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[5], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let lamports = bank_client.get_balance(&pubkey).unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[5]);
+        assert!(effects.result.is_none());
+        let lamports = effects.get_account(&pubkey).unwrap().lamports;
         assert_eq!(lamports, 12);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[6], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let lamports = bank_client.get_balance(&pubkey).unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[6]);
+        assert!(effects.result.is_none());
+        let lamports = effects.get_account(&pubkey).unwrap().lamports;
         assert_eq!(lamports, 13);
 
-        let keypair = Keypair::new();
-        let pubkey = keypair.pubkey();
+        let pubkey = Pubkey::new_unique();
         let account_metas = vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
+            AccountMeta::new(payer_pubkey, true),
             AccountMeta::new(payee_pubkey, false),
             AccountMeta::new(pubkey, false),
             AccountMeta::new_readonly(pubkey, true),
             AccountMeta::new_readonly(program_id, false),
         ];
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas.clone());
-        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-        let result = bank_client.send_and_confirm_message(&[&mint_keypair, &keypair], message);
-        assert!(result.is_ok());
+        let accounts = vec![
+            (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
+            (payee_pubkey, Account::new(10, 1, &program_id)),
+            (pubkey, Account::new(10, 1, &program_id)),
+        ];
+        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts,
+            instruction,
+        };
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+        assert!(effects.result.is_none());
     }
 }
 
