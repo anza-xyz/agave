@@ -30,7 +30,7 @@ use {
         snapshot_hash::SnapshotHash,
         streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion,
     },
-    crossbeam_channel::{Receiver, Sender},
+    crossbeam_channel::Receiver,
     log::*,
     regex::Regex,
     semver::Version,
@@ -52,6 +52,7 @@ use {
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, LazyLock},
+        thread,
     },
     tempfile::TempDir,
 };
@@ -1327,24 +1328,33 @@ fn unarchive_snapshot(
     snapshot_result
 }
 
-/// Streams snapshot dir files across channel
+/// Spawn thread that streams snapshot dir files across channel
+///
 /// Follow the flow of streaming_unarchive_snapshot(), but handle the from_dir case.
-fn streaming_snapshot_dir_files(
-    file_sender: Sender<PathBuf>,
-    snapshot_file_path: impl Into<PathBuf>,
-    snapshot_version_path: impl Into<PathBuf>,
+fn spawn_streaming_snapshot_dir_files(
+    snapshot_file_path: PathBuf,
+    snapshot_version_path: PathBuf,
     account_paths: &[PathBuf],
-) -> Result<()> {
-    file_sender.send(snapshot_file_path.into())?;
-    file_sender.send(snapshot_version_path.into())?;
+) -> (Receiver<PathBuf>, thread::JoinHandle<Result<()>>) {
+    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
+    let account_paths = account_paths.to_vec();
 
-    for account_path in account_paths {
-        for file in fs::read_dir(account_path)? {
-            file_sender.send(file?.path())?;
-        }
-    }
+    let handle = thread::Builder::new()
+        .name("solSnapDirFiles".to_string())
+        .spawn(move || {
+            file_sender.send(snapshot_file_path)?;
+            file_sender.send(snapshot_version_path)?;
 
-    Ok(())
+            for account_path in account_paths {
+                for file in fs::read_dir(account_path)? {
+                    file_sender.send(file?.path())?;
+                }
+            }
+            Ok::<_, SnapshotError>(())
+        })
+        .expect("should spawn thread");
+
+    (file_receiver, handle)
 }
 
 /// Performs the common tasks when deserializing a snapshot
@@ -1432,15 +1442,13 @@ pub fn rebuild_storages_from_snapshot_dir(
         }
     }
 
-    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let snapshot_file_path = &snapshot_info.snapshot_path();
+    let snapshot_file_path = snapshot_info.snapshot_path();
     let snapshot_version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    streaming_snapshot_dir_files(
-        file_sender,
+    let (file_receiver, stream_files_handle) = spawn_streaming_snapshot_dir_files(
         snapshot_file_path,
         snapshot_version_path,
         account_paths,
-    )?;
+    );
 
     let SnapshotFieldsBundle {
         bank_fields,
@@ -1460,7 +1468,9 @@ pub fn rebuild_storages_from_snapshot_dir(
         storage_access,
         obsolete_accounts,
     )?;
-
+    stream_files_handle
+        .join()
+        .expect("should join file stream thread")?;
     Ok((storage, bank_fields, accounts_db_fields))
 }
 
