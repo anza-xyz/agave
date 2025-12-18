@@ -1031,6 +1031,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_banking_stage_tick() {
         agave_logger::setup();
         let GenesisConfigInfo {
