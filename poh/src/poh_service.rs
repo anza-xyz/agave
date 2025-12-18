@@ -115,9 +115,9 @@ impl PohService {
                     // We've started up post alpenglow migration. Don't bother starting PohService
                     info!("Post Alpenglow migration, not starting PohService");
                     // Send the RecordReceiver directly to BlockCreationLoop,
-                    // if this fails then we're already shutting down
                     if let Err(e) = record_receiver_sender.send(record_receiver) {
-                        info!("Unable to send record receiver, shutting down {e:?}");
+                        // If this fails then it is because we're already shutting down
+                        info!("Unable to send record receiver, already shutting down {e:?}");
                     }
                     return;
                 }
@@ -176,9 +176,13 @@ impl PohService {
                     return;
                 }
 
-                // Pass the RecordReceiver to BlockCreationLoop,
+                // Pass the RecordReceiver to BlockCreationLoop. This is how we ensure that both block producers
+                // are not running at the same time. BlockCreationLoop will block on receiving the RecordReceiver
+                // before starting.
                 if let Err(e) = record_receiver_sender.send(record_receiver) {
-                    error!("Unable to send record receiver, shutting down {e:}");
+                    // If this send fails it is because we have been asked to shutdown and BlockCreationLoop
+                    // has exited.
+                    error!("Unable to send record receiver, already shutting down {e:}");
                     return;
                 }
 
