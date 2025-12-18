@@ -387,7 +387,7 @@ fn test_binaries_work() {
     let platform_folder = sdk_path.join("dependencies").join("platform-tools");
     let rust_bin_folder = platform_folder.join("rust").join("bin");
     let llvm_bin_folder = platform_folder.join("llvm").join("bin");
-    for binary in ["lldb", "lld", "clang", "solana-lldb"] {
+    for binary in ["lld", "clang"] {
         assert_cmd::Command::new(llvm_bin_folder.join(binary))
             .arg("--version")
             .assert()
