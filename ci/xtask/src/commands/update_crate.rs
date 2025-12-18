@@ -49,7 +49,7 @@ pub fn run(args: CommandArgs) -> Result<()> {
         {
             if update_dependency_spec(workspace_deps, &args.from, &args.to) {
                 need_to_write = true;
-                info!("  ✅ updated workspace.dependencie");
+                info!("  ✅ updated workspace.dependencies");
             }
         }
 
