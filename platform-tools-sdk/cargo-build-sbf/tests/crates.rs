@@ -328,8 +328,6 @@ fn test_corrupted_toolchain() {
 
     assert_failed_command();
 
-    fs::rename(bin_folder.join("rustc_2"), bin_folder.join("rustc"))
-        .expect("Failed to rename file");
     fs::rename(&bin_folder, bin_folder.parent().unwrap().join("bin2"))
         .expect("Failed to rename file");
 
@@ -366,4 +364,39 @@ fn test_alternate_download() {
     assert.success();
 
     build_noop_and_readelf("v0");
+}
+
+#[test]
+#[serial]
+fn test_binaries_work() {
+    let args = [
+        "-v",
+        "--sbf-sdk",
+        "../sbf",
+        "--install-only",
+        "--force-tools-install",
+    ];
+    let assert = assert_cmd::Command::cargo_bin("cargo-build-sbf")
+        .unwrap()
+        .env("RUST_LOG", "debug")
+        .args(args)
+        .assert();
+    assert.success();
+    let cwd = env::current_dir().expect("Unable to get current working directory");
+    let sdk_path = cwd.parent().unwrap().join("sbf");
+    let platform_folder = sdk_path.join("dependencies").join("platform-tools");
+    let rust_bin_folder = platform_folder.join("rust").join("bin");
+    let llvm_bin_folder = platform_folder.join("llvm").join("bin");
+    for binary in ["lldb", "lld", "clang", "solana-lldb"] {
+        assert_cmd::Command::new(llvm_bin_folder.join(binary))
+            .arg("--version")
+            .assert()
+            .success();
+    }
+    for binary in ["rustc", "cargo", "rustdoc"] {
+        assert_cmd::Command::new(rust_bin_folder.join(binary))
+            .arg("--version")
+            .assert()
+            .success();
+    }
 }

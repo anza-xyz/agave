@@ -560,12 +560,12 @@ fn main() {
              may get mixed results with it.",
         ))
         .arg(
-            Arg::new("patch_nix")
+            Arg::new("patch_binaries_for_nix")
                 .long("patch-binaries-for-nix")
                 .takes_value(true)
-                .required(false)
-                .validator(|val| val.parse::<bool>().map_err(|e| e.to_string()))
-                .help("Should patch the downloaded toolchain binaries to work on nix systems?"),
+                .default_missing_value("true")
+                .possible_values(["true", "false"])
+                .help("Patch the downloaded toolchain binaries to work on nix systems"),
         )
         .get_matches_from(args);
 
@@ -641,8 +641,8 @@ fn main() {
         lto: matches.is_present("lto"),
         install_only: matches.is_present("install_only"),
         patch_binaries_for_nix: matches
-            .is_present("patch_nix")
-            .then(|| matches.value_of_t("patch_nix").unwrap()),
+            .is_present("patch_binaries_for_nix")
+            .then(|| matches.value_of_t("patch_binaries_for_nix").unwrap()),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {

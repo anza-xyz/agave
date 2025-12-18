@@ -250,14 +250,16 @@ pub(crate) fn install_if_missing(
     if config.force_tools_install {
         if target_path.is_dir() {
             debug!("Remove directory {target_path:?}");
-            fs::remove_dir_all(target_path).map_err(|err| err.to_string())?;
+            fs::remove_dir_all(target_path)
+                .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
         }
         let source_base = config.sbf_sdk.join("dependencies");
         if source_base.exists() {
             let source_path = source_base.join(package);
             if source_path.exists() {
                 debug!("Remove file {source_path:?}");
-                fs::remove_file(source_path).map_err(|err| err.to_string())?;
+                fs::remove_file(&source_path)
+                    .map_err(|err| format!("could not remove {source_path:?}: {err}"))?;
             }
         }
     }
@@ -273,7 +275,8 @@ pub(crate) fn install_if_missing(
             .is_none()
     {
         debug!("Remove directory {target_path:?}");
-        fs::remove_dir(target_path).map_err(|err| err.to_string())?;
+        fs::remove_dir(target_path)
+            .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
     }
 
     // Check whether the package is already in ~/.cache/solana.
@@ -286,10 +289,12 @@ pub(crate) fn install_if_missing(
     {
         if target_path.exists() {
             debug!("Remove file {target_path:?}");
-            fs::remove_file(target_path).map_err(|err| err.to_string())?;
+            fs::remove_file(target_path)
+                .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
         }
 
-        fs::create_dir_all(target_path).map_err(|err| err.to_string())?;
+        fs::create_dir_all(target_path)
+            .map_err(|err| format!("could not create {target_path:?}: {err}"))?;
         let arch = if cfg!(target_arch = "aarch64") {
             "aarch64"
         } else {
@@ -305,7 +310,8 @@ pub(crate) fn install_if_missing(
 
         let download_file_path = target_path.join(&platform_tools_download_file_name);
         if download_file_path.exists() {
-            fs::remove_file(&download_file_path).map_err(|err| err.to_string())?;
+            fs::remove_file(&download_file_path)
+                .map_err(|err| format!("could not remove {download_file_path:?}: {err}"))?;
         }
 
         download_platform_tools(
@@ -322,8 +328,8 @@ pub(crate) fn install_if_missing(
             .map_err(|err| format!("could not unpack downloaded archive: {err}"))?;
         fs::remove_file(download_file_path)
             .map_err(|err| format!("could not remove downloaded archive: {err}"))?;
-        if should_fix_bins_and_dylibs(config) {
-            let _ = fix_all_bins_and_dylibs(target_path);
+        if should_nix_patch_bins_and_dylibs(config) {
+            let _ = nix_patch_all_bins_and_dylibs(target_path);
         }
     }
 
@@ -331,13 +337,15 @@ pub(crate) fn install_if_missing(
     // platform-tools-sdk/sbf/dependencies directory if no valid link found.
     let source_base = config.sbf_sdk.join("dependencies");
     if !source_base.exists() {
-        fs::create_dir_all(&source_base).map_err(|err| err.to_string())?;
+        fs::create_dir_all(&source_base)
+            .map_err(|err| format!("could not create {source_base:?}: {err}"))?;
     }
     let source_path = source_base.join(package);
     // Check whether the correct symbolic link exists.
     let invalid_link = if let Ok(link_target) = source_path.read_link() {
         if link_target.ne(target_path) {
-            fs::remove_file(&source_path).map_err(|err| err.to_string())?;
+            fs::remove_file(&source_path)
+                .map_err(|err| format!("could not remove {source_path:?}: {err}"))?;
             true
         } else {
             false
@@ -347,10 +355,13 @@ pub(crate) fn install_if_missing(
     };
     if invalid_link {
         #[cfg(unix)]
-        std::os::unix::fs::symlink(target_path, source_path).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&target_path, &source_path).map_err(|err| {
+            format!("could not symlink {source_path:?} -> {target_path:?}: {err}")
+        })?;
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(target_path, source_path)
-            .map_err(|err| err.to_string())?;
+        std::os::windows::fs::symlink_dir(&target_path, &source_path).map_err(|err| {
+            format!("could not symlink {source_path:?} -> {target_path:?}: {err}")
+        })?;
     }
     Ok(())
 }
@@ -579,19 +590,19 @@ pub(crate) fn rust_target_triple(config: &Config) -> String {
     }
 }
 
-fn fix_all_bins_and_dylibs(path: &Path) -> Result<(), std::io::Error> {
+fn nix_patch_all_bins_and_dylibs(path: &Path) -> Result<(), std::io::Error> {
     for libdir in [path.join("llvm/lib"), path.join("rust/lib")] {
         for candidate in std::fs::read_dir(libdir)? {
             let Ok(candidate) = candidate else { continue };
             if path_is_dylib(&candidate.path()) {
-                fix_bin_or_dylib(path, &candidate.path());
+                nix_patch_bin_or_dylib(path, &candidate.path());
             }
         }
     }
     for bindir in [path.join("llvm/bin"), path.join("rust/bin")] {
         for candidate in std::fs::read_dir(bindir)? {
             let Ok(candidate) = candidate else { continue };
-            fix_bin_or_dylib(path, &candidate.path());
+            nix_patch_bin_or_dylib(path, &candidate.path());
         }
     }
     for targetdir in std::fs::read_dir(path.join("rust/lib/rustlib"))? {
@@ -602,14 +613,14 @@ fn fix_all_bins_and_dylibs(path: &Path) -> Result<(), std::io::Error> {
             };
             for candidate in bindir_candidates {
                 let Ok(candidate) = candidate else { continue };
-                fix_bin_or_dylib(path, &candidate.path());
+                nix_patch_bin_or_dylib(path, &candidate.path());
             }
         }
     }
     Ok(())
 }
 
-fn fix_bin_or_dylib(out: &Path, fname: &Path) {
+fn nix_patch_bin_or_dylib(out: &Path, fname: &Path) {
     debug!("attempting to patch {}", fname.display());
     // Only build `.nix-deps` once.
     static NIX_DEPS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -632,7 +643,12 @@ fn fix_bin_or_dylib(out: &Path, fname: &Path) {
         symlinkJoin {
             name = \"solana-sbf-dependencies\";
             paths = [
+                libedit
+                python310
+                ncurses
                 zlib
+                xz.out
+                libxml2.out
                 patchelf
                 stdenv.cc.bintools
                 libgcc.lib
@@ -666,6 +682,9 @@ fn fix_bin_or_dylib(out: &Path, fname: &Path) {
         let dynamic_linker = fs::read_to_string(dynamic_linker_path).unwrap();
         patchelf.args(["--set-interpreter", dynamic_linker.trim_end()]);
     }
+    // Adjustments for lldb (which references debian/ubuntu specific sonames.)
+    patchelf.args(["--replace-needed", "libedit.so.2", "libedit.so"]);
+    patchelf.args(["--replace-needed", "libxml2.so.2", "libxml2.so"]);
     patchelf.arg(fname);
     let _ = patchelf.output();
 }
@@ -675,7 +694,7 @@ fn path_is_dylib(path: &Path) -> bool {
     path.to_str().is_some_and(|path| path.contains(".so"))
 }
 
-fn should_fix_bins_and_dylibs(config: &Config) -> bool {
+fn should_nix_patch_bins_and_dylibs(config: &Config) -> bool {
     static SHOULD_FIX_BINS_AND_DYLIBS: OnceLock<bool> = OnceLock::new();
     let val = *SHOULD_FIX_BINS_AND_DYLIBS.get_or_init(|| {
         let uname = Command::new("uname").arg("-s").output();
@@ -709,7 +728,7 @@ fn should_fix_bins_and_dylibs(config: &Config) -> bool {
         if !is_nixos {
             let in_nix_shell = env::var("IN_NIX_SHELL");
             if let Ok(in_nix_shell) = in_nix_shell {
-                info!(
+                warn!(
                     "The IN_NIX_SHELL environment variable is `{in_nix_shell}`; you may need to \
                      set the --patch-binaries-for-nix argument"
                 );
