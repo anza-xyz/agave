@@ -165,13 +165,12 @@ impl PohService {
                     )
                 };
 
-                // Migrate to alpenglow PoH
-                if !poh_exit.load(Ordering::Relaxed)
-                    // Should be set by migration status once we have progressed past the ReadyToEnable phase
-                    && migration_status.shutdown_poh.load(Ordering::Acquire)
+                if poh_exit.load(Ordering::Relaxed)
+                    || !migration_status.shutdown_poh.load(Ordering::Acquire)
                 {
-                    info!("Migrating poh service to alpenglow tick producer");
-                } else {
+                    // Either we have been forced to exit, encountered an error or are using
+                    // a short lived test tick producer. Either way we should not migrate to Alpenglow but instead
+                    // shutdown
                     poh_exit.store(true, Ordering::Relaxed);
                     return;
                 }
