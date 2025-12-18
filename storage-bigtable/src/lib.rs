@@ -697,6 +697,7 @@ impl LedgerStorage {
                                     slot,
                                     tx_with_meta: tx_with_meta.clone(),
                                     block_time: block.block_time,
+                                    index,
                                 })
                             }
                         })
@@ -740,6 +741,7 @@ impl LedgerStorage {
                         slot,
                         tx_with_meta,
                         block_time: block.block_time,
+                        index,
                     }))
                 }
             }

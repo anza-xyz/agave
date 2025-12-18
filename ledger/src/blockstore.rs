@@ -3166,7 +3166,7 @@ impl Blockstore {
         if let Some((slot, meta)) =
             self.get_transaction_status(signature, confirmed_unrooted_slots)?
         {
-            let transaction = self
+            let (transaction, index) = self
                 .find_transaction_in_slot(slot, signature)?
                 .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?; // Should not happen
 
@@ -3177,6 +3177,7 @@ impl Blockstore {
                     VersionedTransactionWithStatusMeta { transaction, meta },
                 ),
                 block_time,
+                index,
             }))
         } else {
             Ok(None)
@@ -3187,22 +3188,24 @@ impl Blockstore {
         &self,
         slot: Slot,
         signature: Signature,
-    ) -> Result<Option<VersionedTransaction>> {
+    ) -> Result<Option<(VersionedTransaction, u32)>> {
         let slot_entries = self.get_slot_entries(slot, 0)?;
         Ok(slot_entries
             .iter()
             .cloned()
             .flat_map(|entry| entry.transactions)
-            .map(|transaction| {
+            .enumerate()
+            .map(|(index, transaction)| {
                 if let Err(err) = transaction.sanitize() {
                     warn!(
                         "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: \
                          {slot:?}, {transaction:?}",
                     );
                 }
-                transaction
+                (index, transaction)
             })
-            .find(|transaction| transaction.signatures[0] == signature))
+            .find(|(_, transaction)| transaction.signatures[0] == signature)
+            .map(|(index, transaction)| (transaction, index as u32)))
     }
 
     // DEPRECATED and decommissioned
@@ -8869,14 +8872,15 @@ pub mod tests {
             })
             .collect();
 
-        for tx_with_meta in expected_transactions.clone() {
+        for (index, tx_with_meta) in expected_transactions.clone().into_iter().enumerate() {
             let signature = tx_with_meta.transaction.signatures[0];
             assert_eq!(
                 blockstore.get_rooted_transaction(signature).unwrap(),
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta.clone()),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
             assert_eq!(
@@ -8886,7 +8890,8 @@ pub mod tests {
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
         }
@@ -8992,7 +8997,7 @@ pub mod tests {
             })
             .collect();
 
-        for tx_with_meta in expected_transactions.clone() {
+        for (index, tx_with_meta) in expected_transactions.clone().into_iter().enumerate() {
             let signature = tx_with_meta.transaction.signatures[0];
             assert_eq!(
                 blockstore
@@ -9001,7 +9006,8 @@ pub mod tests {
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
             assert_eq!(blockstore.get_rooted_transaction(signature).unwrap(), None);

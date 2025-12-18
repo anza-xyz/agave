@@ -777,6 +777,7 @@ pub async fn process_confirm(
                                 block_time,
                                 slot,
                                 transaction: transaction_with_meta,
+                                ..
                             } = confirmed_transaction;
 
                             let decoded_transaction =

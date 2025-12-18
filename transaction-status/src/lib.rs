@@ -596,6 +596,7 @@ pub struct ConfirmedTransactionWithStatusMeta {
     pub slot: Slot,
     pub tx_with_meta: TransactionWithStatusMeta,
     pub block_time: Option<UnixTimestamp>,
+    pub index: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -619,6 +620,7 @@ impl ConfirmedTransactionWithStatusMeta {
                 true,
             )?,
             block_time: self.block_time,
+            idx_in_block: self.index,
         })
     }
 
