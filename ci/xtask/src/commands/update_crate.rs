@@ -28,7 +28,10 @@ pub fn run(args: CommandArgs) -> Result<()> {
         info!("[{}]", cargo_toml.display());
 
         for exclude_path in &args.exclude_paths {
-            if cargo_toml.starts_with(exclude_path) {
+            if cargo_toml
+                .to_string_lossy()
+                .contains(exclude_path.to_string_lossy().as_ref())
+            {
                 info!("  ⏩ skipped (exclude path)");
                 continue 'MAIN_LOOP;
             }
