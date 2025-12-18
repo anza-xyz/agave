@@ -28,11 +28,18 @@ Release channels have their own copy of this changelog:
   * `--accounts-hash-cache-path`
   * `--disable-accounts-disk-index`
   * `--dev-halt-at-slot`
+  * `--monitor` (`exit` subcommand)
+  * `--wait-for-exit` (`exit` subcommand)
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 ### CLI
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`
+### Platform tools
+#### Breaking
+* `cargo-build-sbf --debug` now generates a file `program.so.debug` instead of `program.debug`.
+* `cargo-build-sbf --debug` places all debug related objects inside `target/deploy/debug`.
+
 
 ## 3.1.0
 ### RPC

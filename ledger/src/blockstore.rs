@@ -17,8 +17,8 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         next_slots_iterator::NextSlotsIterator,
         shred::{
-            self, resize_stored_shred, ErasureSetId, ProcessShredsStats, ReedSolomonCache, Shred,
-            ShredId, ShredType, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+            self, ErasureSetId, ProcessShredsStats, ReedSolomonCache, Shred, ShredId, ShredType,
+            Shredder, DATA_SHREDS_PER_FEC_BLOCK,
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
@@ -2234,11 +2234,8 @@ impl Blockstore {
 
         // Commit step: commit all changes to the mutable structures at once, or none at all.
         // We don't want only a subset of these changes going through.
-        self.data_shred_cf.put_bytes_in_batch(
-            write_batch,
-            (slot, index),
-            shred.bytes_to_store(),
-        )?;
+        self.data_shred_cf
+            .put_bytes_in_batch(write_batch, (slot, index), shred.payload())?;
         data_index.insert(index);
         let newly_completed_data_sets = update_slot_meta(
             last_in_slot,
@@ -2264,13 +2261,7 @@ impl Blockstore {
     }
 
     pub fn get_data_shred(&self, slot: Slot, index: u64) -> Result<Option<Vec<u8>>> {
-        let shred = self.data_shred_cf.get_bytes((slot, index))?;
-        let shred = shred.map(resize_stored_shred).transpose();
-        shred.map_err(|err| {
-            let err = format!("Invalid stored shred: {err}");
-            let err = Box::new(bincode::ErrorKind::Custom(err));
-            BlockstoreError::InvalidShredData(err)
-        })
+        self.data_shred_cf.get_bytes((slot, index))
     }
 
     pub fn get_data_shreds_for_slot(&self, slot: Slot, start_index: u64) -> Result<Vec<Shred>> {

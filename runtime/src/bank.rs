@@ -4139,9 +4139,16 @@ impl Bank {
         };
 
         self.store_account(pubkey, new_account);
+
+        // If the new account has zero lamports, that means it is being closed.
+        let new_account_data_size = if new_account.lamports() == 0 {
+            0
+        } else {
+            new_account.data().len()
+        };
         self.calculate_and_update_accounts_data_size_delta_off_chain(
             old_account_data_size,
-            new_account.data().len(),
+            new_account_data_size,
         );
     }
 
@@ -5005,45 +5012,6 @@ impl Bank {
         self.epoch_schedule().get_leader_schedule_epoch(slot)
     }
 
-    /// Returns whether the specified epoch should use the new vote account
-    /// keyed leader schedule
-    pub fn should_use_vote_keyed_leader_schedule(&self, epoch: Epoch) -> Option<bool> {
-        let effective_epoch = self
-            .feature_set
-            .activated_slot(&agave_feature_set::enable_vote_address_leader_schedule::id())
-            .map(|activation_slot| {
-                // If the feature was activated at genesis, then the new leader
-                // schedule should be effective immediately in the first epoch
-                if activation_slot == 0 {
-                    return 0;
-                }
-
-                // Calculate the epoch that the feature became activated in
-                let activation_epoch = self.epoch_schedule.get_epoch(activation_slot);
-
-                // The effective epoch is the epoch immediately after the
-                // activation epoch
-                activation_epoch.wrapping_add(1)
-            });
-
-        // Starting from the effective epoch, always use the new leader schedule
-        if let Some(effective_epoch) = effective_epoch {
-            return Some(epoch >= effective_epoch);
-        }
-
-        // Calculate the max epoch we can cache a leader schedule for
-        let max_cached_leader_schedule = self.get_leader_schedule_epoch(self.slot());
-        if epoch <= max_cached_leader_schedule {
-            // The feature cannot be effective by the specified epoch
-            Some(false)
-        } else {
-            // Cannot determine if an epoch should use the new leader schedule if the
-            // the epoch is too far in the future because we won't know if the feature
-            // will have been activated by then or not.
-            None
-        }
-    }
-
     /// a bank-level cache of vote accounts and stake delegation info
     fn update_stakes_cache(
         &self,
@@ -5692,43 +5660,6 @@ impl Bank {
 
             if precompile_is_active {
                 self.add_precompile(&precompile.program_id);
-            }
-        }
-    }
-
-    /// Use to replace programs by feature activation
-    #[allow(dead_code)]
-    fn replace_program_account(
-        &mut self,
-        old_address: &Pubkey,
-        new_address: &Pubkey,
-        datapoint_name: &'static str,
-    ) {
-        if let Some(old_account) = self.get_account_with_fixed_root(old_address) {
-            if let Some(new_account) = self.get_account_with_fixed_root(new_address) {
-                datapoint_info!(datapoint_name, ("slot", self.slot, i64));
-
-                // Burn lamports in the old account
-                self.capitalization
-                    .fetch_sub(old_account.lamports(), Relaxed);
-
-                // Transfer new account to old account
-                self.store_account(old_address, &new_account);
-
-                // Clear new account
-                self.store_account(new_address, &AccountSharedData::default());
-
-                // Unload a program from the bank's cache
-                self.transaction_processor
-                    .global_program_cache
-                    .write()
-                    .unwrap()
-                    .remove_programs([*old_address].into_iter());
-
-                self.calculate_and_update_accounts_data_size_delta_off_chain(
-                    old_account.data().len(),
-                    new_account.data().len(),
-                );
             }
         }
     }

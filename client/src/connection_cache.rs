@@ -174,8 +174,6 @@ macro_rules! dispatch {
     };
 }
 
-pub(crate) use dispatch;
-
 impl ClientConnection for BlockingClientConnection {
     dispatch!(fn server_addr(&self) -> &SocketAddr);
     dispatch!(fn send_data(&self, buffer: &[u8]) -> TransportResult<()>);

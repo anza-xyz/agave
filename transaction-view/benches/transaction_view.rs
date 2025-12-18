@@ -1,8 +1,8 @@
 use {
     agave_transaction_view::transaction_view::TransactionView,
     criterion::{
-        black_box, criterion_group, criterion_main, measurement::Measurement, BenchmarkGroup,
-        Criterion, Throughput,
+        criterion_group, criterion_main, measurement::Measurement, BenchmarkGroup, Criterion,
+        Throughput,
     },
     solana_hash::Hash,
     solana_instruction::Instruction,
@@ -17,6 +17,7 @@ use {
     solana_transaction::versioned::{
         sanitized::SanitizedVersionedTransaction, VersionedTransaction,
     },
+    std::hint::black_box,
 };
 
 const NUM_TRANSACTIONS: usize = 1024;

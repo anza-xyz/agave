@@ -230,10 +230,6 @@ impl ShredData {
     pub(super) fn reference_tick(&self) -> u8 {
         (self.data_header.flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits()
     }
-
-    pub(super) fn bytes_to_store(&self) -> &[u8] {
-        &self.payload
-    }
 }
 
 impl ShredCode {
@@ -1328,11 +1324,12 @@ fn finish_erasure_batch(
         shred.set_signature(signature);
         debug_assert!(shred.verify(&keypair.pubkey()));
         debug_assert_matches!(shred.sanitize(), Ok(()));
-        // Assert that shred payload is fully populated.
-        debug_assert_eq!(shred, {
-            let shred = shred.payload().clone();
-            &Shred::from_payload(shred).unwrap()
-        });
+        #[cfg(debug_assertions)]
+        {
+            // Assert that shred payload is fully populated.
+            let expected_shred = Shred::from_payload(shred.payload().clone()).unwrap();
+            debug_assert_eq!(shred, &expected_shred);
+        }
     }
     Ok(*tree.root())
 }
@@ -1752,7 +1749,7 @@ mod test {
                 shred::layout::get_chained_merkle_root(shred),
                 Some(chained_merkle_root)
             );
-            let data = shred::layout::get_signed_data(shred).unwrap();
+            let data = shred::layout::get_merkle_root(shred).unwrap();
             assert_eq!(data, merkle_root);
             assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
         }

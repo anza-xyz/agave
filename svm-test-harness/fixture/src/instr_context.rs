@@ -10,12 +10,11 @@ pub struct InstrContext {
     pub feature_set: FeatureSet,
     pub accounts: Vec<(Pubkey, Account)>,
     pub instruction: StableInstruction,
-    pub cu_avail: u64,
 }
 
 #[cfg(feature = "fuzz")]
 use {
-    super::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
+    crate::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
     solana_instruction::AccountMeta,
 };
 
@@ -75,7 +74,6 @@ impl TryFrom<ProtoInstrContext> for InstrContext {
             feature_set,
             accounts,
             instruction,
-            cu_avail: value.cu_avail,
         })
     }
 }

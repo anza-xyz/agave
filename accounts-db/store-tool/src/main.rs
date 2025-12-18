@@ -136,7 +136,7 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
                     account.offset(),
                     account.pubkey().to_string(),
                     account.owner().to_string(),
-                    account.data_len(),
+                    account.data().len(),
                     account.lamports(),
                 );
             }
@@ -212,7 +212,7 @@ fn do_search(
                             account.offset(),
                             account.pubkey(),
                             account.owner(),
-                            account.data_len(),
+                            account.data().len(),
                             account.lamports(),
                         );
                     }

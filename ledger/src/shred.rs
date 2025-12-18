@@ -50,10 +50,7 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::{
-    merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload,
-    shred_data::resize_stored_shred,
-};
+pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::blockstore::{self},
@@ -451,15 +448,6 @@ impl Shred {
 
     pub fn index(&self) -> u32 {
         self.common_header().index
-    }
-
-    // Possibly trimmed payload;
-    // Should only be used when storing shreds to blockstore.
-    pub(crate) fn bytes_to_store(&self) -> &[u8] {
-        match self {
-            Self::ShredCode(shred) => shred.payload(),
-            Self::ShredData(shred) => shred.bytes_to_store(),
-        }
     }
 
     pub fn fec_set_index(&self) -> u32 {
@@ -1800,7 +1788,6 @@ mod tests {
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
@@ -1850,7 +1837,6 @@ mod tests {
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()

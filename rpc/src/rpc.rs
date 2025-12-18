@@ -7701,7 +7701,7 @@ pub mod tests {
 
         // Create a vote account with no stake.
         let alice_vote_keypair = Keypair::new();
-        let alice_vote_state = VoteStateV4::new(
+        let alice_vote_state = VoteStateV4::new_with_defaults(
             &alice_vote_keypair.pubkey(),
             &VoteInit {
                 node_pubkey: mint_keypair.pubkey(),
