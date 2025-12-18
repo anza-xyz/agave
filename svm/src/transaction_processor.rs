@@ -840,22 +840,21 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut count_hits_and_misses = true;
         loop {
-            let (program_to_load, task_waiter) = {
-                // Lock the global cache.
-                let global_program_cache = self.global_program_cache.read().unwrap();
-                // Figure out which program needs to be loaded next.
-                let program_to_load = global_program_cache.extract(
-                    &mut missing_programs,
-                    program_cache_for_tx_batch,
-                    program_runtime_environments_for_execution,
-                    increment_usage_counter,
-                    count_hits_and_misses,
-                );
-                count_hits_and_misses = false;
-                let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
-                // Unlock the global cache again.
-                (program_to_load, task_waiter)
-            };
+            // Lock the global cache.
+            let global_program_cache = self.global_program_cache.read().unwrap();
+            // Figure out which program needs to be loaded next.
+            let program_to_load = global_program_cache.extract(
+                &mut missing_programs,
+                program_cache_for_tx_batch,
+                program_runtime_environments_for_execution,
+                increment_usage_counter,
+                count_hits_and_misses,
+            );
+            count_hits_and_misses = false;
+            let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
+            let task_cookie = task_waiter.cookie();
+            // Unlock the global cache again.
+            drop(global_program_cache);
 
             let program_to_store = program_to_load.map(|key| {
                 // Load, verify and compile one program.
@@ -870,7 +869,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .expect("called load_program_with_pubkey() with nonexistent account");
                 (key, program)
             });
-            let task_cookie = task_waiter.cookie();
 
             if let Some((key, program)) = program_to_store {
                 program_cache_for_tx_batch.loaded_missing = true;
