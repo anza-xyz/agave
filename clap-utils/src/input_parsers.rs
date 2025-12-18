@@ -7,6 +7,7 @@ use {
     clap::ArgMatches,
     solana_bls_signatures::{
         ProofOfPossessionCompressed as BLSProofOfPossessionCompressed, Pubkey as BLSPubkey,
+        PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
@@ -119,19 +120,15 @@ pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPub
     })
 }
 
+pub fn bls_pubkey_of(matches: &ArgMatches<'_>, name: &str) -> Option<BLSPubkeyCompressed> {
+    value_of(matches, name)
+}
+
 pub fn bls_proof_of_possession_of(
     matches: &ArgMatches<'_>,
     name: &str,
-) -> Option<Vec<BLSProofOfPossessionCompressed>> {
-    matches.values_of(name).map(|values| {
-        values
-            .map(|value| {
-                BLSProofOfPossessionCompressed::from_str(value).unwrap_or_else(|_| {
-                    panic!("Failed to parse BLS public key from value: {value}")
-                })
-            })
-            .collect()
-    })
+) -> Option<BLSProofOfPossessionCompressed> {
+    value_of(matches, name)
 }
 
 // Return pubkey/signature pairs for a string of the form pubkey=signature

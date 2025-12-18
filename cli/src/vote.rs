@@ -16,7 +16,11 @@ use {
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
-    solana_bls_signatures::keypair::Keypair as BLSKeypair,
+    solana_bls_signatures::{
+        keypair::Keypair as BLSKeypair,
+        proof_of_possession::ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
+        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+    },
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -28,8 +32,9 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        display::build_balance_message, return_signers_with_config, CliEpochVotingHistory,
-        CliLandedVote, CliVoteAccount, ReturnSignersConfig,
+        display::build_balance_message, return_signers_data, return_signers_with_config,
+        CliEpochVotingHistory, CliLandedVote, CliSignOnlyDataWithBLS, CliVoteAccount,
+        ReturnSignersConfig,
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
@@ -257,13 +262,29 @@ impl VoteSubCommands for App<'_, '_> {
                         .validator(is_valid_signer)
                         .help("Current authorized vote signer."),
                 )
-                .arg(
+                .arg(pubkey!(
                     Arg::with_name("new_authorized")
                         .index(3)
-                        .value_name("NEW_AUTHORIZED_KEYPAIR")
-                        .required(true)
-                        .validator(is_valid_signer)
-                        .help("New authorized vote signer."),
+                        .value_name("NEW_AUTHORIZED_PUBKEY_OR_KEYPAIR")
+                        .required(true),
+                    "New authorized vote signer. pubkey if BLS pubkey and proof of possession are \
+                     provided, otherwise keypair."
+                ))
+                .arg(
+                    Arg::with_name("bls_pubkey")
+                        .long("bls-pubkey")
+                        .value_name("BLS_PUBKEY_COMPRESSED")
+                        .takes_value(true)
+                        .required(false)
+                        .help("New BLS public key in compressed form"),
+                )
+                .arg(
+                    Arg::with_name("bls_proof_of_possession")
+                        .long("bls-proof-of-possession")
+                        .value_name("BLS_PROOF_OF_POSSESSION_COMPRESSED")
+                        .takes_value(true)
+                        .required(false)
+                        .help("New BLS proof of possession in compressed form"),
                 )
                 .offline_args()
                 .nonce_args(false)
@@ -833,8 +854,35 @@ pub fn parse_vote_authorize_with_bls(
     let vote_account_pubkey =
         pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
     let (authorized, authorized_pubkey) = signer_of(matches, "authorized", wallet_manager)?;
-    let (new_authorized, new_authorized_pubkey) =
-        signer_of(matches, "new_authorized", wallet_manager)?;
+    let bls_pubkey = bls_pubkey_of(matches, "bls_pubkey");
+    let bls_proof_of_possession = bls_proof_of_possession_of(matches, "bls_proof_of_possession");
+    // If both BLS pubkey and proof of possession are provided, use them directly, otherwise need to derive from the new authorized signer
+    if bls_pubkey.is_some() ^ bls_proof_of_possession.is_some() {
+        return Err(CliError::BadParameter(
+            "Both BLS pubkey and proof of possession must be provided together".to_string(),
+        ));
+    }
+    let (
+        bls_pubkey_compressed_bytes,
+        bls_proof_of_possession_compressed_bytes,
+        new_authorized_pubkey,
+    ) = if let Some(bls_pubkey) = bls_pubkey {
+        (bls_pubkey.0, bls_proof_of_possession.unwrap().0, None)
+    } else {
+        let (new_authorized, new_authorized_pubkey) =
+            signer_of(matches, "new_authorized", wallet_manager)?;
+        let new_authorized_voter_keypair: &dyn Signer = new_authorized.as_deref().unwrap();
+        let (bls_pubkey_compressed_bytes, bls_proof_of_possession_compressed_bytes) =
+            generate_bls_pubkey_and_proof_of_possession(
+                &vote_account_pubkey,
+                new_authorized_voter_keypair,
+            );
+        (
+            bls_pubkey_compressed_bytes,
+            bls_proof_of_possession_compressed_bytes,
+            new_authorized_pubkey,
+        )
+    };
 
     let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
@@ -848,22 +896,25 @@ pub fn parse_vote_authorize_with_bls(
 
     let mut bulk_signers = vec![fee_payer, authorized];
 
-    let new_authorized_voter_keypair: &dyn Signer = new_authorized.as_deref().unwrap();
-    let (bls_pubkey_compressed_bytes, bls_proof_of_possession_compressed_bytes) =
-        generate_bls_pubkey_and_proof_of_possession(
-            &vote_account_pubkey,
-            new_authorized_voter_keypair,
-        );
-
     let vote_authorize = VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
         bls_pubkey: bls_pubkey_compressed_bytes,
         bls_proof_of_possession: bls_proof_of_possession_compressed_bytes,
     });
 
-    let new_authorized_pubkey = new_authorized_pubkey.unwrap();
-    if checked {
-        bulk_signers.push(new_authorized);
-    }
+    let new_authorized_pubkey = if checked {
+        let (new_authorized_signer, new_authorized_pubkey) =
+            signer_of(matches, "new_authorized", wallet_manager)?;
+        bulk_signers.push(new_authorized_signer);
+        new_authorized_pubkey.unwrap()
+    } else {
+        new_authorized_pubkey
+            .or_else(|| {
+                pubkey_of_signer(matches, "new_authorized", wallet_manager)
+                    .ok()
+                    .flatten()
+            })
+            .unwrap()
+    };
     if nonce_account.is_some() {
         bulk_signers.push(nonce_authority);
     }
@@ -1534,13 +1585,31 @@ pub async fn process_vote_authorize(
 
     if sign_only {
         tx.try_partial_sign(&config.signers, recent_blockhash)?;
-        return_signers_with_config(
-            &tx,
-            &config.output_format,
-            &ReturnSignersConfig {
-                dump_transaction_message,
-            },
-        )
+        if let VoteAuthorize::VoterWithBLS(args) = &vote_authorize {
+            let base = return_signers_data(
+                &tx,
+                &ReturnSignersConfig {
+                    dump_transaction_message,
+                },
+            );
+            let bls_pubkey: BLSPubkeyCompressed = BLSPubkeyCompressed(args.bls_pubkey);
+            let bls_proof_of_possession: BLSProofOfPossessionCompressed =
+                BLSProofOfPossessionCompressed(args.bls_proof_of_possession);
+            let output = CliSignOnlyDataWithBLS {
+                base,
+                bls_pubkey: bls_pubkey.to_string(),
+                bls_proof_of_possession: bls_proof_of_possession.to_string(),
+            };
+            Ok(config.output_format.formatted_string(&output))
+        } else {
+            return_signers_with_config(
+                &tx,
+                &config.output_format,
+                &ReturnSignersConfig {
+                    dump_transaction_message,
+                },
+            )
+        }
     } else {
         tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
@@ -2121,9 +2190,9 @@ mod tests {
         let blockhash_string = format!("{blockhash}");
         let nonce_account = Pubkey::new_unique();
 
+        let (bls_pubkey, bls_proof_of_possession) =
+            generate_bls_pubkey_and_proof_of_possession(&pubkey, &keypair2);
         let vote_authorize = if with_bls {
-            let (bls_pubkey, bls_proof_of_possession) =
-                generate_bls_pubkey_and_proof_of_possession(&pubkey, &keypair2);
             VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
                 bls_pubkey,
                 bls_proof_of_possession,
@@ -2132,12 +2201,19 @@ mod tests {
             VoteAuthorize::Voter
         };
         let test_authorize_voter = if with_bls {
+            let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey);
+            let bls_proof_of_possession_compressed =
+                BLSProofOfPossessionCompressed(bls_proof_of_possession);
             test_commands.clone().get_matches_from(vec![
                 "test",
                 "vote-authorize-voter-with-bls",
                 &pubkey_string,
                 &default_keypair_file,
-                &keypair2_file,
+                &pubkey2_string,
+                "--bls-pubkey",
+                &bls_pubkey_compressed.to_string(),
+                "--bls-proof-of-possession",
+                &bls_proof_of_possession_compressed.to_string(),
             ])
         } else {
             test_commands.clone().get_matches_from(vec![
@@ -2268,12 +2344,15 @@ mod tests {
         let authorized_sig = authorized_keypair.sign_message(&[0u8]);
         let authorized_signer = format!("{}={}", authorized_keypair.pubkey(), authorized_sig);
         let test_authorize_voter = if with_bls {
+            let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey);
+            let bls_proof_of_possession_compressed =
+                BLSProofOfPossessionCompressed(bls_proof_of_possession);
             test_commands.clone().get_matches_from(vec![
                 "test",
                 "vote-authorize-voter-with-bls",
                 &pubkey_string,
                 &authorized_keypair.pubkey().to_string(),
-                &keypair2_file,
+                &pubkey2_string,
                 "--blockhash",
                 &blockhash_string,
                 "--signer",
@@ -2286,6 +2365,10 @@ mod tests {
                 &nonce_account.to_string(),
                 "--nonce-authority",
                 &pubkey2_string,
+                "--bls-pubkey",
+                &bls_pubkey_compressed.to_string(),
+                "--bls-proof-of-possession",
+                &bls_proof_of_possession_compressed.to_string(),
             ])
         } else {
             test_commands.clone().get_matches_from(vec![
