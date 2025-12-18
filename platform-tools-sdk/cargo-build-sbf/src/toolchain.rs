@@ -329,7 +329,12 @@ pub(crate) fn install_if_missing(
         fs::remove_file(download_file_path)
             .map_err(|err| format!("could not remove downloaded archive: {err}"))?;
         if should_nix_patch_bins_and_dylibs(config) {
-            let _ = nix_patch_all_bins_and_dylibs(target_path);
+            if let Err(e) = nix_patch_all_bins_and_dylibs(target_path) {
+                error!(
+                    "patching for nix failed ({e};) will continue, but tools might not work \
+                     out-of-box"
+                )
+            }
         }
     }
 
