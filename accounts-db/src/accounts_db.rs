@@ -5816,7 +5816,7 @@ impl AccountsDb {
         let infos = self.write_accounts_to_cache(accounts.target_slot(), &accounts, transactions);
         store_accounts_time.stop();
         self.stats
-            .store_accounts
+            .store_accounts_to_cache_us
             .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
 
         // Update the index
@@ -5886,7 +5886,7 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         store_accounts_time.stop();
         self.stats
-            .store_accounts
+            .store_accounts_to_storage_us
             .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
 
         self.mark_zero_lamport_single_ref_accounts(&infos, storage, reclaim_handling);
@@ -6100,8 +6100,17 @@ impl AccountsDb {
             datapoint_info!(
                 "accounts_db_store_timings",
                 (
-                    "store_accounts",
-                    self.stats.store_accounts.swap(0, Ordering::Relaxed),
+                    "store_accounts_to_cache_us",
+                    self.stats
+                        .store_accounts_to_cache_us
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "store_accounts_to_storage_us",
+                    self.stats
+                        .store_accounts_to_storage_us
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
