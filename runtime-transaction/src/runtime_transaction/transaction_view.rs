@@ -15,6 +15,7 @@ use {
         LegacyMessage, MessageHeader, SanitizedMessage, TransactionSignatureDetails,
         VersionedMessage,
     },
+    solana_perf::flow_state::FlowState,
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
@@ -44,8 +45,22 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
     ) -> Result<Self> {
-        from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx)
-            .map(|meta| RuntimeTransaction { transaction, meta })
+        Self::try_new_with_flow_state(transaction, message_hash, is_simple_vote_tx, None)
+    }
+
+    pub fn try_new_with_flow_state(
+        transaction: SanitizedTransactionView<D>,
+        message_hash: MessageHash,
+        is_simple_vote_tx: Option<bool>,
+        flow_state: Option<FlowState>,
+    ) -> Result<Self> {
+        from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx).map(|meta| {
+            RuntimeTransaction {
+                transaction,
+                meta,
+                flow_state,
+            }
+        })
     }
 }
 
@@ -54,9 +69,15 @@ impl<'a, D: TransactionData> RuntimeTransaction<&'a SanitizedTransactionView<D>>
         transaction: &'a SanitizedTransactionView<D>,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
+        flow_state: Option<FlowState>,
     ) -> Result<Self> {
-        from_sanitized_transaction_view(transaction, message_hash, is_simple_vote_tx)
-            .map(|meta| RuntimeTransaction { transaction, meta })
+        from_sanitized_transaction_view(transaction, message_hash, is_simple_vote_tx).map(|meta| {
+            RuntimeTransaction {
+                transaction,
+                meta,
+                flow_state,
+            }
+        })
     }
 }
 
@@ -107,7 +128,11 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         loaded_addresses: Option<LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
-        let RuntimeTransaction { transaction, meta } = statically_loaded_runtime_tx;
+        let RuntimeTransaction {
+            transaction,
+            meta,
+            flow_state,
+        } = statically_loaded_runtime_tx;
         // transaction-view does not distinguish between different types of errors here.
         // return generic sanitize failure error here.
         // these transactions should be immediately dropped, and we generally
@@ -115,7 +140,11 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let transaction =
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
-        let mut tx = Self { transaction, meta };
+        let mut tx = Self {
+            transaction,
+            meta,
+            flow_state,
+        };
         tx.load_dynamic_metadata()?;
 
         Ok(tx)
@@ -209,6 +238,10 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
             signatures: self.signatures().to_vec(),
             message,
         }
+    }
+
+    fn flow_state(&self) -> Option<FlowState> {
+        self.flow_state.clone()
     }
 }
 

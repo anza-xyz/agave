@@ -18,7 +18,10 @@ use {
     solana_measure::measure::Measure,
     solana_net_utils::token_bucket::TokenBucket,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{BytesPacket, PacketBatch},
+    solana_perf::{
+        flow_state::FlowState,
+        packet::{BytesPacket, PacketBatch},
+    },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_tls_utils::get_pubkey_from_tls_certificate,
@@ -100,6 +103,7 @@ struct PacketAccumulator {
     pub meta: Meta,
     pub chunks: SmallVec<[Bytes; 2]>,
     pub start_time: Instant,
+    pub flow_state: FlowState,
 }
 
 impl PacketAccumulator {
@@ -108,6 +112,7 @@ impl PacketAccumulator {
             meta,
             chunks: SmallVec::default(),
             start_time: Instant::now(),
+            flow_state: FlowState::default(),
         }
     }
 }
@@ -681,6 +686,7 @@ async fn handle_connection<Q, C>(
                     break;
                 }
             };
+            accum.flow_state.chunk_received();
 
             match handle_chunks(
                 // Bytes::clone() is a cheap atomic inc
@@ -792,9 +798,10 @@ fn handle_chunks(
     // them into one `Bytes` buffer. We make a copy once, with
     // intention to not do it again.
     let mut packet = if accum.chunks.len() == 1 {
-        BytesPacket::new(
+        BytesPacket::new_with_flow_state(
             accum.chunks.pop().expect("expected one chunk"),
             accum.meta.clone(),
+            Some(accum.flow_state.clone()),
         )
     } else {
         let size: usize = accum.chunks.iter().map(Bytes::len).sum();
@@ -802,7 +809,11 @@ fn handle_chunks(
         for chunk in &accum.chunks {
             buf.put_slice(chunk);
         }
-        BytesPacket::new(buf.freeze(), accum.meta.clone())
+        BytesPacket::new_with_flow_state(
+            buf.freeze(),
+            accum.meta.clone(),
+            Some(accum.flow_state.clone()),
+        )
     };
 
     let packet_size = packet.meta().size;

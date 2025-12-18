@@ -1,5 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use solana_perf::flow_state::FlowState;
 use {
     super::{
         transaction_priority_id::TransactionPriorityId,
@@ -347,6 +348,7 @@ impl TransactionViewReceiveAndBuffer {
                             working_bank,
                             enable_static_instruction_limit,
                             transaction_account_lock_limit,
+                            packet.flow_state(),
                         ) {
                             Ok(state) => Ok(state),
                             Err(
@@ -407,13 +409,15 @@ impl TransactionViewReceiveAndBuffer {
         working_bank: &Bank,
         enable_static_instruction_limit: bool,
         transaction_account_lock_limit: usize,
+        flow_state: Option<FlowState>,
     ) -> Result<TransactionViewState, PacketHandlingError> {
-        let (view, deactivation_slot) = translate_to_runtime_view(
+        let (view, deactivation_slot) = translate_to_runtime_view_with_flow_state(
             bytes,
             working_bank,
             root_bank,
             enable_static_instruction_limit,
             transaction_account_lock_limit,
+            flow_state,
         )?;
         if validate_account_locks(
             view.account_keys(),
@@ -439,15 +443,33 @@ impl TransactionViewReceiveAndBuffer {
     }
 }
 
-/// Perform sanitization checks and transition from data to an executable
-/// [`RuntimeTransaction`]. This additionally returns the minimum slot for
-/// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
 pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     data: D,
     working_bank: &Bank,
     root_bank: &Bank,
     enable_static_instruction_limit: bool,
     transaction_account_lock_limit: usize,
+) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
+    translate_to_runtime_view_with_flow_state(
+        data,
+        working_bank,
+        root_bank,
+        enable_static_instruction_limit,
+        transaction_account_lock_limit,
+        None,
+    )
+}
+
+/// Perform sanitization checks and transition from data to an executable
+/// [`RuntimeTransaction`]. This additionally returns the minimum slot for
+/// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
+pub(crate) fn translate_to_runtime_view_with_flow_state<D: TransactionData>(
+    data: D,
+    working_bank: &Bank,
+    root_bank: &Bank,
+    enable_static_instruction_limit: bool,
+    transaction_account_lock_limit: usize,
+    flow_state: Option<FlowState>,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     // Parsing and basic sanitization checks
     let Ok(view) =
@@ -456,10 +478,11 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         return Err(PacketHandlingError::Sanitization);
     };
 
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new_with_flow_state(
         view,
         MessageHash::Compute,
         None,
+        flow_state,
     ) else {
         return Err(PacketHandlingError::Sanitization);
     };

@@ -1,6 +1,17 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
+use std::{
+    cell::OnceCell,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::SystemTime,
+};
+
+use crate::flow_state::FlowState;
 #[cfg(feature = "dev-context-only-utils")]
 use bytes::{BufMut, BytesMut};
+
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bincode::config::Options,
@@ -34,11 +45,25 @@ pub const NUM_RCVMMSGS: usize = 64;
 pub struct BytesPacket {
     buffer: Bytes,
     meta: Meta,
+    #[serde(skip)]
+    flow_state: Option<FlowState>,
 }
 
 impl BytesPacket {
     pub fn new(buffer: Bytes, meta: Meta) -> Self {
-        Self { buffer, meta }
+        Self {
+            buffer,
+            meta,
+            flow_state: None,
+        }
+    }
+
+    pub fn new_with_flow_state(buffer: Bytes, meta: Meta, flow_state: Option<FlowState>) -> Self {
+        Self {
+            buffer,
+            meta,
+            flow_state,
+        }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -46,6 +71,7 @@ impl BytesPacket {
         Self {
             buffer: Bytes::new(),
             meta: Meta::default(),
+            flow_state: None,
         }
     }
 
@@ -58,7 +84,11 @@ impl BytesPacket {
             meta.set_socket_addr(dest);
         }
 
-        Self { buffer, meta }
+        Self {
+            buffer,
+            meta,
+            flow_state: None,
+        }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -78,7 +108,11 @@ impl BytesPacket {
             meta.set_socket_addr(dest);
         }
 
-        Ok(Self { buffer, meta })
+        Ok(Self {
+            buffer,
+            meta,
+            flow_state: None,
+        })
     }
 
     #[inline]
@@ -370,6 +404,13 @@ impl<'a> PacketRef<'a> {
         }
     }
 
+    pub fn flow_state(&self) -> Option<FlowState> {
+        match self {
+            Self::Packet(_) => None,
+            Self::Bytes(packet) => packet.flow_state.clone(),
+        }
+    }
+
     pub fn to_bytes_packet(&self) -> BytesPacket {
         match self {
             // In case of the legacy `Packet` variant, we unfortunately need to
@@ -379,7 +420,7 @@ impl<'a> PacketRef<'a> {
                     .data(..)
                     .map(|data| Bytes::from(data.to_vec()))
                     .unwrap_or_else(Bytes::new);
-                BytesPacket::new(buffer, self.meta().clone())
+                BytesPacket::new_with_flow_state(buffer, self.meta().clone(), self.flow_state())
             }
             // Cheap clone of `Bytes`.
             // We call `to_owned()` twice, because `packet` is `&&BytesPacket`
