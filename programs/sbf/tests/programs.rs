@@ -80,6 +80,44 @@ use {
 };
 
 #[cfg(feature = "sbf_rust")]
+fn default_program_cache(
+    feature_set: &FeatureSet,
+) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+    harness::program_cache::new_with_builtins(feature_set, /* slot */ 0)
+}
+
+fn default_program_cache_with_program(
+    program_id: &Pubkey,
+    program_elf: &[u8],
+    feature_set: &FeatureSet,
+    compute_budget: &ComputeBudget,
+) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+    let mut program_cache = default_program_cache(feature_set);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        program_id,
+        &loader_v4::id(),
+        program_elf,
+        feature_set,
+        compute_budget,
+    );
+    program_cache
+}
+
+#[cfg(feature = "sbf_rust")]
+fn default_sysvar_cache() -> SysvarCache {
+    let mut sysvar_cache = SysvarCache::default();
+    sysvar_cache.fill_missing_entries(|pubkey, callback| {
+        if pubkey == &rent::id() {
+            let rent = Rent::default();
+            let rent_data = bincode::serialize(&rent).unwrap();
+            callback(&rent_data);
+        }
+    });
+    sysvar_cache
+}
+
+#[cfg(feature = "sbf_rust")]
 fn process_transaction_and_record_inner(
     bank: &Bank,
     tx: Transaction,
@@ -247,40 +285,16 @@ fn test_program_sbf_sanity() {
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
 
-        let accounts = vec![
-            (
-                program_id,
-                Account {
-                    owner: loader_v4::id(),
-                    ..Default::default() // <-- Stubbed
-                },
-            ),
-            (pubkey1, Account::default()),
-            (pubkey2, Account::default()),
-        ];
+        let accounts = vec![(pubkey1, Account::default()), (pubkey2, Account::default())];
 
         let compute_budget = ComputeBudget::new_with_defaults(false, false);
-
-        let mut program_cache =
-            harness::program_cache::new_with_builtins(&feature_set, /* slot */ 0);
-        harness::program_cache::add_program(
-            &mut program_cache,
+        let mut program_cache = default_program_cache_with_program(
             &program_id,
-            &loader_v4::id(),
             &program_elf,
             &feature_set,
             &compute_budget,
         );
-
-        let mut sysvar_cache = SysvarCache::default();
-        sysvar_cache.fill_missing_entries(|pubkey, callbackback| {
-            if pubkey == &rent::id() {
-                // Add the default Rent sysvar.
-                let rent = Rent::default();
-                let rent_data = bincode::serialize(&rent).unwrap();
-                callbackback(&rent_data);
-            }
-        });
+        let sysvar_cache = default_sysvar_cache();
 
         let context = InstrContext {
             feature_set,
@@ -517,42 +531,19 @@ fn test_program_sbf_error_handling() {
 
         let pubkey1 = Pubkey::new_unique();
 
-        let accounts = vec![
-            (
-                program_id,
-                Account {
-                    owner: loader_v4::id(),
-                    ..Default::default()
-                },
-            ),
-            (pubkey1, Account::default()),
-        ];
+        let accounts = vec![(pubkey1, Account::default())];
 
         let compute_budget = ComputeBudget::new_with_defaults(false, false);
-
-        let mut program_cache =
-            harness::program_cache::new_with_builtins(&feature_set, /* slot */ 0);
-        harness::program_cache::add_program(
-            &mut program_cache,
+        let mut program_cache = default_program_cache_with_program(
             &program_id,
-            &loader_v4::id(),
             &program_elf,
             &feature_set,
             &compute_budget,
         );
-
-        let mut sysvar_cache = SysvarCache::default();
-        sysvar_cache.fill_missing_entries(|pubkey, callback| {
-            if pubkey == &rent::id() {
-                let rent = Rent::default();
-                let rent_data = bincode::serialize(&rent).unwrap();
-                callback(&rent_data);
-            }
-        });
+        let sysvar_cache = default_sysvar_cache();
 
         // Helper to execute an instruction with the given data byte.
-        let execute = |data: &[u8],
-                       program_cache: &mut solana_program_runtime::loaded_programs::ProgramCacheForTxBatch| {
+        let mut execute = |data: &[u8]| {
             let account_metas = vec![AccountMeta::new(pubkey1, true)];
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas);
 
@@ -562,47 +553,47 @@ fn test_program_sbf_error_handling() {
                 instruction,
             };
 
-            harness::execute_instr(context, &compute_budget, program_cache, &sysvar_cache)
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
                 .unwrap()
         };
 
-        let effects = execute(&[1], &mut program_cache);
-        assert!(effects.result.is_none(), "{:?}", effects.result);
+        let effects = execute(&[1]);
+        assert!(effects.result.is_none());
 
-        let effects = execute(&[2], &mut program_cache);
+        let effects = execute(&[2]);
         assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
 
-        let effects = execute(&[3], &mut program_cache);
+        let effects = execute(&[3]);
         assert_eq!(effects.result, Some(InstructionError::Custom(0)));
 
-        let effects = execute(&[4], &mut program_cache);
+        let effects = execute(&[4]);
         assert_eq!(effects.result, Some(InstructionError::Custom(42)));
 
-        let effects = execute(&[5], &mut program_cache);
+        let effects = execute(&[5]);
         assert!(
             effects.result == Some(InstructionError::InvalidInstructionData)
                 || effects.result == Some(InstructionError::InvalidError)
         );
 
-        let effects = execute(&[6], &mut program_cache);
+        let effects = execute(&[6]);
         assert!(
             effects.result == Some(InstructionError::InvalidInstructionData)
                 || effects.result == Some(InstructionError::InvalidError)
         );
 
-        let effects = execute(&[7], &mut program_cache);
+        let effects = execute(&[7]);
         assert!(
             effects.result == Some(InstructionError::InvalidInstructionData)
                 || effects.result == Some(InstructionError::AccountBorrowFailed)
         );
 
-        let effects = execute(&[8], &mut program_cache);
+        let effects = execute(&[8]);
         assert_eq!(
             effects.result,
             Some(InstructionError::InvalidInstructionData)
         );
 
-        let effects = execute(&[9], &mut program_cache);
+        let effects = execute(&[9]);
         assert_eq!(
             effects.result,
             Some(InstructionError::MaxSeedLengthExceeded)
