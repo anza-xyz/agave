@@ -27,7 +27,7 @@ impl WeightedU64Index {
         // chosen weight.
         let mut total_weight = 0u64;
         for weight in weights.iter_mut() {
-            total_weight = total_weight.saturating_add(*weight);
+            total_weight = total_weight.checked_add(*weight).ok_or(Error::Overflow)?;
             *weight = total_weight;
         }
         if weights.pop().is_none() {
@@ -104,6 +104,10 @@ mod tests {
         assert_matches!(
             WeightedU64Index::new(vec![0, 0, 0, 0, 0]),
             Err(Error::InsufficientNonZero)
+        );
+        assert_matches!(
+            WeightedU64Index::new(vec![u64::MAX / 3, u64::MAX / 2, 0, u64::MAX / 3]),
+            Err(Error::Overflow)
         );
     }
 }
