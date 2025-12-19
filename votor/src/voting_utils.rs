@@ -371,6 +371,9 @@ mod tests {
 
         let my_keys = &validator_keypairs[my_index];
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let bls_sender = unbounded().0;
+        let commitment_sender = unbounded().0;
+        let consensus_metrics_sender = unbounded().0;
         VotingContext {
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
@@ -381,11 +384,11 @@ mod tests {
             derived_bls_keypairs: HashMap::new(),
             has_new_vote_been_rooted: false,
             own_vote_sender,
-            bls_sender: unbounded().0,
-            commitment_sender: unbounded().0,
+            bls_sender,
+            commitment_sender,
             wait_to_vote_slot: None,
             sharable_banks,
-            consensus_metrics_sender: unbounded().0,
+            consensus_metrics_sender,
         }
     }
 
