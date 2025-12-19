@@ -197,11 +197,11 @@ mod tests {
 
         let (root_bank_squashed, _, _) = snapshot_controller.handle_new_roots(num_banks, &banks);
 
-        // Verify that the root bank was not squashed
+        // Verify that the root bank was squashed if and only if a snapshot was requested at that slot
         if expected_snapshot_slot == Some(num_banks) {
-            assert_eq!(root_bank_squashed, true);
+            assert!(root_bank_squashed);
         } else {
-            assert_eq!(root_bank_squashed, false);
+            assert!(!root_bank_squashed);
         }
 
         // Verify the latest_abs_request_slot is updated
