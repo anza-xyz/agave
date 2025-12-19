@@ -2869,7 +2869,7 @@ fn main() {
                             rent_exempt_reserve: u64,
                             points: Vec<PointDetail>,
                             base_rewards: u64,
-                            commission: u8,
+                            commission_bps: u16,
                             vote_rewards: u64,
                             stake_rewards: u64,
                             activation_epoch: Epoch,
@@ -2931,7 +2931,11 @@ fn main() {
                                     detail.current_effective_stake = *stake;
                                 }
                                 InflationPointCalculationEvent::Commission(commission) => {
-                                    detail.commission = *commission;
+                                    // Convert percentage to basis points.
+                                    detail.commission_bps = *commission as u16 * 100;
+                                }
+                                InflationPointCalculationEvent::CommissionBps(commission_bps) => {
+                                    detail.commission_bps = *commission_bps;
                                 }
                                 InflationPointCalculationEvent::RentExemptReserve(reserve) => {
                                     detail.rent_exempt_reserve = *reserve;
@@ -3104,7 +3108,7 @@ fn main() {
                                         base_rewards: String,
                                         stake_rewards: String,
                                         vote_rewards: String,
-                                        commission: String,
+                                        commission_bps: String,
                                         cluster_rewards: String,
                                         cluster_points: String,
                                         old_capitalization: u64,
@@ -3191,7 +3195,9 @@ fn main() {
                                             vote_rewards: format_or_na(
                                                 detail.map(|d| d.vote_rewards),
                                             ),
-                                            commission: format_or_na(detail.map(|d| d.commission)),
+                                            commission_bps: format_or_na(
+                                                detail.map(|d| d.commission_bps),
+                                            ),
                                             cluster_rewards: format_or_na(cluster_rewards),
                                             cluster_points: format_or_na(cluster_points),
                                             old_capitalization: base_bank.capitalization(),
