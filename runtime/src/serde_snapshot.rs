@@ -342,12 +342,12 @@ impl<T> SnapshotAccountsDbFields<T> {
             None => Ok(()),
             Some(AccountsDbFields(incremental_snapshot_storages, ..)) => {
                 // filter out incremental snapshot storages with slot <= full snapshot slot
-                // There must not be any overlap in the slots of storages between the full snapshot and the incremental snapshot
+                // There must not be any overlap in the slots of storages between the full snapshot and
+                // the incremental snapshot
                 incremental_snapshot_storages
                     .iter()
-                    .all(|(slot, _)| {
-                        slot > full_snapshot_slot && !full_snapshot_storages.contains_key(slot)
-                    })
+                    .filter(|&(slot, _)| slot > full_snapshot_slot)
+                    .all(|(slot, _)| !full_snapshot_storages.contains_key(slot))
                     .then_some(())
                     .ok_or_else(|| {
                         io::Error::new(
