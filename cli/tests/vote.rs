@@ -16,9 +16,7 @@ use {
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_signer::{null_signer::NullSigner, Signer},
     solana_test_validator::TestValidator,
-    solana_vote_program::vote_state::{
-        create_bls_pubkey_and_proof_of_possession, VoteAuthorize, VoteStateV4,
-    },
+    solana_vote_program::vote_state::{VoteAuthorize, VoteStateV4},
     test_case::test_case,
 };
 
@@ -49,18 +47,15 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
 
     // Create vote account
     let vote_account_keypair = Keypair::new();
-    let (bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession(&vote_account_keypair.pubkey());
     let vote_account_pubkey = vote_account_keypair.pubkey();
     config.signers = vec![&default_signer, &vote_account_keypair];
-    config.command = CliCommand::CreateVoteAccountV2 {
+    config.command = CliCommand::CreateVoteAccount {
         vote_account: 1,
         seed: None,
         identity_account: 0,
         authorized_voter: None,
-        bls_pubkey,
-        bls_proof_of_possession,
         authorized_withdrawer: config.signers[0].pubkey(),
+        commission: 0,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -69,7 +64,6 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         memo: None,
         fee_payer: 0,
         compute_unit_price,
-        inflation_rewards_commission_bps: 0,
     };
     process_command(&config).await.unwrap();
     let vote_account = rpc_client

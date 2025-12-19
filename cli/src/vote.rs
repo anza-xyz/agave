@@ -13,14 +13,8 @@ use {
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
         stake::check_current_authority,
     },
-    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
-    solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair,
-        proof_of_possession::ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
-        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-    },
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -32,14 +26,11 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        display::build_balance_message, return_signers_data, return_signers_with_config,
-        CliEpochVotingHistory, CliLandedVote, CliSignOnlyDataWithBLS, CliVoteAccount,
-        ReturnSignersConfig,
+        display::build_balance_message, return_signers_with_config, CliEpochVotingHistory,
+        CliLandedVote, CliVoteAccount, ReturnSignersConfig,
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
-    solana_instruction::Instruction,
-    solana_keypair::Signer,
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -51,12 +42,7 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{
-            create_bls_proof_of_possession, verify_bls_proof_of_possession, VoteAuthorize,
-            VoteInit, VoteInitV2, VoteStateV4, VoterWithBLSArgs,
-            BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
-            VOTE_CREDITS_MAXIMUM_PER_SLOT,
-        },
+        vote_state::{VoteAuthorize, VoteInit, VoteStateV4, VOTE_CREDITS_MAXIMUM_PER_SLOT},
     },
     std::rc::Rc,
 };
@@ -138,79 +124,6 @@ impl VoteSubCommands for App<'_, '_> {
                 .arg(compute_unit_price_arg()),
         )
         .subcommand(
-            SubCommand::with_name("create-vote-account-with-bls")
-                .about("Create a vote account with BLS pubkey")
-                .arg(
-                    Arg::with_name("vote_account")
-                        .index(1)
-                        .value_name("ACCOUNT_KEYPAIR")
-                        .takes_value(true)
-                        .required(true)
-                        .validator(is_valid_signer)
-                        .help("Vote account keypair to create"),
-                )
-                .arg(
-                    Arg::with_name("identity_account")
-                        .index(2)
-                        .value_name("IDENTITY_KEYPAIR")
-                        .takes_value(true)
-                        .required(true)
-                        .validator(is_valid_signer)
-                        .help("Keypair of validator that will vote with this account"),
-                )
-                .arg(pubkey!(
-                    Arg::with_name("authorized_withdrawer")
-                        .index(3)
-                        .value_name("WITHDRAWER_PUBKEY")
-                        .takes_value(true)
-                        .required(true)
-                        .long("authorized-withdrawer"),
-                    "Authorized withdrawer."
-                ))
-                .arg(
-                    Arg::with_name("inflation_rewards_commission_bps")
-                        .long("inflation_rewards_commission_bps")
-                        .value_name("INFLATION_REWARDS_COMMISSION_BPS")
-                        .takes_value(true)
-                        .default_value("0")
-                        .help("The commission taken on inflation rewards"),
-                )
-                .arg(
-                    Arg::with_name("authorized_voter")
-                        .index(4)
-                        .value_name("AUTHORIZED_VOTER_KEYPAIR")
-                        .takes_value(true)
-                        .required(false)
-                        .validator(is_valid_signer)
-                        .help("Authorized voter [default: validator identity pubkey]."),
-                )
-                .arg(
-                    Arg::with_name("allow_unsafe_authorized_withdrawer")
-                        .long("allow-unsafe-authorized-withdrawer")
-                        .takes_value(false)
-                        .help(
-                            "Allow an authorized withdrawer pubkey to be identical to the \
-                             validator identity account pubkey or vote account pubkey, which is \
-                             normally an unsafe configuration and should be avoided.",
-                        ),
-                )
-                .arg(
-                    Arg::with_name("seed")
-                        .long("seed")
-                        .value_name("STRING")
-                        .takes_value(true)
-                        .help(
-                            "Seed for address generation; if specified, the resulting account \
-                             will be at a derived address of the VOTE ACCOUNT pubkey",
-                        ),
-                )
-                .offline_args()
-                .nonce_args(false)
-                .arg(fee_payer_arg())
-                .arg(memo_arg())
-                .arg(compute_unit_price_arg()),
-        )
-        .subcommand(
             SubCommand::with_name("vote-authorize-voter")
                 .about("Authorize a new vote signing keypair for the given vote account")
                 .arg(pubkey!(
@@ -235,57 +148,6 @@ impl VoteSubCommands for App<'_, '_> {
                         .required(true),
                     "New authorized vote signer."
                 ))
-                .offline_args()
-                .nonce_args(false)
-                .arg(fee_payer_arg())
-                .arg(memo_arg())
-                .arg(compute_unit_price_arg()),
-        )
-        .subcommand(
-            SubCommand::with_name("vote-authorize-voter-with-bls")
-                .about(
-                    "Authorize a new vote signing keypair for the given vote account, update BLS \
-                     pubkey",
-                )
-                .arg(pubkey!(
-                    Arg::with_name("vote_account_pubkey")
-                        .index(1)
-                        .value_name("VOTE_ACCOUNT_ADDRESS")
-                        .required(true),
-                    "Vote account in which to set the authorized voter."
-                ))
-                .arg(
-                    Arg::with_name("authorized")
-                        .index(2)
-                        .value_name("AUTHORIZED_KEYPAIR")
-                        .required(true)
-                        .validator(is_valid_signer)
-                        .help("Current authorized vote signer."),
-                )
-                .arg(pubkey!(
-                    Arg::with_name("new_authorized")
-                        .index(3)
-                        .value_name("NEW_AUTHORIZED_PUBKEY_OR_KEYPAIR")
-                        .required(true),
-                    "New authorized vote signer. pubkey if BLS pubkey and proof of possession are \
-                     provided, otherwise keypair."
-                ))
-                .arg(
-                    Arg::with_name("bls_pubkey")
-                        .long("bls-pubkey")
-                        .value_name("BLS_PUBKEY_COMPRESSED")
-                        .takes_value(true)
-                        .required(false)
-                        .help("New BLS public key in compressed form"),
-                )
-                .arg(
-                    Arg::with_name("bls_proof_of_possession")
-                        .long("bls-proof-of-possession")
-                        .value_name("BLS_PROOF_OF_POSSESSION_COMPRESSED")
-                        .takes_value(true)
-                        .required(false)
-                        .help("New BLS proof of possession in compressed form"),
-                )
                 .offline_args()
                 .nonce_args(false)
                 .arg(fee_payer_arg())
@@ -328,41 +190,6 @@ impl VoteSubCommands for App<'_, '_> {
                 .about(
                     "Authorize a new vote signing keypair for the given vote account, checking \
                      the new authority as a signer",
-                )
-                .arg(pubkey!(
-                    Arg::with_name("vote_account_pubkey")
-                        .index(1)
-                        .value_name("VOTE_ACCOUNT_ADDRESS")
-                        .required(true),
-                    "Vote account in which to set the authorized voter."
-                ))
-                .arg(
-                    Arg::with_name("authorized")
-                        .index(2)
-                        .value_name("AUTHORIZED_KEYPAIR")
-                        .required(true)
-                        .validator(is_valid_signer)
-                        .help("Current authorized vote signer."),
-                )
-                .arg(
-                    Arg::with_name("new_authorized")
-                        .index(3)
-                        .value_name("NEW_AUTHORIZED_KEYPAIR")
-                        .required(true)
-                        .validator(is_valid_signer)
-                        .help("New authorized vote signer."),
-                )
-                .offline_args()
-                .nonce_args(false)
-                .arg(fee_payer_arg())
-                .arg(memo_arg())
-                .arg(compute_unit_price_arg()),
-        )
-        .subcommand(
-            SubCommand::with_name("vote-authorize-voter-checked-with-bls")
-                .about(
-                    "Authorize a new vote signing keypair for the given vote account, checking \
-                     the new authority as a signer, also update BLS pubkey",
                 )
                 .arg(pubkey!(
                     Arg::with_name("vote_account_pubkey")
@@ -622,17 +449,6 @@ impl VoteSubCommands for App<'_, '_> {
     }
 }
 
-fn generate_bls_pubkey_and_proof_of_possession(
-    vote_account_pubkey: &Pubkey,
-    keypair: &dyn Signer,
-) -> (
-    [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-    [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
-) {
-    let bls_keypair = BLSKeypair::derive_from_signer(keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-    create_bls_proof_of_possession(vote_account_pubkey, &bls_keypair)
-}
-
 pub fn parse_create_vote_account(
     matches: &ArgMatches<'_>,
     default_signer: &DefaultSigner,
@@ -702,88 +518,6 @@ pub fn parse_create_vote_account(
     })
 }
 
-pub fn parse_create_vote_account_with_bls(
-    matches: &ArgMatches<'_>,
-    default_signer: &DefaultSigner,
-    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
-) -> Result<CliCommandInfo, CliError> {
-    let (vote_account, vote_account_pubkey) = signer_of(matches, "vote_account", wallet_manager)?;
-    let seed = matches.value_of("seed").map(|s| s.to_string());
-    let (identity_account, identity_pubkey) =
-        signer_of(matches, "identity_account", wallet_manager)?;
-    let (authorized_voter_keypair, authorized_voter) =
-        signer_of(matches, "authorized_voter", wallet_manager)?;
-    let authorized_withdrawer =
-        pubkey_of_signer(matches, "authorized_withdrawer", wallet_manager)?.unwrap();
-    let allow_unsafe = matches.is_present("allow_unsafe_authorized_withdrawer");
-    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
-    let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
-    let blockhash_query = BlockhashQuery::new_from_matches(matches);
-    let nonce_account = pubkey_of_signer(matches, NONCE_ARG.name, wallet_manager)?;
-    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
-    let (nonce_authority, nonce_authority_pubkey) =
-        signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
-    let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
-    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
-    let inflation_rewards_commission_bps =
-        value_of(matches, "inflation_rewards_commission_bps").unwrap_or(0);
-
-    let authorized_voter_keypair: &dyn Signer = authorized_voter_keypair
-        .as_deref()
-        .or(identity_account.as_deref())
-        .unwrap();
-    let (bls_pubkey_compressed_bytes, bls_proof_of_possession_compressed_bytes) =
-        generate_bls_pubkey_and_proof_of_possession(
-            &vote_account_pubkey.unwrap(),
-            authorized_voter_keypair,
-        );
-    if !allow_unsafe {
-        if authorized_withdrawer == vote_account_pubkey.unwrap() {
-            return Err(CliError::BadParameter(
-                "Authorized withdrawer pubkey is identical to vote account pubkey, an unsafe \
-                 configuration"
-                    .to_owned(),
-            ));
-        }
-        if authorized_withdrawer == identity_pubkey.unwrap() {
-            return Err(CliError::BadParameter(
-                "Authorized withdrawer pubkey is identical to identity account pubkey, an unsafe \
-                 configuration"
-                    .to_owned(),
-            ));
-        }
-    }
-
-    let mut bulk_signers = vec![fee_payer, vote_account, identity_account];
-    if nonce_account.is_some() {
-        bulk_signers.push(nonce_authority);
-    }
-    let signer_info =
-        default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
-
-    Ok(CliCommandInfo {
-        command: CliCommand::CreateVoteAccountV2 {
-            vote_account: signer_info.index_of(vote_account_pubkey).unwrap(),
-            seed,
-            identity_account: signer_info.index_of(identity_pubkey).unwrap(),
-            authorized_voter,
-            bls_pubkey: bls_pubkey_compressed_bytes,
-            bls_proof_of_possession: bls_proof_of_possession_compressed_bytes,
-            authorized_withdrawer,
-            sign_only,
-            dump_transaction_message,
-            blockhash_query,
-            nonce_account,
-            nonce_authority: signer_info.index_of(nonce_authority_pubkey).unwrap(),
-            memo,
-            fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
-            compute_unit_price,
-            inflation_rewards_commission_bps,
-        },
-        signers: signer_info.signers,
-    })
-}
-
 pub fn parse_vote_authorize(
     matches: &ArgMatches<'_>,
     default_signer: &DefaultSigner,
@@ -814,106 +548,6 @@ pub fn parse_vote_authorize(
         new_authorized_pubkey.unwrap()
     } else {
         pubkey_of_signer(matches, "new_authorized_pubkey", wallet_manager)?.unwrap()
-    };
-    if nonce_account.is_some() {
-        bulk_signers.push(nonce_authority);
-    }
-    let signer_info =
-        default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
-
-    Ok(CliCommandInfo {
-        command: CliCommand::VoteAuthorize {
-            vote_account_pubkey,
-            new_authorized_pubkey,
-            vote_authorize,
-            sign_only,
-            dump_transaction_message,
-            blockhash_query,
-            nonce_account,
-            nonce_authority: signer_info.index_of(nonce_authority_pubkey).unwrap(),
-            memo,
-            fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
-            authorized: signer_info.index_of(authorized_pubkey).unwrap(),
-            new_authorized: if checked {
-                signer_info.index_of(Some(new_authorized_pubkey))
-            } else {
-                None
-            },
-            compute_unit_price,
-        },
-        signers: signer_info.signers,
-    })
-}
-
-pub fn parse_vote_authorize_with_bls(
-    matches: &ArgMatches<'_>,
-    default_signer: &DefaultSigner,
-    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
-    checked: bool,
-) -> Result<CliCommandInfo, CliError> {
-    let vote_account_pubkey =
-        pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
-    let (authorized, authorized_pubkey) = signer_of(matches, "authorized", wallet_manager)?;
-    let bls_pubkey = bls_pubkey_of(matches, "bls_pubkey");
-    let bls_proof_of_possession = bls_proof_of_possession_of(matches, "bls_proof_of_possession");
-    // If both BLS pubkey and proof of possession are provided, use them directly, otherwise need to derive from the new authorized signer
-    if bls_pubkey.is_some() ^ bls_proof_of_possession.is_some() {
-        return Err(CliError::BadParameter(
-            "Both BLS pubkey and proof of possession must be provided together".to_string(),
-        ));
-    }
-    let (
-        bls_pubkey_compressed_bytes,
-        bls_proof_of_possession_compressed_bytes,
-        new_authorized_pubkey,
-    ) = if let Some(bls_pubkey) = bls_pubkey {
-        (bls_pubkey.0, bls_proof_of_possession.unwrap().0, None)
-    } else {
-        let (new_authorized, new_authorized_pubkey) =
-            signer_of(matches, "new_authorized", wallet_manager)?;
-        let new_authorized_voter_keypair: &dyn Signer = new_authorized.as_deref().unwrap();
-        let (bls_pubkey_compressed_bytes, bls_proof_of_possession_compressed_bytes) =
-            generate_bls_pubkey_and_proof_of_possession(
-                &vote_account_pubkey,
-                new_authorized_voter_keypair,
-            );
-        (
-            bls_pubkey_compressed_bytes,
-            bls_proof_of_possession_compressed_bytes,
-            new_authorized_pubkey,
-        )
-    };
-
-    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
-    let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
-    let blockhash_query = BlockhashQuery::new_from_matches(matches);
-    let nonce_account = pubkey_of(matches, NONCE_ARG.name);
-    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
-    let (nonce_authority, nonce_authority_pubkey) =
-        signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
-    let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
-    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
-
-    let mut bulk_signers = vec![fee_payer, authorized];
-
-    let vote_authorize = VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-        bls_pubkey: bls_pubkey_compressed_bytes,
-        bls_proof_of_possession: bls_proof_of_possession_compressed_bytes,
-    });
-
-    let new_authorized_pubkey = if checked {
-        let (new_authorized_signer, new_authorized_pubkey) =
-            signer_of(matches, "new_authorized", wallet_manager)?;
-        bulk_signers.push(new_authorized_signer);
-        new_authorized_pubkey.unwrap()
-    } else {
-        new_authorized_pubkey
-            .or_else(|| {
-                pubkey_of_signer(matches, "new_authorized", wallet_manager)
-                    .ok()
-                    .flatten()
-            })
-            .unwrap()
     };
     if nonce_account.is_some() {
         bulk_signers.push(nonce_authority);
@@ -1173,144 +807,6 @@ pub async fn process_create_vote_account(
     fee_payer: SignerIndex,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let build_instructions =
-        |(lamports, identity_pubkey, vote_account_pubkey, vote_account_address)| {
-            let vote_init = VoteInit {
-                node_pubkey: identity_pubkey,
-                authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
-                authorized_withdrawer,
-                commission,
-            };
-            let space = VoteStateV4::size_of() as u64;
-            let mut create_vote_account_config = CreateVoteAccountConfig {
-                space,
-                ..CreateVoteAccountConfig::default()
-            };
-            let to = if let Some(seed) = seed {
-                create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
-                &vote_account_address
-            } else {
-                &vote_account_pubkey
-            };
-
-            vote_instruction::create_account_with_config(
-                &config.signers[0].pubkey(),
-                to,
-                &vote_init,
-                lamports,
-                create_vote_account_config,
-            )
-        };
-    process_create_vote_account_internal(
-        rpc_client,
-        config,
-        vote_account,
-        seed,
-        identity_account,
-        sign_only,
-        dump_transaction_message,
-        blockhash_query,
-        nonce_account,
-        nonce_authority,
-        memo,
-        fee_payer,
-        compute_unit_price,
-        build_instructions,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn process_create_vote_account_v2(
-    rpc_client: &RpcClient,
-    config: &CliConfig<'_>,
-    vote_account: SignerIndex,
-    seed: &Option<String>,
-    identity_account: SignerIndex,
-    authorized_voter: &Option<Pubkey>,
-    authorized_withdrawer: Pubkey,
-    authorized_voter_bls_pubkey: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-    authorized_voter_bls_proof_of_possession: [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
-    sign_only: bool,
-    dump_transaction_message: bool,
-    blockhash_query: &BlockhashQuery,
-    nonce_account: Option<&Pubkey>,
-    nonce_authority: SignerIndex,
-    memo: Option<&String>,
-    fee_payer: SignerIndex,
-    compute_unit_price: Option<u64>,
-    inflation_rewards_commission_bps: u16,
-) -> ProcessResult {
-    let build_instructions =
-        |(lamports, identity_pubkey, vote_account_pubkey, vote_account_address)| {
-            let vote_init_v2 = VoteInitV2 {
-                node_pubkey: identity_pubkey,
-                authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
-                authorized_withdrawer,
-                authorized_voter_bls_pubkey,
-                authorized_voter_bls_proof_of_possession,
-                inflation_rewards_commission_bps,
-                ..VoteInitV2::default()
-            };
-            let space = VoteStateV4::size_of() as u64;
-            let mut create_vote_account_config = CreateVoteAccountConfig {
-                space,
-                ..CreateVoteAccountConfig::default()
-            };
-            let to = if let Some(seed) = seed {
-                create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
-                &vote_account_address
-            } else {
-                &vote_account_pubkey
-            };
-
-            vote_instruction::create_account_with_config_v2(
-                &config.signers[0].pubkey(),
-                to,
-                &vote_init_v2,
-                lamports,
-                create_vote_account_config,
-            )
-        };
-    process_create_vote_account_internal(
-        rpc_client,
-        config,
-        vote_account,
-        seed,
-        identity_account,
-        sign_only,
-        dump_transaction_message,
-        blockhash_query,
-        nonce_account,
-        nonce_authority,
-        memo,
-        fee_payer,
-        compute_unit_price,
-        build_instructions,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn process_create_vote_account_internal<F>(
-    rpc_client: &RpcClient,
-    config: &CliConfig<'_>,
-    vote_account: SignerIndex,
-    seed: &Option<String>,
-    identity_account: SignerIndex,
-    sign_only: bool,
-    dump_transaction_message: bool,
-    blockhash_query: &BlockhashQuery,
-    nonce_account: Option<&Pubkey>,
-    nonce_authority: SignerIndex,
-    memo: Option<&String>,
-    fee_payer: SignerIndex,
-    compute_unit_price: Option<u64>,
-    build_instructions: F,
-) -> ProcessResult
-where
-    F: Fn((u64, Pubkey, Pubkey, Pubkey)) -> Vec<Instruction>,
-{
     let vote_account = config.signers[vote_account];
     let vote_account_pubkey = vote_account.pubkey();
     let vote_account_address = if let Some(seed) = seed {
@@ -1338,24 +834,43 @@ where
 
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
+    let space = VoteStateV4::size_of() as u64;
 
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-
     let build_message = |lamports| {
-        let ixs = build_instructions((
+        let vote_init = VoteInit {
+            node_pubkey: identity_pubkey,
+            authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
+            authorized_withdrawer,
+            commission,
+        };
+        let mut create_vote_account_config = CreateVoteAccountConfig {
+            space,
+            ..CreateVoteAccountConfig::default()
+        };
+        let to = if let Some(seed) = seed {
+            create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
+            &vote_account_address
+        } else {
+            &vote_account_pubkey
+        };
+
+        let ixs = vote_instruction::create_account_with_config(
+            &config.signers[0].pubkey(),
+            to,
+            &vote_init,
             lamports,
-            identity_pubkey,
-            vote_account_pubkey,
-            vote_account_address,
-        ))
+            create_vote_account_config,
+        )
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
             compute_unit_limit,
         });
+
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
                 ixs,
@@ -1503,36 +1018,11 @@ pub async fn process_vote_authorize(
                 check_current_authority(&[vote_state.authorized_withdrawer], &authorized.pubkey())?
             }
         }
-        VoteAuthorize::VoterWithBLS(args) => {
-            if let Some(vote_state) = vote_state {
-                let current_epoch = rpc_client.get_epoch_info().await?.epoch;
-                let current_authorized_voter = vote_state
-                    .authorized_voters
-                    .get_authorized_voter(current_epoch)
-                    .ok_or_else(|| {
-                        CliError::RpcRequestError(
-                            "Invalid vote account state; no authorized voters found".to_string(),
-                        )
-                    })?;
-                check_current_authority(
-                    &[current_authorized_voter, vote_state.authorized_withdrawer],
-                    &authorized.pubkey(),
-                )?;
-                if let Some(signer) = new_authorized_signer {
-                    if signer.is_interactive() {
-                        return Err(CliError::BadParameter(format!(
-                            "invalid new authorized vote signer {new_authorized_pubkey:?}. \
-                             Interactive vote signers not supported"
-                        ))
-                        .into());
-                    }
-                }
-                verify_bls_proof_of_possession(
-                    vote_account_pubkey,
-                    &args.bls_pubkey,
-                    &args.bls_proof_of_possession,
-                )?;
-            }
+        VoteAuthorize::VoterWithBLS(_) => {
+            return Err(CliError::BadParameter(
+                "VoterWithBLS authorization not yet supported".to_string(),
+            )
+            .into());
         }
     }
 
@@ -1585,31 +1075,13 @@ pub async fn process_vote_authorize(
 
     if sign_only {
         tx.try_partial_sign(&config.signers, recent_blockhash)?;
-        if let VoteAuthorize::VoterWithBLS(args) = &vote_authorize {
-            let base = return_signers_data(
-                &tx,
-                &ReturnSignersConfig {
-                    dump_transaction_message,
-                },
-            );
-            let bls_pubkey: BLSPubkeyCompressed = BLSPubkeyCompressed(args.bls_pubkey);
-            let bls_proof_of_possession: BLSProofOfPossessionCompressed =
-                BLSProofOfPossessionCompressed(args.bls_proof_of_possession);
-            let output = CliSignOnlyDataWithBLS {
-                base,
-                bls_pubkey: bls_pubkey.to_string(),
-                bls_proof_of_possession: bls_proof_of_possession.to_string(),
-            };
-            Ok(config.output_format.formatted_string(&output))
-        } else {
-            return_signers_with_config(
-                &tx,
-                &config.output_format,
-                &ReturnSignersConfig {
-                    dump_transaction_message,
-                },
-            )
-        }
+        return_signers_with_config(
+            &tx,
+            &config.output_format,
+            &ReturnSignersConfig {
+                dump_transaction_message,
+            },
+        )
     } else {
         tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
@@ -2157,7 +1629,6 @@ mod tests {
         solana_rpc_client_nonce_utils::nonblocking::blockhash_query::Source,
         solana_signer::Signer,
         tempfile::NamedTempFile,
-        test_case::test_case,
     };
 
     fn make_tmp_file() -> (String, NamedTempFile) {
@@ -2165,9 +1636,8 @@ mod tests {
         (String::from(tmp_file.path().to_str().unwrap()), tmp_file)
     }
 
-    #[test_case(true; "With BLS")]
-    #[test_case(false; "Without BLS")]
-    fn test_parse_vote_authorize(with_bls: bool) {
+    #[test]
+    fn test_parse_command() {
         let test_commands = get_clap_app("test", "desc", "version");
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey();
@@ -2183,54 +1653,25 @@ mod tests {
         write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
         let default_signer = DefaultSigner::new("", &default_keypair_file);
 
-        let (keypair2_file, mut tmp_file) = make_tmp_file();
-        write_keypair(&keypair2, tmp_file.as_file_mut()).unwrap();
-
         let blockhash = Hash::default();
         let blockhash_string = format!("{blockhash}");
         let nonce_account = Pubkey::new_unique();
 
-        let (bls_pubkey, bls_proof_of_possession) =
-            generate_bls_pubkey_and_proof_of_possession(&pubkey, &keypair2);
-        let vote_authorize = if with_bls {
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            })
-        } else {
-            VoteAuthorize::Voter
-        };
-        let test_authorize_voter = if with_bls {
-            let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey);
-            let bls_proof_of_possession_compressed =
-                BLSProofOfPossessionCompressed(bls_proof_of_possession);
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter-with-bls",
-                &pubkey_string,
-                &default_keypair_file,
-                &pubkey2_string,
-                "--bls-pubkey",
-                &bls_pubkey_compressed.to_string(),
-                "--bls-proof-of-possession",
-                &bls_proof_of_possession_compressed.to_string(),
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter",
-                &pubkey_string,
-                &default_keypair_file,
-                &pubkey2_string,
-            ])
-        };
+        // Test VoteAuthorize SubCommand
+        let test_authorize_voter = test_commands.clone().get_matches_from(vec![
+            "test",
+            "vote-authorize-voter",
+            &pubkey_string,
+            &default_keypair_file,
+            &pubkey2_string,
+        ]);
         assert_eq!(
             parse_command(&test_authorize_voter, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
-                    vote_authorize,
+                    vote_authorize: VoteAuthorize::Voter,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2250,31 +1691,20 @@ mod tests {
         let (authorized_keypair_file, mut tmp_file) = make_tmp_file();
         write_keypair(&authorized_keypair, tmp_file.as_file_mut()).unwrap();
 
-        let test_authorize_voter = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter-with-bls",
-                &pubkey_string,
-                &authorized_keypair_file,
-                &keypair2_file,
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter",
-                &pubkey_string,
-                &authorized_keypair_file,
-                &pubkey2_string,
-            ])
-        };
-
+        let test_authorize_voter = test_commands.clone().get_matches_from(vec![
+            "test",
+            "vote-authorize-voter",
+            &pubkey_string,
+            &authorized_keypair_file,
+            &pubkey2_string,
+        ]);
         assert_eq!(
             parse_command(&test_authorize_voter, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
-                    vote_authorize,
+                    vote_authorize: VoteAuthorize::Voter,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2293,36 +1723,23 @@ mod tests {
             }
         );
 
-        let test_authorize_voter = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter-with-bls",
-                &pubkey_string,
-                &authorized_keypair_file,
-                &keypair2_file,
-                "--blockhash",
-                &blockhash_string,
-                "--sign-only",
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter",
-                &pubkey_string,
-                &authorized_keypair_file,
-                &pubkey2_string,
-                "--blockhash",
-                &blockhash_string,
-                "--sign-only",
-            ])
-        };
+        let test_authorize_voter = test_commands.clone().get_matches_from(vec![
+            "test",
+            "vote-authorize-voter",
+            &pubkey_string,
+            &authorized_keypair_file,
+            &pubkey2_string,
+            "--blockhash",
+            &blockhash_string,
+            "--sign-only",
+        ]);
         assert_eq!(
             parse_command(&test_authorize_voter, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
-                    vote_authorize,
+                    vote_authorize: VoteAuthorize::Voter,
                     sign_only: true,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Static(blockhash),
@@ -2343,61 +1760,32 @@ mod tests {
 
         let authorized_sig = authorized_keypair.sign_message(&[0u8]);
         let authorized_signer = format!("{}={}", authorized_keypair.pubkey(), authorized_sig);
-        let test_authorize_voter = if with_bls {
-            let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey);
-            let bls_proof_of_possession_compressed =
-                BLSProofOfPossessionCompressed(bls_proof_of_possession);
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter-with-bls",
-                &pubkey_string,
-                &authorized_keypair.pubkey().to_string(),
-                &pubkey2_string,
-                "--blockhash",
-                &blockhash_string,
-                "--signer",
-                &authorized_signer,
-                "--signer",
-                &signer2,
-                "--fee-payer",
-                &pubkey2_string,
-                "--nonce",
-                &nonce_account.to_string(),
-                "--nonce-authority",
-                &pubkey2_string,
-                "--bls-pubkey",
-                &bls_pubkey_compressed.to_string(),
-                "--bls-proof-of-possession",
-                &bls_proof_of_possession_compressed.to_string(),
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "vote-authorize-voter",
-                &pubkey_string,
-                &authorized_keypair.pubkey().to_string(),
-                &pubkey2_string,
-                "--blockhash",
-                &blockhash_string,
-                "--signer",
-                &authorized_signer,
-                "--signer",
-                &signer2,
-                "--fee-payer",
-                &pubkey2_string,
-                "--nonce",
-                &nonce_account.to_string(),
-                "--nonce-authority",
-                &pubkey2_string,
-            ])
-        };
+        let test_authorize_voter = test_commands.clone().get_matches_from(vec![
+            "test",
+            "vote-authorize-voter",
+            &pubkey_string,
+            &authorized_keypair.pubkey().to_string(),
+            &pubkey2_string,
+            "--blockhash",
+            &blockhash_string,
+            "--signer",
+            &authorized_signer,
+            "--signer",
+            &signer2,
+            "--fee-payer",
+            &pubkey2_string,
+            "--nonce",
+            &nonce_account.to_string(),
+            "--nonce-authority",
+            &pubkey2_string,
+        ]);
         assert_eq!(
             parse_command(&test_authorize_voter, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
-                    vote_authorize,
+                    vote_authorize: VoteAuthorize::Voter,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Validated(
@@ -2421,47 +1809,15 @@ mod tests {
                 ],
             }
         );
-    }
 
-    #[test_case(true; "With BLS")]
-    #[test_case(false; "Without BLS")]
-    fn test_parse_vote_authorize_checked(with_bls: bool) {
-        let test_commands = get_clap_app("test", "desc", "version");
-        let keypair = Keypair::new();
-        let pubkey = keypair.pubkey();
-        let pubkey_string = pubkey.to_string();
-
-        let default_keypair = Keypair::new();
-        let (default_keypair_file, mut tmp_file) = make_tmp_file();
-        write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
-        let default_signer = DefaultSigner::new("", &default_keypair_file);
-
+        // Test checked VoteAuthorize SubCommand
         let (voter_keypair_file, mut tmp_file) = make_tmp_file();
         let voter_keypair = Keypair::new();
         write_keypair(&voter_keypair, tmp_file.as_file_mut()).unwrap();
 
-        let authorized_keypair = Keypair::new();
-        let (authorized_keypair_file, mut tmp_file) = make_tmp_file();
-        write_keypair(&authorized_keypair, tmp_file.as_file_mut()).unwrap();
-
-        let vote_authorize = if with_bls {
-            let (bls_pubkey, bls_proof_of_possession) =
-                generate_bls_pubkey_and_proof_of_possession(&pubkey, &voter_keypair);
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            })
-        } else {
-            VoteAuthorize::Voter
-        };
-        let command = if with_bls {
-            "vote-authorize-voter-checked-with-bls"
-        } else {
-            "vote-authorize-voter-checked"
-        };
         let test_authorize_voter = test_commands.clone().get_matches_from(vec![
             "test",
-            &command,
+            "vote-authorize-voter-checked",
             &pubkey_string,
             &default_keypair_file,
             &voter_keypair_file,
@@ -2472,7 +1828,7 @@ mod tests {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: voter_keypair.pubkey(),
-                    vote_authorize,
+                    vote_authorize: VoteAuthorize::Voter,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2493,7 +1849,7 @@ mod tests {
 
         let test_authorize_voter = test_commands.clone().get_matches_from(vec![
             "test",
-            &command,
+            "vote-authorize-voter-checked",
             &pubkey_string,
             &authorized_keypair_file,
             &voter_keypair_file,
@@ -2504,7 +1860,7 @@ mod tests {
                 command: CliCommand::VoteAuthorize {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: voter_keypair.pubkey(),
-                    vote_authorize,
+                    vote_authorize: VoteAuthorize::Voter,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2526,33 +1882,14 @@ mod tests {
 
         let test_authorize_voter = test_commands.clone().get_matches_from(vec![
             "test",
-            &command,
+            "vote-authorize-voter-checked",
             &pubkey_string,
             &authorized_keypair_file,
-            &voter_keypair.pubkey().to_string(),
+            &pubkey2_string,
         ]);
         assert!(parse_command(&test_authorize_voter, &default_signer, &mut None).is_err());
-    }
 
-    #[test_case(true; "With BLS")]
-    #[test_case(false; "Without BLS")]
-    fn test_parse_vote_create_vote_account(with_bls: bool) {
-        let test_commands = get_clap_app("test", "desc", "version");
-
-        let keypair2 = Keypair::new();
-        let pubkey2 = keypair2.pubkey();
-        let pubkey2_string = pubkey2.to_string();
-        let sig2 = keypair2.sign_message(&[0u8]);
-        let signer2 = format!("{}={}", keypair2.pubkey(), sig2);
-
-        let default_keypair = Keypair::new();
-        let (default_keypair_file, mut tmp_file) = make_tmp_file();
-        write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
-        let default_signer = DefaultSigner::new("", &default_keypair_file);
-
-        let blockhash = Hash::default();
-        let blockhash_string = format!("{blockhash}");
-
+        // Test CreateVoteAccount SubCommand
         let (identity_keypair_file, mut tmp_file) = make_tmp_file();
         let identity_keypair = Keypair::new();
         let authorized_withdrawer = Keypair::new().pubkey();
@@ -2561,73 +1898,34 @@ mod tests {
         let keypair = Keypair::new();
         write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();
 
-        let nonce_account = Pubkey::new_unique();
-
-        let (bls_pubkey, bls_proof_of_possession) =
-            generate_bls_pubkey_and_proof_of_possession(&keypair.pubkey(), &identity_keypair);
-
-        let test_create_vote_account = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account-with-bls",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-                "--inflation_rewards_commission_bps",
-                "10",
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-                "--commission",
-                "10",
-            ])
-        };
-        let expected_command = if with_bls {
-            CliCommand::CreateVoteAccountV2 {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                bls_pubkey,
-                bls_proof_of_possession,
-                authorized_withdrawer,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-                inflation_rewards_commission_bps: 10,
-            }
-        } else {
-            CliCommand::CreateVoteAccount {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer,
-                commission: 10,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        };
+        let test_create_vote_account = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--commission",
+            "10",
+        ]);
         assert_eq!(
             parse_command(&test_create_vote_account, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: expected_command,
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    commission: 10,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -2636,64 +1934,32 @@ mod tests {
             }
         );
 
-        let test_create_vote_account2 = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account-with-bls",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-            ])
-        };
-        let expected_command = if with_bls {
-            CliCommand::CreateVoteAccountV2 {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer,
-                bls_pubkey,
-                bls_proof_of_possession,
-                inflation_rewards_commission_bps: 0,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        } else {
-            CliCommand::CreateVoteAccount {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer,
-                commission: 100,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        };
+        let test_create_vote_account2 = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+        ]);
         assert_eq!(
             parse_command(&test_create_vote_account2, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: expected_command,
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    commission: 100,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -2702,78 +1968,39 @@ mod tests {
             }
         );
 
-        let test_create_vote_account = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account-with-bls",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-                "--inflation_rewards_commission_bps",
-                "10",
-                "--blockhash",
-                &blockhash_string,
-                "--sign-only",
-                "--fee-payer",
-                &default_keypair.pubkey().to_string(),
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-                "--commission",
-                "10",
-                "--blockhash",
-                &blockhash_string,
-                "--sign-only",
-                "--fee-payer",
-                &default_keypair.pubkey().to_string(),
-            ])
-        };
-        let expected_command = if with_bls {
-            CliCommand::CreateVoteAccountV2 {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer,
-                bls_pubkey,
-                bls_proof_of_possession,
-                inflation_rewards_commission_bps: 10,
-                sign_only: true,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Static(blockhash),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        } else {
-            CliCommand::CreateVoteAccount {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer,
-                commission: 10,
-                sign_only: true,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Static(blockhash),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        };
+        let test_create_vote_account = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--commission",
+            "10",
+            "--blockhash",
+            &blockhash_string,
+            "--sign-only",
+            "--fee-payer",
+            &default_keypair.pubkey().to_string(),
+        ]);
         assert_eq!(
             parse_command(&test_create_vote_account, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: expected_command,
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    commission: 10,
+                    sign_only: true,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Static(blockhash),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -2784,98 +2011,49 @@ mod tests {
 
         let identity_sig = identity_keypair.sign_message(&[0u8]);
         let identity_signer = format!("{}={}", identity_keypair.pubkey(), identity_sig);
-        let test_create_vote_account = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account-with-bls",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-                "--inflation_rewards_commission_bps",
-                "10",
-                "--blockhash",
-                &blockhash_string,
-                "--signer",
-                &identity_signer,
-                "--signer",
-                &signer2,
-                "--fee-payer",
-                &default_keypair_file,
-                "--nonce",
-                &nonce_account.to_string(),
-                "--nonce-authority",
-                &pubkey2_string,
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account",
-                &keypair_file,
-                &identity_keypair.pubkey().to_string(),
-                &authorized_withdrawer.to_string(),
-                "--commission",
-                "10",
-                "--blockhash",
-                &blockhash_string,
-                "--signer",
-                &identity_signer,
-                "--signer",
-                &signer2,
-                "--fee-payer",
-                &default_keypair_file,
-                "--nonce",
-                &nonce_account.to_string(),
-                "--nonce-authority",
-                &pubkey2_string,
-            ])
-        };
-        let expected_command = if with_bls {
-            CliCommand::CreateVoteAccountV2 {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer,
-                bls_pubkey,
-                bls_proof_of_possession,
-                inflation_rewards_commission_bps: 10,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Validated(
-                    Source::NonceAccount(nonce_account),
-                    blockhash,
-                ),
-                nonce_account: Some(nonce_account),
-                nonce_authority: 3,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        } else {
-            CliCommand::CreateVoteAccount {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer,
-                commission: 10,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Validated(
-                    Source::NonceAccount(nonce_account),
-                    blockhash,
-                ),
-                nonce_account: Some(nonce_account),
-                nonce_authority: 3,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        };
+        let test_create_vote_account = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair.pubkey().to_string(),
+            &authorized_withdrawer.to_string(),
+            "--commission",
+            "10",
+            "--blockhash",
+            &blockhash_string,
+            "--signer",
+            &identity_signer,
+            "--signer",
+            &signer2,
+            "--fee-payer",
+            &default_keypair_file,
+            "--nonce",
+            &nonce_account.to_string(),
+            "--nonce-authority",
+            &pubkey2_string,
+        ]);
         assert_eq!(
             parse_command(&test_create_vote_account, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: expected_command,
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    commission: 10,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Validated(
+                        Source::NonceAccount(nonce_account),
+                        blockhash
+                    ),
+                    nonce_account: Some(nonce_account),
+                    nonce_authority: 3,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -2886,77 +2064,39 @@ mod tests {
         );
 
         // test init with an authed voter
-        let authed_keypair = Keypair::new();
-        let authed = authed_keypair.pubkey();
-        let (authed_keypair_file, mut tmp_file) = make_tmp_file();
-        write_keypair(&authed_keypair, tmp_file.as_file_mut()).unwrap();
+        let authed = solana_pubkey::new_rand();
         let (keypair_file, mut tmp_file) = make_tmp_file();
         let keypair = Keypair::new();
         write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();
-        let (bls_pubkey, bls_proof_of_possession) =
-            generate_bls_pubkey_and_proof_of_possession(&keypair.pubkey(), &authed_keypair);
 
-        let test_create_vote_account3 = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account-with-bls",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-                &authed_keypair_file,
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account",
-                &keypair_file,
-                &identity_keypair_file,
-                &authorized_withdrawer.to_string(),
-                "--authorized-voter",
-                &authed.to_string(),
-            ])
-        };
-        let expected_command = if with_bls {
-            CliCommand::CreateVoteAccountV2 {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: Some(authed),
-                authorized_withdrawer,
-                bls_pubkey,
-                bls_proof_of_possession,
-                inflation_rewards_commission_bps: 0,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        } else {
-            CliCommand::CreateVoteAccount {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: Some(authed),
-                authorized_withdrawer,
-                commission: 100,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        };
+        let test_create_vote_account3 = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--authorized-voter",
+            &authed.to_string(),
+        ]);
         assert_eq!(
             parse_command(&test_create_vote_account3, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: expected_command,
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: Some(authed),
+                    authorized_withdrawer,
+                    commission: 100,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
                     Box::new(keypair),
@@ -2969,68 +2109,33 @@ mod tests {
         let keypair = Keypair::new();
         write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();
         // succeed even though withdrawer unsafe (because forcefully allowed)
-        let test_create_vote_account4 = if with_bls {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account-with-bls",
-                &keypair_file,
-                &identity_keypair_file,
-                &identity_keypair_file,
-                "--allow-unsafe-authorized-withdrawer",
-            ])
-        } else {
-            test_commands.clone().get_matches_from(vec![
-                "test",
-                "create-vote-account",
-                &keypair_file,
-                &identity_keypair_file,
-                &identity_keypair_file,
-                "--allow-unsafe-authorized-withdrawer",
-            ])
-        };
-        let (bls_pubkey, bls_proof_of_possession) =
-            generate_bls_pubkey_and_proof_of_possession(&keypair.pubkey(), &identity_keypair);
-        let expected_command = if with_bls {
-            CliCommand::CreateVoteAccountV2 {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer: identity_keypair.pubkey(),
-                inflation_rewards_commission_bps: 0,
-                bls_pubkey,
-                bls_proof_of_possession,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        } else {
-            CliCommand::CreateVoteAccount {
-                vote_account: 1,
-                seed: None,
-                identity_account: 2,
-                authorized_voter: None,
-                authorized_withdrawer: identity_keypair.pubkey(),
-                commission: 100,
-                sign_only: false,
-                dump_transaction_message: false,
-                blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
-                nonce_account: None,
-                nonce_authority: 0,
-                memo: None,
-                fee_payer: 0,
-                compute_unit_price: None,
-            }
-        };
+        let test_create_vote_account4 = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &identity_keypair_file,
+            "--allow-unsafe-authorized-withdrawer",
+        ]);
         assert_eq!(
             parse_command(&test_create_vote_account4, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: expected_command,
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer: identity_keypair.pubkey(),
+                    commission: 100,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3038,29 +2143,6 @@ mod tests {
                 ],
             }
         );
-    }
-
-    #[test]
-    fn test_parse_vote_other_commands() {
-        let test_commands = get_clap_app("test", "desc", "version");
-        let keypair = Keypair::new();
-        let pubkey = keypair.pubkey();
-        let pubkey_string = pubkey.to_string();
-
-        let default_keypair = Keypair::new();
-        let (default_keypair_file, mut tmp_file) = make_tmp_file();
-        write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
-        let default_signer = DefaultSigner::new("", &default_keypair_file);
-
-        let blockhash = Hash::default();
-        let blockhash_string = format!("{blockhash}");
-
-        let (identity_keypair_file, mut tmp_file) = make_tmp_file();
-        let identity_keypair = Keypair::new();
-        write_keypair(&identity_keypair, tmp_file.as_file_mut()).unwrap();
-        let (keypair_file, mut tmp_file) = make_tmp_file();
-        let keypair = Keypair::new();
-        write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();
 
         let test_update_validator = test_commands.clone().get_matches_from(vec![
             "test",

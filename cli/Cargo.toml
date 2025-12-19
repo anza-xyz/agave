@@ -19,7 +19,10 @@ path = "src/main.rs"
 [features]
 default = ["remote-wallet-hidraw"]
 agave-unstable-api = []
-dev-context-only-utils = ["solana-faucet/dev-context-only-utils"]
+dev-context-only-utils = [
+    "solana-faucet/dev-context-only-utils",
+    "solana-client/dev-context-only-utils",
+]
 remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
@@ -27,7 +30,6 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
-agave-votor-messages = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 clap = { workspace = true }
@@ -48,7 +50,6 @@ serde_json = { workspace = true }
 solana-account = "=3.2.0"
 solana-account-decoder = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
-solana-bls-signatures = { workspace = true }
 solana-borsh = "=3.0.0"
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
@@ -65,7 +66,7 @@ solana-feature-gate-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-fee-calculator = "=3.0.0"
 solana-fee-structure = "=3.0.0"
 solana-hash = "=3.1.0"
-solana-instruction = { workspace = true }
+solana-instruction = "3.1.0"
 solana-keypair = "=3.1.0"
 solana-loader-v3-interface = { version = "=6.1.0", features = ["bincode"] }
 solana-loader-v4-interface = "=3.1.0"
@@ -117,6 +118,5 @@ solana-rpc = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tps-client = { workspace = true, features = ["dev-context-only-utils"] }
-solana-vote-program = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
