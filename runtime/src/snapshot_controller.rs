@@ -151,7 +151,7 @@ mod tests {
         let mut parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
         banks.push(parent_bank.clone());
 
-        for _i in 1..=num_banks {
+        for _ in 1..=num_banks {
             let new_bank = Arc::new(Bank::new_from_parent(
                 parent_bank.clone(),
                 &Pubkey::default(),
@@ -183,7 +183,7 @@ mod tests {
         expected_snapshot_type: Option<SnapshotRequestKind>,
     ) {
         let banks = create_banks(num_banks);
-        let banks = banks.iter().rev().collect::<Vec<&Arc<Bank>>>();
+        let banks = banks.iter().rev().collect::<Vec<_>>();
 
         let snapshot_config = SnapshotConfig {
             full_snapshot_archive_interval,
