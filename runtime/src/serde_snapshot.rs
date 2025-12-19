@@ -497,10 +497,10 @@ pub(crate) fn snapshot_storage_lengths_from_fields(
     let AccountsDbFields(snapshot_storage, ..) = &accounts_db_fields;
     snapshot_storage
         .iter()
-        .filter_map(|(slot, slot_storage)| {
-            slot_storage
-                .first()
-                .map(|storage_entry| (*slot, (storage_entry.id(), storage_entry.current_len())))
+        .map(|(slot, slot_storage)| {
+            assert_eq!(slot_storage.len(), 1, "invalid storage count (slot={slot})");
+            let storage_entry = slot_storage[0];
+            (*slot, (storage_entry.id(), storage_entry.current_len()))
         })
         .collect()
 }

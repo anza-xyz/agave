@@ -234,7 +234,7 @@ impl SnapshotStorageRebuilder {
         if let Some(other) = self.storage.insert(slot, storage_entry) {
             Err(SnapshotError::RebuildStorages(format!(
                 "there must be exactly one storage per slot, but slot {slot} has duplicate \
-                 storages:{} vs {storage_id}",
+                 storages: {} vs {storage_id}",
                 other.id()
             )))
         } else {
