@@ -5,7 +5,7 @@ use {
     crate::serde_snapshot::{
         reconstruct_single_storage, remap_and_reconstruct_single_storage,
         snapshot_storage_lengths_from_fields, AccountsDbFields, SerdeObsoleteAccountsMap,
-        SerializableAccountStorageEntry, SerializedAccountsFileId,
+        SerializableAccountStorageEntry,
     },
     agave_fs::FileInfo,
     crossbeam_channel::{select, unbounded, Receiver, Sender},
@@ -40,7 +40,7 @@ pub(crate) struct SnapshotStorageRebuilder {
     /// Number of threads to rebuild with
     num_threads: usize,
     /// Snapshot storage lengths - from the snapshot file
-    snapshot_storage_lengths: HashMap<Slot, (SerializedAccountsFileId, usize)>,
+    snapshot_storage_lengths: HashMap<Slot, usize>,
     /// Container for storing rebuilt snapshot storages
     storage: AccountStorageMap,
     /// Tracks next append_vec_id
@@ -91,7 +91,7 @@ impl SnapshotStorageRebuilder {
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_storage_lengths: HashMap<Slot, (SerializedAccountsFileId, usize)>,
+        snapshot_storage_lengths: HashMap<Slot, usize>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
@@ -116,7 +116,7 @@ impl SnapshotStorageRebuilder {
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_storage_lengths: HashMap<Slot, (SerializedAccountsFileId, usize)>,
+        snapshot_storage_lengths: HashMap<Slot, usize>,
         append_vec_files: Vec<FileInfo>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
@@ -206,7 +206,7 @@ impl SnapshotStorageRebuilder {
     fn process_complete_slot(&self, slot: Slot, file_info: FileInfo) -> Result<(), SnapshotError> {
         let filename = file_info.path.file_name().unwrap().to_str().unwrap();
         let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
-        let current_len = self.snapshot_storage_lengths.get(&slot).unwrap().1;
+        let current_len = *self.snapshot_storage_lengths.get(&slot).unwrap();
 
         let storage_entry = match &self.snapshot_from {
             SnapshotFrom::Archive => remap_and_reconstruct_single_storage(
