@@ -1,16 +1,7 @@
 // re-export since this is needed at validator startup
 pub use agave_xdp::set_cpu_affinity;
-#[cfg(target_os = "linux")]
 use {
-    agave_xdp::{
-        device::QueueId, get_network_device::NetworkDevice, load_xdp_program, route::Router,
-        route_monitor::RouteMonitor, tx_loop::tx_loop,
-    },
-    arc_swap::ArcSwap,
-    crossbeam_channel::TryRecvError,
-    std::{thread::Builder, time::Duration},
-};
-use {
+    agave_xdp::get_network_device::NetworkDevice,
     crossbeam_channel::{Sender, TrySendError},
     solana_ledger::shred,
     std::{
@@ -19,6 +10,16 @@ use {
         sync::{atomic::AtomicBool, Arc},
         thread,
     },
+};
+#[cfg(target_os = "linux")]
+use {
+    agave_xdp::{
+        device::QueueId, load_xdp_program, route::Router, route_monitor::RouteMonitor,
+        tx_loop::tx_loop,
+    },
+    arc_swap::ArcSwap,
+    crossbeam_channel::TryRecvError,
+    std::{thread::Builder, time::Duration},
 };
 
 #[cfg(target_os = "linux")]
