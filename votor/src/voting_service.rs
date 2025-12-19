@@ -271,6 +271,7 @@ mod tests {
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
+        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -281,7 +282,6 @@ mod tests {
         solana_signer::Signer,
         solana_streamer::{
             quic::{spawn_server, QuicServerParams, SpawnServerResult},
-            socket::SocketAddrSpace,
             streamer::StakedNodes,
         },
         std::{

@@ -814,6 +814,7 @@ mod tests {
             blockstore::Blockstore, blockstore_options::BlockstoreOptions, get_tmp_ledger_path,
             leader_schedule_cache::LeaderScheduleCache,
         },
+        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -822,7 +823,6 @@ mod tests {
             },
             installed_scheduler_pool::BankWithScheduler,
         },
-        solana_streamer::socket::SocketAddrSpace,
         std::{
             collections::HashMap,
             fs::remove_file,
