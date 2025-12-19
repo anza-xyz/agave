@@ -281,17 +281,16 @@ mod tests {
         },
         solana_signer::Signer,
         solana_streamer::{
-            quic::{spawn_server, QuicServerParams, SpawnServerResult},
+            nonblocking::swqos::SwQosConfig,
+            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
         std::{
             net::SocketAddr,
-            sync::{
-                atomic::{AtomicBool, Ordering},
-                Arc,
-            },
+            sync::{Arc, RwLock},
         },
         test_case::test_case,
+        tokio_util::sync::CancellationToken,
     };
 
     fn create_voting_service(
@@ -379,7 +378,6 @@ mod tests {
 
         // Start a quick streamer to handle quick control packets
         let (sender, receiver) = crossbeam_channel::unbounded();
-        let exit = Arc::new(AtomicBool::new(false));
         let stakes = validator_keypairs
             .iter()
             .map(|x| (x.node_keypair.pubkey(), 100))
@@ -388,20 +386,24 @@ mod tests {
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
         )));
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
+            endpoints: _,
             thread: quic_server_thread,
-            ..
-        } = spawn_server(
+            key_updater: _,
+        } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
-            "quic_streamer_test",
+            "voting_service_test",
             [socket],
             &Keypair::new(),
             sender,
-            exit.clone(),
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+            cancel.clone(),
         )
         .unwrap();
+
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
         let received_message = packet
@@ -414,7 +416,7 @@ mod tests {
                 )
             });
         assert_eq!(received_message, expected_message);
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         quic_server_thread.join().unwrap();
     }
 }
