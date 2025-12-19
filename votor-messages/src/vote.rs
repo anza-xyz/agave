@@ -10,7 +10,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "ECnePnemn3asm25ZfWHjaQrsNwoMyrpYiGEn8rDohdwM")
+    frozen_abi(digest = "AgKoR2cpjUSVCW7Cpihob5nDiPcFt1PXmoPKWJg3zuSB")
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Vote {
@@ -24,7 +24,7 @@ pub enum Vote {
     NotarizeFallback(NotarizationFallbackVote),
     /// A skip fallback vote
     SkipFallback(SkipFallbackVote),
-    /// The genesis vote for use in the migration
+    /// A genesis vote, only used during the TowerBFT -> Alpenglow Migration
     Genesis(GenesisVote),
 }
 
@@ -190,9 +190,9 @@ impl From<GenesisVote> for Vote {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct NotarizationVote {
-    /// Slot for the vote.
+    /// The slot this vote is cast for.
     pub slot: Slot,
-    /// Block id for the vote.
+    /// The block id this vote is for.
     pub block_id: Hash,
 }
 
@@ -204,7 +204,7 @@ pub struct NotarizationVote {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct FinalizationVote {
-    /// Slot for the vote.
+    /// The slot this vote is cast for.
     pub slot: Slot,
 }
 
@@ -218,7 +218,7 @@ pub struct FinalizationVote {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct SkipVote {
-    /// Slot for the vote.
+    /// The slot this vote is cast for.
     pub slot: Slot,
 }
 
@@ -230,9 +230,9 @@ pub struct SkipVote {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct NotarizationFallbackVote {
-    /// Slot for the vote.
+    /// The slot this vote is cast for.
     pub slot: Slot,
-    /// Block id for the vote.
+    /// The block id this vote is for.
     pub block_id: Hash,
 }
 
@@ -244,7 +244,7 @@ pub struct NotarizationFallbackVote {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct SkipFallbackVote {
-    /// Slot for the vote.
+    /// The slot this vote is cast for.
     pub slot: Slot,
 }
 
@@ -256,8 +256,8 @@ pub struct SkipFallbackVote {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct GenesisVote {
-    /// Slot for the vote.
+    /// The slot this vote is cast for.
     pub slot: Slot,
-    /// Block id for the vote.
+    /// The block id this vote is for.
     pub block_id: Hash,
 }

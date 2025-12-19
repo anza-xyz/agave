@@ -1,4 +1,4 @@
-//! Put BLS message here so all clients can agree on the format
+//! Put Alpenglow consensus messages here so all clients can agree on the format.
 use {
     crate::vote::Vote,
     serde::{Deserialize, Serialize},
@@ -12,24 +12,28 @@ pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
 /// Block, a (slot, hash) tuple
 pub type Block = (Slot, Hash);
-
 /// A consensus vote.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
     frozen_abi(digest = "4nTsJNvSwHrs8FHz2TPbSBiYc8Eattw4v31XDge2c5zA")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VoteMessage {
-    /// The vote
+    /// The type of the vote.
     pub vote: Vote,
-    /// The signature
+    /// The signature.
     pub signature: BLSSignature,
-    /// The rank of the validator
+    /// The rank of the validator.
     pub rank: u16,
 }
 
-/// Certificate details
+/// The different types of certificates and their relevant state.
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor),
+    frozen_abi(digest = "CazjewshYYizgQuCgBBRv6gzasJpUvFVKoSeEirWRKgA")
+)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub enum CertificateType {
     /// Finalize certificate
@@ -163,11 +167,12 @@ impl CertificateType {
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Certificate {
-    /// The type of the certificate.
+    /// The certificate type.
     pub cert_type: CertificateType,
-    /// The signature
+    /// The aggregate signature.
     pub signature: BLSSignature,
-    /// The bitmap for validators, see solana-signer-store for encoding format
+    /// A rank bitmap for validators' signatures included in the aggregate.
+    /// See solana-signer-store for encoding format.
     pub bitmap: Vec<u8>,
 }
 
@@ -180,9 +185,9 @@ pub struct Certificate {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
-    /// Vote message, with the vote and the rank of the validator.
+    /// A vote from a single party.
     Vote(VoteMessage),
-    /// Certificate message
+    /// A certificate aggregating votes from multiple parties.
     Certificate(Certificate),
 }
 
