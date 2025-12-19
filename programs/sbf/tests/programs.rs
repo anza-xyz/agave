@@ -2481,14 +2481,7 @@ fn test_program_reads_from_program_account() {
         &compute_budget,
     );
 
-    let mut sysvar_cache = SysvarCache::default();
-    sysvar_cache.fill_missing_entries(|pubkey, callback| {
-        if pubkey == &rent::id() {
-            let rent = Rent::default();
-            let rent_data = bincode::serialize(&rent).unwrap();
-            callback(&rent_data);
-        }
-    });
+    let sysvar_cache = default_sysvar_cache();
 
     // Build the program account data: LoaderV4State header + ELF bytes
     let loader_state = LoaderV4State {
@@ -2547,13 +2540,7 @@ fn test_program_sbf_c_dup() {
         &compute_budget,
     );
 
-    let mut sysvar_cache = SysvarCache::default();
-    sysvar_cache.fill_missing_entries(|pubkey, callback| {
-        if pubkey == &rent::id() {
-            let rent_data = bincode::serialize(&Rent::default()).unwrap();
-            callback(&rent_data);
-        }
-    });
+    let sysvar_cache = default_sysvar_cache();
 
     let account_address = Pubkey::new_unique();
     let account =
