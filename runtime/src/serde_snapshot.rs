@@ -77,7 +77,7 @@ const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct AccountsDbFields<T>(
+pub(crate) struct AccountsDbFields<T>(
     HashMap<Slot, SmallVec<[T; 1]>>,
     u64, // obsolete, formerly write_version
     Slot,
@@ -89,6 +89,38 @@ pub struct AccountsDbFields<T>(
     #[serde(deserialize_with = "default_on_eof")]
     Vec<(Slot, Hash)>,
 );
+
+impl<T: SerializableStorage> AccountsDbFields<T> {
+    /// Get snapshot storage lengths filtering to slots above base slot (if provided).
+    ///
+    /// Returns an error if storage slots exceed snapshot slot indicating inconsistency of data.
+    pub(crate) fn get_storage_lengths_for_snapshot_slots(
+        &self,
+        base_slot: Option<Slot>,
+    ) -> Result<HashMap<Slot, usize>, SnapshotError> {
+        let AccountsDbFields(snapshot_storage, _, snapshot_slot, ..) = self;
+        let filtered_min_slot = base_slot.map(|slot| slot + 1).unwrap_or(Slot::MIN);
+        let mut lengths = HashMap::with_capacity(snapshot_storage.len());
+
+        for (slot, slot_storage) in snapshot_storage {
+            if slot > snapshot_slot {
+                return Err(SnapshotError::MismatchedSnapshotStorageSlot(
+                    *slot,
+                    *snapshot_slot,
+                ));
+            }
+            if *slot < filtered_min_slot {
+                // Serialized bank includes storage mapping for all slots, but it might be used for
+                // rebuilding storages only up from `base_slot`, so this case is not an error.
+                continue;
+            }
+            assert_eq!(slot_storage.len(), 1, "invalid storage count (slot={slot})");
+            let storage_entry = &slot_storage[0];
+            lengths.insert(*slot, storage_entry.current_len());
+        }
+        Ok(lengths)
+    }
+}
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
@@ -317,48 +349,13 @@ pub struct SnapshotAccountsDbFields<T> {
 }
 
 impl<T> SnapshotAccountsDbFields<T> {
-    pub fn new(
+    pub(crate) fn new(
         full_snapshot_accounts_db_fields: AccountsDbFields<T>,
         incremental_snapshot_accounts_db_fields: Option<AccountsDbFields<T>>,
     ) -> Self {
         Self {
             full_snapshot_accounts_db_fields,
             incremental_snapshot_accounts_db_fields,
-        }
-    }
-
-    /// Verify the consistency of slots in incremental snapshot (if present)
-    ///
-    /// Returns error if full snapshot has some slot above its deserialized slot number that overlap
-    /// with slots from incremental snapshot.
-    fn verify_slot_ranges(&self) -> Result<(), Error> {
-        let AccountsDbFields(
-            full_snapshot_storages,
-            _full_snapshot_write_version,
-            full_snapshot_slot,
-            ..,
-        ) = &self.full_snapshot_accounts_db_fields;
-        match &self.incremental_snapshot_accounts_db_fields {
-            None => Ok(()),
-            Some(AccountsDbFields(incremental_snapshot_storages, ..)) => {
-                // filter out incremental snapshot storages with slot <= full snapshot slot
-                // There must not be any overlap in the slots of storages between the full snapshot and
-                // the incremental snapshot
-                incremental_snapshot_storages
-                    .iter()
-                    .filter(|&(slot, _)| slot > full_snapshot_slot)
-                    .all(|(slot, _)| !full_snapshot_storages.contains_key(slot))
-                    .then_some(())
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Snapshots are incompatible: There are storages for the same slot in \
-                             both the full snapshot and the incremental snapshot!",
-                        )
-                    })?;
-
-                Ok(())
-            }
         }
     }
 
@@ -492,21 +489,6 @@ where
         .into();
 
     Ok((bank_fields, accounts_db_fields))
-}
-
-/// Get snapshot storage lengths from accounts_db_fields
-pub(crate) fn snapshot_storage_lengths_from_fields(
-    accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
-) -> HashMap<Slot, usize> {
-    let AccountsDbFields(snapshot_storage, ..) = &accounts_db_fields;
-    snapshot_storage
-        .iter()
-        .map(|(slot, slot_storage)| {
-            assert_eq!(slot_storage.len(), 1, "invalid storage count (slot={slot})");
-            let storage_entry = slot_storage[0];
-            (*slot, storage_entry.current_len())
-        })
-        .collect()
 }
 
 pub(crate) fn fields_from_stream<R: Read>(
@@ -1039,8 +1021,6 @@ where
         accounts_update_notifier,
         exit,
     );
-
-    snapshot_accounts_db_fields.verify_slot_ranges()?;
 
     let (snapshot_write_version, snapshot_bank_hash_info) =
         snapshot_accounts_db_fields.into_write_version_and_bank_hash_info();

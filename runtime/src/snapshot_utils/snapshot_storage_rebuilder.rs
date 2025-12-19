@@ -3,9 +3,7 @@
 use {
     super::{SnapshotError, SnapshotFrom},
     crate::serde_snapshot::{
-        reconstruct_single_storage, remap_and_reconstruct_single_storage,
-        snapshot_storage_lengths_from_fields, AccountsDbFields, SerdeObsoleteAccountsMap,
-        SerializableAccountStorageEntry,
+        reconstruct_single_storage, remap_and_reconstruct_single_storage, SerdeObsoleteAccountsMap,
     },
     agave_fs::FileInfo,
     crossbeam_channel::{select, unbounded, Receiver, Sender},
@@ -58,33 +56,6 @@ pub(crate) struct SnapshotStorageRebuilder {
 }
 
 impl SnapshotStorageRebuilder {
-    /// Synchronously spawns threads to rebuild snapshot storages
-    pub(crate) fn rebuild_storage(
-        accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
-        append_vec_files: Vec<FileInfo>,
-        file_receiver: Receiver<FileInfo>,
-        num_threads: usize,
-        next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_from: SnapshotFrom,
-        storage_access: StorageAccess,
-        obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
-    ) -> Result<AccountStorageMap, SnapshotError> {
-        let snapshot_storage_lengths = snapshot_storage_lengths_from_fields(accounts_db_fields);
-
-        let account_storage_map = Self::spawn_rebuilder_threads(
-            file_receiver,
-            num_threads,
-            next_append_vec_id,
-            snapshot_storage_lengths,
-            append_vec_files,
-            snapshot_from,
-            storage_access,
-            obsolete_accounts,
-        )?;
-
-        Ok(account_storage_map)
-    }
-
     /// Create the SnapshotStorageRebuilder for storing state during rebuilding
     ///     - pre-allocates data for storage file infos
     fn new(
@@ -111,13 +82,15 @@ impl SnapshotStorageRebuilder {
         }
     }
 
+    /// Synchronously spawns threads to rebuild snapshot storages returning when they complete
+    ///
     /// Spawn threads for processing buffered append_vec_files, and then received files
-    fn spawn_rebuilder_threads(
+    pub(crate) fn spawn_rebuilder_threads(
+        snapshot_storage_lengths: HashMap<Slot, usize>,
+        append_vec_files: Vec<FileInfo>,
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_storage_lengths: HashMap<Slot, usize>,
-        append_vec_files: Vec<FileInfo>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
@@ -206,7 +179,11 @@ impl SnapshotStorageRebuilder {
     fn process_complete_slot(&self, slot: Slot, file_info: FileInfo) -> Result<(), SnapshotError> {
         let filename = file_info.path.file_name().unwrap().to_str().unwrap();
         let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
-        let current_len = *self.snapshot_storage_lengths.get(&slot).unwrap();
+        let Some(&current_len) = self.snapshot_storage_lengths.get(&slot) else {
+            return Err(SnapshotError::RebuildStorages(format!(
+                "append vec file {filename} for slot outside of expected range in snapshot"
+            )));
+        };
 
         let storage_entry = match &self.snapshot_from {
             SnapshotFrom::Archive => remap_and_reconstruct_single_storage(
