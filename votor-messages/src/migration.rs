@@ -41,7 +41,7 @@
 //!
 //! - When in `AlpenglowEnabled` various TowerBFT threads stop processsing alpenglow slots while still processing
 //!   TowerBFT slots pre alpenglow genesis in order to help other cluster participants catchup.
-//! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads
+//! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
 use {
     crate::consensus_message::{Block, Certificate, CertificateType},
     log::*,
