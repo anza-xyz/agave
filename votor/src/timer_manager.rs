@@ -12,7 +12,7 @@ use {
     crossbeam_channel::Sender,
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
-    solana_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::migration::MigrationStatus,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},

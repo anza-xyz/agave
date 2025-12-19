@@ -1,25 +1,26 @@
 [package]
-name = "solana-votor-messages"
-description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/solana-votor-messages"
-readme = "../README.md"
+name = "agave-votor-messages"
+documentation = "https://docs.rs/agave-votor-messages"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
 [features]
+agave-unstable-api = []
+dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-hash/frozen-abi",
 ]
-dev-context-only-utils = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
 log = { workspace = true }
@@ -37,14 +38,13 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true }
-solana-logger = { workspace = true }
+solana-hash = { workspace = true, features = ["serde"] }
 solana-program = { workspace = true }
 solana-vote-interface = { workspace = true }
 spl-pod = { workspace = true }
 
 [dev-dependencies]
-solana-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
+agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
 
 [lints]
 workspace = true

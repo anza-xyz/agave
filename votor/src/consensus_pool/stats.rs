@@ -1,6 +1,6 @@
 use {
     solana_metrics::datapoint_info,
-    solana_votor_messages::{consensus_message::CertificateType, vote::VoteType},
+    agave_votor_messages::{consensus_message::CertificateType, vote::VoteType},
     std::time::{Duration, Instant},
 };
 

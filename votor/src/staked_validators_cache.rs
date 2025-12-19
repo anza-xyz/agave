@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_alpenglow_port_override() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (bank_forks, cluster_info, node_pubkeys) = create_bank_forks_and_cluster_info(3, 0, 1);
         let pubkey_b = node_pubkeys[1];
 
