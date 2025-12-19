@@ -577,6 +577,7 @@ dependencies = [
  "solana-vote-program",
  "test-case",
  "thiserror 2.0.17",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
