@@ -8,8 +8,8 @@ use {
         consensus_pool::stats::ConsensusPoolStats,
         event::VotorEvent,
     },
-    solana_hash::Hash,
     agave_votor_messages::vote::Vote,
+    solana_hash::Hash,
     std::collections::BTreeMap,
 };
 

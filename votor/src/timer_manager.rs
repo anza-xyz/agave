@@ -9,10 +9,10 @@ use {
         common::{DELTA_BLOCK, DELTA_TIMEOUT},
         event::VotorEvent,
     },
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
-    agave_votor_messages::migration::MigrationStatus,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},

@@ -13,6 +13,10 @@ use {
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
     },
+    agave_votor_messages::{
+        consensus_message::{Certificate, ConsensusMessage},
+        migration::MigrationStatus,
+    },
     crossbeam_channel::{select, Receiver, Sender, TrySendError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -22,10 +26,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    agave_votor_messages::{
-        consensus_message::{Certificate, ConsensusMessage},
-        migration::MigrationStatus,
-    },
     stats::ConsensusPoolServiceStats,
     std::{
         sync::{
@@ -445,6 +445,10 @@ impl ConsensusPoolService {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::{
+            consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            vote::Vote,
+        },
         crossbeam_channel::Sender,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -460,10 +464,6 @@ mod tests {
         },
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
-        agave_votor_messages::{
-            consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
-            vote::Vote,
-        },
         std::sync::Arc,
         test_case::test_case,
     };
