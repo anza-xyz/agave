@@ -2018,28 +2018,6 @@ impl fmt::Display for CliSignOnlyData {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CliSignOnlyDataWithBLS {
-    #[serde(flatten)]
-    pub base: CliSignOnlyData,
-    pub bls_pubkey: String,
-    pub bls_proof_of_possession: String,
-}
-
-impl QuietDisplay for CliSignOnlyDataWithBLS {}
-impl VerboseDisplay for CliSignOnlyDataWithBLS {}
-
-impl fmt::Display for CliSignOnlyDataWithBLS {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f)?;
-        write!(f, "{}", self.base)?;
-        writeln_name_value(f, "BLS Public Key:", &self.bls_pubkey)?;
-        writeln_name_value(f, "BLS Proof of Possession:", &self.bls_proof_of_possession)?;
-        Ok(())
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliSignature {
