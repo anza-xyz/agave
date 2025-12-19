@@ -56,6 +56,8 @@ pub trait VoteStateHandle {
 
     fn set_commission(&mut self, commission: u8);
 
+    fn set_inflation_rewards_commission_bps(&mut self, commission_bps: u16);
+
     fn node_pubkey(&self) -> &Pubkey;
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
@@ -352,6 +354,11 @@ impl VoteStateHandle for VoteStateV3 {
         self.commission = commission;
     }
 
+    fn set_inflation_rewards_commission_bps(&mut self, _commission_bps: u16) {
+        // No-op. We can never reach this callsite, since SIMD-0291 depends on
+        // SIMD-0185: the activation of VoteStateV4.
+    }
+
     fn node_pubkey(&self) -> &Pubkey {
         &self.node_pubkey
     }
@@ -521,6 +528,10 @@ impl VoteStateHandle for VoteStateV4 {
     fn set_commission(&mut self, commission: u8) {
         // Safety: u16::MAX > u8::MAX * 100
         self.inflation_rewards_commission_bps = (commission as u16) * 100;
+    }
+
+    fn set_inflation_rewards_commission_bps(&mut self, commission_bps: u16) {
+        self.inflation_rewards_commission_bps = commission_bps;
     }
 
     fn node_pubkey(&self) -> &Pubkey {
@@ -716,6 +727,13 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_commission(commission),
             TargetVoteState::V4(v4) => v4.set_commission(commission),
+        }
+    }
+
+    fn set_inflation_rewards_commission_bps(&mut self, commission_bps: u16) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.set_inflation_rewards_commission_bps(commission_bps),
+            TargetVoteState::V4(v4) => v4.set_inflation_rewards_commission_bps(commission_bps),
         }
     }
 
@@ -2278,5 +2296,41 @@ mod tests {
             Some(newer_bls_pubkey_compressed)
         );
         assert!(vote_state.has_bls_pubkey());
+    }
+
+    #[test]
+    fn test_set_inflation_rewards_commission_bps() {
+        // V3: try to set various values - should all be no-ops.
+        let mut handler = VoteStateHandler::new_v3(VoteStateV3::default());
+        let original_commission = handler.commission();
+
+        handler.set_inflation_rewards_commission_bps(500);
+        assert_eq!(handler.commission(), original_commission);
+
+        handler.set_inflation_rewards_commission_bps(10_000);
+        assert_eq!(handler.commission(), original_commission);
+
+        handler.set_inflation_rewards_commission_bps(15_000);
+        assert_eq!(handler.commission(), original_commission);
+
+        // V4: actual live updates.
+        let mut handler = VoteStateHandler::new_v4(VoteStateV4::default());
+
+        // First test some "normal" values.
+        for bps in [0, 100, 500, 1_000, 5_000, 10_000] {
+            handler.set_inflation_rewards_commission_bps(bps);
+            let v4 = handler.as_ref_v4();
+            assert_eq!(v4.inflation_rewards_commission_bps, bps);
+            // commission() should return bps / 100
+            assert_eq!(handler.commission(), (bps / 100) as u8);
+        }
+
+        // Now test values > 10,000 are allowed at program level.
+        // Capping happens during reward calculation, not storage.
+        for bps in [10_001, 15_000, u16::MAX] {
+            handler.set_inflation_rewards_commission_bps(bps);
+            let v4 = handler.as_ref_v4();
+            assert_eq!(v4.inflation_rewards_commission_bps, bps);
+        }
     }
 }

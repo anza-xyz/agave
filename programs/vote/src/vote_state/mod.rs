@@ -23,7 +23,7 @@ use {
         instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
         IndexOfAccount,
     },
-    solana_vote_interface::{error::VoteError, program::id},
+    solana_vote_interface::{error::VoteError, instruction::CommissionKind, program::id},
     std::{
         cmp::Ordering,
         collections::{HashSet, VecDeque},
@@ -852,6 +852,35 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
     vote_state.set_commission(commission);
+
+    vote_state.set_vote_account_state(vote_account)
+}
+
+/// Update the vote account's commission in basis points (SIMD-0291).
+pub fn update_commission_bps<S: std::hash::BuildHasher>(
+    vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
+    commission_bps: u16,
+    kind: CommissionKind,
+    signers: &HashSet<Pubkey, S>,
+) -> Result<(), InstructionError> {
+    // Per SIMD-0291: BlockRevenue returns InvalidInstructionData
+    // (Block revenue commission updates will be enabled in a future SIMD)
+    if matches!(kind, CommissionKind::BlockRevenue) {
+        return Err(InstructionError::InvalidInstructionData);
+    }
+
+    let mut vote_state = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, false),
+    )?;
+
+    // No commission update rule, per SIMD-0249 and SIMD-0291.
+
+    // Require authorized withdrawer to sign.
+    verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
+
+    vote_state.set_inflation_rewards_commission_bps(commission_bps);
 
     vote_state.set_vote_account_state(vote_account)
 }
@@ -1711,6 +1740,120 @@ mod tests {
             .commission(),
             9
         );
+    }
+
+    /// Test update_commission_bps (SIMD-0291).
+    ///
+    /// Unlike test_update_commission, SIMD-0291 has no timing restrictions
+    /// (per SIMD-0249). Updates are always allowed regardless of epoch position.
+    ///
+    /// This test only uses V4 since SIMD-0291 depends on SIMD-0185 (VoteStateV4).
+    #[test]
+    fn test_update_commission_bps() {
+        let target_version = VoteStateTargetVersion::V4;
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
+        let withdrawer_pubkey = *vote_state.authorized_withdrawer();
+        let node_pubkey = *vote_state.node_pubkey();
+
+        // Set initial commission.
+        vote_state.set_commission(10); // 10%
+
+        let serialized = vote_state.serialize();
+        let serialized_len = serialized.len();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized_len);
+        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
+        vote_account.set_data_from_slice(&serialized);
+
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![(id(), processor_account), (node_pubkey, vote_account)],
+            rent,
+            0,
+            0,
+            1,
+        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
+        let non_signers: HashSet<Pubkey> = HashSet::new();
+
+        // `CommissionKind::BlockRevenue` returns `InvalidInstructionData`.
+        assert_eq!(
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                500,
+                CommissionKind::BlockRevenue,
+                &signers,
+            ),
+            Err(InstructionError::InvalidInstructionData)
+        );
+
+        // Missing signature returns `MissingRequiredSignature`.
+        assert_eq!(
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                500,
+                CommissionKind::InflationRewards,
+                &non_signers,
+            ),
+            Err(InstructionError::MissingRequiredSignature)
+        );
+
+        // Incorrect signature for withdraw authority returns `MissingRequiredSignature`.
+        let wrong_signers: HashSet<Pubkey> = vec![Pubkey::new_unique()].into_iter().collect();
+        assert_eq!(
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                500,
+                CommissionKind::InflationRewards,
+                &wrong_signers,
+            ),
+            Err(InstructionError::MissingRequiredSignature)
+        );
+
+        let mut commission_bps_roundtrip = |new_commission_bps: u16| {
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                new_commission_bps,
+                CommissionKind::InflationRewards,
+                &signers,
+            )
+            .unwrap();
+            let handler = get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap();
+            let commission_bps = handler.as_ref_v4().inflation_rewards_commission_bps;
+            assert_eq!(commission_bps, new_commission_bps);
+        };
+
+        // There's no timing check for SIMD-0291, so just go back and forth
+        // with new values.
+
+        commission_bps_roundtrip(1_100); // Increase to 11%
+        commission_bps_roundtrip(5_000); // Increase to 50%
+        commission_bps_roundtrip(4_400); // Decrease to 44%
+        commission_bps_roundtrip(4_600); // Increase to 46%
+
+        // Values > 10,000 bps are allowed at program level.
+        commission_bps_roundtrip(15_000); // 150%
+        commission_bps_roundtrip(50_000); // 500%
     }
 
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]

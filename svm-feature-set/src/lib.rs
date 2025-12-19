@@ -56,6 +56,7 @@ pub struct SVMFeatureSet {
     pub create_account_allow_prefund: bool,
     pub bls_pubkey_management_in_vote_account: bool,
     pub enable_alt_bn128_g2_syscalls: bool,
+    pub commission_rate_in_basis_points: bool,
 }
 
 impl SVMFeatureSet {
@@ -108,6 +109,7 @@ impl SVMFeatureSet {
             create_account_allow_prefund: true,
             bls_pubkey_management_in_vote_account: true,
             enable_alt_bn128_g2_syscalls: true,
+            commission_rate_in_basis_points: true,
         }
     }
 }

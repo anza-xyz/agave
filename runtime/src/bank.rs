@@ -935,7 +935,7 @@ pub struct Bank {
 #[derive(Debug)]
 struct VoteReward {
     vote_account: AccountSharedData,
-    commission: u8,
+    commission_bps: u16,
     vote_rewards: u64,
 }
 
@@ -2435,7 +2435,7 @@ impl Bank {
             vote_pubkey,
             VoteReward {
                 mut vote_account,
-                commission,
+                commission_bps,
                 vote_rewards,
             },
         ) in vote_account_rewards
@@ -2451,7 +2451,9 @@ impl Bank {
                     reward_type: RewardType::Voting,
                     lamports: vote_rewards as i64,
                     post_balance: vote_account.lamports(),
-                    commission: Some(commission),
+                    // TODO: Update RewardInfo in solana-reward-info crate to support
+                    // commission_bps: Option<u16>, then pass bps here without loss.
+                    commission: Some((commission_bps / 100).min(100) as u8),
                 },
                 vote_account,
             ));

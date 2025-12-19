@@ -35,8 +35,9 @@ pub(crate) struct PartitionedStakeReward {
     pub stake: Stake,
     /// Stake reward for recording in the Bank on distribution
     pub stake_reward: u64,
-    /// Vote commission for recording reward info
-    pub commission: u8,
+    /// Vote commission in basis points (0-10,000 representing 0-100%) for
+    /// recording reward info.
+    pub commission_bps: u16,
 }
 
 /// A vector of stake rewards.
@@ -448,7 +449,9 @@ mod tests {
                     stake_pubkey: stake_reward.stake_pubkey,
                     stake,
                     stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                    commission: stake_reward.stake_reward_info.commission.unwrap(),
+                    // TODO: Update RewardInfo in solana-reward-info crate to support
+                    // commission_bps: Option<u16>, then use that here directly.
+                    commission_bps: stake_reward.stake_reward_info.commission.unwrap() as u16 * 100,
                 })
             } else {
                 None

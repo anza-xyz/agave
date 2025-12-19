@@ -149,8 +149,7 @@ impl VoteReward {
         let validator_pubkey = solana_pubkey::new_rand();
         let validator_stake_lamports = rng.random_range(1..200);
         let validator_voting_keypair = Keypair::new();
-        let commission: u8 = rng.random_range(1..20);
-        let commission_bps = u16::from(commission) * 100;
+        let commission_bps: u16 = rng.random_range(100..2_000);
 
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
@@ -163,7 +162,7 @@ impl VoteReward {
 
         Self {
             vote_account: validator_vote_account,
-            commission,
+            commission_bps,
             vote_rewards: rng.random_range(1..200),
         }
     }
@@ -11232,7 +11231,7 @@ fn test_calc_vote_accounts_to_store_overflow() {
         pubkey,
         VoteReward {
             vote_account,
-            commission: 0,
+            commission_bps: 0,
             vote_rewards: 1, // enough to overflow
         },
     );
@@ -11247,7 +11246,7 @@ fn test_calc_vote_accounts_to_store_overflow() {
 #[test]
 fn test_calc_vote_accounts_to_store_normal() {
     let pubkey = solana_pubkey::new_rand();
-    for commission in 0..2 {
+    for commission_bps in [0, 100] {
         for vote_rewards in 0..2 {
             let mut vote_account_rewards = HashMap::default();
             let mut vote_account = AccountSharedData::default();
@@ -11256,7 +11255,7 @@ fn test_calc_vote_accounts_to_store_normal() {
                 pubkey,
                 VoteReward {
                     vote_account: vote_account.clone(),
-                    commission,
+                    commission_bps,
                     vote_rewards,
                 },
             );
@@ -11275,7 +11274,9 @@ fn test_calc_vote_accounts_to_store_normal() {
                     reward_type: RewardType::Voting,
                     lamports: vote_rewards as i64,
                     post_balance: vote_account.lamports(),
-                    commission: Some(commission),
+                    // TODO: Update RewardInfo in solana-reward-info crate to support
+                    // commission_bps: Option<u16>, then pass bps here without loss.
+                    commission: Some((commission_bps / 100) as u8),
                 }
             );
             assert_eq!(*pubkey_result, pubkey);
