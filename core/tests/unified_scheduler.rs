@@ -41,7 +41,7 @@ use {
         TaskHandler,
     },
     std::{
-        collections::HashMap,
+        collections::{BTreeMap, HashMap},
         sync::{atomic::Ordering, Arc, Mutex},
         thread::sleep,
         time::Duration,
@@ -159,6 +159,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             duplicate_confirmed_slots,
             unfrozen_gossip_verified_vote_hashes,
             epoch_slots_frozen_slots,
+            slow_slots_by_expiry: BTreeMap::default(),
         };
         ReplayStage::handle_new_root(
             root,
