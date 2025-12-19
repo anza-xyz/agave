@@ -476,7 +476,7 @@ impl MigrationStatus {
     /// received a genesis certificate and it matches.
     pub fn set_genesis_block(&self, discovered_genesis_block @ (slot, _): Block) {
         let mut phase = self.phase.write().unwrap();
-        let MigrationPhase::Migration {
+        let &mut MigrationPhase::Migration {
             migration_slot,
             ref mut genesis_block,
             ref genesis_cert,
@@ -494,7 +494,7 @@ impl MigrationStatus {
         );
 
         assert!(
-            slot < *migration_slot,
+            slot < migration_slot,
             "Attempting to set a genesis block that is past the migration start"
         );
         warn!(
@@ -535,7 +535,7 @@ impl MigrationStatus {
     /// Transitions to `ReadyToEnable` if we have already received a genesis block and it matches.
     pub fn set_genesis_certificate(&self, cert: Arc<Certificate>) {
         let mut phase = self.phase.write().unwrap();
-        let MigrationPhase::Migration {
+        let &mut MigrationPhase::Migration {
             migration_slot,
             ref genesis_block,
             ref mut genesis_cert,
@@ -551,7 +551,7 @@ impl MigrationStatus {
         };
 
         assert!(
-            slot < *migration_slot,
+            slot < migration_slot,
             "Attempting to set a genesis certificate past the migration start"
         );
         warn!(

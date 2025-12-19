@@ -233,7 +233,7 @@ impl EventHandler {
         local_context: &mut LocalContext,
     ) -> Result<Vec<BLSOp>, EventLoopError> {
         let mut votes = vec![];
-        let LocalContext {
+        let &mut LocalContext {
             ref mut my_pubkey,
             ref mut pending_blocks,
             ref mut finalized_blocks,
