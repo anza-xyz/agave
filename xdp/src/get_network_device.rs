@@ -34,6 +34,6 @@ pub struct NetworkDevice {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn get_network_device(_interface: Option<String>) -> Result<NetworkDevice, Box<dyn Error>> {
+pub fn get_network_device(_interface: Option<&str>) -> Result<NetworkDevice, Box<dyn Error>> {
     Err("XDP not supported on this platform!".into())
 }
