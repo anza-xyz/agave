@@ -18,18 +18,18 @@ const MAXIMUM_VALIDATORS: usize = 4096;
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum AggregateError {
+pub(super) enum AggregateError {
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
-    #[error("rank {0} is invalid")]
+    #[error("Invalid rank: {0}")]
     InvalidRank(u16),
-    #[error("validator already included")]
+    #[error("Validator already included")]
     ValidatorAlreadyIncluded,
 }
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::build()`] function.
 #[derive(Debug, Error, PartialEq)]
-pub enum BuildError {
+pub(crate) enum BuildError {
     #[error("Encoding failed: {0:?}")]
     Encode(EncodeError),
     #[error("BLS error: {0}")]
@@ -272,14 +272,14 @@ impl BuilderType {
 }
 
 /// Builder for creating [`Certificate`] by using BLS signature aggregation.
-pub struct CertificateBuilder {
+pub(super) struct CertificateBuilder {
     builder_type: BuilderType,
     cert_type: CertificateType,
 }
 
 impl CertificateBuilder {
     /// Creates a new instance of the builder.
-    pub fn new(cert_type: CertificateType) -> Self {
+    pub(super) fn new(cert_type: CertificateType) -> Self {
         let builder_type = BuilderType::new(&cert_type);
         Self {
             builder_type,
@@ -288,12 +288,12 @@ impl CertificateBuilder {
     }
 
     /// Aggregates new [`VoteMessage`]s into the builder.
-    pub fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
+    pub(super) fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
         self.builder_type.aggregate(&self.cert_type, msgs)
     }
 
     /// Builds a [`Certificate`] from the builder.
-    pub fn build(self) -> Result<Certificate, BuildError> {
+    pub(super) fn build(self) -> Result<Certificate, BuildError> {
         self.builder_type.build(self.cert_type)
     }
 

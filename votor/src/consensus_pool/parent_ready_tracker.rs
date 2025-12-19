@@ -21,7 +21,7 @@ use {
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum BlockProductionParent {
+pub(crate) enum BlockProductionParent {
     MissedWindow,
     ParentNotReady,
     Parent(Block),
@@ -199,6 +199,7 @@ impl ParentReadyTracker {
         }
     }
 
+    #[cfg(test)]
     pub fn parent_ready(&self, slot: Slot, parent: Block) -> bool {
         self.slot_statuses
             .get(&slot)
