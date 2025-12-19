@@ -351,7 +351,7 @@ fn retransmit(
 
     let mut epoch_cache_update = Measure::start("retransmit_epoch_cache_update");
     shred_deduper.maybe_reset(
-        &mut rand::thread_rng(),
+        &mut rand::rng(),
         DEDUPER_FALSE_POSITIVE_RATE,
         DEDUPER_RESET_CYCLE,
     );
@@ -661,7 +661,7 @@ impl RetransmitStage {
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
         );
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut stats = RetransmitStats::new(Instant::now());
         let mut addr_cache = AddrCache::with_capacity(/*capacity:*/ 4);
         let mut shred_deduper = ShredDeduper::new(&mut rng, DEDUPER_NUM_BITS);
@@ -945,7 +945,7 @@ mod tests {
                 &entries,
                 true,
                 // chained_merkle_root
-                Hash::new_from_array(rand::thread_rng().gen()),
+                Hash::new_from_array(rand::rng().random()),
                 0,
                 code_index,
                 &rsc,

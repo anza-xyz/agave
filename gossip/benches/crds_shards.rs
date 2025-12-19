@@ -1,6 +1,6 @@
 use {
     criterion::{criterion_group, criterion_main, Criterion},
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_gossip::{
         crds::{Crds, GossipRoute, VersionedCrdsValue},
         crds_shards::CrdsShards,
@@ -22,7 +22,7 @@ fn new_test_crds_value<R: Rng>(rng: &mut R) -> VersionedCrdsValue {
 }
 
 fn bench_crds_shards_find(c: &mut Criterion, num_values: usize, mask_bits: u32) {
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let values: Vec<_> = repeat_with(|| new_test_crds_value(&mut rng))
         .take(num_values)
         .collect();
@@ -34,7 +34,7 @@ fn bench_crds_shards_find(c: &mut Criterion, num_values: usize, mask_bits: u32) 
         &format!("bench_crds_shards_find: mask_bits: {mask_bits:?}"),
         |b| {
             b.iter(|| {
-                let mask = rng.gen();
+                let mask = rng.random();
                 let _hits = shards.find(mask, mask_bits).count();
             })
         },

@@ -130,6 +130,10 @@ pub fn execute(
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
 
+    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
+    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
+    solana_entry::entry::init_poh();
+
     solana_core::validator::report_target_features();
 
     let authorized_voter_keypairs = keypairs_of(matches, "authorized_voter_keypairs")
@@ -899,9 +903,6 @@ pub fn execute(
         }
     }
 
-    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
-    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
-    solana_entry::entry::init_poh();
     snapshot_utils::remove_tmp_snapshot_archives(
         &validator_config.snapshot_config.full_snapshot_archives_dir,
     );
