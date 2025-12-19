@@ -392,6 +392,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-signer-store",
+ "solana-streamer",
  "solana-time-utils",
  "solana-transaction",
  "solana-transaction-error",
@@ -406,14 +407,19 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "bitvec",
+ "bytemuck",
  "log",
+ "num_enum",
  "serde",
- "solana-address 2.0.0",
+ "solana-account",
  "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",
  "solana-hash 3.1.0",
- "solana-pubkey 4.0.0",
+ "solana-program",
+ "solana-vote-interface",
+ "spl-pod",
 ]
 
 [[package]]

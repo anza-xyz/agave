@@ -25,7 +25,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SetRootError},
     solana_signer::Signer,
-    solana_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
+    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
     std::{
         collections::{BTreeMap, BTreeSet},
         sync::{
@@ -823,7 +823,7 @@ mod tests {
             installed_scheduler_pool::BankWithScheduler,
         },
         solana_streamer::socket::SocketAddrSpace,
-        solana_votor_messages::{
+        agave_votor_messages::{
             consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
         },

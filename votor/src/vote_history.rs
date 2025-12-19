@@ -7,7 +7,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
-    solana_votor_messages::{consensus_message::Block, vote::Vote},
+    agave_votor_messages::{consensus_message::Block, vote::Vote},
     std::collections::{hash_map::Entry, HashMap, HashSet},
     thiserror::Error,
 };

@@ -1,5 +1,5 @@
 use {
-    solana_votor_messages::{
+    agave_votor_messages::{
         consensus_message::CertificateType,
         migration::GENESIS_VOTE_THRESHOLD,
         vote::{Vote, VoteType},

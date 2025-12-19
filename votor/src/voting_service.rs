@@ -14,7 +14,7 @@ use {
     solana_rpc::alpenglow_last_voted::AlpenglowLastVoted,
     solana_runtime::bank_forks::BankForks,
     solana_transaction_error::TransportError,
-    solana_votor_messages::consensus_message::{Certificate, ConsensusMessage},
+    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     std::{
         collections::HashMap,
         net::SocketAddr,
@@ -289,7 +289,7 @@ mod tests {
             socket::SocketAddrSpace,
             streamer::StakedNodes,
         },
-        solana_votor_messages::{
+        agave_votor_messages::{
             consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
@@ -372,7 +372,7 @@ mod tests {
         bitmap: Vec::new(),
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
-        solana_logger::setup();
+        agave_logger::setup();
         let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 

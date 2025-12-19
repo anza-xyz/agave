@@ -16,7 +16,7 @@ use {
     crate::{common::MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE, event::VotorEvent},
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_pubkey::Pubkey,
-    solana_votor_messages::consensus_message::Block,
+    agave_votor_messages::consensus_message::Block,
     std::collections::HashMap,
 };
 

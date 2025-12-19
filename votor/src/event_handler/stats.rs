@@ -2,7 +2,7 @@ use {
     crate::{event::VotorEvent, voting_service::BLSOp},
     solana_clock::Slot,
     solana_metrics::datapoint_info,
-    solana_votor_messages::{consensus_message::ConsensusMessage, vote::VoteType},
+    agave_votor_messages::{consensus_message::ConsensusMessage, vote::VoteType},
     std::{
         collections::{BTreeMap, HashMap},
         time::{Duration, Instant},

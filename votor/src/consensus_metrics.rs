@@ -4,7 +4,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
-    solana_votor_messages::vote::Vote,
+    agave_votor_messages::vote::Vote,
     std::{
         collections::BTreeMap,
         sync::{
