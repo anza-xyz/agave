@@ -1,14 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 //! The `net_utils` module assists with networking
 
-// Activate some of the Rust 2024 lints to make the future migration easier.
-#![warn(if_let_rescope)]
-#![warn(keyword_idents_2024)]
-#![warn(rust_2024_incompatible_pat)]
-#![warn(tail_expr_drop_order)]
-#![warn(unsafe_attr_outside_unsafe)]
-#![warn(unsafe_op_in_unsafe_fn)]
-
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
