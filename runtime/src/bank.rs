@@ -569,7 +569,7 @@ impl PartialEq for Bank {
             accounts_data_size_delta_off_chain: _,
             epoch_reward_status: _,
             transaction_processor: _,
-            check_program_modification_slot: _,
+            check_program_deployment_slot: _,
             collector_fee_details: _,
             compute_budget: _,
             transaction_account_lock_limit: _,
@@ -878,7 +878,7 @@ pub struct Bank {
 
     transaction_processor: TransactionBatchProcessor<BankForks>,
 
-    check_program_modification_slot: bool,
+    check_program_deployment_slot: bool,
 
     /// Collected fee details
     collector_fee_details: RwLock<CollectorFeeDetails>,
@@ -1117,7 +1117,7 @@ impl Bank {
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
-            check_program_modification_slot: false,
+            check_program_deployment_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: None,
             transaction_account_lock_limit: None,
@@ -1364,7 +1364,7 @@ impl Bank {
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor,
-            check_program_modification_slot: false,
+            check_program_deployment_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: parent.compute_budget,
             transaction_account_lock_limit: parent.transaction_account_lock_limit,
@@ -1893,7 +1893,7 @@ impl Bank {
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
-            check_program_modification_slot: false,
+            check_program_deployment_slot: false,
             // collector_fee_details is not serialized to snapshot
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: runtime_config.compute_budget,
@@ -3189,7 +3189,7 @@ impl Bank {
             &mut TransactionErrorMetrics::default(),
             TransactionProcessingConfig {
                 account_overrides: Some(&account_overrides),
-                check_program_modification_slot: self.check_program_modification_slot,
+                check_program_deployment_slot: self.check_program_deployment_slot,
                 log_messages_bytes_limit: None,
                 limit_to_load_programs: true,
                 recording_config: ExecutionRecordingConfig {
@@ -3931,7 +3931,7 @@ impl Bank {
             &mut TransactionErrorMetrics::default(),
             TransactionProcessingConfig {
                 account_overrides: None,
-                check_program_modification_slot: self.check_program_modification_slot,
+                check_program_deployment_slot: self.check_program_deployment_slot,
                 log_messages_bytes_limit,
                 limit_to_load_programs: false,
                 recording_config,
@@ -5739,12 +5739,12 @@ impl Bank {
         false
     }
 
-    pub fn check_program_modification_slot(&self) -> bool {
-        self.check_program_modification_slot
+    pub fn check_program_deployment_slot(&self) -> bool {
+        self.check_program_deployment_slot
     }
 
-    pub fn set_check_program_modification_slot(&mut self, check: bool) {
-        self.check_program_modification_slot = check;
+    pub fn set_check_program_deployment_slot(&mut self, check: bool) {
+        self.check_program_deployment_slot = check;
     }
 
     pub fn fee_structure(&self) -> &FeeStructure {

@@ -112,9 +112,9 @@ pub struct TransactionProcessingConfig<'a> {
     /// Encapsulates overridden accounts, typically used for transaction
     /// simulation.
     pub account_overrides: Option<&'a AccountOverrides>,
-    /// Whether or not to check a program's modification slot when replenishing
+    /// Whether or not to check a program's deployment slot when replenishing
     /// a program cache instance.
-    pub check_program_modification_slot: bool,
+    pub check_program_deployment_slot: bool,
     /// The maximum number of bytes that log messages can consume.
     pub log_messages_bytes_limit: Option<usize>,
     /// Whether to limit the number of programs loaded for the transaction
@@ -416,7 +416,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 &environment.program_runtime_environments_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut execute_timings,
-                config.check_program_modification_slot,
+                config.check_program_deployment_slot,
                 config.limit_to_load_programs,
                 false, // increment_usage_counter
             );
@@ -505,7 +505,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             &environment.program_runtime_environments_for_execution,
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
-                            config.check_program_modification_slot,
+                            config.check_program_deployment_slot,
                             config.limit_to_load_programs,
                             true, // increment_usage_counter
                         );
@@ -829,7 +829,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_runtime_environments_for_execution: &ProgramRuntimeEnvironments,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
-        check_program_modification_slot: bool,
+        check_program_deployment_slot: bool,
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
     ) {
@@ -837,7 +837,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_accounts_set
                 .iter()
                 .map(|(pubkey, last_modification_slot)| {
-                    let match_criteria = if check_program_modification_slot {
+                    let match_criteria = if check_program_deployment_slot {
                         get_program_deployment_slot(account_loader, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
                                 ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
