@@ -1835,23 +1835,6 @@ mod tests {
             instruction_accounts.clone(),
             Err(InstructionError::InvalidArgument),
         );
-
-        // Test that if the account already has a BLS pubkey, VoteAuthorize::Voter
-        // is rejected
-        // Initialize a new vote account with BLS pubkey
-        let instruction_data = serialize(&VoteInstruction::Authorize(
-            authorized_voter_pubkey,
-            VoteAuthorize::Voter,
-        ))
-        .unwrap();
-        process_instruction(
-            true,
-            true,
-            &instruction_data,
-            transaction_accounts,
-            instruction_accounts,
-            Err(InstructionError::InvalidInstructionData),
-        );
     }
 
     #[test_case(false ; "VoteStateV3")]

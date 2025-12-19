@@ -4067,6 +4067,10 @@ mod tests {
         assert!(vote_state.has_bls_pubkey());
 
         // Test replay attack, can't use someone else's BLS pubkey and PoP
+        let clock = Clock {
+            epoch: 3,
+            ..Clock::default()
+        };
         let (others_bls_pubkey, others_bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&Pubkey::new_unique());
         let new_node_pubkey = solana_pubkey::new_rand();
@@ -4088,5 +4092,36 @@ mod tests {
             ),
             Err(InstructionError::InvalidArgument),
         );
+
+        // Test updating to a new BLS pubkey, can only do it in next epoch.
+        let clock = Clock {
+            epoch: 5,
+            ..Clock::default()
+        };
+        let (new_bls_pubkey, new_bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&vote_account_pubkey);
+        let new_authorized_voter = solana_pubkey::new_rand();
+        let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_authorized_voter]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            authorize(
+                &mut borrowed_account,
+                VoteStateTargetVersion::V4,
+                &new_authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: new_bls_pubkey,
+                    bls_proof_of_possession: new_bls_proof_of_possession
+                }),
+                &signers,
+                &clock,
+                true,
+            ),
+            Ok(())
+        );
+        let vote_state =
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_authorized_voter).unwrap();
+        assert_eq!(vote_state.bls_pubkey_compressed, Some(new_bls_pubkey));
+        assert!(vote_state.has_bls_pubkey());
     }
 }

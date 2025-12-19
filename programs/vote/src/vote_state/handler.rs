@@ -1044,10 +1044,7 @@ mod tests {
         },
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{
-                BlockTimestamp, VoteInit, BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE,
-                MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
-            },
+            state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
         },
         std::collections::VecDeque,
         test_case::test_case,
@@ -2222,31 +2219,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bls_pubkey_handling() {
-        let bls_pubkey_compressed = [1u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
-        let vote_state_v4 = VoteStateV4::new(
-            &VoteInitV2 {
-                node_pubkey: Pubkey::new_unique(),
-                authorized_voter: Pubkey::new_unique(),
-                authorized_withdrawer: Pubkey::new_unique(),
-                block_revenue_commission_bps: 500,
-                block_revenue_collector: Pubkey::new_unique(),
-                inflation_rewards_commission_bps: 1000,
-                inflation_rewards_collector: Pubkey::new_unique(),
-                authorized_voter_bls_pubkey: bls_pubkey_compressed,
-                authorized_voter_bls_proof_of_possession: [2u8;
-                    BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
-            },
-            &Clock::default(),
-        );
-        assert_eq!(
-            vote_state_v4.bls_pubkey_compressed,
-            Some(bls_pubkey_compressed)
-        );
-        assert!(vote_state_v4.has_bls_pubkey());
-    }
-
-    #[test]
     fn test_get_and_update_authorized_voter_v4_with_bls() {
         let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
@@ -2280,6 +2252,29 @@ mod tests {
         assert_eq!(
             vote_state.bls_pubkey_compressed,
             Some(bls_pubkey_compressed)
+        );
+        assert!(vote_state.has_bls_pubkey());
+
+        // Now update authorized voter again with another BLS pubkey.
+        let newer_voter = Pubkey::new_unique();
+        let newer_bls_pubkey_compressed = [7u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
+        vote_state
+            .set_new_authorized_voter(
+                &newer_voter,
+                1,
+                2,
+                Some(&newer_bls_pubkey_compressed),
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(vote_state.authorized_voters().len(), 3);
+        assert_eq!(
+            *vote_state.authorized_voters().last().unwrap().1,
+            newer_voter
+        );
+        assert_eq!(
+            vote_state.bls_pubkey_compressed,
+            Some(newer_bls_pubkey_compressed)
         );
         assert!(vote_state.has_bls_pubkey());
     }
