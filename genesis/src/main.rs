@@ -7,7 +7,7 @@ use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bls_signatures::Pubkey as BLSPubkey,
+    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_clap_utils::{
         input_parsers::{
             bls_pubkeys_of, cluster_type_of, pubkey_of, pubkeys_of,
@@ -42,10 +42,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
-        genesis_utils::{
-            add_genesis_epoch_rewards_account, add_genesis_stake_config_account,
-            bls_pubkey_to_compressed_bytes,
-        },
+        genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
         stake_utils,
     },
     solana_sdk_ids::system_program,
@@ -77,6 +74,16 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
             Keypair::try_from(bytes.as_ref()).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
+}
+
+fn bls_pubkey_from_str(key_str: &str) -> Result<BLSPubkeyCompressed, Box<dyn error::Error>> {
+    match BLSPubkeyCompressed::from_str(key_str) {
+        Ok(bls_pubkey) => Ok(bls_pubkey),
+        Err(_) => {
+            let bls_pubkey = BLSPubkey::from_str(key_str)?;
+            Ok(bls_pubkey.try_into()?)
+        }
+    }
 }
 
 pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> io::Result<u64> {
@@ -152,11 +159,16 @@ pub fn load_validator_accounts(
                 ))
             })?,
         ];
-        let bls_pubkeys: Vec<BLSPubkey> = account_details.bls_pubkey.map_or(Ok(vec![]), |s| {
-            BLSPubkey::from_str(&s)
-                .map(|pk| vec![pk])
-                .map_err(|err| io::Error::other(format!("Invalid BLS pubkey: {err}")))
-        })?;
+        let bls_pubkeys: Vec<BLSPubkeyCompressed> = account_details
+            .bls_pubkey
+            .as_ref()
+            .map(|key_str| {
+                bls_pubkey_from_str(key_str)
+                    .map_err(|err| io::Error::other(format!("Invalid BLS pubkey: {err}")))
+            })
+            .transpose()?
+            .map(|pk| vec![pk])
+            .unwrap_or_default();
 
         add_validator_accounts(
             genesis_config,
@@ -240,7 +252,7 @@ fn features_to_deactivate_for_cluster(
 fn add_validator_accounts(
     genesis_config: &mut GenesisConfig,
     pubkeys_iter: &mut Iter<Pubkey>,
-    bls_pubkeys_iter: &mut Iter<BLSPubkey>,
+    bls_pubkeys_iter: &mut Iter<BLSPubkeyCompressed>,
     lamports: u64,
     stake_lamports: u64,
     commission: u8,
@@ -264,8 +276,7 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let bls_pubkey_compressed_bytes =
-            bls_pubkeys_iter.next().map(bls_pubkey_to_compressed_bytes);
+        let bls_pubkey_compressed_bytes = bls_pubkeys_iter.next().map(|bls_pubkey| bls_pubkey.0);
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
@@ -1299,8 +1310,13 @@ mod tests {
         assert_eq!(genesis_config.accounts.len(), 3);
     }
 
-    #[test]
-    fn test_append_validator_accounts_to_genesis() {
+    #[test_case(true, true; "add bls compressed pubkey")]
+    #[test_case(true, false; "add bls pubkey")]
+    #[test_case(false, false; "no bls pubkey")]
+    fn test_append_validator_accounts_to_genesis(
+        add_bls_pubkey: bool,
+        use_compressed_pubkey: bool,
+    ) {
         // Test invalid file returns error
         assert!(load_validator_accounts(
             "unknownfile",
@@ -1312,6 +1328,19 @@ mod tests {
 
         let mut genesis_config = GenesisConfig::default();
 
+        let generate_bls_pubkey = || {
+            if add_bls_pubkey {
+                let bls_pubkey = BLSKeypair::new().public;
+                if use_compressed_pubkey {
+                    let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
+                    Some(bls_pubkey_compressed.to_string())
+                } else {
+                    Some(bls_pubkey.to_string())
+                }
+            } else {
+                None
+            }
+        };
         let validator_accounts = vec![
             StakedValidatorAccountInfo {
                 identity_account: solana_pubkey::new_rand().to_string(),
@@ -1342,13 +1371,21 @@ mod tests {
         let serialized = serde_yaml::to_string(&validator_accounts).unwrap();
 
         // write accounts to file
-        let filename = "test_append_validator_accounts_to_genesis.yml";
-        let path = Path::new(filename);
+        let filename = format!(
+            "test_append_validator_accounts_to_genesis_{}_{}_bls.yml",
+            if add_bls_pubkey { "with" } else { "without" },
+            if use_compressed_pubkey {
+                "compressed"
+            } else {
+                "uncompressed"
+            }
+        );
+        let path = Path::new(&filename);
         let mut file = File::create(path).unwrap();
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
-        load_validator_accounts(filename, 100, &Rent::default(), &mut genesis_config)
+        load_validator_accounts(&filename, 100, &Rent::default(), &mut genesis_config)
             .expect("Failed to load validator accounts");
 
         remove_file(path).unwrap();
@@ -1379,12 +1416,29 @@ mod tests {
                 assert_eq!(vote_state.authorized_withdrawer, identity_pk);
                 let authorized_voters = &vote_state.authorized_voters;
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
-                assert_eq!(
-                    bls_pubkey_to_compressed_bytes(
-                        &BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap()).unwrap()
-                    ),
-                    vote_state.bls_pubkey_compressed.unwrap()
-                );
+                if add_bls_pubkey {
+                    let bls_pubkey_compressed_from_input = if use_compressed_pubkey {
+                        BLSPubkeyCompressed::from_str(b64_account.bls_pubkey.as_ref().unwrap())
+                            .expect("failed to parse BLS pubkey from input")
+                    } else {
+                        BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap())
+                            .expect("failed to parse BLS pubkey from input")
+                            .try_into()
+                            .expect("failed to convert BLS pubkey to compressed form")
+                    };
+                    let bls_pubkey_compressed_from_account = BLSPubkeyCompressed(
+                        vote_state
+                            .bls_pubkey_compressed
+                            .expect("missing BLS pubkey bytes"),
+                    );
+                    assert_eq!(
+                        bls_pubkey_compressed_from_input,
+                        bls_pubkey_compressed_from_account,
+                    );
+                } else {
+                    assert!(b64_account.bls_pubkey.is_none());
+                    assert!(vote_state.bls_pubkey_compressed.is_none());
+                }
 
                 // check stake account
                 let stake_pk = b64_account.stake_account.parse().unwrap();

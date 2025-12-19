@@ -285,7 +285,7 @@ fn test_program_sbf_sanity() {
         let context = InstrContext {
             feature_set,
             accounts,
-            instruction: instruction.into(),
+            instruction,
         };
 
         let effects =
@@ -559,7 +559,7 @@ fn test_program_sbf_error_handling() {
             let context = InstrContext {
                 feature_set: feature_set.clone(),
                 accounts: accounts.clone(),
-                instruction: instruction.into(),
+                instruction,
             };
 
             harness::execute_instr(context, &compute_budget, program_cache, &sysvar_cache)
