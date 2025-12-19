@@ -66,7 +66,6 @@ use {
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
-        convert::TryFrom,
         fs::File,
         io::{self, Read},
         mem::transmute,

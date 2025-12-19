@@ -41,6 +41,7 @@ Execution of the program involves mapping the program's public key to an entrypo
 The interface is best described by the `Instruction::data` that the user encodes.
 
 - `CreateAccount` - This allows the user to create an account with an allocated data array and assign it to a Program.
+- `CreateAccountAllowPrefund` - Same as `CreateAccount`, but does not check (and fail) if lamports are 0
 - `CreateAccountWithSeed` - Same as `CreateAccount`, but the new account's address is derived from
   - the funding account's pubkey,
   - a mnemonic string (seed), and
