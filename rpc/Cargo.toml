@@ -128,7 +128,6 @@ solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-vote-interface = { workspace = true }
-solana-vote-program = { workspace = true }
 spl-pod = { workspace = true }
 symlink = { workspace = true }
 test-case = { workspace = true }

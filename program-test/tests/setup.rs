@@ -12,7 +12,7 @@ use {
     solana_transaction::Transaction,
     solana_vote_program::{
         vote_instruction,
-        vote_state::{self, create_bls_pubkey_and_proof_of_possession, VoteInitV2, VoteStateV4},
+        vote_state::{self, VoteInit, VoteStateV4},
     },
 };
 
@@ -56,18 +56,14 @@ pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
     ));
     let vote_lamports = Rent::default().minimum_balance(VoteStateV4::size_of());
     let vote_keypair = Keypair::new();
-    let (bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession(&vote_keypair.pubkey());
     let user_keypair = Keypair::new();
-    instructions.append(&mut vote_instruction::create_account_with_config_v2(
+    instructions.append(&mut vote_instruction::create_account_with_config(
         &context.payer.pubkey(),
         &vote_keypair.pubkey(),
-        &VoteInitV2 {
+        &VoteInit {
             node_pubkey: validator_keypair.pubkey(),
             authorized_voter: user_keypair.pubkey(),
-            authorized_voter_bls_pubkey: bls_pubkey,
-            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-            ..VoteInitV2::default()
+            ..VoteInit::default()
         },
         vote_lamports,
         vote_instruction::CreateVoteAccountConfig {

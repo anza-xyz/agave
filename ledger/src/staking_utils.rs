@@ -18,10 +18,7 @@ pub(crate) mod tests {
         solana_vote::vote_account::{VoteAccount, VoteAccounts},
         solana_vote_program::{
             vote_instruction,
-            vote_state::{
-                create_bls_pubkey_and_proof_of_possession, VoteInitV2, VoteStateV4,
-                VoteStateVersions,
-            },
+            vote_state::{VoteInit, VoteStateV4, VoteStateVersions},
         },
         std::sync::Arc,
     };
@@ -44,22 +41,17 @@ pub(crate) mod tests {
             bank.process_transaction(&tx).unwrap();
         }
 
-        let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-
         process_instructions(
             bank,
             &[from_account, vote_account, validator_identity_account],
-            &vote_instruction::create_account_with_config_v2(
+            &vote_instruction::create_account_with_config(
                 &from_account.pubkey(),
                 &vote_pubkey,
-                &VoteInitV2 {
+                &VoteInit {
                     node_pubkey: validator_identity_account.pubkey(),
                     authorized_voter: vote_pubkey,
                     authorized_withdrawer: vote_pubkey,
-                    authorized_voter_bls_pubkey: bls_pubkey,
-                    authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-                    ..VoteInitV2::default()
+                    commission: 0,
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
@@ -105,19 +97,15 @@ pub(crate) mod tests {
         let node1 = solana_pubkey::new_rand();
         let vote_pubkey1 = solana_pubkey::new_rand();
 
-        let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey1);
-
         // Node 1 has stake of 3
         for i in 0..3 {
             stakes.push((
                 i,
-                VoteStateV4::new(
-                    &VoteInitV2 {
+                VoteStateV4::new_with_defaults(
+                    &vote_pubkey1,
+                    &VoteInit {
                         node_pubkey: node1,
-                        authorized_voter_bls_pubkey: bls_pubkey,
-                        authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-                        ..VoteInitV2::default()
+                        ..VoteInit::default()
                     },
                     &Clock::default(),
                 ),
@@ -127,17 +115,14 @@ pub(crate) mod tests {
         // Node 1 has stake of 5
         let node2 = solana_pubkey::new_rand();
         let vote_pubkey2 = solana_pubkey::new_rand();
-        let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_pubkey2);
 
         stakes.push((
             5,
-            VoteStateV4::new(
-                &VoteInitV2 {
+            VoteStateV4::new_with_defaults(
+                &vote_pubkey2,
+                &VoteInit {
                     node_pubkey: node2,
-                    authorized_voter_bls_pubkey: bls_pubkey,
-                    authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-                    ..VoteInitV2::default()
+                    ..VoteInit::default()
                 },
                 &Clock::default(),
             ),
