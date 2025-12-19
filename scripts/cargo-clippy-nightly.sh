@@ -22,6 +22,8 @@ source "$here/../ci/rust-version.sh" nightly
 # Similarly, nightly is desired to run clippy over all of bench files because
 # the bench itself isn't stabilized yet...
 #   ref: https://github.com/rust-lang/rust/issues/66287
+#
+# allow arguments are temporary, violations should be fixed after migration to Rust 2024
 "$here/cargo-for-all-lock-files.sh" -- \
   "+${rust_nightly}" clippy \
   --workspace --all-targets --features dummy-for-ci-check,frozen-abi -- \
@@ -30,4 +32,5 @@ source "$here/../ci/rust-version.sh" nightly
   --deny=clippy::arithmetic_side_effects \
   --deny=clippy::manual_let_else \
   --deny=clippy::uninlined-format-args \
-  --deny=clippy::used_underscore_binding
+  --deny=clippy::used_underscore_binding \
+  --allow=clippy::collapsible_if
