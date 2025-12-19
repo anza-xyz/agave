@@ -1226,7 +1226,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         .filter_map(move |program| match program.program {
                             ProgramCacheEntryType::Loaded(_) => {
                                 if include_program_runtime_v1 {
-                                    Some((*id, program.deployment_slot, program.clone()))
+                                    Some((*id, 0, program.clone()))
                                 } else {
                                     None
                                 }
