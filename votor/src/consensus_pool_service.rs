@@ -456,6 +456,7 @@ mod tests {
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_hash::Hash,
         solana_ledger::get_tmp_ledger_path_auto_delete,
+        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank_forks::{BankForks, SharableBanks},
             genesis_utils::{
@@ -463,7 +464,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         std::sync::Arc,
         test_case::test_case,
     };
