@@ -7,7 +7,7 @@ use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
+    solana_bls_signatures::PubkeyCompressed as BLSPubkeyCompressed,
     solana_clap_utils::{
         input_parsers::{
             bls_pubkeys_of, cluster_type_of, pubkey_of, pubkeys_of,
@@ -74,16 +74,6 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
             Keypair::try_from(bytes.as_ref()).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
-}
-
-fn bls_pubkey_from_str(key_str: &str) -> Result<BLSPubkeyCompressed, Box<dyn error::Error>> {
-    match BLSPubkeyCompressed::from_str(key_str) {
-        Ok(bls_pubkey) => Ok(bls_pubkey),
-        Err(_) => {
-            let bls_pubkey = BLSPubkey::from_str(key_str)?;
-            Ok(bls_pubkey.try_into()?)
-        }
-    }
 }
 
 pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> io::Result<u64> {
@@ -159,16 +149,12 @@ pub fn load_validator_accounts(
                 ))
             })?,
         ];
-        let bls_pubkeys: Vec<BLSPubkeyCompressed> = account_details
-            .bls_pubkey
-            .as_ref()
-            .map(|key_str| {
-                bls_pubkey_from_str(key_str)
+        let bls_pubkeys: Vec<BLSPubkeyCompressed> =
+            account_details.bls_pubkey.map_or(Ok(vec![]), |s| {
+                BLSPubkeyCompressed::from_str(&s)
+                    .map(|pk| vec![pk])
                     .map_err(|err| io::Error::other(format!("Invalid BLS pubkey: {err}")))
-            })
-            .transpose()?
-            .map(|pk| vec![pk])
-            .unwrap_or_default();
+            })?;
 
         add_validator_accounts(
             genesis_config,
@@ -956,11 +942,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 mod tests {
     use {
         super::*,
-        solana_bls_signatures::keypair::Keypair as BLSKeypair,
+        solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
         solana_borsh::v1 as borsh1,
         solana_genesis_config::GenesisConfig,
         solana_stake_interface as stake,
         std::{collections::HashMap, fs::remove_file, io::Write, path::Path},
+        test_case::test_case,
     };
 
     #[test]
@@ -1346,7 +1333,7 @@ mod tests {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
-                bls_pubkey: Some(BLSKeypair::new().public.to_string()),
+                bls_pubkey: generate_bls_pubkey(),
                 balance_lamports: 100000000000,
                 stake_lamports: 10000000000,
             },
@@ -1354,7 +1341,7 @@ mod tests {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
-                bls_pubkey: Some(BLSKeypair::new().public.to_string()),
+                bls_pubkey: generate_bls_pubkey(),
                 balance_lamports: 200000000000,
                 stake_lamports: 20000000000,
             },
@@ -1362,7 +1349,7 @@ mod tests {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
-                bls_pubkey: Some(BLSKeypair::new().public.to_string()),
+                bls_pubkey: generate_bls_pubkey(),
                 balance_lamports: 300000000000,
                 stake_lamports: 30000000000,
             },
@@ -1433,7 +1420,7 @@ mod tests {
                     );
                     assert_eq!(
                         bls_pubkey_compressed_from_input,
-                        bls_pubkey_compressed_from_account,
+                        bls_pubkey_compressed_from_account
                     );
                 } else {
                     assert!(b64_account.bls_pubkey.is_none());
