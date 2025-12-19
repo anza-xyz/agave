@@ -4,7 +4,7 @@
 use {
     aya_ebpf::{
         bindings::xdp_action::{XDP_DROP, XDP_PASS},
-        helpers::gen::bpf_xdp_get_buff_len,
+        helpers::r#gen::bpf_xdp_get_buff_len,
         macros::xdp,
         programs::XdpContext,
     },
