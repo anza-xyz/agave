@@ -13,6 +13,11 @@ use {
         },
         event::VotorEvent,
     },
+    agave_votor_messages::{
+        consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        migration::MigrationStatus,
+        vote::{Vote, VoteType},
+    },
     certificate_builder::{BuildError as CertificateBuildError, CertificateBuilder},
     log::{error, trace},
     solana_clock::{Epoch, Slot},
@@ -20,11 +25,6 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
-    agave_votor_messages::{
-        consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
-        migration::MigrationStatus,
-        vote::{Vote, VoteType},
-    },
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap},
@@ -671,6 +671,7 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::consensus_message::{VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey, Signature as BLSSignature,
             VerifiableSignature,
@@ -685,7 +686,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        agave_votor_messages::consensus_message::{VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
         std::sync::{Arc, RwLock},
         test_case::test_case,
     };

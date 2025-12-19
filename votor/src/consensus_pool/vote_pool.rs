@@ -1,8 +1,8 @@
 use {
     crate::common::Stake,
+    agave_votor_messages::consensus_message::VoteMessage,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    agave_votor_messages::consensus_message::VoteMessage,
     std::collections::{BTreeMap, BTreeSet},
 };
 
@@ -131,8 +131,8 @@ impl DuplicateBlockVotePool {
 mod test {
     use {
         super::*,
-        solana_bls_signatures::Signature as BLSSignature,
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+        solana_bls_signatures::Signature as BLSSignature,
     };
 
     #[test]

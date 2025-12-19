@@ -1,8 +1,8 @@
 use {
     crate::{event::VotorEvent, voting_service::BLSOp},
+    agave_votor_messages::{consensus_message::ConsensusMessage, vote::VoteType},
     solana_clock::Slot,
     solana_metrics::datapoint_info,
-    agave_votor_messages::{consensus_message::ConsensusMessage, vote::VoteType},
     std::{
         collections::{BTreeMap, HashMap},
         time::{Duration, Instant},

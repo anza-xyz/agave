@@ -56,6 +56,7 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
+    agave_votor_messages::{consensus_message::ConsensusMessage, migration::MigrationStatus},
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -72,7 +73,6 @@ use {
         bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
         snapshot_controller::SnapshotController,
     },
-    agave_votor_messages::{consensus_message::ConsensusMessage, migration::MigrationStatus},
     std::{
         collections::HashMap,
         sync::{atomic::AtomicBool, Arc, RwLock},

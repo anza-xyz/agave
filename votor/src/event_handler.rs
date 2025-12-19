@@ -14,6 +14,7 @@ use {
         voting_utils::{generate_vote_message, VoteError, VotingContext},
         votor::SharedContext,
     },
+    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
     crossbeam_channel::{select, RecvError, SendError},
     parking_lot::RwLock,
     solana_clock::Slot,
@@ -23,9 +24,8 @@ use {
     },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::SetRootError},
+    solana_runtime::bank::Bank,
     solana_signer::Signer,
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
     std::{
         collections::{BTreeMap, BTreeSet},
         sync::{
@@ -68,9 +68,6 @@ enum EventLoopError {
 
     #[error("Error generating and inserting vote")]
     VotingError(#[from] VoteError),
-
-    #[error("Unable to set root")]
-    SetRootError(#[from] SetRootError),
 
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
@@ -287,7 +284,7 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                )?;
+                );
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -415,7 +412,7 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                )?;
+                );
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -751,7 +748,7 @@ impl EventHandler {
         finalized_blocks: &mut BTreeSet<Block>,
         received_shred: &mut BTreeSet<Slot>,
         stats: &mut EventHandlerStats,
-    ) -> Result<(), SetRootError> {
+    ) {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
         let old_root = bank_forks_r.root();
         let Some(new_root) = finalized_blocks
@@ -767,7 +764,7 @@ impl EventHandler {
             .max()
         else {
             // No rootable banks
-            return Ok(());
+            return;
         };
         drop(bank_forks_r);
         root_utils::set_root(
@@ -779,9 +776,8 @@ impl EventHandler {
             pending_blocks,
             finalized_blocks,
             received_shred,
-        )?;
+        );
         stats.set_root(new_root);
-        Ok(())
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -803,6 +799,10 @@ mod tests {
             },
             voting_service::BLSOp,
         },
+        agave_votor_messages::{
+            consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            vote::Vote,
+        },
         crossbeam_channel::{unbounded, Receiver, TryRecvError},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
@@ -823,10 +823,6 @@ mod tests {
             installed_scheduler_pool::BankWithScheduler,
         },
         solana_streamer::socket::SocketAddrSpace,
-        agave_votor_messages::{
-            consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
-            vote::Vote,
-        },
         std::{
             collections::HashMap,
             fs::remove_file,
