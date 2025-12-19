@@ -22,19 +22,10 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
 const STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP: usize = 5;
-
-#[derive(Debug, Error)]
-enum SendVoteError {
-    #[error(transparent)]
-    BincodeError(#[from] bincode::Error),
-    #[error(transparent)]
-    TransportError(#[from] TransportError),
-}
 
 #[derive(Debug)]
 pub enum BLSOp {

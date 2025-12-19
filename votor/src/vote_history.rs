@@ -14,20 +14,6 @@ use {
 
 pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(PartialEq, Eq, Debug, Default, Clone, Copy, Serialize, Deserialize)]
-pub(crate) enum BlockhashStatus {
-    /// No vote since restart
-    #[default]
-    Uninitialized,
-    /// Non voting validator
-    NonVoting,
-    /// Hot spare validator
-    HotSpare,
-    /// Successfully generated vote tx with blockhash
-    Blockhash(Slot, Hash),
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum VoteHistoryVersions {
     Current(VoteHistory),
