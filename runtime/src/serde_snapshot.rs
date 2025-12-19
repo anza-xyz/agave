@@ -327,14 +327,14 @@ impl<T> SnapshotAccountsDbFields<T> {
         }
     }
 
-    /// Verify the consistency of slots in full snapshot relative to incremental snapshot (if present)
+    /// Verify the consistency of slots in incremental snapshot (if present)
     ///
     /// Returns error if full snapshot has some slot above its deserialized slot number that overlap
     /// with slots from incremental snapshot.
     fn verify_slot_ranges(&self) -> Result<(), Error> {
         let AccountsDbFields(
             full_snapshot_storages,
-            _full_snapshot_version,
+            _full_snapshot_write_version,
             full_snapshot_slot,
             ..,
         ) = &self.full_snapshot_accounts_db_fields;
@@ -345,8 +345,9 @@ impl<T> SnapshotAccountsDbFields<T> {
                 // There must not be any overlap in the slots of storages between the full snapshot and the incremental snapshot
                 incremental_snapshot_storages
                     .iter()
-                    .filter(|&(slot, _)| slot > full_snapshot_slot)
-                    .all(|(slot, _)| !full_snapshot_storages.contains_key(slot))
+                    .all(|(slot, _)| {
+                        slot > full_snapshot_slot && !full_snapshot_storages.contains_key(slot)
+                    })
                     .then_some(())
                     .ok_or_else(|| {
                         io::Error::new(
@@ -361,14 +362,14 @@ impl<T> SnapshotAccountsDbFields<T> {
         }
     }
 
-    /// Extract final snapshot version and bank hash info from full accounts db fields (+incremental).
+    /// Extract final write version and bank hash info from full and incremental accounts db fields.
     ///
     /// If there is no incremental snapshot, this returns the fields from the full snapshot.
     /// Otherwise, gets them from the incremental snapshot.
-    fn into_snapshot_version_and_bank_hash_info(self) -> (u64, BankHashInfo) {
+    fn into_write_version_and_bank_hash_info(self) -> (u64, BankHashInfo) {
         let AccountsDbFields(
             _snapshot_storages,
-            snapshot_version,
+            snapshot_write_version,
             _snapshot_slot,
             snapshot_bank_hash_info,
             _snapshot_historical_roots,
@@ -376,7 +377,7 @@ impl<T> SnapshotAccountsDbFields<T> {
         ) = self
             .incremental_snapshot_accounts_db_fields
             .unwrap_or(self.full_snapshot_accounts_db_fields);
-        (snapshot_version, snapshot_bank_hash_info)
+        (snapshot_write_version, snapshot_bank_hash_info)
     }
 }
 
@@ -1045,8 +1046,8 @@ where
 
     snapshot_accounts_db_fields.verify_slot_ranges()?;
 
-    let (snapshot_version, snapshot_bank_hash_info) =
-        snapshot_accounts_db_fields.into_snapshot_version_and_bank_hash_info();
+    let (snapshot_write_version, snapshot_bank_hash_info) =
+        snapshot_accounts_db_fields.into_write_version_and_bank_hash_info();
 
     // Ensure all account paths exist
     for path in &accounts_db.paths {
@@ -1078,7 +1079,7 @@ where
         .store(next_append_vec_id, Ordering::Release);
     accounts_db
         .write_version
-        .fetch_add(snapshot_version, Ordering::Release);
+        .fetch_add(snapshot_write_version, Ordering::Release);
 
     info!("Building accounts index...");
     let start = Instant::now();
