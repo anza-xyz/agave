@@ -229,7 +229,9 @@ impl Bank {
                 reward_type: RewardType::Staking,
                 lamports: i64::try_from(partitioned_stake_reward.stake_reward).unwrap(),
                 post_balance: account.lamports(),
-                commission: Some(partitioned_stake_reward.commission),
+                // TODO: Update RewardInfo in solana-reward-info crate to support
+                // commission_bps: Option<u16>, then pass bps here without loss.
+                commission: Some((partitioned_stake_reward.commission_bps / 100).min(100) as u8),
             },
             stake_account: account,
         })
@@ -622,14 +624,14 @@ mod tests {
             credits_observed: 42,
         };
         let stake_reward = 100;
-        let commission = 42;
+        let commission_bps = 4_200;
 
         let nonexistent_account = Pubkey::new_unique();
         let partitioned_stake_reward = PartitionedStakeReward {
             stake_pubkey: nonexistent_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -660,7 +662,7 @@ mod tests {
             stake_pubkey: overflowing_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -699,7 +701,7 @@ mod tests {
             stake_pubkey: successful_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -723,7 +725,9 @@ mod tests {
                 reward_type: RewardType::Staking,
                 lamports: stake_reward as i64,
                 post_balance: expected_lamports,
-                commission: Some(commission),
+                // TODO: Update RewardInfo in solana-reward-info crate to support
+                // commission_bps: Option<u16>, then pass bps here without loss.
+                commission: Some((commission_bps / 100) as u8),
             },
         };
         assert_eq!(
