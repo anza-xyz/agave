@@ -145,7 +145,7 @@ impl ConsensusMetrics {
         }
     }
 
-    pub fn start_metrics_loop(
+    pub(crate) fn start_metrics_loop(
         epoch: Epoch,
         receiver: ConsensusMetricsEventReceiver,
         exit: Arc<AtomicBool>,

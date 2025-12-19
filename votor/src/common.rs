@@ -35,7 +35,7 @@ pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
 /// as well as the stake fraction required for certificate completion.
 ///
 /// Must be in sync with `vote_to_cert_types`
-pub const fn certificate_limits_and_vote_types(
+pub(crate) const fn certificate_limits_and_vote_types(
     cert_type: &CertificateType,
 ) -> (f64, &'static [VoteType]) {
     match cert_type {

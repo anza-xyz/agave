@@ -1,3 +1,4 @@
+//! Defines ConsensusPool to store received and generated votes and certificates.
 use {
     crate::{
         commitment::CommitmentError,
@@ -33,16 +34,17 @@ use {
     thiserror::Error,
 };
 
-pub mod certificate_builder;
-pub mod parent_ready_tracker;
+mod certificate_builder;
+pub(crate) mod parent_ready_tracker;
 mod slot_stake_counters;
 mod stats;
 mod vote_pool;
 
 pub type PoolId = (Slot, VoteType);
 
+/// Different failure cases from calling `add_vote()`.
 #[derive(Debug, Error, PartialEq)]
-pub enum AddVoteError {
+pub(crate) enum AddVoteError {
     #[error("Conflicting vote type: {0:?} vs existing {1:?} for slot: {2} pubkey: {3}")]
     ConflictingVoteType(VoteType, VoteType, Slot, Pubkey),
 
@@ -51,9 +53,6 @@ pub enum AddVoteError {
 
     #[error("Unrooted slot")]
     UnrootedSlot,
-
-    #[error("Slot in the future")]
-    SlotInFuture,
 
     #[error("Certificate error: {0}")]
     Certificate(#[from] CertificateBuildError),
@@ -97,8 +96,10 @@ fn get_key_and_stakes(
     }
     Ok((*vote_key, stake, epoch_stakes.total_stake()))
 }
-
-pub struct ConsensusPool {
+/// Container to store received votes and certificates.
+///
+/// Based on received votes and certificates, generates new `VotorEvent`s and generates new certificates.
+pub(crate) struct ConsensusPool {
     my_pubkey: Pubkey,
     // Vote pools to do bean counting for votes.
     vote_pools: BTreeMap<PoolId, VotePool>,
@@ -107,7 +108,7 @@ pub struct ConsensusPool {
     /// Tracks slots which have reached the parent ready condition:
     /// - They have a potential parent block with a NotarizeFallback certificate
     /// - All slots from the parent have a Skip certificate
-    pub parent_ready_tracker: ParentReadyTracker,
+    pub(crate) parent_ready_tracker: ParentReadyTracker,
     /// Highest slot that has a Finalized variant certificate
     highest_finalized_slot: Option<Slot>,
     /// Highest slot that has Finalize+Notarize or FinalizeFast, for use in standstill
@@ -122,7 +123,7 @@ pub struct ConsensusPool {
 }
 
 impl ConsensusPool {
-    pub fn new_from_root_bank_pre_migration(
+    pub(crate) fn new_from_root_bank_pre_migration(
         my_pubkey: Pubkey,
         bank: &Bank,
         migration_status: Arc<MigrationStatus>,
@@ -360,7 +361,7 @@ impl ConsensusPool {
     ///
     /// If this resulted in a new highest Finalize or FastFinalize certificate,
     /// return the slot
-    pub fn add_message(
+    pub(crate) fn add_message(
         &mut self,
         epoch_schedule: &EpochSchedule,
         epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
@@ -487,7 +488,7 @@ impl ConsensusPool {
     }
 
     /// Get the notarized block in `slot`
-    pub fn get_notarized_block(&self, slot: Slot) -> Option<Block> {
+    fn get_notarized_block(&self, slot: Slot) -> Option<Block> {
         self.completed_certificates
             .iter()
             .find_map(|(cert_type, _)| match cert_type {
@@ -524,7 +525,7 @@ impl ConsensusPool {
             .unwrap_or(0)
     }
 
-    pub fn highest_finalized_slot(&self) -> Slot {
+    pub(crate) fn highest_finalized_slot(&self) -> Slot {
         self.completed_certificates
             .iter()
             .filter_map(|(cert_type, _)| match cert_type {
@@ -538,7 +539,7 @@ impl ConsensusPool {
     }
 
     /// Checks if any block in the slot `s` is finalized
-    pub fn is_finalized(&self, slot: Slot) -> bool {
+    fn is_finalized(&self, slot: Slot) -> bool {
         self.completed_certificates.keys().any(|cert_type| {
             matches!(cert_type, CertificateType::Finalize(s) | CertificateType::FinalizeFast(s, _) if *s == slot)
         })
@@ -547,14 +548,15 @@ impl ConsensusPool {
     /// Checks if the any block in slot `slot` has received a `NotarizeFallback` certificate, if so return
     /// the size of the certificate
     #[cfg(test)]
-    pub fn slot_has_notarized_fallback(&self, slot: Slot) -> bool {
+    fn slot_has_notarized_fallback(&self, slot: Slot) -> bool {
         self.completed_certificates.iter().any(
             |(cert_type, _)| matches!(cert_type, CertificateType::NotarizeFallback(s,_) if *s == slot),
         )
     }
 
     /// Checks if `slot` has a `Skip` certificate
-    pub fn skip_certified(&self, slot: Slot) -> bool {
+    #[cfg(test)]
+    fn skip_certified(&self, slot: Slot) -> bool {
         self.completed_certificates
             .contains_key(&CertificateType::Skip(slot))
     }
@@ -605,7 +607,7 @@ impl ConsensusPool {
     }
 
     /// Cleanup any old slots from the certificate pool
-    pub fn prune_old_state(&mut self, root_slot: Slot) {
+    pub(crate) fn prune_old_state(&mut self, root_slot: Slot) {
         // `completed_certificates`` now only contains entries >= `slot`
         self.completed_certificates
             .retain(|cert_type, _| match cert_type {
@@ -629,11 +631,11 @@ impl ConsensusPool {
         self.parent_ready_tracker.update_pubkey(new_pubkey);
     }
 
-    pub fn maybe_report(&mut self) {
+    pub(crate) fn maybe_report(&mut self) {
         self.stats.maybe_report();
     }
 
-    pub fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
+    pub(crate) fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
         let (highest_finalized_with_notarize_slot, has_fast_finalize) =
             self.highest_finalized_with_notarize.unwrap_or((0, false));
         self.completed_certificates
