@@ -545,7 +545,8 @@ mod tests {
         let start = Instant::now();
         let mut event_received = false;
         while start.elapsed() < Duration::from_secs(5) {
-            if let Ok(event) = receiver.recv_timeout(Duration::from_millis(500)) {
+            let recv = receiver.recv_timeout(Duration::from_millis(500));
+            if let Ok(event) = recv {
                 if condition(&event) {
                     event_received = true;
                     break;
