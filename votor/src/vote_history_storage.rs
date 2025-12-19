@@ -108,8 +108,7 @@ pub struct NullVoteHistoryStorage {}
 
 impl VoteHistoryStorage for NullVoteHistoryStorage {
     fn load(&self, _node_pubkey: &Pubkey) -> Result<VoteHistory> {
-        Err(VoteHistoryError::IoError(io::Error::new(
-            io::ErrorKind::Other,
+        Err(VoteHistoryError::IoError(io::Error::other(
             "NullVoteHistoryStorage::load() not available",
         )))
     }
