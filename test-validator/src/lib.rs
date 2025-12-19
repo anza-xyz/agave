@@ -1050,7 +1050,10 @@ impl TestValidator {
         }
 
         for feature in feature_set {
-            genesis_utils::activate_feature(&mut genesis_config, feature);
+            // TODO: remove after cli change for bls_pubkey_management_in_vote_account is checked in
+            if feature != agave_feature_set::bls_pubkey_management_in_vote_account::id() {
+                genesis_utils::activate_feature(&mut genesis_config, feature);
+            }
         }
 
         let ledger_path = match &config.ledger_path {
