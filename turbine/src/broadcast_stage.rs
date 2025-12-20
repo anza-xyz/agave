@@ -12,7 +12,7 @@ use {
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
         xdp::XdpSender,
     },
-    crossbeam_channel::{unbounded, Receiver, RecvError, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
     itertools::Itertools,
     solana_clock::Slot,
     solana_gossip::{
@@ -27,14 +27,14 @@ use {
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
-    solana_streamer::sendmmsg::{batch_send, SendPktsError},
-    solana_time_utils::{timestamp, AtomicInterval},
+    solana_streamer::sendmmsg::{SendPktsError, batch_send},
+    solana_time_utils::{AtomicInterval, timestamp},
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -389,16 +389,18 @@ impl BroadcastStage {
 
         let retransmit_thread = Builder::new()
             .name("solBroadcastRtx".to_string())
-            .spawn(move || loop {
-                if let Some(res) = Self::handle_error(
-                    Self::check_retransmit_signals(
-                        &blockstore,
-                        &retransmit_slots_receiver,
-                        &socket_sender,
-                    ),
-                    "solana-broadcaster-retransmit-check_retransmit_signals",
-                ) {
-                    return res;
+            .spawn(move || {
+                loop {
+                    if let Some(res) = Self::handle_error(
+                        Self::check_retransmit_signals(
+                            &blockstore,
+                            &retransmit_slots_receiver,
+                            &socket_sender,
+                        ),
+                        "solana-broadcaster-retransmit-check_retransmit_signals",
+                    ) {
+                        return res;
+                    }
                 }
             })
             .unwrap();
@@ -424,9 +426,11 @@ impl BroadcastStage {
                     .get_data_shreds_for_slot(new_retransmit_slot, 0)
                     .expect("My own shreds must be reconstructable"),
             );
-            debug_assert!(data_shreds
-                .iter()
-                .all(|shred| shred.slot() == new_retransmit_slot));
+            debug_assert!(
+                data_shreds
+                    .iter()
+                    .all(|shred| shred.slot() == new_retransmit_slot)
+            );
             if !data_shreds.is_empty() {
                 socket_sender.send((data_shreds, None))?;
             }
@@ -437,9 +441,11 @@ impl BroadcastStage {
                     .expect("My own shreds must be reconstructable"),
             );
 
-            debug_assert!(coding_shreds
-                .iter()
-                .all(|shred| shred.slot() == new_retransmit_slot));
+            debug_assert!(
+                coding_shreds
+                    .iter()
+                    .all(|shred| shred.slot() == new_retransmit_slot)
+            );
             if !coding_shreds.is_empty() {
                 socket_sender.send((coding_shreds, None))?;
             }
@@ -563,15 +569,15 @@ pub mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
-            shred::{max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shredder},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{
             path::Path,
-            sync::{atomic::AtomicBool, Arc},
+            sync::{Arc, atomic::AtomicBool},
             thread::sleep,
         },
     };

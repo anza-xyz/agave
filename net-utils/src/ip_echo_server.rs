@@ -1,5 +1,5 @@
 use {
-    crate::{bind_to_unspecified, HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH},
+    crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, bind_to_unspecified},
     log::*,
     serde::{Deserialize, Serialize},
     solana_serde::default_on_eof,

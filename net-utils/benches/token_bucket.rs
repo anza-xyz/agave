@@ -24,34 +24,38 @@ fn bench_token_bucket() {
 
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                if start.elapsed() > run_duration {
-                    break;
+            scope.spawn(|| {
+                loop {
+                    if start.elapsed() > run_duration {
+                        break;
+                    }
+                    match tb.consume_tokens(request_size) {
+                        Ok(_) => accepted.fetch_add(1, Ordering::Relaxed),
+                        Err(_) => rejected.fetch_add(1, Ordering::Relaxed),
+                    };
                 }
-                match tb.consume_tokens(request_size) {
-                    Ok(_) => accepted.fetch_add(1, Ordering::Relaxed),
-                    Err(_) => rejected.fetch_add(1, Ordering::Relaxed),
-                };
             });
         }
         // periodically check for races
-        let jh = scope.spawn(|| loop {
-            std::thread::sleep(Duration::from_millis(100));
-            let elapsed = start.elapsed();
-            if elapsed > run_duration {
-                break;
+        let jh = scope.spawn(|| {
+            loop {
+                std::thread::sleep(Duration::from_millis(100));
+                let elapsed = start.elapsed();
+                if elapsed > run_duration {
+                    break;
+                }
+                let acc = accepted.load(Ordering::Relaxed);
+                let rate = acc as f64 / elapsed.as_secs_f64();
+                assert!(
+                    tb.current_tokens() < request_size * 2,
+                    "bucket should have no spare tokens"
+                );
+                assert!(
+                    // allow 1% error
+                    (rate - target_rate).abs() < target_rate / 100.0,
+                    "Accepted rate should be about {target_rate}, actual {rate}"
+                );
             }
-            let acc = accepted.load(Ordering::Relaxed);
-            let rate = acc as f64 / elapsed.as_secs_f64();
-            assert!(
-                tb.current_tokens() < request_size * 2,
-                "bucket should have no spare tokens"
-            );
-            assert!(
-                // allow 1% error
-                (rate - target_rate).abs() < target_rate / 100.0,
-                "Accepted rate should be about {target_rate}, actual {rate}"
-            );
         });
         jh.join().expect("Rate checks should pass");
     });

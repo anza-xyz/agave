@@ -30,7 +30,7 @@ pub mod tooling_for_tests;
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     std::{
         io::{self},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
@@ -39,8 +39,8 @@ use {
 };
 pub use {
     ip_echo_server::{
-        ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
-        MINIMUM_IP_ECHO_SERVER_THREADS,
+        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE,
+        MINIMUM_IP_ECHO_SERVER_THREADS, ip_echo_server,
     },
     socket_addr_space::SocketAddrSpace,
 };

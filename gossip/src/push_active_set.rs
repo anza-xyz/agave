@@ -226,39 +226,55 @@ mod tests {
         }
         let other = &nodes[5];
         let origin = &nodes[17];
-        assert!(active_set
-            .get_nodes(&pubkey, origin, &stakes)
-            .eq([13, 5, 18, 16, 0].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, &stakes)
-            .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([13, 5, 18, 16, 0].into_iter().map(|k| &nodes[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k]))
+        );
         active_set.prune(&pubkey, &nodes[5], &[*origin], &stakes);
         active_set.prune(&pubkey, &nodes[3], &[*origin], &stakes);
         active_set.prune(&pubkey, &nodes[16], &[*origin], &stakes);
-        assert!(active_set
-            .get_nodes(&pubkey, origin, &stakes)
-            .eq([13, 18, 0].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, &stakes)
-            .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([13, 18, 0].into_iter().map(|k| &nodes[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k]))
+        );
         active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes);
         assert!(active_set.0.iter().all(|entry| entry.0.len() == 7));
-        assert!(active_set
-            .get_nodes(&pubkey, origin, &stakes)
-            .eq([18, 0, 7, 15, 11].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, &stakes)
-            .eq([18, 16, 0, 7, 15, 11].into_iter().map(|k| &nodes[k])));
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([18, 0, 7, 15, 11].into_iter().map(|k| &nodes[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([18, 16, 0, 7, 15, 11].into_iter().map(|k| &nodes[k]))
+        );
         let origins = [*origin, *other];
         active_set.prune(&pubkey, &nodes[18], &origins, &stakes);
         active_set.prune(&pubkey, &nodes[0], &origins, &stakes);
         active_set.prune(&pubkey, &nodes[15], &origins, &stakes);
-        assert!(active_set
-            .get_nodes(&pubkey, origin, &stakes)
-            .eq([7, 11].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, &stakes)
-            .eq([16, 7, 11].into_iter().map(|k| &nodes[k])));
+        assert!(
+            active_set
+                .get_nodes(&pubkey, origin, &stakes)
+                .eq([7, 11].into_iter().map(|k| &nodes[k]))
+        );
+        assert!(
+            active_set
+                .get_nodes(&pubkey, other, &stakes)
+                .eq([16, 7, 11].into_iter().map(|k| &nodes[k]))
+        );
     }
 
     #[test]
@@ -284,9 +300,11 @@ mod tests {
             if !keys.contains(&origin) {
                 assert!(entry.get_nodes(pubkey, origin).eq(keys));
             } else {
-                assert!(entry
-                    .get_nodes(pubkey, origin)
-                    .eq(keys.into_iter().filter(|&key| key != origin)));
+                assert!(
+                    entry
+                        .get_nodes(pubkey, origin)
+                        .eq(keys.into_iter().filter(|&key| key != origin))
+                );
             }
         }
         // Assert that each filter already prunes the key.
@@ -294,9 +312,11 @@ mod tests {
             assert!(filter.contains(node));
         }
         for (pubkey, origin) in iproduct!(&nodes, keys) {
-            assert!(entry
-                .get_nodes(pubkey, origin)
-                .eq(keys.into_iter().filter(|&node| node != origin)));
+            assert!(
+                entry
+                    .get_nodes(pubkey, origin)
+                    .eq(keys.into_iter().filter(|&node| node != origin))
+            );
         }
         // Assert that prune excludes node from get.
         let origin = &nodes[3];
@@ -304,9 +324,11 @@ mod tests {
         entry.prune(&nodes[14], origin);
         entry.prune(&nodes[19], origin);
         for pubkey in &nodes {
-            assert!(entry.get_nodes(pubkey, origin).eq(keys
-                .into_iter()
-                .filter(|&&node| pubkey == origin || (node != nodes[11] && node != nodes[14]))));
+            assert!(
+                entry.get_nodes(pubkey, origin).eq(keys
+                    .into_iter()
+                    .filter(|&&node| pubkey == origin || (node != nodes[11] && node != nodes[14])))
+            );
         }
         // Assert that rotate adds new nodes.
         entry.rotate(&mut rng, 5, NUM_BLOOM_FILTER_ITEMS, &nodes, &weights);
