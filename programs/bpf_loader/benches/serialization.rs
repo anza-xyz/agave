@@ -1,11 +1,11 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     solana_account::{Account, AccountSharedData},
     solana_program_runtime::serialization::serialize_parameters,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
-    solana_transaction_context::{instruction_accounts::InstructionAccount, TransactionContext},
+    solana_transaction_context::{TransactionContext, instruction_accounts::InstructionAccount},
 };
 
 fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext<'static> {

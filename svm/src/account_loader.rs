@@ -4,15 +4,15 @@ use {
     crate::{
         account_overrides::AccountOverrides,
         rent_calculator::{
-            check_rent_state_with_account, get_account_rent_state, RENT_EXEMPT_RENT_EPOCH,
+            RENT_EXEMPT_RENT_EPOCH, check_rent_state_with_account, get_account_rent_state,
         },
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
     },
     ahash::{AHashMap, AHashSet},
     solana_account::{
-        state_traits::StateMut, Account, AccountSharedData, ReadableAccount, WritableAccount,
-        PROGRAM_OWNERS,
+        Account, AccountSharedData, PROGRAM_OWNERS, ReadableAccount, WritableAccount,
+        state_traits::StateMut,
     },
     solana_clock::Slot,
     solana_fee_structure::FeeDetails,
@@ -20,7 +20,7 @@ use {
     solana_instructions_sysvar::construct_instructions_data,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_nonce::state::State as NonceState,
-    solana_nonce_account::{get_system_account_kind, SystemAccountKind},
+    solana_nonce_account::{SystemAccountKind, get_system_account_kind},
     solana_program_runtime::execution_budget::{
         SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
     },
@@ -33,7 +33,7 @@ use {
     solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction_context::{transaction_accounts::KeyedAccountSharedData, IndexOfAccount},
+    solana_transaction_context::{IndexOfAccount, transaction_accounts::KeyedAccountSharedData},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::num::NonZeroU32,
 };
@@ -661,9 +661,9 @@ mod tests {
         solana_keypair::Keypair,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_message::{
+            LegacyMessage, Message, MessageHeader, SanitizedMessage,
             compiled_instruction::CompiledInstruction,
             v0::{LoadedAddresses, LoadedMessage},
-            LegacyMessage, Message, MessageHeader, SanitizedMessage,
         },
         solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
@@ -679,9 +679,9 @@ mod tests {
         solana_signer::Signer,
         solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
         solana_system_transaction::transfer,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::{
-            transaction_accounts::KeyedAccountSharedData, TransactionContext,
+            TransactionContext, transaction_accounts::KeyedAccountSharedData,
         },
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{
@@ -1142,9 +1142,14 @@ mod tests {
         let requested_data_size_limit = NonZeroU32::new(data_size as u32).unwrap();
 
         // OK - loaded data size is up to limit
-        assert!(acc
-            .increase_calculated_data_size(data_size, requested_data_size_limit, &mut error_metrics)
-            .is_ok());
+        assert!(
+            acc.increase_calculated_data_size(
+                data_size,
+                requested_data_size_limit,
+                &mut error_metrics
+            )
+            .is_ok()
+        );
         assert_eq!(data_size as u32, acc.loaded_accounts_data_size);
 
         // fail - loading more data that would exceed limit
