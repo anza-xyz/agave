@@ -11,7 +11,7 @@ use {
     crossbeam_channel::{Receiver, RecvError, Sender, TryRecvError},
     lru::LruCache,
     rand::Rng,
-    rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_ledger::{
@@ -31,7 +31,7 @@ use {
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
     },
-    solana_streamer::sendmmsg::{multi_target_send, SendPktsError},
+    solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
     std::{
         borrow::Cow,
@@ -39,8 +39,8 @@ use {
         net::{SocketAddr, UdpSocket},
         ops::AddAssign,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},

@@ -3,7 +3,7 @@ use {
     bincode::serialized_size,
     itertools::Itertools,
     log::*,
-    rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     serial_test::serial,
     solana_gossip::{
         cluster_info_metrics::GossipStats,
@@ -13,7 +13,7 @@ use {
         crds_gossip::*,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
-            CrdsTimeouts, ProcessPullStats, PullRequest, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsTimeouts, ProcessPullStats, PullRequest,
         },
         crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
