@@ -9,17 +9,17 @@ use {
 const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
-pub(crate) struct ConsensusPoolServiceStats {
-    pub(crate) add_message_failed: Saturating<usize>,
-    pub(crate) certificates_sent: Saturating<usize>,
-    pub(crate) certificates_dropped: Saturating<usize>,
-    pub(crate) new_finalized_slot: Saturating<usize>,
-    pub(crate) parent_ready_missed_window: Saturating<usize>,
-    pub(crate) parent_ready_produce_window: Saturating<usize>,
-    pub(crate) received_votes: Saturating<usize>,
-    pub(crate) received_certificates: Saturating<usize>,
-    pub(crate) standstill: bool,
-    pub(crate) prune_old_state_called: Saturating<usize>,
+pub(super) struct ConsensusPoolServiceStats {
+    pub(super) add_message_failed: Saturating<usize>,
+    pub(super) certificates_sent: Saturating<usize>,
+    pub(super) certificates_dropped: Saturating<usize>,
+    pub(super) new_finalized_slot: Saturating<usize>,
+    pub(super) parent_ready_missed_window: Saturating<usize>,
+    pub(super) parent_ready_produce_window: Saturating<usize>,
+    pub(super) received_votes: Saturating<usize>,
+    pub(super) received_certificates: Saturating<usize>,
+    pub(super) standstill: bool,
+    pub(super) prune_old_state_called: Saturating<usize>,
     last_request_time: Instant,
 }
 
@@ -77,7 +77,7 @@ impl ConsensusPoolServiceStats {
         );
     }
 
-    pub fn maybe_report(&mut self) {
+    pub(super) fn maybe_report(&mut self) {
         if self.last_request_time.elapsed() >= STATS_REPORT_INTERVAL {
             self.report();
             *self = Self::new();

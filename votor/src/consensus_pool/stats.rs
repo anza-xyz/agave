@@ -17,6 +17,7 @@ struct CertificateStats {
 }
 
 impl CertificateStats {
+    /// Increments the stats associated with the certificate type by one.
     fn increment(&mut self, certificate: &CertificateType) {
         match certificate {
             CertificateType::Finalize(_) => self.finalize = self.finalize.saturating_add(1),
@@ -104,6 +105,7 @@ impl ConsensusPoolStats {
         }
     }
 
+    /// Reports the certificate related statistics.
     fn report(&self) {
         datapoint_info!(
             "consensus_pool_stats",
