@@ -363,9 +363,11 @@ mod tests {
             .aggregate(&messages_2)
             .expect("Failed to aggregate notarization fallback votes");
 
-        let cert = builder.build().expect("Failed to build certificate");
-        assert_eq!(cert.cert_type, cert_type);
-        match decode(&cert.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode bitmap") {
+        let certificate_message = builder.build().expect("Failed to build certificate");
+        assert_eq!(certificate_message.cert_type, cert_type);
+        match decode(&certificate_message.bitmap, MAXIMUM_VALIDATORS)
+            .expect("Failed to decode bitmap")
+        {
             Decoded::Base3(bitmap1, bitmap2) => {
                 assert_eq!(bitmap1.len(), 8);
                 assert_eq!(bitmap2.len(), 8);
@@ -386,9 +388,11 @@ mod tests {
         builder
             .aggregate(&messages_1)
             .expect("Failed to aggregate notarization votes");
-        let cert = builder.build().expect("Failed to build certificate");
-        assert_eq!(cert.cert_type, cert_type);
-        match decode(&cert.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode bitmap") {
+        let certificate_message = builder.build().expect("Failed to build certificate");
+        assert_eq!(certificate_message.cert_type, cert_type);
+        match decode(&certificate_message.bitmap, MAXIMUM_VALIDATORS)
+            .expect("Failed to decode bitmap")
+        {
             Decoded::Base2(bitmap1) => {
                 assert_eq!(bitmap1.len(), 7);
                 for i in rank_1 {
@@ -405,9 +409,11 @@ mod tests {
         builder
             .aggregate(&messages_2)
             .expect("Failed to aggregate notarization fallback votes");
-        let cert = builder.build().expect("Failed to build certificate");
-        assert_eq!(cert.cert_type, cert_type);
-        match decode(&cert.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode bitmap") {
+        let certificate_message = builder.build().expect("Failed to build certificate");
+        assert_eq!(certificate_message.cert_type, cert_type);
+        match decode(&certificate_message.bitmap, MAXIMUM_VALIDATORS)
+            .expect("Failed to decode bitmap")
+        {
             Decoded::Base3(bitmap1, bitmap2) => {
                 assert_eq!(bitmap1.count_ones(), 0);
                 assert_eq!(bitmap2.len(), 8);
@@ -510,14 +516,14 @@ mod tests {
         builder
             .aggregate(&vote_messages)
             .expect("Failed to aggregate votes");
-        let cert = builder.build().expect("Failed to build certificate");
+        let certificate_message = builder.build().expect("Failed to build certificate");
 
         // 3. Verification: Aggregate the public keys and verify the signature.
         let aggregate_pubkey = BLSPubkeyProjective::aggregate(keypairs.iter().map(|kp| &kp.public))
             .expect("Failed to aggregate public keys");
 
         let verification_result =
-            aggregate_pubkey.verify_signature(&cert.signature, &serialized_vote);
+            aggregate_pubkey.verify_signature(&certificate_message.signature, &serialized_vote);
 
         assert!(
             verification_result.unwrap_or(false),
@@ -574,10 +580,11 @@ mod tests {
         builder
             .aggregate(&all_vote_messages)
             .expect("Failed to aggregate votes");
-        let cert = builder.build().expect("Failed to build certificate");
+        let certificate_message = builder.build().expect("Failed to build certificate");
 
         // 3. Verification:
-        let decoded_bitmap = decode(&cert.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode");
+        let decoded_bitmap =
+            decode(&certificate_message.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode");
 
         match decoded_bitmap {
             Decoded::Base2(_bitmap) => {
@@ -595,7 +602,7 @@ mod tests {
 
         SignatureProjective::verify_distinct_aggregated(
             all_pubkeys.iter(),
-            &cert.signature,
+            &certificate_message.signature,
             all_messages.iter().map(Vec::as_slice),
         )
         .unwrap();

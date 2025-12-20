@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use {
     agave_votor_messages::vote::Vote,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},

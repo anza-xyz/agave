@@ -21,7 +21,7 @@ extern crate log;
 
 pub mod commitment;
 pub mod common;
-pub mod consensus_metrics;
+mod consensus_metrics;
 pub mod consensus_pool;
 mod consensus_pool_service;
 pub mod event;
@@ -31,8 +31,8 @@ mod staked_validators_cache;
 mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;
-pub mod voting_service;
-pub mod voting_utils;
+mod voting_service;
+mod voting_utils;
 #[allow(dead_code)]
 pub mod votor;
 

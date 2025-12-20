@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use {
     crate::{
         staked_validators_cache::StakedValidatorsCache,
