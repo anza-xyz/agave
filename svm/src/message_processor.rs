@@ -88,12 +88,12 @@ mod tests {
         },
         rand0_7::thread_rng,
         solana_account::{
-            Account, AccountSharedData, ReadableAccount, WritableAccount,
-            DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+            Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount,
+            WritableAccount,
         },
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_hash::Hash,
-        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_instruction::{AccountMeta, Instruction, error::InstructionError},
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_precompile_error::PrecompileError,
         solana_program_runtime::{

@@ -3,11 +3,11 @@ use {
     crate::svm_message::SVMMessage,
     solana_hash::Hash,
     solana_message::{
+        MessageHeader, SanitizedMessage, SanitizedVersionedMessage, SimpleAddressLoader,
+        VersionedMessage,
         compiled_instruction::CompiledInstruction,
         legacy,
         v0::{self, LoadedAddresses, MessageAddressTableLookup},
-        MessageHeader, SanitizedMessage, SanitizedVersionedMessage, SimpleAddressLoader,
-        VersionedMessage,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
