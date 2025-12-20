@@ -8,7 +8,7 @@ use {
     solana_pubkey::Pubkey,
     solana_reward_info::{RewardInfo, RewardType},
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
+    solana_svm::rent_calculator::check_static_account_rent_state_transition,
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
     thiserror::Error,
@@ -16,6 +16,7 @@ use {
 
 #[derive(Error, Debug, PartialEq)]
 enum DepositFeeError {
+    #[allow(dead_code)]
     #[error("fee account became rent paying")]
     InvalidRentPayingAccount,
     #[error("lamport overflow")]
@@ -153,24 +154,20 @@ impl Bank {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
 
-        let recipient_pre_rent_state = get_account_rent_state(
-            &self.rent_collector().rent,
-            account.lamports(),
-            account.data().len(),
-        );
+        let pre_balance = account.lamports();
         let distribution = account.checked_add_lamports(fees);
         if distribution.is_err() {
             return Err(DepositFeeError::LamportOverflow);
         }
 
-        let recipient_post_rent_state = get_account_rent_state(
-            &self.rent_collector().rent,
+        // rent state transition must be checked in case the account receiving the distribution
+        // doesn't exist yet.
+        if !check_static_account_rent_state_transition(
+            pre_balance,
             account.lamports(),
             account.data().len(),
-        );
-        let rent_state_transition_allowed =
-            transition_allowed(&recipient_pre_rent_state, &recipient_post_rent_state);
-        if !rent_state_transition_allowed {
+            &self.rent_collector().rent,
+        ) {
             return Err(DepositFeeError::InvalidRentPayingAccount);
         }
 
@@ -204,7 +201,6 @@ pub mod tests {
         enum Scenario {
             Normal,
             InvalidOwner,
-            RentPaying,
         }
 
         struct TestCase {
@@ -220,7 +216,6 @@ pub mod tests {
         for test_case in [
             TestCase::new(Scenario::Normal),
             TestCase::new(Scenario::InvalidOwner),
-            TestCase::new(Scenario::RentPaying),
         ] {
             let mut genesis = create_genesis_config(0);
             let rent = Rent::default();
@@ -231,21 +226,18 @@ pub mod tests {
             let deposit = 100;
             let mut burn = 100;
 
-            if test_case.scenario == Scenario::RentPaying {
-                // ensure that account balance + collected fees will make it rent-paying
-                let initial_balance = 100;
-                let account = AccountSharedData::new(initial_balance, 0, &system_program::id());
-                bank.store_account(bank.leader_id(), &account);
-                assert!(initial_balance + deposit < min_rent_exempt_balance);
-            } else if test_case.scenario == Scenario::InvalidOwner {
-                // ensure that account owner is invalid and fee distribution will fail
-                let account =
-                    AccountSharedData::new(min_rent_exempt_balance, 0, &Pubkey::new_unique());
-                bank.store_account(bank.leader_id(), &account);
-            } else {
-                let account =
-                    AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
-                bank.store_account(bank.leader_id(), &account);
+            match test_case.scenario {
+                Scenario::InvalidOwner => {
+                    // ensure that account owner is invalid and fee distribution will fail
+                    let account =
+                        AccountSharedData::new(min_rent_exempt_balance, 0, &Pubkey::new_unique());
+                    bank.store_account(bank.leader_id(), &account);
+                }
+                Scenario::Normal => {
+                    let account =
+                        AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
+                    bank.store_account(bank.leader_id(), &account);
+                }
             }
 
             let initial_burn = burn;
@@ -253,7 +245,7 @@ pub mod tests {
             burn += bank.deposit_or_burn_fee(deposit);
             let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
-            if test_case.scenario != Scenario::Normal {
+            if test_case.scenario == Scenario::InvalidOwner {
                 assert_eq!(initial_leader_id_balance, new_leader_id_balance);
                 assert_eq!(initial_burn + deposit, burn);
                 let locked_rewards = bank.rewards.read().unwrap();
@@ -333,22 +325,57 @@ pub mod tests {
     }
 
     #[test]
-    fn test_deposit_fees_invalid_rent_paying() {
-        let initial_balance = 0;
-        let genesis = create_genesis_config(initial_balance);
-        let pubkey = genesis.mint_keypair.pubkey();
-        let mut genesis_config = genesis.genesis_config;
-        genesis_config.rent = Rent::default(); // Ensure rent is non-zero, as genesis_utils sets Rent::free by default
-        let bank = Bank::new_for_tests(&genesis_config);
-        let min_rent_exempt_balance = genesis_config.rent.minimum_balance(0);
+    fn test_deposit_fees_to_nonexistent_account_rent_exempt() {
+        let mut genesis = create_genesis_config(0);
+        let rent = Rent::default();
+        genesis.genesis_config.rent = rent.clone();
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let nonexistent_pubkey = Pubkey::new_unique();
 
-        let deposit_amount = 500;
-        assert!(initial_balance + deposit_amount < min_rent_exempt_balance);
+        // Fee is sufficient to make the new account rent-exempt
+        let deposit_amount = rent.minimum_balance(0);
+
+        assert!(
+            bank.get_account(&nonexistent_pubkey).is_none(),
+            "Account should not exist before deposit"
+        );
 
         assert_eq!(
-            bank.deposit_fees(&pubkey, deposit_amount),
+            bank.deposit_fees(&nonexistent_pubkey, deposit_amount),
+            Ok(deposit_amount),
+            "Deposit should succeed when fee is sufficient for rent-exemption"
+        );
+
+        let account = bank.get_account(&nonexistent_pubkey).unwrap();
+        assert_eq!(account.lamports(), deposit_amount);
+        assert_eq!(account.owner(), &system_program::id());
+    }
+
+    #[test]
+    fn test_deposit_fees_to_nonexistent_account_not_rent_exempt() {
+        let mut genesis = create_genesis_config(0);
+        let rent = Rent::default();
+        genesis.genesis_config.rent = rent.clone();
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let nonexistent_pubkey = Pubkey::new_unique();
+
+        // Fee is insufficient to make the new account rent-exempt
+        let deposit_amount = rent.minimum_balance(0) - 1;
+
+        assert!(
+            bank.get_account(&nonexistent_pubkey).is_none(),
+            "Account should not exist before deposit"
+        );
+
+        assert_eq!(
+            bank.deposit_fees(&nonexistent_pubkey, deposit_amount),
             Err(DepositFeeError::InvalidRentPayingAccount),
-            "Expected an error due to invalid rent paying account"
+            "Deposit should fail when fee is insufficient for rent-exemption"
+        );
+
+        assert!(
+            bank.get_account(&nonexistent_pubkey).is_none(),
+            "Account should still not exist after failed deposit"
         );
     }
 

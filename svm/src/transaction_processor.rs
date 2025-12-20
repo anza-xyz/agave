@@ -10,7 +10,9 @@ use {
         nonce_info::NonceInfo,
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
-        transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_account_state_info::{
+            new_post_exec, new_post_exec_legacy, new_pre_exec, verify_changes,
+        },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
@@ -942,8 +944,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             compute_budget.max_instruction_trace_length,
         );
 
-        let pre_account_state_info =
-            TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
+        let pre_account_state_info = new_pre_exec(&transaction_context, tx);
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -990,16 +991,25 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
-        let mut status = process_result
-            .and_then(|info| {
+        let mut post_account_state_info = process_result
+            .and_then(|_info| {
                 let post_account_state_info =
-                    TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
-                TransactionAccountStateInfo::verify_changes(
+                    if environment.feature_set.relax_post_exec_min_balance_check {
+                        new_post_exec(
+                            &transaction_context,
+                            &pre_account_state_info,
+                            tx,
+                            &environment.rent,
+                        )
+                    } else {
+                        new_post_exec_legacy(&transaction_context, tx, &environment.rent)
+                    };
+                verify_changes(
                     &pre_account_state_info,
                     &post_account_state_info,
                     &transaction_context,
                 )
-                .map(|_| info)
+                .map(|_| post_account_state_info)
             })
             .map_err(|err| {
                 match err {
@@ -1036,14 +1046,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts_resize_delta: accounts_data_len_delta,
         } = execution_record;
 
-        if status.is_ok()
+        if post_account_state_info.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
                 .filter(|lamports_after_tx| lamports_before_tx == *lamports_after_tx)
                 .is_none()
         {
-            status = Err(TransactionError::UnbalancedTransaction);
+            post_account_state_info = Err(TransactionError::UnbalancedTransaction);
         }
-        let status = status.map(|_| ());
+        let status = post_account_state_info
+            .as_ref()
+            .map(|_| ())
+            .map_err(|err| err.clone());
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
@@ -2069,73 +2082,6 @@ mod tests {
                     loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
                 },
-            })
-        );
-    }
-
-    #[test]
-    fn test_validate_transaction_fee_payer_rent_paying() {
-        let lamports_per_signature = 5000;
-        let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
-            &[],
-            Some(&Pubkey::new_unique()),
-            &Hash::new_unique(),
-        ));
-        let fee_payer_address = message.fee_payer();
-        let rent = Rent {
-            lamports_per_byte_year: 1_000_000,
-            ..Default::default()
-        };
-        let min_balance = rent.minimum_balance(0);
-        let transaction_fee = lamports_per_signature;
-        let starting_balance = min_balance - 1;
-        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
-
-        let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
-            account_shared_data: Arc::new(RwLock::new(mock_accounts)),
-            ..Default::default()
-        };
-        let mut account_loader = (&mock_bank).into();
-
-        let mut error_counters = TransactionErrorMetrics::default();
-        let compute_budget_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
-            MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0),
-        );
-        let result =
-            TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
-                &message,
-                CheckedTransactionDetails::new(None, compute_budget_and_limits),
-                &Hash::default(),
-                &rent,
-                &mut error_counters,
-            );
-
-        let post_validation_fee_payer_account = {
-            let mut account = fee_payer_account.clone();
-            account.set_lamports(starting_balance - transaction_fee);
-            account
-        };
-
-        assert_eq!(
-            result,
-            Ok(ValidatedTransactionDetails {
-                rollback_accounts: RollbackAccounts::new(
-                    None, // nonce
-                    *fee_payer_address,
-                    post_validation_fee_payer_account.clone(),
-                    0, // rent epoch
-                ),
-                compute_budget: compute_budget_and_limits.budget,
-                loaded_accounts_bytes_limit: compute_budget_and_limits
-                    .loaded_accounts_data_size_limit,
-                fee_details: FeeDetails::new(transaction_fee, 0),
-                loaded_fee_payer_account: LoadedTransactionAccount {
-                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
-                    account: post_validation_fee_payer_account,
-                }
             })
         );
     }
