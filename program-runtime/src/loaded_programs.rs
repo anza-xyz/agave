@@ -11,15 +11,15 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
     solana_svm_type_overrides::{
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, Condvar, Mutex, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         thread,
     },
     std::{
-        collections::{hash_map::Entry, HashMap},
+        collections::{HashMap, hash_map::Entry},
         fmt::{Debug, Formatter},
         sync::Weak,
     },
@@ -265,9 +265,7 @@ impl ProgramCacheStats {
             let evictions = evictions.join("\n");
             trace!(
                 "Eviction Details:\n  {:<44}  {}\n{}",
-                "Program",
-                "Count",
-                evictions
+                "Program", "Count", evictions
             );
         }
     }
@@ -1396,9 +1394,10 @@ impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<
 mod tests {
     use {
         crate::loaded_programs::{
-            BlockRelation, ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheEntryOwner,
-            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramCacheMatchCriteria,
-            ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
+            BlockRelation, DELAY_VISIBILITY_SLOT_OFFSET, ForkGraph, ProgramCache,
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
         },
         assert_matches::assert_matches,
         percentage::Percentage,
@@ -1410,8 +1409,8 @@ mod tests {
             io::Read,
             ops::ControlFlow,
             sync::{
-                atomic::{AtomicU64, Ordering},
                 Arc, RwLock,
+                atomic::{AtomicU64, Ordering},
             },
         },
         test_case::{test_case, test_matrix},
