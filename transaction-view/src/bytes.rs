@@ -239,7 +239,7 @@ pub unsafe fn read_type<'a, T: Sized>(bytes: &'a [u8], offset: &mut usize) -> Re
 mod tests {
     use {
         super::*,
-        bincode::{serialize_into, DefaultOptions, Options},
+        bincode::{DefaultOptions, Options, serialize_into},
         solana_packet::PACKET_DATA_SIZE,
         solana_short_vec::ShortU16,
     };
