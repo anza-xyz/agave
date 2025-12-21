@@ -80,6 +80,8 @@ pub enum RpcCustomError {
     SlotNotEpochBoundary { slot: Slot },
     #[error("LongTermStorageUnreachable")]
     LongTermStorageUnreachable,
+    #[error("InvalidParam")]
+    InvalidParam,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -257,6 +259,11 @@ impl From<RpcCustomError> for Error {
             RpcCustomError::LongTermStorageUnreachable => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
                 message: "Failed to query long-term storage; please try again".to_string(),
+                data: None,
+            },
+            RpcCustomError::InvalidParam => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
+                message: "Invalid parameter provided".to_string(),
                 data: None,
             },
         }

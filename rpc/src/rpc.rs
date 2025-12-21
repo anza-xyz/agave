@@ -91,7 +91,7 @@ use {
         UiConfirmedBlock, UiTransactionEncoding,
     },
     solana_validator_exit::Exit,
-    solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
+    solana_vote_program::vote_state::{VoteStateV3 as VoteState, MAX_LOCKOUT_HISTORY},
     spl_generic_token::{
         token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
         token_2022::{self, ACCOUNTTYPE_ACCOUNT},
@@ -2909,31 +2909,67 @@ pub mod rpc_minimal {
             options: Option<RpcLeaderScheduleConfigWrapper>,
             config: Option<RpcLeaderScheduleConfig>,
         ) -> Result<Option<RpcLeaderSchedule>> {
-            let (slot, maybe_config) = options.map(|options| options.unzip()).unwrap_or_default();
+            let (slot, maybe_config) = options.map(|o| o.unzip()).unwrap_or_default();
             let config = maybe_config.or(config).unwrap_or_default();
 
+            if config.identity.is_some() && config.vote_accounts.is_some() {
+                return Err(Error::invalid_params(
+                    "Cannot specify both 'identity' and 'voteAccounts'".to_string(),
+                ));
+            }
+
             if let Some(ref identity) = config.identity {
-                let _ = verify_pubkey(identity)?;
+                verify_pubkey(identity)?;
             }
 
             let bank = meta.bank(config.commitment);
+            let mut allowed_identities = HashSet::new();
+
+            if let Some(ref vote_accounts) = config.vote_accounts {
+                for vote_str in vote_accounts {
+                    let vote_pubkey = verify_pubkey(vote_str)?;
+
+                    let account = bank.get_account(&vote_pubkey).ok_or_else(|| {
+                        Error::invalid_params(format!(
+                            "{vote_pubkey} does not exist or is not a vote account"
+                        ))
+                    })?;
+
+                    if !solana_vote_program::check_id(account.owner()) {
+                        return Err(Error::invalid_params(format!(
+                            "{vote_pubkey} is not owned by the vote program"
+                        )));
+                    }
+
+                    let vote_state = VoteState::deserialize(&account.data()).map_err(|_| {
+                        Error::invalid_params(format!("{vote_pubkey} has invalid vote state data"))
+                    })?;
+
+                    allowed_identities.insert(vote_state.node_pubkey.to_string());
+                }
+            }
+
             let slot = slot.unwrap_or_else(|| bank.slot());
             let epoch = bank.epoch_schedule().get_epoch(slot);
 
-            debug!("get_leader_schedule rpc request received: {slot:?}");
+            debug!("get_leader_schedule rpc request received: slot={slot}, epoch={epoch}");
 
             Ok(meta
                 .leader_schedule_cache
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
-                    let mut schedule_by_identity =
+                    let mut schedule =
                         solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule.get_slot_leaders().iter().enumerate(),
                         );
+
                     if let Some(identity) = config.identity {
-                        schedule_by_identity.retain(|k, _| *k == identity);
+                        schedule.retain(|k, _| *k == identity);
+                    } else if !allowed_identities.is_empty() {
+                        schedule.retain(|k, _| allowed_identities.contains(k));
                     }
-                    schedule_by_identity
+
+                    schedule
                 }))
         }
     }
