@@ -34,7 +34,9 @@ use {
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
-    solana_vote_program::vote_state::VoteAuthorize,
+    solana_vote_program::vote_state::{
+        VoteAuthorize, BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+    },
     std::{
         collections::HashMap, error, io::stdout, rc::Rc, str::FromStr, sync::Arc, time::Duration,
     },
@@ -406,6 +408,27 @@ pub enum CliCommand {
         fee_payer: SignerIndex,
         compute_unit_price: Option<u64>,
     },
+    CreateVoteAccountV2 {
+        vote_account: SignerIndex,
+        seed: Option<String>,
+        identity_account: SignerIndex,
+        authorized_voter: Option<Pubkey>,
+        bls_pubkey: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+        bls_proof_of_possession: [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+        authorized_withdrawer: Pubkey,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        blockhash_query: BlockhashQuery,
+        nonce_account: Option<Pubkey>,
+        nonce_authority: SignerIndex,
+        memo: Option<String>,
+        fee_payer: SignerIndex,
+        compute_unit_price: Option<u64>,
+        inflation_rewards_commission_bps: Option<u16>,
+        block_revenue_commission_bps: Option<u16>,
+        inflation_rewards_collector: Option<Pubkey>,
+        block_revenue_collector: Option<Pubkey>,
+    },
     // Wallet Commands
     Address,
     Airdrop {
@@ -757,6 +780,9 @@ pub fn parse_command(
         ("create-vote-account", Some(matches)) => {
             parse_create_vote_account(matches, default_signer, wallet_manager)
         }
+        ("create-vote-account-with-bls", Some(matches)) => {
+            parse_create_vote_account_with_bls(matches, default_signer, wallet_manager)
+        }
         ("vote-update-validator", Some(matches)) => {
             parse_vote_update_validator(matches, default_signer, wallet_manager)
         }
@@ -770,6 +796,9 @@ pub fn parse_command(
             VoteAuthorize::Voter,
             !CHECKED,
         ),
+        ("vote-authorize-voter-with-bls", Some(matches)) => {
+            parse_vote_authorize_with_bls(matches, default_signer, wallet_manager, !CHECKED)
+        }
         ("vote-authorize-withdrawer", Some(matches)) => parse_vote_authorize(
             matches,
             default_signer,
@@ -784,6 +813,9 @@ pub fn parse_command(
             VoteAuthorize::Voter,
             CHECKED,
         ),
+        ("vote-authorize-voter-checked-with-bls", Some(matches)) => {
+            parse_vote_authorize_with_bls(matches, default_signer, wallet_manager, CHECKED)
+        }
         ("vote-authorize-withdrawer-checked", Some(matches)) => parse_vote_authorize(
             matches,
             default_signer,
@@ -1592,6 +1624,52 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 memo.as_ref(),
                 *fee_payer,
                 *compute_unit_price,
+            )
+            .await
+        }
+        CliCommand::CreateVoteAccountV2 {
+            vote_account,
+            seed,
+            identity_account,
+            authorized_voter,
+            authorized_withdrawer,
+            bls_pubkey,
+            bls_proof_of_possession,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority,
+            memo,
+            fee_payer,
+            compute_unit_price,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
+        } => {
+            process_create_vote_account_v2(
+                &rpc_client,
+                config,
+                *vote_account,
+                seed,
+                *identity_account,
+                authorized_voter,
+                *authorized_withdrawer,
+                *bls_pubkey,
+                *bls_proof_of_possession,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                nonce_account.as_ref(),
+                *nonce_authority,
+                memo.as_ref(),
+                *fee_payer,
+                *compute_unit_price,
+                inflation_rewards_commission_bps,
+                inflation_rewards_collector,
+                block_revenue_commission_bps,
+                block_revenue_collector,
             )
             .await
         }
