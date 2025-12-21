@@ -44,8 +44,8 @@ use {
     thiserror::Error,
 };
 
-pub const GRACE_TICKS_FACTOR: u64 = 2;
-pub const MAX_GRACE_SLOTS: u64 = 2;
+pub const GRACE_TICKS_FACTOR: u64 = 4;
+pub const MAX_GRACE_SLOTS: u64 = 1;
 
 #[derive(Error, Debug, Clone)]
 pub enum PohRecorderError {
@@ -2265,22 +2265,22 @@ mod tests {
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((4, 4)), 8),
-            (Some(33), 40, 4)
+            (Some(33), 40, 2)
         );
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((4, 7)), 8),
-            (Some(33), 64, 2 * 8)
+            (Some(33), 64, 8)
         );
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((6, 7)), 8),
-            (Some(49), 64, 8)
+            (Some(49), 64, 4)
         );
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((6, 7)), 4),
-            (Some(25), 32, 4)
+            (Some(25), 32, 2)
         );
     }
 }
