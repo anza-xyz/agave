@@ -122,7 +122,7 @@ impl Bank {
                         reward_type: RewardType::Fee,
                         lamports: deposit as i64,
                         post_balance,
-                        commission: None,
+                        commission_bps: None,
                     },
                 ));
                 0
