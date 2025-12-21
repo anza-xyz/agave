@@ -62,6 +62,8 @@ pub trait VoteStateHandle {
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
 
+    fn set_inflation_rewards_collector(&mut self, collector: Pubkey);
+
     fn set_block_revenue_collector(&mut self, collector: Pubkey);
 
     fn votes(&self) -> &VecDeque<LandedVote>;
@@ -367,6 +369,10 @@ impl VoteStateHandle for VoteStateV3 {
         self.node_pubkey = node_pubkey;
     }
 
+    fn set_inflation_rewards_collector(&mut self, _collector: Pubkey) {
+        // No-op for v3: field does not exist.
+    }
+
     fn set_block_revenue_collector(&mut self, _collector: Pubkey) {
         // No-op for v3: field does not exist.
     }
@@ -540,6 +546,10 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         self.node_pubkey = node_pubkey;
+    }
+
+    fn set_inflation_rewards_collector(&mut self, collector: Pubkey) {
+        self.inflation_rewards_collector = collector;
     }
 
     fn set_block_revenue_collector(&mut self, collector: Pubkey) {
@@ -748,6 +758,13 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
             TargetVoteState::V4(v4) => v4.set_node_pubkey(node_pubkey),
+        }
+    }
+
+    fn set_inflation_rewards_collector(&mut self, collector: Pubkey) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.set_inflation_rewards_collector(collector),
+            TargetVoteState::V4(v4) => v4.set_inflation_rewards_collector(collector),
         }
     }
 
