@@ -8,7 +8,6 @@
     )
 )]
 #![allow(clippy::arithmetic_side_effects)]
-pub mod alpenglow_last_voted;
 mod cluster_tpu_info;
 pub mod filter;
 pub mod max_slots;
