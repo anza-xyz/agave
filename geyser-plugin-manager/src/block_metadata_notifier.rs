@@ -83,7 +83,8 @@ impl BlockMetadataNotifierImpl {
                     lamports: reward.lamports,
                     post_balance: reward.post_balance,
                     reward_type: Some(reward.reward_type),
-                    commission: reward.commission,
+                    commission: reward.commission_bps.map(|bps| (bps / 100) as u8),
+                    commission_bps: reward.commission_bps,
                 })
                 .collect(),
             num_partitions: rewards.num_partitions,
