@@ -229,9 +229,7 @@ impl Bank {
                 reward_type: RewardType::Staking,
                 lamports: i64::try_from(partitioned_stake_reward.stake_reward).unwrap(),
                 post_balance: account.lamports(),
-                // TODO: Update RewardInfo in solana-reward-info crate to support
-                // commission_bps: Option<u16>, then pass bps here without loss.
-                commission: Some((partitioned_stake_reward.commission_bps / 100).min(100) as u8),
+                commission_bps: Some(partitioned_stake_reward.commission_bps),
             },
             stake_account: account,
         })
@@ -725,9 +723,7 @@ mod tests {
                 reward_type: RewardType::Staking,
                 lamports: stake_reward as i64,
                 post_balance: expected_lamports,
-                // TODO: Update RewardInfo in solana-reward-info crate to support
-                // commission_bps: Option<u16>, then pass bps here without loss.
-                commission: Some((commission_bps / 100) as u8),
+                commission_bps: Some(commission_bps),
             },
         };
         assert_eq!(
