@@ -18,6 +18,7 @@ fn create_rewards() -> Rewards {
             post_balance: u64::MAX,
             reward_type: Some(RewardType::Fee),
             commission: None,
+            commission_bps: None,
         })
         .collect()
 }

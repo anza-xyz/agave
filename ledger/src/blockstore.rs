@@ -10383,6 +10383,7 @@ pub mod tests {
                 post_balance: u64::MAX,
                 reward_type: Some(RewardType::Fee),
                 commission: None,
+                commission_bps: None,
             })
             .collect();
         let protobuf_rewards: generated::Rewards = rewards.into();
@@ -10456,6 +10457,7 @@ pub mod tests {
                 post_balance: 42,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData {

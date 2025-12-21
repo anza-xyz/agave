@@ -813,6 +813,7 @@ mod test {
                 post_balance: 9_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData {
@@ -893,6 +894,7 @@ Rewards:
                 post_balance: 14_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses,
             return_data: Some(TransactionReturnData {

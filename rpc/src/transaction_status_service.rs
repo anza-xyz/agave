@@ -295,7 +295,8 @@ impl TransactionStatusService {
                     lamports: reward_info.lamports,
                     post_balance: reward_info.post_balance,
                     reward_type: Some(reward_info.reward_type),
-                    commission: reward_info.commission,
+                    commission: reward_info.commission_bps.map(|bps| (bps / 100) as u8),
+                    commission_bps: reward_info.commission_bps,
                 })
                 .collect();
             let blockstore_rewards = RewardsAndNumPartitions {
