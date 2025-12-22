@@ -43,7 +43,8 @@ pub struct StoredAccountMeta<'append_vec> {
     pub account_meta: &'append_vec AccountMeta,
     pub(crate) data: &'append_vec [u8],
     pub(crate) offset: usize,
-    pub(crate) stored_size: usize,
+    /// the number of bytes, plus any padding, to store this account
+    pub(crate) aligned_stored_size: usize,
 }
 
 impl<'append_vec> StoredAccountMeta<'append_vec> {
@@ -51,8 +52,10 @@ impl<'append_vec> StoredAccountMeta<'append_vec> {
         &self.meta.pubkey
     }
 
-    pub fn stored_size(&self) -> usize {
-        self.stored_size
+    /// Returns the size, in bytes, this account will take to store,
+    /// plus possible alignment padding bytes before the next entry.
+    pub fn aligned_stored_size(&self) -> usize {
+        self.aligned_stored_size
     }
 
     pub fn offset(&self) -> usize {
@@ -93,7 +96,8 @@ pub struct StoredAccountNoData<'append_vec> {
     pub meta: &'append_vec StoredMeta,
     pub account_meta: &'append_vec AccountMeta,
     pub offset: usize,
-    pub stored_size: usize,
+    /// the number of bytes, plus any padding, to store this account
+    pub aligned_stored_size: usize,
 }
 
 impl<'append_vec> StoredAccountNoData<'append_vec> {
@@ -121,9 +125,11 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
         self.offset
     }
 
+    /// Returns the size, in bytes, this account will take to store,
+    /// plus possible alignment padding bytes before the next entry.
     #[inline(always)]
-    pub fn stored_size(&self) -> usize {
-        self.stored_size
+    pub fn aligned_stored_size(&self) -> usize {
+        self.aligned_stored_size
     }
 
     #[inline(always)]
@@ -213,13 +219,13 @@ mod tests {
             data: data.clone(),
         };
         let offset = 99 * size_of::<u64>(); // offset needs to be 8 byte aligned
-        let stored_size = 101;
+        let aligned_stored_size = 101;
         let stored_account = StoredAccountMeta {
             meta: &meta,
             account_meta: &account_meta,
             data: &data,
             offset,
-            stored_size,
+            aligned_stored_size,
         };
         assert!(accounts_equal(&account, &stored_account));
     }

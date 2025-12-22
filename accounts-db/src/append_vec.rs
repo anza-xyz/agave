@@ -545,7 +545,7 @@ impl AppendVec {
                 matches = false;
                 return;
             }
-            last_offset = account.offset() + account.stored_size();
+            last_offset = account.offset() + account.aligned_stored_size();
             num_accounts += 1;
         })?;
         let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
@@ -708,13 +708,13 @@ impl AppendVec {
                 let (account_meta, next) = Self::get_type::<AccountMeta>(slice, next)?;
                 let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(slice, next)?;
                 let (data, next) = Self::get_slice(slice, next, meta.data_len as usize)?;
-                let stored_size = next - offset;
+                let aligned_stored_size = next - offset;
                 Some(callback(StoredAccountMeta {
                     meta,
                     account_meta,
                     data,
                     offset,
-                    stored_size,
+                    aligned_stored_size,
                 }))
             }
             AppendVecFileBacking::File(file) => {
@@ -737,13 +737,13 @@ impl AppendVec {
                 Some(if remaining_bytes_for_data >= data_len as usize {
                     // we already read enough data to load this account
                     let (data, next) = Self::get_slice(valid_bytes, next, meta.data_len as usize)?;
-                    let stored_size = next;
+                    let aligned_stored_size = next;
                     let account = StoredAccountMeta {
                         meta,
                         account_meta,
                         data,
                         offset,
-                        stored_size,
+                        aligned_stored_size,
                     };
                     callback(account)
                 } else {
@@ -763,13 +763,13 @@ impl AppendVec {
                     }
                     // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
                     let data = unsafe { data.assume_init() };
-                    let stored_size = aligned_stored_size(data_len as usize);
+                    let aligned_stored_size = aligned_stored_size(data_len as usize);
                     let account = StoredAccountMeta {
                         meta,
                         account_meta,
                         data: &data[..],
                         offset,
-                        stored_size,
+                        aligned_stored_size,
                     };
                     callback(account)
                 })
@@ -789,13 +789,13 @@ impl AppendVec {
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 let (meta, next) = Self::get_type::<StoredMeta>(slice, offset)?;
                 let (account_meta, _) = Self::get_type::<AccountMeta>(slice, next)?;
-                let stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
+                let aligned_stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
 
                 Some(callback(StoredAccountNoData {
                     meta,
                     account_meta,
                     offset,
-                    stored_size,
+                    aligned_stored_size,
                 }))
             }
             AppendVecFileBacking::File(file) => {
@@ -811,13 +811,13 @@ impl AppendVec {
                 });
                 let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
                 let (account_meta, _) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
-                let stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
+                let aligned_stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
 
                 Some(callback(StoredAccountNoData {
                     meta,
                     account_meta,
                     offset,
-                    stored_size,
+                    aligned_stored_size,
                 }))
             }
         }
@@ -849,13 +849,13 @@ impl AppendVec {
                 Some(if remaining_bytes_for_data >= data_len as usize {
                     // we already read enough data to load this account
                     let (data, next) = Self::get_slice(valid_bytes, next, meta.data_len as usize)?;
-                    let stored_size = next;
+                    let aligned_stored_size = next;
                     let account = StoredAccountMeta {
                         meta,
                         account_meta,
                         data,
                         offset,
-                        stored_size,
+                        aligned_stored_size,
                     };
                     // data is within `buf`, so just allocate a new vec for data
                     create_account_shared_data(&account)
@@ -904,7 +904,7 @@ impl AppendVec {
                 &r_callback,
                 r2.as_ref().unwrap()
             ));
-            assert_eq!(sizes, r_callback.stored_size());
+            assert_eq!(sizes, r_callback.aligned_stored_size());
             let pubkey = r_callback.meta.pubkey;
             Some((pubkey, create_account_shared_data(&r_callback)))
         });
@@ -1007,7 +1007,7 @@ impl AppendVec {
                 let mut offset = 0;
                 while self
                     .get_stored_account_meta_callback(offset, |account| {
-                        offset += account.stored_size();
+                        offset += account.aligned_stored_size();
                         if account.is_zero_lamport() && account.pubkey() == &Pubkey::default() {
                             // we passed the last useful account
                             return false;
@@ -1044,16 +1044,16 @@ impl AppendVec {
                     if leftover >= data_len {
                         // we already read enough data to load this account
                         let data = &bytes.0[next..(next + data_len)];
-                        let stored_size = aligned_stored_size(data_len);
+                        let aligned_stored_size = aligned_stored_size(data_len);
                         let account = StoredAccountMeta {
                             meta,
                             account_meta,
                             data,
                             offset,
-                            stored_size,
+                            aligned_stored_size,
                         };
                         callback(account);
-                        reader.consume(stored_size);
+                        reader.consume(aligned_stored_size);
                         // restore default required buffer size
                         min_buf_len = STORE_META_OVERHEAD;
                     } else {
@@ -1175,14 +1175,14 @@ impl AppendVec {
                     if offset + stored_size > self_len {
                         break;
                     }
-                    let stored_size = u64_align!(stored_size);
+                    let aligned_stored_size = u64_align!(stored_size);
                     callback(StoredAccountNoData {
                         meta: stored_meta,
                         account_meta,
                         offset,
-                        stored_size,
+                        aligned_stored_size,
                     });
-                    offset += stored_size;
+                    offset += aligned_stored_size;
                 }
             }
             AppendVecFileBacking::File(file) => {
@@ -1212,14 +1212,14 @@ impl AppendVec {
                     if offset + stored_size > self_len {
                         break;
                     }
-                    let stored_size = u64_align!(stored_size);
+                    let aligned_stored_size = u64_align!(stored_size);
                     callback(StoredAccountNoData {
                         meta: stored_meta,
                         account_meta,
                         offset,
-                        stored_size,
+                        aligned_stored_size,
                     });
-                    reader.consume(stored_size);
+                    reader.consume(aligned_stored_size);
                 }
             }
         }
@@ -2302,7 +2302,7 @@ mod tests {
                         let offset = account_offsets.get(i).unwrap();
 
                         assert_eq!(
-                            stored_account.stored_size,
+                            stored_account.aligned_stored_size,
                             aligned_stored_size(account.data().len()),
                         );
                         assert_eq!(stored_account.offset(), *offset);
