@@ -7886,6 +7886,7 @@ dependencies = [
  "solana-account",
  "solana-account-decoder",
  "solana-bincode",
+ "solana-bls-signatures",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-clock",

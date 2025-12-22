@@ -483,6 +483,31 @@ mod tests {
     }
 
     #[test]
+    fn test_bls_pubkey_of() {
+        let bls_pubkey_compressed = BLSPubkeyCompressed([1u8; 48]);
+        let matches =
+            app().get_matches_from(vec!["test", "--single", &bls_pubkey_compressed.to_string()]);
+        assert_eq!(
+            bls_pubkey_of(&matches, "single"),
+            Some(bls_pubkey_compressed)
+        );
+    }
+
+    #[test]
+    fn test_bls_proof_of_possession_of() {
+        let bls_proof_of_possession = BLSProofOfPossessionCompressed([1u8; 96]);
+        let matches = app().get_matches_from(vec![
+            "test",
+            "--single",
+            &bls_proof_of_possession.to_string(),
+        ]);
+        assert_eq!(
+            bls_proof_of_possession_of(&matches, "single"),
+            Some(bls_proof_of_possession)
+        );
+    }
+
+    #[test]
     fn test_lamports_of_sol() {
         let matches = app().get_matches_from(vec!["test", "--single", "50"]);
         assert_eq!(lamports_of_sol(&matches, "single"), Some(50_000_000_000));

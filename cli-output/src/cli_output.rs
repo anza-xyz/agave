@@ -3364,6 +3364,10 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
+        solana_bls_signatures::{
+            ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
+            PubkeyCompressed as BLSPubkeyCompressed,
+        },
         solana_keypair::keypair_from_seed,
         solana_message::Message,
         solana_pubkey::Pubkey,
@@ -3466,6 +3470,37 @@ mod tests {
                 bad_sig: vec![bad.pubkey().to_string()],
             }
         );
+    }
+
+    #[test]
+    fn test_return_signers_with_bls() {
+        let bls_pubkey = BLSPubkeyCompressed([2u8; 48]);
+        let bls_proof_of_possession = BLSProofOfPossessionCompressed([3u8; 96]);
+        let res_data_with_bls = CliSignOnlyDataWithBLS {
+            base: CliSignOnlyData {
+                blockhash: Hash::new_from_array([9u8; 32]).to_string(),
+                message: None,
+                signers: vec![format!(
+                    "{}={}",
+                    Pubkey::default().to_string(),
+                    Signature::default().to_string()
+                )],
+                absent: vec![],
+                bad_sig: vec![],
+            },
+            bls_pubkey: bls_pubkey.to_string(),
+            bls_proof_of_possession: bls_proof_of_possession.to_string(),
+        };
+        let expected_output = "\n\n\u{1b}[1mBlockhash:\u{1b}[0m \
+            cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN\n\u{1b}[1mSigners \
+            (Pubkey=Signature):\u{1b}[0m\n 11111111111111111111111111111111=\
+            1111111111111111111111111111111111111111111111111111111111111111\
+            \n\u{1b}[1mBLS Public Key:\u{1b}[0m AgICAgICAgICAgICAgICAgICAgICAg\
+            ICAgICAgICAgICAgICAgICAgICAgICAgIC\n\u{1b}[1mBLS Proof of \
+            Possession:\u{1b}[0m AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD\
+            AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD\
+            AwMDAwMDAwMDAwMDAwMD\n";
+        assert_eq!(format!("{res_data_with_bls}"), expected_output);
     }
 
     #[test]
