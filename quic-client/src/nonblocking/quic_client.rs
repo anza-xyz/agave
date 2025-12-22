@@ -7,9 +7,8 @@ use {
     futures::future::TryFutureExt,
     log::*,
     quinn::{
-        crypto::rustls::QuicClientConfig, ClientConfig, ClosedStream, ConnectError, Connection,
-        ConnectionError, Endpoint, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
-        WriteError,
+        crypto::rustls::QuicClientConfig, ClientConfig, ConnectError, Connection, ConnectionError,
+        Endpoint, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig, WriteError,
     },
     solana_connection_cache::{
         client_connection::ClientStats, connection_cache_stats::ConnectionCacheStats,
@@ -52,8 +51,6 @@ pub enum QuicError {
     ConnectionError(#[from] ConnectionError),
     #[error(transparent)]
     ConnectError(#[from] ConnectError),
-    #[error(transparent)]
-    ClosedStream(#[from] ClosedStream),
 }
 
 impl From<QuicError> for ClientErrorKind {
