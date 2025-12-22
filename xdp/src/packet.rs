@@ -8,7 +8,7 @@ use {
 pub const ETH_HEADER_SIZE: usize = 14;
 pub const IP_HEADER_SIZE: usize = 20;
 pub const UDP_HEADER_SIZE: usize = 8;
-pub const GRE_HEADER_SIZE: usize = 4; // Used by GRE module
+pub const GRE_HEADER_SIZE: usize = 4;
 const IP_DONT_FRAGMENT: u16 = 0x4000;
 
 pub fn write_eth_header(packet: &mut [u8], src_mac: &[u8; 6], dst_mac: &[u8; 6]) {
@@ -24,21 +24,22 @@ pub(crate) fn write_ip_header(
     payload_len: u16,
     protocol: u8,
     dont_fragment: bool,
+    ttl: Option<u8>,
+    tos: Option<u8>,
 ) {
     let total_len = IP_HEADER_SIZE + payload_len as usize;
 
     // version (4) and IHL (5)
     packet[0] = 0x45;
     // tos
-    packet[1] = 0;
+    packet[1] = tos.unwrap_or(0);
     packet[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
     // identification
     packet[4..6].copy_from_slice(&0u16.to_be_bytes());
     // flags & frag offset
     let frag_flags = if dont_fragment { IP_DONT_FRAGMENT } else { 0 };
-    packet[6..8].copy_from_slice(&frag_flags.to_be_bytes()); //todo: greg: do we need this for all ip headers? FD has it in theirs
-                                                             // TTL
-    packet[8] = 64;
+    packet[6..8].copy_from_slice(&frag_flags.to_be_bytes());
+    packet[8] = ttl.unwrap_or(64);
     // protocol
     packet[9] = protocol;
     // checksum
@@ -64,6 +65,8 @@ pub fn write_ip_header_for_udp(
         payload_len,
         IPPROTO_UDP as u8,
         false,
+        None,
+        None,
     );
 }
 

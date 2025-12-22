@@ -22,8 +22,6 @@ use {
 const NETLINK_RCVBUF_SIZE: i32 = 1 << 16;
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
 // GRE nested attributes (from include/uapi/linux/if_tunnel.h)
-const _IFLA_GRE_UNSPEC: u16 = 0;
-const IFLA_GRE_LINK: u16 = 1;
 const IFLA_GRE_IFLAGS: u16 = 2;
 const IFLA_GRE_OFLAGS: u16 = 3;
 const IFLA_GRE_IKEY: u16 = 4;
@@ -349,14 +347,13 @@ impl std::fmt::Display for MacAddress {
 pub struct GreTunnelInfo {
     pub local: Option<IpAddr>,
     pub remote: Option<IpAddr>,
-    pub iflags: Option<u16>,
+    pub iflags: Option<u16>, // ingress flags
     pub oflags: Option<u16>,
-    pub ikey: Option<u32>,
+    pub ikey: Option<u32>, // ingress key
     pub okey: Option<u32>,
     pub ttl: Option<u8>,
     pub tos: Option<u8>,
     pub pmtudisc: Option<u8>,
-    pub link_ifindex: Option<u32>, // underlay ifindex (IFLA_GRE_LINK)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,7 +362,6 @@ pub struct InterfaceInfo {
     pub if_name: String,
     pub dev_type: u16,
     pub gre_tunnel: Option<GreTunnelInfo>,
-    pub primary_ipv4: Option<Ipv4Addr>,
 }
 
 #[repr(C)]
@@ -374,7 +370,6 @@ struct InterfaceRequest {
     ifi: ifinfomsg,
 }
 
-// Get all interfaces via netlink (based off of FD: fd_netdev_netlink_load_table)
 pub fn netlink_get_interfaces(family: u8) -> Result<Vec<InterfaceInfo>, io::Error> {
     let sock = NetlinkSocket::open()?;
 
@@ -439,7 +434,6 @@ pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo>
         if_name,
         dev_type: ifi.ifi_type,
         gre_tunnel,
-        primary_ipv4: None,
     })
 }
 
@@ -447,7 +441,7 @@ pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo>
 fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<GreTunnelInfo> {
     let (kind, gre) = parse_linkinfo_kind_and_data(attrs)?;
     if kind != "gre" {
-        return None; // only L3 GRE; ignore gretap/erspan
+        return None;
     }
 
     let u8_from_bytes = |data: &[u8]| -> Option<u8> { data.first().copied() };
@@ -467,7 +461,6 @@ fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<G
         ttl: None,
         tos: None,
         pmtudisc: None,
-        link_ifindex: None,
     };
 
     if let Some(a) = gre.get(&IFLA_GRE_LOCAL) {
@@ -496,9 +489,6 @@ fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<G
     }
     if let Some(a) = gre.get(&IFLA_GRE_PMTUDISC) {
         tunnel_info.pmtudisc = u8_from_bytes(a.data);
-    }
-    if let Some(a) = gre.get(&IFLA_GRE_LINK) {
-        tunnel_info.link_ifindex = u32_from_ne_bytes(a.data);
     }
     Some(tunnel_info)
 }
@@ -531,7 +521,7 @@ fn parse_linkinfo_kind_and_data<'a>(
 }
 
 /// Represents an entry in the neighbor table (ARP/NDP cache)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NeighborEntry {
     // IPv4 or IPv6 address
     pub destination: Option<IpAddr>,
@@ -666,6 +656,7 @@ pub struct RouteEntry {
 }
 
 impl RouteEntry {
+    #[inline]
     pub fn same_key(&self, other: &Self) -> bool {
         self.family == other.family
             && self.dst_len == other.dst_len
