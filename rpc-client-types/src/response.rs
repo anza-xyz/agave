@@ -496,7 +496,7 @@ pub struct RpcConfirmedTransactionStatusWithSignature {
     pub memo: Option<String>,
     pub block_time: Option<UnixTimestamp>,
     pub confirmation_status: Option<TransactionConfirmationStatus>,
-    pub idx_in_block: u32,
+    pub transaction_index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -553,7 +553,7 @@ impl From<ConfirmedTransactionStatusWithSignature> for RpcConfirmedTransactionSt
             memo,
             block_time,
             confirmation_status: None,
-            idx_in_block: index,
+            transaction_index: index,
         }
     }
 }

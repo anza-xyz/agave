@@ -711,7 +711,7 @@ pub struct EncodedConfirmedTransactionWithStatusMeta {
     #[serde(flatten)]
     pub transaction: EncodedTransactionWithStatusMeta,
     pub block_time: Option<i64>,
-    pub idx_in_block: u32,
+    pub transaction_index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

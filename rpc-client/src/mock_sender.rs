@@ -250,7 +250,7 @@ impl RpcSender for MockSender {
                         }),
                 },
                 block_time: Some(1628633791),
-                idx_in_block: 0,
+                transaction_index: 0,
             })?,
             "getTransactionCount" => json![1234],
             "getSlot" => json![0],
@@ -431,7 +431,7 @@ impl RpcSender for MockSender {
                     memo: None,
                     block_time: None,
                     confirmation_status: Some(TransactionConfirmationStatus::Finalized),
-                    idx_in_block: 0,
+                    transaction_index: 0,
                 }])?
             }
             "getBlockTime" => serde_json::to_value(UnixTimestamp::default())?,

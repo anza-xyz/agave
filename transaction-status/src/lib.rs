@@ -620,7 +620,7 @@ impl ConfirmedTransactionWithStatusMeta {
                 true,
             )?,
             block_time: self.block_time,
-            idx_in_block: self.index,
+            transaction_index: self.index,
         })
     }
 
