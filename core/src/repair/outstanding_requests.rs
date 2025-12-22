@@ -1,7 +1,7 @@
 use {
     crate::repair::request_response::RequestResponse,
     lru::LruCache,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_ledger::shred::Nonce,
 };
 
@@ -19,7 +19,7 @@ where
     // the given timestamp to be made
     pub fn add_request(&mut self, request: T, now: u64) -> Nonce {
         let num_expected_responses = request.num_expected_responses();
-        let nonce = thread_rng().gen_range(0..Nonce::MAX);
+        let nonce = rng().random_range(0..Nonce::MAX);
         self.requests.put(
             nonce,
             RequestStatus {

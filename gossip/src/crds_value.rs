@@ -257,7 +257,7 @@ mod test {
 
     #[test]
     fn test_keys_and_values() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let v = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         assert_eq!(v.wallclock(), 0);
         let key = *v.contact_info().unwrap().pubkey();
@@ -286,7 +286,7 @@ mod test {
 
     #[test]
     fn test_signature() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
         let wrong_keypair = Keypair::new();
         let mut v = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
@@ -345,7 +345,7 @@ mod test {
         );
         let values: Vec<CrdsValue> = vec![
             {
-                let keypair = Keypair::new_from_array(rng.gen());
+                let keypair = Keypair::new_from_array(rng.random());
                 let lockouts: [Lockout; 4] = [
                     Lockout::new_with_confirmation_count(302_388_991, 11),
                     Lockout::new_with_confirmation_count(302_388_995, 7),
@@ -355,17 +355,17 @@ mod test {
                 let tower_sync = TowerSync {
                     lockouts: lockouts.into_iter().collect(),
                     root: Some(302_388_989),
-                    hash: Hash::new_from_array(rng.gen()),
+                    hash: Hash::new_from_array(rng.random()),
                     timestamp: Some(1_732_044_716_167),
-                    block_id: Hash::new_from_array(rng.gen()),
+                    block_id: Hash::new_from_array(rng.random()),
                 };
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    Hash::new_from_array(rng.gen()),     // blockhash
-                    &keypair,                            // node_keypair
-                    &Keypair::new_from_array(rng.gen()), // vote_keypair
-                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
-                    None,                                // switch_proof_hash
+                    Hash::new_from_array(rng.random()), // blockhash
+                    &keypair,                           // node_keypair
+                    &Keypair::new_from_array(rng.random()), // vote_keypair
+                    &Keypair::new_from_array(rng.random()), // authorized_voter_keypair
+                    None,                               // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),
@@ -376,7 +376,7 @@ mod test {
                 CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
             },
             {
-                let keypair = Keypair::new_from_array(rng.gen());
+                let keypair = Keypair::new_from_array(rng.random());
                 let lockouts: [Lockout; 3] = [
                     Lockout::new_with_confirmation_count(302_410_500, 9),
                     Lockout::new_with_confirmation_count(302_410_505, 5),
@@ -385,17 +385,17 @@ mod test {
                 let tower_sync = TowerSync {
                     lockouts: lockouts.into_iter().collect(),
                     root: Some(302_410_499),
-                    hash: Hash::new_from_array(rng.gen()),
+                    hash: Hash::new_from_array(rng.random()),
                     timestamp: Some(1_732_053_615_237),
-                    block_id: Hash::new_from_array(rng.gen()),
+                    block_id: Hash::new_from_array(rng.random()),
                 };
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    Hash::new_from_array(rng.gen()),     // blockhash
-                    &keypair,                            // node_keypair
-                    &Keypair::new_from_array(rng.gen()), // vote_keypair
-                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
-                    None,                                // switch_proof_hash
+                    Hash::new_from_array(rng.random()), // blockhash
+                    &keypair,                           // node_keypair
+                    &Keypair::new_from_array(rng.random()), // vote_keypair
+                    &Keypair::new_from_array(rng.random()), // authorized_voter_keypair
+                    None,                               // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),

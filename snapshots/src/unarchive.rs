@@ -114,11 +114,11 @@ pub fn unpack_genesis_archive(
 
 fn decompressed_tar_reader(
     archive_format: ArchiveFormat,
-    archive_path: impl AsRef<Path>,
+    archive_path: &Path,
     buf_size: u64,
     io_setup: &IoSetupState,
-) -> io::Result<ArchiveFormatDecompressor<impl BufRead>> {
+) -> io::Result<ArchiveFormatDecompressor<impl BufRead + use<>>> {
     let buf_reader =
-        buffered_reader::large_file_buf_reader(archive_path.as_ref(), buf_size as usize, io_setup)?;
+        buffered_reader::large_file_buf_reader(archive_path, buf_size as usize, io_setup)?;
     ArchiveFormatDecompressor::new(archive_format, buf_reader)
 }

@@ -19,13 +19,13 @@ const NUM: usize = 4096;
 fn test_packet_with_size(size: usize, rng: &mut ThreadRng) -> Vec<u8> {
     // subtract 8 bytes because the length will get serialized as well
     (0..size.checked_sub(8).unwrap())
-        .map(|_| rng.gen())
+        .map(|_| rng.random())
         .collect()
 }
 
 fn do_bench_dedup_packets(b: &mut Bencher, mut batches: Vec<PacketBatch>) {
     // verify packets
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
     b.iter(|| {
         let _ans = deduper::dedup_packets_and_count_discards(&deduper, &mut batches);
@@ -42,7 +42,7 @@ fn do_bench_dedup_packets(b: &mut Bencher, mut batches: Vec<PacketBatch>) {
 }
 
 fn bench_dedup_same_small_packets(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let small_packet = test_packet_with_size(128, &mut rng);
 
     let batches = to_packet_batches(
@@ -54,7 +54,7 @@ fn bench_dedup_same_small_packets(b: &mut Bencher) {
 }
 
 fn bench_dedup_same_big_packets(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let big_packet = test_packet_with_size(1024, &mut rng);
 
     let batches = to_packet_batches(
@@ -66,7 +66,7 @@ fn bench_dedup_same_big_packets(b: &mut Bencher) {
 }
 
 fn bench_dedup_diff_small_packets(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let batches = to_packet_batches(
         &(0..NUM)
@@ -79,7 +79,7 @@ fn bench_dedup_diff_small_packets(b: &mut Bencher) {
 }
 
 fn bench_dedup_diff_big_packets(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let batches = to_packet_batches(
         &(0..NUM)
@@ -92,7 +92,7 @@ fn bench_dedup_diff_big_packets(b: &mut Bencher) {
 }
 
 fn bench_dedup_baseline(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let batches = to_packet_batches(
         &(0..0)
@@ -105,7 +105,7 @@ fn bench_dedup_baseline(b: &mut Bencher) {
 }
 
 fn bench_dedup_reset(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
     b.iter(|| {
         deduper.maybe_reset(

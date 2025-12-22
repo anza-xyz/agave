@@ -135,3 +135,101 @@ impl SnapshotController {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, crate::accounts_background_service::SnapshotRequestKind,
+        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
+        solana_genesis_config::create_genesis_config, solana_pubkey::Pubkey, std::sync::Arc,
+        test_case::test_case,
+    };
+
+    fn create_banks(num_banks: u64) -> Vec<Arc<Bank>> {
+        let mut banks = vec![];
+        let (genesis_config, _) = create_genesis_config(1_000_000);
+        let mut parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        banks.push(parent_bank.clone());
+
+        for _ in 1..=num_banks {
+            let new_bank = Arc::new(Bank::new_from_parent(
+                parent_bank.clone(),
+                &Pubkey::default(),
+                parent_bank.slot() + 1,
+            ));
+            parent_bank = new_bank;
+            banks.push(parent_bank.clone());
+        }
+
+        banks
+    }
+    #[test_case(SnapshotInterval::Disabled, SnapshotInterval::Disabled,
+        50, None, None; "Snapshots Disabled")]
+    #[test_case(SnapshotInterval::Slots(10.try_into().unwrap()), SnapshotInterval::Slots(5.try_into().unwrap()),
+        4, None, None; "No snapshot triggered")]
+    #[test_case(SnapshotInterval::Slots(5.try_into().unwrap()), SnapshotInterval::Disabled,
+        8, Some(5), Some(SnapshotRequestKind::FullSnapshot); "Full without Incremental")]
+    #[test_case(SnapshotInterval::Slots(10.try_into().unwrap()), SnapshotInterval::Slots(10.try_into().unwrap()),
+        10, Some(10), Some(SnapshotRequestKind::FullSnapshot); "Full and Incremental on same slot, full is selected")]
+    #[test_case(SnapshotInterval::Slots(10.try_into().unwrap()), SnapshotInterval::Slots(5.try_into().unwrap()),
+        15, Some(15), Some(SnapshotRequestKind::IncrementalSnapshot); "Newer incremental picked over older Full")]
+    #[test_case(SnapshotInterval::Disabled, SnapshotInterval::Slots(5.try_into().unwrap()),
+        5, Some(5), Some(SnapshotRequestKind::IncrementalSnapshot); "Incremental without Full")]
+    fn test_handle_new_roots(
+        full_snapshot_archive_interval: SnapshotInterval,
+        incremental_snapshot_archive_interval: SnapshotInterval,
+        num_banks: u64,
+        expected_snapshot_slot: Option<u64>,
+        expected_snapshot_type: Option<SnapshotRequestKind>,
+    ) {
+        let banks = create_banks(num_banks);
+        let banks = banks.iter().rev().collect::<Vec<_>>();
+
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archive_interval,
+            incremental_snapshot_archive_interval,
+            ..Default::default()
+        };
+
+        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let snapshot_controller =
+            SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
+
+        let (root_bank_squashed, _, _) = snapshot_controller.handle_new_roots(num_banks, &banks);
+
+        // Verify that the root bank was squashed if and only if a snapshot was requested at that slot
+        if expected_snapshot_slot == Some(num_banks) {
+            assert!(root_bank_squashed);
+        } else {
+            assert!(!root_bank_squashed);
+        }
+
+        // Verify the latest_abs_request_slot is updated
+        assert_eq!(
+            snapshot_controller.latest_abs_request_slot(),
+            expected_snapshot_slot.unwrap_or(0)
+        );
+
+        // Pull the snapshot request from the channel
+        let sent_request = snapshot_request_receiver.try_recv();
+
+        if let Some(expected_snapshot_type) = expected_snapshot_type {
+            assert!(
+                sent_request.is_ok(),
+                "Expected a snapshot request to be sent"
+            );
+            let sent_request = sent_request.unwrap();
+            assert_eq!(sent_request.request_kind, expected_snapshot_type);
+            // Verify that the bank was squashed up to the snapshot slot
+            assert_eq!(
+                sent_request.snapshot_root_bank.slot(),
+                expected_snapshot_slot.unwrap()
+            );
+        } else {
+            assert!(
+                sent_request.is_err(),
+                "Expected no snapshot request to be sent"
+            );
+        }
+    }
+}

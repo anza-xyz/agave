@@ -3,7 +3,7 @@
 use {
     bencher::{benchmark_group, benchmark_main, Bencher},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::Rng,
     solana_perf::{
         packet::{to_packet_batches, BytesPacket, BytesPacketBatch, PacketBatch},
         recycler::Recycler,
@@ -112,7 +112,7 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
     // generate packet vector
     let mut batches = vec![];
     while current_packets < num_packets {
-        let mut len: usize = thread_rng().gen_range(1..128);
+        let mut len: usize = rand::rng().random_range(1..128);
         current_packets += len;
         if current_packets > num_packets {
             len -= current_packets - num_packets;
@@ -120,13 +120,13 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
         }
         let mut batch = BytesPacketBatch::with_capacity(len);
         for _ in 0..len {
-            if thread_rng().gen_ratio(1, 2) {
+            if rand::rng().random_ratio(1, 2) {
                 tx = simple_tx.clone();
             } else {
                 tx = multi_tx.clone();
             };
             let mut packet = BytesPacket::from_data(None, &tx).expect("serialize request");
-            if thread_rng().gen_ratio((num_packets - NUM) as u32, num_packets as u32) {
+            if rand::rng().random_ratio((num_packets - NUM) as u32, num_packets as u32) {
                 packet.meta_mut().set_discard(true);
             } else {
                 num_valid += 1;

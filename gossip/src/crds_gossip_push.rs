@@ -246,7 +246,7 @@ impl CrdsGossipPush {
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
     ) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         // Active and valid gossip nodes with matching shred-version.
         let nodes = crds_gossip::get_gossip_nodes(
             &mut rng,
@@ -296,7 +296,7 @@ mod tests {
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
-            &mut rand::thread_rng(),
+            &mut rand::rng(),
             Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn test_personalized_push_messages() {
         let now = timestamp();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut crds = Crds::default();
         let push = CrdsGossipPush::default();
         let mut ping_cache = new_ping_cache();

@@ -34,14 +34,10 @@ impl SerializableAccountStorageEntry {
 }
 
 pub(crate) trait SerializableStorage {
-    fn id(&self) -> SerializedAccountsFileId;
     fn current_len(&self) -> usize;
 }
 
 impl SerializableStorage for SerializableAccountStorageEntry {
-    fn id(&self) -> SerializedAccountsFileId {
-        self.id
-    }
     fn current_len(&self) -> usize {
         self.accounts_current_len
     }

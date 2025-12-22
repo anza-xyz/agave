@@ -128,7 +128,7 @@ dependencies = [
  "dashmap",
  "futures 0.3.31",
  "histogram",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "log",
  "num_cpus",
  "pretty-hex",
@@ -227,7 +227,7 @@ dependencies = [
 name = "agave-random"
 version = "4.0.0-alpha.0"
 dependencies = [
- "rand 0.8.5",
+ "rand 0.9.2",
 ]
 
 [[package]]
@@ -937,9 +937,9 @@ dependencies = [
 
 [[package]]
 name = "async-lock"
-version = "3.4.1"
+version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd03604047cee9b6ce9de9f70c6cd540a0520c813cbd49bae61f33ab80ed1dc"
+checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
 dependencies = [
  "event-listener",
  "event-listener-strategy",
@@ -2052,18 +2052,18 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "2.1.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10b768e943bed7bf2cab53df09f4bc34bfd217cdb57d971e769874c9a6710618"
+checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
 dependencies = [
  "derive_more-impl",
 ]
 
 [[package]]
 name = "derive_more-impl"
-version = "2.1.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d286bfdaf75e988b4a78e013ecd79c581e06399ab53fbacd2d916c2f904f30b"
+checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
  "convert_case 0.10.0",
  "proc-macro2",
@@ -5584,6 +5584,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scc"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
+dependencies = [
+ "sdd",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5607,6 +5616,12 @@ dependencies = [
  "ring",
  "untrusted",
 ]
+
+[[package]]
+name = "sdd"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "sec1"
@@ -5784,23 +5799,23 @@ dependencies = [
 
 [[package]]
 name = "serial_test"
-version = "2.0.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e56dd856803e253c8f298af3f4d7eb0ae5e23a737252cd90bb4f3b435033b2d"
+checksum = "1b258109f244e1d6891bf1053a55d63a5cd4f8f4c30cf9a1280989f80e7a1fa9"
 dependencies = [
- "dashmap",
  "futures 0.3.31",
- "lazy_static",
  "log",
+ "once_cell",
  "parking_lot 0.12.5",
+ "scc",
  "serial_test_derive",
 ]
 
 [[package]]
 name = "serial_test_derive"
-version = "2.0.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91d129178576168c589c9ec973feedf7d3126c01ac2bf08795109aa35b69fb8f"
+checksum = "5d69265a08751de7844521fd15003ae0a888e035773ba05695c5c759a6f89eef"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6019,9 +6034,9 @@ dependencies = [
 
 [[package]]
 name = "solana-account"
-version = "3.2.0"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "014dcb9293341241dd153b35f89ea906e4170914f4a347a95e7fb07ade47cd6f"
+checksum = "60e0ac2a81ae17e1b3570deb50242ab4cfde50b848b898f57288b6271cc7b71f"
 dependencies = [
  "bincode",
  "qualifier_attr",
@@ -6031,7 +6046,7 @@ dependencies = [
  "solana-account-info",
  "solana-clock",
  "solana-instruction-error",
- "solana-pubkey 3.0.0",
+ "solana-pubkey 4.0.0",
  "solana-sdk-ids",
  "solana-sysvar",
 ]
@@ -6446,9 +6461,9 @@ dependencies = [
 
 [[package]]
 name = "solana-bls-signatures"
-version = "1.0.0"
+version = "2.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c75573697bbb148afa8209aa3ce228ca0754584c9a8a91e818db0f706ae4fb"
+checksum = "4acb2f8e2ce54f8798c8a5eb5d06f4cb4f596a5879be5ad81e95a60a1bde9359"
 dependencies = [
  "base64 0.22.1",
  "blst",
@@ -6849,6 +6864,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
+ "agave-votor-messages",
  "ahash 0.8.12",
  "anyhow",
  "arc-swap",
@@ -6863,7 +6879,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "dashmap",
- "derive_more 2.1.0",
+ "derive_more 2.1.1",
  "futures 0.3.31",
  "histogram",
  "itertools 0.14.0",
@@ -6876,8 +6892,8 @@ dependencies = [
  "prio-graph",
  "qualifier_attr",
  "quinn",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
  "rayon",
  "rolling-file",
  "rts-alloc",
@@ -7084,7 +7100,7 @@ dependencies = [
  "bincode",
  "clap 3.2.25",
  "crossbeam-channel",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "log",
  "rand 0.9.2",
  "serde",
@@ -7447,8 +7463,8 @@ dependencies = [
  "log",
  "lru",
  "num-traits",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
  "rayon",
  "serde",
  "serde-big-array",
@@ -7665,9 +7681,7 @@ dependencies = [
  "num_enum",
  "prost",
  "qualifier_attr",
- "rand 0.8.5",
  "rand 0.9.2",
- "rand_chacha 0.3.1",
  "rand_chacha 0.9.0",
  "rayon",
  "reed-solomon-erasure",
@@ -8033,7 +8047,7 @@ dependencies = [
  "libc",
  "log",
  "nix",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rayon",
  "serde",
  "solana-clock",
@@ -8061,6 +8075,7 @@ dependencies = [
 name = "solana-poh"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-votor-messages",
  "arc-swap",
  "core_affinity",
  "crossbeam-channel",
@@ -9652,8 +9667,8 @@ dependencies = [
  "log",
  "lru",
  "quinn",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
  "rayon",
  "rustls 0.23.35",
  "solana-clock",
@@ -9726,7 +9741,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "derive-where",
- "derive_more 2.1.0",
+ "derive_more 2.1.1",
  "dyn-clone",
  "log",
  "scopeguard",
@@ -9832,6 +9847,7 @@ dependencies = [
  "serde",
  "solana-account",
  "solana-bincode",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",
  "solana-hash 3.1.0",
@@ -11469,9 +11485,9 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f67e680788539097c13ae4311dc36e850624b62b2f481271621adef0fbac6062"
+checksum = "6a57af7f5cf2c575dd1ebd558b80e09545240b703faa2ac8cab94ebcd23a89a8"
 dependencies = [
  "proc-macro2",
  "quote",

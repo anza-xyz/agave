@@ -282,21 +282,26 @@ pub(crate) mod tests {
     };
 
     fn new_rand_socket_addr<R: Rng>(rng: &mut R) -> SocketAddr {
-        let addr = if rng.gen_bool(0.5) {
-            IpAddr::V4(Ipv4Addr::new(rng.gen(), rng.gen(), rng.gen(), rng.gen()))
+        let addr = if rng.random_bool(0.5) {
+            IpAddr::V4(Ipv4Addr::new(
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+            ))
         } else {
             IpAddr::V6(Ipv6Addr::new(
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
-                rng.gen(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random(),
             ))
         };
-        SocketAddr::new(addr, /*port=*/ rng.gen())
+        SocketAddr::new(addr, /*port=*/ rng.random())
     }
 
     pub(crate) fn new_rand_remote_node<R>(rng: &mut R) -> (Keypair, SocketAddr)
@@ -314,7 +319,7 @@ pub(crate) mod tests {
         num_nodes: Option<usize>,
     ) -> PruneData {
         let wallclock = crds_data::new_rand_timestamp(rng);
-        let num_nodes = num_nodes.unwrap_or_else(|| rng.gen_range(0..MAX_PRUNE_DATA_NODES + 1));
+        let num_nodes = num_nodes.unwrap_or_else(|| rng.random_range(0..MAX_PRUNE_DATA_NODES + 1));
         let prunes = std::iter::repeat_with(Pubkey::new_unique)
             .take(num_nodes)
             .collect();
@@ -331,7 +336,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_max_accounts_hashes_with_push_messages() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..256 {
             let accounts_hash = AccountsHashes::new_rand(&mut rng, None);
             let crds_value =
@@ -344,7 +349,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_max_accounts_hashes_with_pull_responses() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..256 {
             let accounts_hash = AccountsHashes::new_rand(&mut rng, None);
             let crds_value =
@@ -357,7 +362,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_max_snapshot_hashes_with_push_messages() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let snapshot_hashes = SnapshotHashes {
             from: Pubkey::new_unique(),
             full: (Slot::default(), Hash::default()),
@@ -372,7 +377,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_max_snapshot_hashes_with_pull_responses() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let snapshot_hashes = SnapshotHashes {
             from: Pubkey::new_unique(),
             full: (Slot::default(), Hash::default()),
@@ -387,7 +392,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_max_prune_data_pubkeys() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..64 {
             let self_keypair = Keypair::new();
             let prune_data =
@@ -425,12 +430,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_duplicate_shred_max_payload_size() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let keypair = Keypair::new();
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..32_000);
+        let next_shred_index = rng.random_range(0..32_000);
         let shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         let other_payload = {
             let other_shred = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
@@ -467,7 +472,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_pull_response_min_serialized_size() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..100 {
             let crds_values = vec![CrdsValue::new_rand(&mut rng, None)];
             let pull_response = Protocol::PullResponse(Pubkey::new_unique(), crds_values);
@@ -497,7 +502,7 @@ pub(crate) mod tests {
     #[test]
     fn test_split_gossip_messages() {
         const NUM_CRDS_VALUES: usize = 2048;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let values: Vec<_> = repeat_with(|| CrdsValue::new_rand(&mut rng, None))
             .take(NUM_CRDS_VALUES)
             .collect();
@@ -513,8 +518,8 @@ pub(crate) mod tests {
             .zip(values)
             .for_each(|(a, b)| assert_eq!(*a, b));
         let socket = SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(rng.gen(), rng.gen(), rng.gen(), rng.gen()),
-            rng.gen(),
+            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
+            rng.random(),
         ));
         let header_size = PACKET_DATA_SIZE - PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
         for values in splits {
@@ -534,7 +539,7 @@ pub(crate) mod tests {
     #[test]
     fn test_split_gossip_messages_pull_response() {
         const NUM_CRDS_VALUES: usize = 2048;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let values: Vec<_> = repeat_with(|| CrdsValue::new_rand(&mut rng, None))
             .take(NUM_CRDS_VALUES)
             .collect();
@@ -550,8 +555,8 @@ pub(crate) mod tests {
             .zip(values)
             .for_each(|(a, b)| assert_eq!(*a, b));
         let socket = SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(rng.gen(), rng.gen(), rng.gen(), rng.gen()),
-            rng.gen(),
+            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
+            rng.random(),
         ));
         // check message fits into PullResponse
         let header_size = PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE;
@@ -662,7 +667,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_prune_data_sign_and_verify_without_prefix() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
@@ -674,7 +679,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_prune_data_sign_and_verify_with_prefix() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
@@ -689,7 +694,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_prune_data_verify_with_and_without_prefix() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 

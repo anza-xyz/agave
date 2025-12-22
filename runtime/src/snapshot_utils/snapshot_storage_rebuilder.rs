@@ -5,11 +5,10 @@ use {
     crate::serde_snapshot::{
         reconstruct_single_storage, remap_and_reconstruct_single_storage,
         snapshot_storage_lengths_from_fields, AccountsDbFields, SerdeObsoleteAccountsMap,
-        SerializableAccountStorageEntry, SerializedAccountsFileId,
+        SerializableAccountStorageEntry,
     },
     agave_fs::FileInfo,
     crossbeam_channel::{select, unbounded, Receiver, Sender},
-    dashmap::DashMap,
     log::*,
     rayon::{
         iter::{IntoParallelIterator, ParallelIterator},
@@ -27,7 +26,7 @@ use {
         str::FromStr as _,
         sync::{
             atomic::{AtomicUsize, Ordering},
-            Arc, Mutex,
+            Arc,
         },
         time::Instant,
     },
@@ -41,9 +40,7 @@ pub(crate) struct SnapshotStorageRebuilder {
     /// Number of threads to rebuild with
     num_threads: usize,
     /// Snapshot storage lengths - from the snapshot file
-    snapshot_storage_lengths: HashMap<Slot, HashMap<SerializedAccountsFileId, usize>>,
-    /// Container for storing snapshot file infos
-    storage_file_infos: DashMap<Slot, Mutex<Vec<FileInfo>>>,
+    snapshot_storage_lengths: HashMap<Slot, usize>,
     /// Container for storing rebuilt snapshot storages
     storage: AccountStorageMap,
     /// Tracks next append_vec_id
@@ -94,23 +91,16 @@ impl SnapshotStorageRebuilder {
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_storage_lengths: HashMap<Slot, HashMap<usize, usize>>,
+        snapshot_storage_lengths: HashMap<Slot, usize>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
     ) -> Self {
         let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
-        let storage_file_infos: DashMap<_, _> = snapshot_storage_lengths
-            .iter()
-            .map(|(slot, storage_lengths)| {
-                (*slot, Mutex::new(Vec::with_capacity(storage_lengths.len())))
-            })
-            .collect();
         Self {
             file_receiver,
             num_threads,
             snapshot_storage_lengths,
-            storage_file_infos,
             storage,
             next_append_vec_id,
             processed_slot_count: AtomicUsize::new(0),
@@ -126,7 +116,7 @@ impl SnapshotStorageRebuilder {
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
-        snapshot_storage_lengths: HashMap<Slot, HashMap<usize, usize>>,
+        snapshot_storage_lengths: HashMap<Slot, usize>,
         append_vec_files: Vec<FileInfo>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
@@ -206,79 +196,50 @@ impl SnapshotStorageRebuilder {
                 self.next_append_vec_id
                     .fetch_max((append_vec_id + 1) as AccountsFileId, Ordering::Relaxed);
             }
-            let slot_storage_count = self.insert_storage_file(&slot, file_info);
-            if slot_storage_count == self.snapshot_storage_lengths.get(&slot).unwrap().len() {
-                // slot_complete
-                self.process_complete_slot(slot)?;
-                self.processed_slot_count.fetch_add(1, Ordering::AcqRel);
-            }
+            self.process_complete_slot(slot, file_info)?;
+            self.processed_slot_count.fetch_add(1, Ordering::AcqRel);
         }
         Ok(())
-    }
-
-    /// Insert storage path into slot and return the number of storage files for the slot
-    fn insert_storage_file(&self, slot: &Slot, file_info: FileInfo) -> usize {
-        let slot_file_infos = self.storage_file_infos.get(slot).unwrap();
-        let mut lock = slot_file_infos.lock().unwrap();
-        lock.push(file_info);
-        lock.len()
     }
 
     /// Process a slot that has received all storage entries
-    fn process_complete_slot(&self, slot: Slot) -> Result<(), SnapshotError> {
-        let slot_storage_file_infos = self.storage_file_infos.get(&slot).unwrap();
-        let mut lock = slot_storage_file_infos.lock().unwrap();
+    fn process_complete_slot(&self, slot: Slot, file_info: FileInfo) -> Result<(), SnapshotError> {
+        let filename = file_info.path.file_name().unwrap().to_str().unwrap();
+        let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
+        let current_len = *self.snapshot_storage_lengths.get(&slot).unwrap();
 
-        let slot_stores = lock
-            .drain(..)
-            .map(|file_info| {
-                let filename = file_info.path.file_name().unwrap().to_str().unwrap();
-                let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
-                let current_len = *self
-                    .snapshot_storage_lengths
-                    .get(&slot)
-                    .unwrap()
-                    .get(&old_append_vec_id)
-                    .unwrap();
+        let storage_entry = match &self.snapshot_from {
+            SnapshotFrom::Archive => remap_and_reconstruct_single_storage(
+                slot,
+                old_append_vec_id,
+                current_len,
+                file_info,
+                &self.next_append_vec_id,
+                &self.num_collisions,
+                self.storage_access,
+            )?,
+            SnapshotFrom::Dir => reconstruct_single_storage(
+                &slot,
+                file_info,
+                current_len,
+                old_append_vec_id as AccountsFileId,
+                self.storage_access,
+                self.obsolete_accounts
+                    .as_ref()
+                    .and_then(|accounts| accounts.remove(&slot)),
+            )?,
+        };
 
-                let storage_entry = match &self.snapshot_from {
-                    SnapshotFrom::Archive => remap_and_reconstruct_single_storage(
-                        slot,
-                        old_append_vec_id,
-                        current_len,
-                        file_info,
-                        &self.next_append_vec_id,
-                        &self.num_collisions,
-                        self.storage_access,
-                    )?,
-                    SnapshotFrom::Dir => reconstruct_single_storage(
-                        &slot,
-                        file_info,
-                        current_len,
-                        old_append_vec_id as AccountsFileId,
-                        self.storage_access,
-                        self.obsolete_accounts
-                            .as_ref()
-                            .and_then(|accounts| accounts.remove(&slot)),
-                    )?,
-                };
-
-                Ok(storage_entry)
-            })
-            .collect::<Result<Vec<_>, SnapshotError>>()?;
-
-        if slot_stores.len() != 1 {
-            return Err(SnapshotError::RebuildStorages(format!(
-                "there must be exactly one storage per slot, but slot {slot} has {} storages",
-                slot_stores.len()
-            )));
+        let storage_id = storage_entry.id();
+        if let Some(other) = self.storage.insert(slot, storage_entry) {
+            Err(SnapshotError::RebuildStorages(format!(
+                "there must be exactly one storage per slot, but slot {slot} has duplicate \
+                 storages: {} vs {storage_id}",
+                other.id()
+            )))
+        } else {
+            Ok(())
         }
-        // SAFETY: The check above guarantees there is one item in slot_stores,
-        // so `.next()` will always return `Some`
-        let storage = slot_stores.into_iter().next().unwrap();
-
-        self.storage.insert(slot, storage);
-        Ok(())
     }
 
     /// Wait for the completion of the rebuilding threads

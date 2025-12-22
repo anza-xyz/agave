@@ -7,8 +7,8 @@ use {
     crossbeam_channel::unbounded,
     log::*,
     rand::{
-        distributions::{Distribution, Uniform},
-        thread_rng, Rng,
+        distr::{Distribution, Uniform},
+        rng, Rng,
     },
     solana_core::{
         banking_trace::BankingTracer,
@@ -55,7 +55,7 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     let ips: Vec<_> = (0..num_ips)
         .map(|_| {
             let mut addr = [0u16; 8];
-            thread_rng().fill(&mut addr);
+            rng().fill(&mut addr);
             std::net::IpAddr::from(addr)
         })
         .collect();
@@ -63,7 +63,7 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     for batch in batches.iter_mut() {
         total += batch.len();
         for mut p in batch.iter_mut() {
-            let ip_index = thread_rng().gen_range(0..ips.len());
+            let ip_index = rng().random_range(0..ips.len());
             p.meta_mut().addr = ips[ip_index];
         }
     }
@@ -100,13 +100,13 @@ fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
         rng.fill(&mut addr);
         std::net::IpAddr::from(addr)
     }
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let mut batches = to_packet_batches(&vec![test_tx(); SIZE], CHUNK_SIZE);
     let spam_addr = new_rand_addr(&mut rng);
     for batch in batches.iter_mut() {
         for mut packet in batch.iter_mut() {
             // One spam address, ~1000 unique addresses.
-            packet.meta_mut().addr = if rng.gen_ratio(1, 30) {
+            packet.meta_mut().addr = if rng.random_ratio(1, 30) {
                 new_rand_addr(&mut rng)
             } else {
                 spam_addr
@@ -139,7 +139,7 @@ fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
         let to_keypair = Keypair::new();
         let txs: Vec<_> = (0..len)
             .map(|_| {
-                let amount = thread_rng().gen();
+                let amount = rng().random();
                 system_transaction::transfer(
                     &from_keypair,
                     &to_keypair.pubkey(),
@@ -209,7 +209,7 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
 
     let txs: Vec<_> = (0..len)
         .map(|_| {
-            let amount = thread_rng().gen();
+            let amount = rng().random();
             system_transaction::transfer(
                 &from_keypair,
                 &to_keypair.pubkey(),
@@ -220,8 +220,8 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
         .collect();
     let mut batches = to_packet_batches(&txs, chunk_size);
 
-    let mut rng = rand::thread_rng();
-    let die = Uniform::<i32>::from(1..100);
+    let mut rng = rand::rng();
+    let die = Uniform::<i32>::try_from(1..100).unwrap();
 
     let mut c = 0;
     batches.iter_mut().for_each(|batch| {
