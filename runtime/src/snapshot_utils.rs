@@ -1473,10 +1473,10 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
 
-    let snapshot_storage_lenghts =
+    let snapshot_storage_lengths =
         accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
     let storage = SnapshotStorageRebuilder::spawn_rebuilder_threads(
-        snapshot_storage_lenghts,
+        snapshot_storage_lengths,
         append_vec_files,
         file_receiver,
         num_rebuilder_threads,

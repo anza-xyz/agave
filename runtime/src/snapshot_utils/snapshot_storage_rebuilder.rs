@@ -181,7 +181,7 @@ impl SnapshotStorageRebuilder {
         let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
         let Some(&current_len) = self.snapshot_storage_lengths.get(&slot) else {
             return Err(SnapshotError::RebuildStorages(format!(
-                "append vec file {filename} for slot outside of expected range in snapshot"
+                "account storage file '{filename}' for slot outside of expected range in snapshot"
             )));
         };
 
