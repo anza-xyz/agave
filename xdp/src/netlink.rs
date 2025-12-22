@@ -434,7 +434,6 @@ pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo>
 
     // Parse GRE tunnel information if this is a GRE interface
     let gre_tunnel = parse_gre_tunnel_info_from_linkinfo(&attrs);
-    // log::info!("greg: xdp: interface info: if_index={}, if_name={if_name}, gre_tunnel={gre_tunnel:?}, if_type={ifi_type}, dev_type={ifi_type}", ifi.ifi_index);
     Some(InterfaceInfo {
         if_index: ifi.ifi_index,
         if_name,
