@@ -184,12 +184,11 @@ impl StakedStreamLoadEMA {
             ConnectionPeerType::Unstaked => self.max_unstaked_load_in_throttling_window,
             ConnectionPeerType::Staked(stake) => {
                 if self.staked_throttling.load(Ordering::Relaxed) {
-                    cmp::max(
-                        self.max_staked_load_in_throttling_window
-                            .saturating_mul(stake)
-                            .saturating_div(total_stake),
-                        self.max_unstaked_load_in_throttling_window + 1,
-                    )
+                    self.max_staked_load_in_throttling_window
+                        .saturating_mul(stake)
+                        .checked_div(total_stake)
+                        .unwrap_or(self.max_unstaked_load_in_throttling_window + 1)
+                        .max(self.max_unstaked_load_in_throttling_window + 1)
                 } else {
                     self.max_staked_load_in_throttling_window
                 }
