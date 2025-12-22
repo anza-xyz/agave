@@ -1,7 +1,7 @@
 use {
     super::{
-        latest_validator_vote_packet::VoteSource, leader_slot_metrics::LeaderSlotMetricsTracker,
-        vote_storage::VoteStorage, BankingStageStats,
+        BankingStageStats, latest_validator_vote_packet::VoteSource,
+        leader_slot_metrics::LeaderSlotMetricsTracker, vote_storage::VoteStorage,
     },
     crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_banking_stage_ingress_types::BankingPacketReceiver,
@@ -12,7 +12,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     std::{
         num::Saturating,
-        sync::{atomic::Ordering, Arc},
+        sync::{Arc, atomic::Ordering},
         time::{Duration, Instant},
     },
 };

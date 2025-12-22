@@ -9,8 +9,8 @@ use {
     solana_poh::poh_recorder::SharedLeaderState,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::JoinHandle,
     },

@@ -4,13 +4,13 @@ use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     agave_feature_set::FeatureSet,
     bytes::Bytes,
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     itertools::Itertools,
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
+    solana_ledger::shred::{self, ShredFetchStats, should_discard_shred},
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
         BytesPacket, BytesPacketBatch, PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef,
@@ -24,8 +24,8 @@ use {
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
