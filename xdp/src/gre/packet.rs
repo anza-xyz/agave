@@ -93,7 +93,7 @@ fn wrap_packet_with_gre(
 /// # Arguments
 /// * `packet` - Buffer to write the GRE packet into
 /// * `src_ip` - Source IP for the inner packet
-/// * `dst_ip` - Destination IP for the inner packet  
+/// * `dst_ip` - Destination IP for the inner packet
 /// * `src_port` - Source port for the inner UDP packet
 /// * `dst_port` - Destination port for the inner UDP packet
 /// * `payload` - The UDP payload data
