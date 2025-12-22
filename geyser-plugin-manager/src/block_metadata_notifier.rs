@@ -1,20 +1,21 @@
 use {
     crate::{
         block_metadata_notifier_interface::BlockMetadataNotifier,
-        geyser_plugin_manager::GeyserPluginManager,
+        geyser_plugin_manager::HotGeyserPluginList,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
     },
+    arc_swap::ArcSwap,
     log::*,
     solana_clock::UnixTimestamp,
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
     solana_transaction_status::{Reward, RewardsAndNumPartitions},
-    std::sync::{Arc, RwLock},
+    std::sync::Arc,
 };
 
 pub(crate) struct BlockMetadataNotifierImpl {
-    plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<HotGeyserPluginList>>,
 }
 
 impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
@@ -31,8 +32,8 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         executed_transaction_count: u64,
         entry_count: u64,
     ) {
-        let plugin_manager = self.plugin_manager.read().unwrap();
-        if plugin_manager.plugins.is_empty() {
+        let plugin_manager = self.plugin_manager.load();
+        if plugin_manager.is_empty() {
             return;
         }
 
@@ -49,7 +50,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             entry_count,
         );
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.iter() {
             let block_info = ReplicaBlockInfoVersions::V0_0_4(&block_info);
             match plugin.notify_block_metadata(block_info) {
                 Err(err) => {
@@ -114,7 +115,7 @@ impl BlockMetadataNotifierImpl {
         }
     }
 
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<HotGeyserPluginList>>) -> Self {
         Self { plugin_manager }
     }
 }
