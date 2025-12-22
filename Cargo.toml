@@ -299,7 +299,7 @@ getrandom = "0.3.4"
 goauth = "0.13.1"
 governor = "0.6.3"
 hex = "0.4.3"
-hidapi = { version = "2.6.3", default-features = false }
+hidapi = { version = "2.6.4", default-features = false }
 histogram = "0.6.9"
 hmac = "0.12.1"
 http = "0.2.12"
