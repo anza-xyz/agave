@@ -2,12 +2,12 @@
 
 use {
     crate::{
-        // dev_gre_check::{ip_route_get_dev,},
         device::{NetworkDevice, QueueId, RingSizes},
+        gre::GreEncapsulator,
         netlink::{InterfaceInfo, MacAddress},
         packet::{
-            construct_gre_packet, write_eth_header, write_ip_header_for_udp, write_udp_header,
-            ETH_HEADER_SIZE, GRE_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
+            write_eth_header, write_ip_header_for_udp, write_udp_header, ETH_HEADER_SIZE,
+            IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
         route::NextHop,
         set_cpu_affinity,
@@ -63,7 +63,6 @@ pub fn tx_loop<
         dev.ipv4_addr()
             .expect("no src_ip provided, device must have an IPv4 address")
     });
-    log::info!("greg: xdp: using src ip address {src_ip}");
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
@@ -137,13 +136,8 @@ pub fn tx_loop<
     // packets.
     let mut batched_packets = 0;
 
-    // Cache the underlay MAC for the GRE remote.
-    // Assumes a single GRE tunnel per host - the cache stores one (gre_remote_ip, mac_address) pair.
-    // The cache invalidates automatically when:
-    // 1. gre_remote changes (tunnel reconfigured)
-    // 2. route_fn returns None (route/ARP changes or tunnel removed)
-    // 3. MAC address is missing (ARP entry expired)
-    let mut cached_gre_remote: Option<(Ipv4Addr, MacAddress)> = None;
+    // GRE encapsulator manages GRE tunnel logic and caching
+    let mut gre_encapsulator = GreEncapsulator::default();
 
     let mut timeouts = 0;
     loop {
@@ -223,90 +217,48 @@ pub fn tx_loop<
                         umem.release(frame.offset());
                         continue;
                     };
-                    // log::info!("greg: xdp: dst_ip nh: {next_hop:?} iface: {interface_info:?}");
-                    if let Some(gre) = interface_info.gre_tunnel.as_ref() {
-                        let (Some(IpAddr::V4(gre_local)), Some(IpAddr::V4(gre_remote))) =
-                            (gre.local, gre.remote)
-                        else {
-                            log::warn!("dropping packet: no GRE endpoints for peer {addr}");
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
+                    // Handle GRE tunnel encapsulation if needed
+                    if GreEncapsulator::is_gre(&interface_info) {
+                        let Some(gre) = interface_info.gre_tunnel.as_ref() else {
                             continue;
                         };
-                        // Cache the GRE remote route lookup to avoid calling route_fn twice in hot path.
-                        // Since we assume a single GRE tunnel, this cache will hit for all GRE packets after the first.
-                        // The cache handles tunnel changes: if gre_remote changes, cache miss triggers refresh.
-                        let outer_dst_mac = match cached_gre_remote.as_ref() {
-                            Some((cached_remote, cached_mac)) if *cached_remote == gre_remote => {
-                                *cached_mac
-                            }
-                            _ => {
-                                // Cache miss - lookup and cache (first packet, tunnel changed, or after route change)
-                                let Some((nh, _iface)) = route_fn(&IpAddr::V4(gre_remote)) else {
-                                    // Invalidate cache on route failure
-                                    cached_gre_remote = None;
-                                    log::warn!(
-                                        "dropping packet: no route for GRE remote {gre_remote}"
-                                    );
-                                    batched_packets -= 1;
-                                    umem.release(frame.offset());
-                                    continue;
-                                };
-                                let Some(mac) = nh.mac_addr else {
-                                    // Invalidate cache on missing MAC
-                                    cached_gre_remote = None;
-                                    log::warn!(
-                                        "dropping packet: GRE remote {gre_remote} must be routed through {} which has no known MAC address",
-                                        nh.ip_addr
-                                    );
-                                    batched_packets -= 1;
-                                    umem.release(frame.offset());
-                                    continue;
-                                };
-                                // Update cache
-                                cached_gre_remote = Some((gre_remote, mac));
-                                mac
-                            }
-                        };
 
-                        // Calculate GRE packet size
-                        const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                        let inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
-                        let gre_packet_size =
-                            ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE + inner_packet_len;
-
-                        // Reserve space for GRE packet
+                        // Calculate and set GRE packet size
+                        let gre_packet_size = GreEncapsulator::calculate_packet_size(len);
                         frame.set_len(gre_packet_size);
                         let packet = umem.map_frame_mut(&frame);
 
-                        let inner_src_ip = next_hop.preferred_src_ip.unwrap_or(src_ip);
-                        // log::info!("greg: xdp: inner src ip: {inner_src_ip}");
-
-                        // Construct the GRE packet
-                        let gre_packet_len = construct_gre_packet(
+                        match gre_encapsulator.encapsulate_packet(
                             packet,
-                            &inner_src_ip, // inner src ip
-                            &dst_ip,       // inner dst ip
-                            src_port,
-                            addr.port(),
                             payload.as_ref(),
-                            gre_local,        // gre src ip
-                            gre_remote,       // gre dst ip
-                            &src_mac.0,       // src MAC (our nic)
-                            &outer_dst_mac.0, // outer dst MAC (underlay next-hop)
-                        );
-
-                        // Update frame length and submit packet
-                        frame.set_len(gre_packet_len);
-                        submit_packet_to_ring(
-                            frame,
-                            &mut ring,
-                            &mut batched_packets,
-                            &mut chunk_remaining,
-                            BATCH_SIZE,
-                        );
-
-                        continue;
+                            *addr,
+                            src_ip,
+                            src_port,
+                            src_mac,
+                            &next_hop,
+                            gre,
+                            &route_fn,
+                        ) {
+                            Ok(gre_packet_len) => {
+                                // Verify the calculated size matches what encapsulate_packet returned
+                                debug_assert_eq!(gre_packet_size, gre_packet_len);
+                                submit_packet_to_ring(
+                                    frame,
+                                    &mut ring,
+                                    &mut batched_packets,
+                                    &mut chunk_remaining,
+                                    BATCH_SIZE,
+                                );
+                                continue;
+                            }
+                            Err(e) => {
+                                log::warn!("dropping packet: {e}");
+                                gre_encapsulator.invalidate_cache();
+                                batched_packets -= 1;
+                                umem.release(frame.offset());
+                                continue;
+                            }
+                        }
                     }
 
                     // we need the MAC address to send the packet
