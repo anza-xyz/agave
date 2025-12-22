@@ -225,7 +225,15 @@ pub fn tx_loop<
                     };
                     // log::info!("greg: xdp: dst_ip nh: {next_hop:?} iface: {interface_info:?}");
                     if let Some(gre) = interface_info.gre_tunnel.as_ref() {
-                        let (nh, _iface) = route_fn(&IpAddr::V4(gre.remote)).unwrap();
+                        let (Some(IpAddr::V4(gre_local)), Some(IpAddr::V4(gre_remote))) =
+                            (gre.local, gre.remote)
+                        else {
+                            log::warn!("dropping packet: no GRE endpoints for peer {addr}");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+                        let (nh, _iface) = route_fn(&IpAddr::V4(gre_remote)).unwrap();
                         let outer_dst_mac = nh.mac_addr.unwrap();
                         // log::info!("greg: xdp: dst_ip nh: {next_hop:?} iface: {interface_info:?}");
                         // Resolve the UNDERLAY toward the GRE remote (this is where we ARP and enforce ifindex)
@@ -288,8 +296,8 @@ pub fn tx_loop<
                             src_port,
                             addr.port(),
                             payload.as_ref(),
-                            gre.local,        // gre src ip
-                            gre.remote,       // gre dst ip
+                            gre_local,        // gre src ip
+                            gre_remote,       // gre dst ip
                             &src_mac.0,       // src MAC (our nic)
                             &outer_dst_mac.0, // outer dst MAC (underlay next-hop)
                         );

@@ -5,7 +5,6 @@ use {
     },
     libc::{AF_INET, AF_INET6},
     std::{
-        collections::HashMap,
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
     },
@@ -157,25 +156,63 @@ impl RouteTable {
     }
 }
 
+#[derive(Clone, Debug)]
+struct InterfaceTable {
+    interfaces: Vec<InterfaceInfo>,
+}
+
+impl InterfaceTable {
+    pub fn new() -> Result<Self, io::Error> {
+        let interfaces = netlink_get_interfaces(AF_INET as u8)?;
+        Ok(Self { interfaces })
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &InterfaceInfo> {
+        self.interfaces.iter()
+    }
+
+    pub fn upsert(&mut self, new_interface: InterfaceInfo) -> bool {
+        if let Some(existing) = self
+            .interfaces
+            .iter_mut()
+            .find(|old| old.if_index == new_interface.if_index)
+        {
+            if *existing != new_interface {
+                *existing = new_interface;
+                return true;
+            }
+            return false;
+        }
+        self.interfaces.push(new_interface);
+        true
+    }
+
+    pub fn remove(&mut self, if_index: u32) -> bool {
+        if let Some(i) = self
+            .interfaces
+            .iter()
+            .position(|old| old.if_index == if_index)
+        {
+            self.interfaces.swap_remove(i);
+            return true;
+        }
+        false
+    }
+}
+
 #[derive(Clone)]
 pub struct Router {
     arp_table: ArpTable,
     route_table: RouteTable,
-    interface_table: HashMap<u32, InterfaceInfo>,
+    interface_table: InterfaceTable,
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
-        let interfaces = netlink_get_interfaces()?;
-        let interface_map: HashMap<u32, InterfaceInfo> = interfaces
-            .into_iter()
-            .map(|if_info| (if_info.if_index, if_info))
-            .collect();
-
         Ok(Self {
             arp_table: ArpTable::new()?,
             route_table: RouteTable::new()?,
-            interface_table: interface_map,
+            interface_table: InterfaceTable::new()?,
         })
     }
 
@@ -189,10 +226,6 @@ impl Router {
         let if_index = default_route
             .out_if_index
             .ok_or(RouteError::MissingOutputInterface)?;
-
-        if !self.interface_table.contains_key(&(if_index as u32)) {
-            return Err(RouteError::UnknownInterfaceIndex(if_index as u32));
-        }
 
         let next_hop_ip = match default_route.gateway {
             Some(gateway) => gateway,
@@ -213,23 +246,20 @@ impl Router {
         })
     }
 
-    pub fn route(&self, dest_ip: IpAddr) -> Result<(NextHop, &InterfaceInfo), RouteError> {
+    pub fn route(&self, dest_ip: IpAddr) -> Result<(NextHop, InterfaceInfo), RouteError> {
         let route = lookup_route(self.route_table.iter(), dest_ip)
             .ok_or(RouteError::NoRouteFound(dest_ip))?;
 
         let if_index = route
             .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)?;
-        if !self.interface_table.contains_key(&(if_index as u32)) {
-            return Err(RouteError::UnknownInterfaceIndex(if_index as u32));
-        }
+            .ok_or(RouteError::MissingOutputInterface)? as u32;
 
         let next_hop_ip = match route.gateway {
             Some(gateway) => gateway,
             None => dest_ip,
         };
 
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index as u32).cloned();
+        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
         let preferred_src_ip = match route.pref_src {
             Some(IpAddr::V4(v4)) => Some(v4),
             _ => None,
@@ -245,8 +275,10 @@ impl Router {
         // Get the interface info for this route
         let interface_info = self
             .interface_table
-            .get(&(if_index as u32))
-            .ok_or(RouteError::MissingOutputInterface)?;
+            .iter()
+            .find(|i| i.if_index == if_index)
+            .ok_or(RouteError::UnknownInterfaceIndex(if_index))?
+            .clone();
 
         Ok((next_hop, interface_info))
     }
@@ -268,14 +300,11 @@ impl Router {
     }
 
     pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) -> bool {
-        self.interface_table
-            .insert(new_interface.if_index, new_interface).is_some()
-        // greg: todo: self.interface_table.upsert(new_interface)
+        self.interface_table.upsert(new_interface)
     }
 
     pub fn remove_interface(&mut self, if_index: u32) -> bool {
-        self.interface_table.remove(&if_index).is_some()
-        // greg: todo: self.interface_table.remove(if_index)
+        self.interface_table.remove(if_index)
     }
 }
 
@@ -334,7 +363,7 @@ mod tests {
     use {
         super::*,
         crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
-        libc::{AF_INET, NUD_REACHABLE},
+        libc::{AF_INET, ARPHRD_ETHER, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -450,5 +479,45 @@ mod tests {
         assert_eq!(router.arp_table.neighbors.len(), before_neigh_len);
     }
 
-    //greg: todo: add test_interface_table()
+    #[test]
+    fn test_interface_table() {
+        let mut router = Router::new().unwrap();
+        let before_interface_len = router.interface_table.iter().len();
+
+        // Create a unique, private interface with a dummy ifindex
+        let test_if_index = 99999;
+        let interface = InterfaceInfo {
+            if_index: test_if_index,
+            if_name: "test_interface".to_string(),
+            dev_type: ARPHRD_ETHER,
+            gre_tunnel: None,
+            primary_ipv4: Some(Ipv4Addr::new(10, 255, 255, 100)),
+        };
+
+        // Upsert new interface and check that it was inserted
+        assert!(router.upsert_interface(interface.clone()));
+        assert!(router.interface_table.iter().any(|i| i == &interface));
+        assert!(router.interface_table.iter().len() >= before_interface_len);
+
+        // Upsert same interface with no changes should return false
+        assert!(!router.upsert_interface(interface.clone()));
+
+        // Upsert with changes should return true
+        let mut modified_interface = interface.clone();
+        modified_interface.if_name = "test_interface_modified".to_string();
+        assert!(router.upsert_interface(modified_interface.clone()));
+        assert!(router
+            .interface_table
+            .iter()
+            .any(|i| i == &modified_interface));
+        assert!(router.interface_table.iter().all(|i| i != &interface));
+
+        // Delete interface and check that it was deleted
+        assert!(router.remove_interface(test_if_index));
+        assert!(router
+            .interface_table
+            .iter()
+            .all(|i| i.if_index != test_if_index));
+        assert_eq!(router.interface_table.iter().len(), before_interface_len);
+    }
 }
