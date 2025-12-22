@@ -1,14 +1,20 @@
-//! L3 GRE (Generic Routing Encapsulation) tunnel support for XDP egress
+//! L3 GRE tunnel support for XDP egress
 //!
-//! This module provides L3 GRE encapsulation, which wraps IP packets (not Ethernet frames).
-//! L3 GRE is distinct from L2 GRE (GREtap) which encapsulates Ethernet frames.
+//! This module provides L3 GRE encapsulation, which wraps IPv4 packets only (not Ethernet frames).
 //!
 //! The GRE tunnel structure: [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
-
+//!
+//! Note: This module currently only supports the basic GRE header (version 0),
+//! without optional checksum, key, or sequence number fields (C, K, S flags).
+//! The flag bits are preserved in the representation for future extensibility.
+//!
+//! References:
+//! - RFC 2784: Generic Routing Encapsulation (GRE)
+//! - RFC 2890: Key and Sequence Number Extensions to GRE
 pub mod encapsulator;
 pub mod packet;
 
 pub use {
     encapsulator::{EncapsulationError, GreEncapsulator},
-    packet::{construct_gre_packet, GreHeader, PacketError},
+    packet::{construct_gre_packet, GreConfig, GreHeader, PacketError},
 };

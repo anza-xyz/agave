@@ -3,7 +3,7 @@
 use {
     crate::{
         device::{NetworkDevice, QueueId, RingSizes},
-        gre::GreEncapsulator,
+        gre::{packet::GreConfig, GreEncapsulator},
         netlink::{InterfaceInfo, MacAddress},
         packet::{
             write_eth_header, write_ip_header_for_udp, write_udp_header, ETH_HEADER_SIZE,
@@ -173,9 +173,6 @@ pub fn tx_loop<
         // necessary
         let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
 
-        // lock free route lookup
-        // let router = atomic_router.load();
-        // let update_counter = atomic_router.update_counter();
         for (addrs, payload) in batched_items.drain(..) {
             for addr in addrs.as_ref() {
                 if ring.available() == 0 || umem.available() == 0 {
@@ -223,8 +220,15 @@ pub fn tx_loop<
                             continue;
                         };
 
-                        // Calculate and set GRE packet size
-                        let gre_packet_size = GreEncapsulator::calculate_packet_size(len);
+                        // Convert to GreConfig and calculate packet size
+                        let Ok(gre_config) = GreConfig::try_from(gre) else {
+                            log::warn!("dropping packet: invalid GRE tunnel endpoints");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+                        let gre_packet_size =
+                            GreEncapsulator::calculate_packet_size(len, &gre_config);
                         frame.set_len(gre_packet_size);
                         let packet = umem.map_frame_mut(&frame);
 
@@ -236,12 +240,10 @@ pub fn tx_loop<
                             src_port,
                             src_mac,
                             &next_hop,
-                            gre,
+                            &gre_config,
                             &route_fn,
                         ) {
-                            Ok(gre_packet_len) => {
-                                // Verify the calculated size matches what encapsulate_packet returned
-                                debug_assert_eq!(gre_packet_size, gre_packet_len);
+                            Ok(()) => {
                                 submit_packet_to_ring(
                                     frame,
                                     &mut ring,
@@ -253,7 +255,6 @@ pub fn tx_loop<
                             }
                             Err(e) => {
                                 log::warn!("dropping packet: {e}");
-                                gre_encapsulator.invalidate_cache();
                                 batched_packets -= 1;
                                 umem.release(frame.offset());
                                 continue;

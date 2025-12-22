@@ -491,7 +491,6 @@ mod tests {
             if_name: "test_interface".to_string(),
             dev_type: ARPHRD_ETHER,
             gre_tunnel: None,
-            primary_ipv4: Some(Ipv4Addr::new(10, 255, 255, 100)),
         };
 
         // Upsert new interface and check that it was inserted
