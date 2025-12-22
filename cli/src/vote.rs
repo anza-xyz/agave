@@ -201,7 +201,6 @@ impl VoteSubCommands for App<'_, '_> {
                         .long("inflation_rewards_commission_bps")
                         .value_name("INFLATION_REWARDS_COMMISSION_BPS")
                         .takes_value(true)
-                        .default_value("0")
                         .help("The commission taken on inflation rewards"),
                 )
                 .arg(
@@ -216,7 +215,6 @@ impl VoteSubCommands for App<'_, '_> {
                         .long("block_revenue_commission_bps")
                         .value_name("BLOCK_REVENUE_COMMISSION_BPS")
                         .takes_value(true)
-                        .default_value("0")
                         .help("The commission taken on block revenue"),
                 )
                 .arg(
@@ -2714,7 +2712,7 @@ mod tests {
                 memo: None,
                 fee_payer: 0,
                 compute_unit_price: None,
-                inflation_rewards_commission_bps: Some(10),
+                inflation_rewards_commission_bps: None,
                 inflation_rewards_collector: None,
                 block_revenue_collector: None,
                 block_revenue_commission_bps: None,
@@ -2749,6 +2747,7 @@ mod tests {
             }
         );
 
+        let inflation_rewards_collector = Pubkey::new_unique();
         let test_create_vote_account = if with_bls {
             test_commands.clone().get_matches_from(vec![
                 "test",
@@ -2758,6 +2757,8 @@ mod tests {
                 &authorized_withdrawer.to_string(),
                 "--inflation_rewards_commission_bps",
                 "10",
+                "--inflation_rewards_collector",
+                &inflation_rewards_collector.to_string(),
                 "--blockhash",
                 &blockhash_string,
                 "--sign-only",
@@ -2798,7 +2799,7 @@ mod tests {
                 fee_payer: 0,
                 compute_unit_price: None,
                 inflation_rewards_commission_bps: Some(10),
-                inflation_rewards_collector: None,
+                inflation_rewards_collector: Some(inflation_rewards_collector),
                 block_revenue_collector: None,
                 block_revenue_commission_bps: None,
             }
@@ -2834,6 +2835,7 @@ mod tests {
 
         let identity_sig = identity_keypair.sign_message(&[0u8]);
         let identity_signer = format!("{}={}", identity_keypair.pubkey(), identity_sig);
+        let block_revenue_collector = Pubkey::new_unique();
         let test_create_vote_account = if with_bls {
             test_commands.clone().get_matches_from(vec![
                 "test",
@@ -2841,8 +2843,10 @@ mod tests {
                 &keypair_file,
                 &identity_keypair_file,
                 &authorized_withdrawer.to_string(),
-                "--inflation_rewards_commission_bps",
-                "10",
+                "--block_revenue_commission_bps",
+                "30",
+                "--block_revenue_collector",
+                &block_revenue_collector.to_string(),
                 "--blockhash",
                 &blockhash_string,
                 "--signer",
@@ -2899,10 +2903,10 @@ mod tests {
                 memo: None,
                 fee_payer: 0,
                 compute_unit_price: None,
-                inflation_rewards_commission_bps: Some(10),
+                inflation_rewards_commission_bps: None,
                 inflation_rewards_collector: None,
-                block_revenue_collector: None,
-                block_revenue_commission_bps: None,
+                block_revenue_collector: Some(block_revenue_collector),
+                block_revenue_commission_bps: Some(30),
             }
         } else {
             CliCommand::CreateVoteAccount {
@@ -2948,6 +2952,8 @@ mod tests {
         write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();
         let (bls_pubkey, bls_proof_of_possession) =
             generate_bls_pubkey_and_proof_of_possession(&keypair.pubkey(), &authed_keypair);
+        let inflation_rewards_collector = Pubkey::new_unique();
+        let block_revenue_collector = Pubkey::new_unique();
 
         let test_create_vote_account3 = if with_bls {
             test_commands.clone().get_matches_from(vec![
@@ -2957,6 +2963,14 @@ mod tests {
                 &identity_keypair_file,
                 &authorized_withdrawer.to_string(),
                 &authed_keypair_file,
+                "--inflation_rewards_commission_bps",
+                "20",
+                "--inflation_rewards_collector",
+                &inflation_rewards_collector.to_string(),
+                "--block_revenue_commission_bps",
+                "40",
+                "--block_revenue_collector",
+                &block_revenue_collector.to_string(),
             ])
         } else {
             test_commands.clone().get_matches_from(vec![
@@ -2986,10 +3000,10 @@ mod tests {
                 memo: None,
                 fee_payer: 0,
                 compute_unit_price: None,
-                inflation_rewards_commission_bps: None,
-                inflation_rewards_collector: None,
-                block_revenue_collector: None,
-                block_revenue_commission_bps: None,
+                inflation_rewards_commission_bps: Some(20),
+                inflation_rewards_collector: Some(inflation_rewards_collector),
+                block_revenue_collector: Some(block_revenue_collector),
+                block_revenue_commission_bps: Some(40),
             }
         } else {
             CliCommand::CreateVoteAccount {
