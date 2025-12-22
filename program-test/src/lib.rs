@@ -14,7 +14,7 @@
 pub use tokio;
 use {
     agave_feature_set::{
-        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FEATURE_NAMES,
+        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES,
     },
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
@@ -814,6 +814,17 @@ impl ProgramTest {
 
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
+
+        let mut _feature_set = FeatureSet::all_enabled();
+        for feature_id in &self.deactivate_feature_set {
+            if FEATURE_NAMES.contains_key(feature_id) {
+                _feature_set.deactivate(feature_id);
+            } else {
+                warn!(
+                    "Feature {feature_id:?} set for deactivation is not a known Feature public key"
+                );
+            }
+        }
 
         let mut genesis_config = create_genesis_config_with_leader_ex(
             1_000_000 * LAMPORTS_PER_SOL,

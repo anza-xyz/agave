@@ -17,6 +17,7 @@ agave-unstable-api = []
 dev-context-only-utils = ["solana-core/dev-context-only-utils"]
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 crossbeam-channel = { workspace = true }
