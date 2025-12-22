@@ -6,7 +6,7 @@ description = "Blockchain, Rebuilt for Scale"
 repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 # Prevents auto-detection of parent workspace (ie. git worktrees).
