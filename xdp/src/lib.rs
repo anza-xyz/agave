@@ -30,7 +30,7 @@ pub mod ecn_codepoint;
 pub mod transmitter;
 
 #[cfg(target_os = "linux")]
-pub use program::{LoadXdpProgramError, load_xdp_program};
+pub use program::{FirewallEvents, LoadXdpProgramError, LoadedXdpProgram, load_xdp_program};
 use std::{io, net::Ipv4Addr, num::ParseIntError};
 
 #[derive(Debug, thiserror::Error)]

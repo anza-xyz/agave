@@ -1,12 +1,20 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::device::NetworkDevice,
+    crate::{device::NetworkDevice, transmitter::XdpFirewallConfig},
+    agave_xdp_ebpf::{FirewallConfig, FirewallRule, REJECT_EVENT_SIZE, RejectEvent},
     aya::{
         Ebpf, EbpfError, EbpfLoader,
+        maps::{Array, MapData, MapError, RingBuf},
         programs::{ProgramError, Xdp, xdp::XdpMode},
     },
-    std::io::{self, Cursor, Write},
+    libc::{POLLIN, nfds_t, poll, pollfd},
+    log::{error, info, trace, warn},
+    std::{
+        io::{self, Cursor, Write},
+        os::fd::AsRawFd,
+        sync::atomic::{AtomicBool, Ordering},
+    },
 };
 
 macro_rules! write_fields {
@@ -50,6 +58,8 @@ pub enum LoadXdpProgramError {
     ReadDriver(io::Error),
     #[error("failed to load XDP object: {0}")]
     LoadObject(#[source] EbpfError),
+    #[error("failed to configure XDP firewall: {0}")]
+    ConfigureFirewall(#[source] MapError),
     #[error("failed to load XDP program into the kernel: {0}")]
     LoadProgram(#[source] ProgramError),
     #[error("failed to attach XDP program to {interface}: {source}")]
@@ -59,16 +69,33 @@ pub enum LoadXdpProgramError {
     },
 }
 
-pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, LoadXdpProgramError> {
+/// XDP program attached to a device. It stays attached until `ebpf` is dropped.
+pub struct LoadedXdpProgram {
+    pub ebpf: Ebpf,
+    /// Packets rejected by the firewall, present when the firewall is enabled.
+    pub firewall_events: Option<FirewallEvents>,
+}
+
+pub fn load_xdp_program(
+    dev: &NetworkDevice,
+    firewall: Option<&XdpFirewallConfig>,
+) -> Result<LoadedXdpProgram, LoadXdpProgramError> {
     let mut loader = EbpfLoader::new();
     let broken_frags = dev.driver().map_err(LoadXdpProgramError::ReadDriver)? == "i40e";
-    let mut ebpf = if broken_frags {
-        loader.override_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
+    let mut ebpf = if broken_frags || firewall.is_some() {
+        if broken_frags {
+            loader.override_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
+        }
         loader.load(agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
     } else {
         loader.load(&generate_xdp_elf())
     }
     .map_err(LoadXdpProgramError::LoadObject)?;
+    // configure the firewall before attaching so that it filters from the first packet
+    let firewall_events = firewall
+        .map(|firewall| configure_firewall(&mut ebpf, firewall))
+        .transpose()
+        .map_err(LoadXdpProgramError::ConfigureFirewall)?;
     let p: &mut Xdp = ebpf
         .program_mut("agave_xdp")
         .expect("both XDP objects define the agave_xdp program")
@@ -82,7 +109,89 @@ pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, LoadXdpProgramError
             source,
         })?;
 
-    Ok(ebpf)
+    Ok(LoadedXdpProgram {
+        ebpf,
+        firewall_events,
+    })
+}
+
+fn configure_firewall(
+    ebpf: &mut Ebpf,
+    firewall: &XdpFirewallConfig,
+) -> Result<FirewallEvents, MapError> {
+    let XdpFirewallConfig {
+        local_ip,
+        strip_gre,
+        enforce,
+        port_rules,
+    } = firewall;
+    let mut rules_map: Array<_, FirewallRule> = Array::try_from(
+        ebpf.map_mut("FIREWALL_RULES")
+            .expect("agave XDP program defines FIREWALL_RULES"),
+    )?;
+    for (port, rule) in port_rules {
+        rules_map.set(u32::from(*port), rule, 0)?;
+    }
+    // written last: a zeroed config keeps the firewall disabled until the rules are in place
+    let config = FirewallConfig {
+        local_ip: local_ip.octets(),
+        strip_gre: *strip_gre,
+        enforce: *enforce,
+    };
+    let mut config_map: Array<_, FirewallConfig> = Array::try_from(
+        ebpf.map_mut("FIREWALL_CONFIG")
+            .expect("agave XDP program defines FIREWALL_CONFIG"),
+    )?;
+    config_map.set(0, config, 0)?;
+    info!(
+        "XDP firewall configured with {config:?} and {} port rules",
+        port_rules.len()
+    );
+    let events = RingBuf::try_from(
+        ebpf.take_map("FIREWALL_EVENTS")
+            .expect("agave XDP program defines FIREWALL_EVENTS"),
+    )?;
+    Ok(FirewallEvents(events))
+}
+
+/// Packets rejected by the XDP firewall.
+pub struct FirewallEvents(RingBuf<MapData>);
+
+impl FirewallEvents {
+    /// Logs rejected packets until `exit` is set.
+    pub fn run(mut self, exit: &AtomicBool) {
+        const POLL_TIMEOUT_MS: i32 = 1000;
+        let mut fds = [pollfd {
+            fd: self.0.as_raw_fd(),
+            events: POLLIN,
+            revents: 0,
+        }];
+        while !exit.load(Ordering::Relaxed) {
+            // SAFETY: fds points to fds.len() valid pollfd entries for the duration of the call
+            let ret = unsafe { poll(fds.as_mut_ptr(), fds.len() as nfds_t, POLL_TIMEOUT_MS) };
+            if ret < 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                error!("polling XDP firewall events failed, stopping event monitor: {err}");
+                return;
+            }
+            while let Some(item) = self.0.next() {
+                if item.len() != REJECT_EVENT_SIZE {
+                    warn!("unexpected XDP firewall event size {}", item.len());
+                    continue;
+                }
+                // SAFETY: the XDP program writes RejectEvent values, whose layout is fixed by
+                // repr(C) and repr(u8), and the size was checked above
+                let event = unsafe { item.as_ptr().cast::<RejectEvent>().read_unaligned() };
+                trace!(
+                    "XDP firewall rejected packet to port {}: {:?} ({})",
+                    event.dst_port, event.reason, event.detail
+                );
+            }
+        }
+    }
 }
 
 fn generate_xdp_elf() -> Vec<u8> {

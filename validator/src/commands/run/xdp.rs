@@ -2,21 +2,25 @@ use {
     agave_xdp::{
         device::NetworkDevice,
         interface_ipv4,
-        transmitter::{TransmitterBuilder, XdpConfig},
+        transmitter::{FirewallRule, TransmitterBuilder, XdpConfig, XdpFirewallConfig},
     },
     solana_core::{
         system_monitor_service::XdpNetworkConfigReport,
         validator::{XdpComponents, XdpTransmitSetup},
     },
-    solana_net_utils::multihomed_sockets::BindIpAddrs,
+    solana_gossip::cluster_info::Sockets,
+    solana_net_utils::{PortRange, multihomed_sockets::BindIpAddrs},
     std::{
-        net::{IpAddr, Ipv4Addr},
+        collections::BTreeMap,
+        net::{IpAddr, Ipv4Addr, UdpSocket},
+        slice,
         sync::{Arc, atomic::AtomicBool},
     },
 };
 
 pub(super) fn build_xdp_transmit_setup(
     mut xdp_config: XdpConfig,
+    firewall_port_rules: Option<BTreeMap<u16, FirewallRule>>,
     bind_addresses: &BindIpAddrs,
     exit: Arc<AtomicBool>,
 ) -> Result<(XdpTransmitSetup, XdpNetworkConfigReport), String> {
@@ -35,6 +39,13 @@ pub(super) fn build_xdp_transmit_setup(
     xdp_config.interface = Some(xdp_interface.clone());
     let zero_copy = xdp_config.zero_copy;
     let src_ip = resolve_xdp_source_ip(bind_addresses.active(), &xdp_interface)?;
+    xdp_config.firewall = firewall_port_rules.map(|port_rules| XdpFirewallConfig {
+        local_ip: src_ip,
+        // DoubleZero delivers traffic over GRE
+        strip_gre: true,
+        enforce: true,
+        port_rules,
+    });
     let transmitter_builder = TransmitterBuilder::new(xdp_config, exit)
         .map_err(|err| format!("failed to create XDP transmitter on {xdp_interface}: {err}"))?;
     // Nothing can express per-component queue assignments yet, so every
@@ -57,6 +68,66 @@ pub(super) fn build_xdp_transmit_setup(
             interface: xdp_interface,
         },
     ))
+}
+
+/// Builds the XDP firewall rules for the node sockets: ingress is denied on every port of the
+/// dynamic port range, except on the ports of sockets that receive traffic.
+pub(super) fn firewall_port_rules(
+    sockets: &Sockets,
+    port_range: PortRange,
+) -> Result<BTreeMap<u16, FirewallRule>, String> {
+    // exhaustive so that new sockets get a rule
+    let Sockets {
+        gossip,
+        ip_echo: _,
+        tvu,
+        tpu_vote,
+        broadcast: _,
+        repair,
+        retransmit_sockets: _,
+        serve_repair,
+        ancestor_hashes_requests,
+        tpu_quic,
+        tpu_forwards_quic,
+        block_id_repair,
+        tpu_vote_forwarding_client: _,
+        tpu_transaction_forwarding_clients,
+        votor_server,
+        quic_votor_client,
+        rpc_sts_client,
+    } = sockets;
+    let ingress_sockets: [(&[UdpSocket], FirewallRule); 13] = [
+        (gossip, FirewallRule::Gossip),
+        (tvu, FirewallRule::Turbine),
+        (tpu_vote, FirewallRule::Vote),
+        (slice::from_ref(serve_repair), FirewallRule::Repair),
+        (tpu_quic, FirewallRule::Quic),
+        (tpu_forwards_quic, FirewallRule::Quic),
+        (votor_server, FirewallRule::Quic),
+        // QUIC clients receive the server side of their connections
+        (tpu_transaction_forwarding_clients, FirewallRule::Quic),
+        (slice::from_ref(quic_votor_client), FirewallRule::Quic),
+        (slice::from_ref(rpc_sts_client), FirewallRule::Quic),
+        // responses to our repair requests: shreds, pings, ancestor hashes and block id proofs
+        (slice::from_ref(repair), FirewallRule::Allow),
+        (
+            slice::from_ref(ancestor_hashes_requests),
+            FirewallRule::Allow,
+        ),
+        (slice::from_ref(block_id_repair), FirewallRule::Allow),
+    ];
+    let mut rules: BTreeMap<_, _> = (port_range.0..port_range.1)
+        .map(|port| (port, FirewallRule::DenyIngress))
+        .collect();
+    for (sockets, rule) in ingress_sockets {
+        for socket in sockets {
+            let addr = socket
+                .local_addr()
+                .map_err(|err| format!("failed to read local address of a socket: {err}"))?;
+            rules.insert(addr.port(), rule);
+        }
+    }
+    Ok(rules)
 }
 
 fn resolve_xdp_source_ip(bind_address: IpAddr, interface: &str) -> Result<Ipv4Addr, String> {
@@ -129,6 +200,7 @@ mod xdp_tests {
                 }],
                 false,
             ),
+            None,
             &BindIpAddrs::new(vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))])
                 .expect("a single specified IPv4 bind address should be valid"),
             Arc::new(AtomicBool::new(false)),

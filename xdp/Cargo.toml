@@ -19,6 +19,7 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-cpu-utils = { workspace = true }
+agave-xdp-ebpf = { workspace = true }
 arc-swap = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -27,7 +28,6 @@ log = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-agave-xdp-ebpf = { workspace = true }
 arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }

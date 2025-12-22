@@ -1,11 +1,13 @@
 #[cfg(target_os = "linux")]
 pub use crate::{neighbors::NeighborIntervals, tx_loop::TrySendError};
+pub use agave_xdp_ebpf::FirewallRule;
 use {
     crate::ecn_codepoint::EcnCodepoint,
     bytes::Bytes,
     std::{
+        collections::BTreeMap,
         io,
-        net::{SocketAddr, SocketAddrV4},
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
         thread,
     },
@@ -13,7 +15,7 @@ use {
 #[cfg(target_os = "linux")]
 use {
     crate::{
-        InterfaceIpError, LoadXdpProgramError,
+        FirewallEvents, InterfaceIpError, LoadXdpProgramError, LoadedXdpProgram,
         device::{DefaultRouteDeviceError, NetworkDevice, QueueId},
         load_xdp_program,
         neighbors::NeighborsObserver,
@@ -28,11 +30,7 @@ use {
     aya::Ebpf,
     crossbeam_queue::ArrayQueue,
     log::info,
-    std::{
-        net::{IpAddr, Ipv4Addr},
-        thread::Builder,
-        time::Duration,
-    },
+    std::{net::IpAddr, thread::Builder, time::Duration},
 };
 
 #[cfg(target_os = "linux")]
@@ -61,6 +59,21 @@ pub struct XdpConfig {
     // The capacity of the channel that sits between senders and each XDP thread that enqueues
     // packets to the NIC.
     pub tx_channel_cap: usize,
+    /// Ingress firewall applied by the XDP program. `None` lets all traffic through.
+    pub firewall: Option<XdpFirewallConfig>,
+}
+
+/// Ingress firewall applied by the XDP program attached to the transmit interface.
+#[derive(Clone, Debug)]
+pub struct XdpFirewallConfig {
+    /// Local IPv4 address that ingress packets must be destined to.
+    pub local_ip: Ipv4Addr,
+    /// Strip GRE encapsulation before applying the rules (DoubleZero compatibility).
+    pub strip_gre: bool,
+    /// Drop packets that violate the rules. When unset, violations are only reported.
+    pub enforce: bool,
+    /// Rules by UDP destination port. Packets to ports without a rule are not filtered.
+    pub port_rules: BTreeMap<u16, FirewallRule>,
 }
 
 impl XdpConfig {
@@ -75,6 +88,7 @@ impl Default for XdpConfig {
             queues: vec![],
             zero_copy: false,
             tx_channel_cap: Self::DEFAULT_TX_CHANNEL_CAP,
+            firewall: None,
         }
     }
 }
@@ -90,6 +104,7 @@ impl XdpConfig {
             queues,
             zero_copy,
             tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
+            firewall: None,
         }
     }
 
@@ -105,6 +120,7 @@ impl XdpConfig {
             queues,
             zero_copy,
             tx_channel_cap,
+            firewall: None,
         }
     }
 }
@@ -382,6 +398,8 @@ pub struct TransmitterBuilder {
     tx_loops: Vec<TxLoop<OwnedUmem>>,
     tx_channel_cap: usize,
     maybe_ebpf: Option<Ebpf>,
+    firewall_events: Option<FirewallEvents>,
+    exit: Arc<AtomicBool>,
     atomic_router: Arc<ArcSwap<Router>>,
     neighbors: NeighborsObserver,
     neighbors_monitor_handle: thread::JoinHandle<()>,
@@ -426,6 +444,7 @@ impl TransmitterBuilder {
             queues,
             zero_copy,
             tx_channel_cap,
+            firewall,
         } = config;
 
         let dev = Arc::new(if let Some(interface) = maybe_interface {
@@ -485,12 +504,16 @@ impl TransmitterBuilder {
         // The guards drop temporary effective capabilities on success and failure.
         let _setup_caps = CapGuard::raise([CAP_NET_ADMIN, CAP_NET_RAW])?;
 
-        let maybe_ebpf = if zero_copy {
+        let (maybe_ebpf, firewall_events) = if zero_copy || firewall.is_some() {
             let _ebpf_caps = CapGuard::raise([CAP_BPF, CAP_PERFMON])?;
 
-            Some(load_xdp_program(&dev)?)
+            let LoadedXdpProgram {
+                ebpf,
+                firewall_events,
+            } = load_xdp_program(&dev, firewall.as_ref())?;
+            (Some(ebpf), firewall_events)
         } else {
-            None
+            (None, None)
         };
 
         let tx_loops = tx_loop_builders
@@ -527,7 +550,7 @@ impl TransmitterBuilder {
             },
         );
         let (neighbors_monitor_handle, neighbors) =
-            NeighborsRefresher::start(exit, neighbor_intervals, || {
+            NeighborsRefresher::start(exit.clone(), neighbor_intervals, || {
                 retain_cap_net_admin();
                 info!("neighbors thread started");
             })
@@ -537,6 +560,8 @@ impl TransmitterBuilder {
             tx_loops,
             tx_channel_cap,
             maybe_ebpf,
+            firewall_events,
+            exit,
             atomic_router,
             neighbors,
             neighbors_monitor_handle,
@@ -565,6 +590,8 @@ impl TransmitterBuilder {
             tx_loops,
             tx_channel_cap,
             maybe_ebpf,
+            firewall_events,
+            exit,
             atomic_router,
             neighbors,
             neighbors_monitor_handle,
@@ -573,6 +600,15 @@ impl TransmitterBuilder {
 
         let drop_queue = Arc::new(ArrayQueue::new(DROP_CHANNEL_CAP));
         let mut threads = vec![route_monitor_handle, neighbors_monitor_handle];
+
+        if let Some(firewall_events) = firewall_events {
+            threads.push(
+                Builder::new()
+                    .name("solXdpFwEvents".to_owned())
+                    .spawn(move || firewall_events.run(&exit))
+                    .expect("spawn XDP firewall events thread"),
+            );
+        }
 
         threads.push(
             Builder::new()

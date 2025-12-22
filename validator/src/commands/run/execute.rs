@@ -288,14 +288,26 @@ pub fn execute(
     let (xdp_transmit_setup, xdp_network_config_report) = {
         let needs_sys_nice = value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8) != 0
             || run_args.json_rpc_config.rpc_niceness_adj != 0;
+        let xdp_firewall_port_rules = (xdp_transmit_config.is_some()
+            && matches.is_present("enable_xdp_firewall"))
+        .then(|| xdp::firewall_port_rules(&node.sockets, dynamic_port_range))
+        .transpose()?;
         let xdp_mode = match xdp_transmit_config.as_ref() {
             None => XdpMode::Disabled,
-            Some(xdp_config) if xdp_config.zero_copy => XdpMode::ZeroCopy,
+            // the firewall needs the XDP program, which takes the same capabilities as zero copy
+            Some(xdp_config) if xdp_config.zero_copy || xdp_firewall_port_rules.is_some() => {
+                XdpMode::ZeroCopy
+            }
             Some(_) => XdpMode::Copy,
         };
         capabilities::restrict(config.primordial_caps, needs_sys_nice, xdp_mode, || {
             xdp_transmit_config.map(|xdp_config| {
-                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+                xdp::build_xdp_transmit_setup(
+                    xdp_config,
+                    xdp_firewall_port_rules,
+                    &node.bind_ip_addrs,
+                    exit.clone(),
+                )
             })
         })?
         .transpose()?

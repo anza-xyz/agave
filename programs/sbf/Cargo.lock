@@ -577,7 +577,9 @@ dependencies = [
 name = "agave-xdp-ebpf"
 version = "5.0.0-alpha.0"
 dependencies = [
+ "aya",
  "aya-ebpf",
+ "network-types",
 ]
 
 [[package]]
@@ -3979,6 +3981,16 @@ dependencies = [
  "cfg-if 0.1.10",
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "network-types"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b2a639fbb002e28c2db28571f31aacc167fe7b36b33eaf650412b8d5efff26a"
+dependencies = [
+ "num-derive 0.4.2",
+ "num-traits",
 ]
 
 [[package]]

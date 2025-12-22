@@ -7,7 +7,10 @@ use {
     solana_clap_utils::input_parsers::parse_cpu_ranges,
     solana_net_utils::multihomed_sockets::BindIpAddrs,
 };
-use {clap::Arg, solana_clap_utils::input_validators::validate_cpu_ranges};
+use {
+    clap::Arg,
+    solana_clap_utils::{hidden_unless_forced, input_validators::validate_cpu_ranges},
+};
 
 #[cfg(target_os = "linux")]
 pub(crate) fn new_config(
@@ -105,6 +108,12 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .conflicts_with("xdp_zero_copy")
             .conflicts_with("no_xdp")
             .help("Use XDP copy mode"),
+        Arg::with_name("enable_xdp_firewall")
+            .long("experimental-enable-xdp-firewall")
+            .hidden(hidden_unless_forced())
+            .takes_value(false)
+            .conflicts_with("no_xdp")
+            .help("EXPERIMENTAL: Filter ingress traffic to the validator ports with XDP"),
     ]
 }
 
