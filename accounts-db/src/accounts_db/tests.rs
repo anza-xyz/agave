@@ -4,7 +4,7 @@ use {
     crate::{
         accounts_file::AccountsFileProvider,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
-        append_vec::{aligned_stored_size, test_utils::TempFile, AppendVec},
+        append_vec::{test_utils::TempFile, AppendVec},
         storable_accounts::AccountForStorage,
     },
     itertools::Itertools,
@@ -163,8 +163,8 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     account_big.set_data(vec![5; 10]);
     account_big.set_lamports(2);
     assert_ne!(
-        aligned_stored_size(account_big.data().len()),
-        aligned_stored_size(account_small.data().len())
+        AppendVec::calculate_stored_size(account_big.data().len()),
+        AppendVec::calculate_stored_size(account_small.data().len()),
     );
     // same account twice with different data lens
     // Rules are the last one of each pubkey is the one that ends up in the index.
@@ -223,7 +223,10 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
         (false, entry.unwrap().slot_list_lock_read_len())
     });
     assert_eq!(slot_list_len, 1);
-    assert_eq!(append_vec.alive_bytes(), aligned_stored_size(0));
+    assert_eq!(
+        append_vec.alive_bytes(),
+        AppendVec::calculate_stored_size(0),
+    );
     assert_eq!(append_vec.accounts_count(), 1);
     assert_eq!(append_vec.count(), 1);
     assert_eq!(result.accounts_data_len, 0);
@@ -404,7 +407,7 @@ fn sample_storage_with_entries_id_fill_percentage(
 ) -> Arc<AccountStorageEntry> {
     let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
     let file_size = account_data_size.unwrap_or(123) * 100 / fill_percentage;
-    let size_aligned: usize = aligned_stored_size(file_size as usize);
+    let size_aligned: usize = AppendVec::calculate_stored_size(file_size as usize);
     let mut data = AccountStorageEntry::new(
         &paths[0],
         slot,
@@ -1336,7 +1339,7 @@ fn test_shrink_zero_lamport_single_ref_account() {
             .get_slot_storage_entry(slot)
             .unwrap()
             .alive_bytes
-            .fetch_sub(aligned_stored_size(0), Ordering::Release);
+            .fetch_sub(AppendVec::calculate_stored_size(0), Ordering::Release);
 
         if let Some(latest_full_snapshot_slot) = latest_full_snapshot_slot {
             accounts.set_latest_full_snapshot_slot(latest_full_snapshot_slot);
@@ -2491,7 +2494,7 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
     // accounts plus the length of their metadata.
     assert_eq!(
         created_accounts.capacity as usize,
-        aligned_stored_size(1000) + aligned_stored_size(2000)
+        AppendVec::calculate_stored_size(1000) + AppendVec::calculate_stored_size(2000),
     );
     // The above check works only when the AppendVec storage is
     // used. More generally the pubkey of the smallest account
@@ -5868,7 +5871,7 @@ fn test_shrink_collect_simple() {
                             }
                             // expected_capacity is determined by what size append vec gets created when the write cache is flushed to an append vec.
                             let mut expected_capacity =
-                                (account_count * aligned_stored_size(space)) as u64;
+                                (account_count * AppendVec::calculate_stored_size(space)) as u64;
                             if append_opposite_zero_lamport_account && space != 0 {
                                 // zero lamport accounts always write space = 0
                                 expected_capacity -= space as u64;

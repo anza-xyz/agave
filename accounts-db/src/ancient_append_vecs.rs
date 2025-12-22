@@ -1125,7 +1125,7 @@ pub mod tests {
             accounts_index::{
                 AccountsIndexScanResult, ReclaimsSlotList, RefCount, ScanFilter, UpsertReclaim,
             },
-            append_vec::{self, aligned_stored_size},
+            append_vec::{self, AppendVec},
             storable_accounts::StorableAccountsBySlot,
             utils::create_account_shared_data,
         },
@@ -1265,7 +1265,7 @@ pub mod tests {
                         bytes: accounts
                             .stored_accounts
                             .iter()
-                            .map(|account| aligned_stored_size(account.data_len()))
+                            .map(|account| AppendVec::calculate_stored_size(account.data_len()))
                             .sum(),
                         slot,
                     })
@@ -1344,7 +1344,7 @@ pub mod tests {
                         bytes: accounts
                             .stored_accounts
                             .iter()
-                            .map(|account| aligned_stored_size(account.data_len()))
+                            .map(|account| AppendVec::calculate_stored_size(account.data_len()))
                             .sum(),
                         slot,
                     })
@@ -1454,7 +1454,7 @@ pub mod tests {
                         bytes: accounts
                             .stored_accounts
                             .iter()
-                            .map(|account| aligned_stored_size(account.data_len()))
+                            .map(|account| AppendVec::calculate_stored_size(account.data_len()))
                             .sum(),
                         slot,
                     })
@@ -1465,7 +1465,7 @@ pub mod tests {
                     NonZeroU64::new(ideal_size).unwrap(),
                 );
 
-                let largest_account_size = aligned_stored_size(data_size) as u64;
+                let largest_account_size = AppendVec::calculate_stored_size(data_size) as u64;
                 // all packed storages should be close to ideal size
                 result.iter().enumerate().for_each(|(i, packed)| {
                     if i + 1 < result.len() && ideal_size > largest_account_size {
@@ -1505,7 +1505,10 @@ pub mod tests {
                             .iter()
                             .map(|(_slot, accounts)| accounts
                                 .iter()
-                                .map(|account| aligned_stored_size(account.data_len()) as u64)
+                                .map(
+                                    |account| AppendVec::calculate_stored_size(account.data_len())
+                                        as u64
+                                )
                                 .sum::<u64>())
                             .sum::<u64>()
                     );
@@ -1636,7 +1639,7 @@ pub mod tests {
         agave_logger::setup();
 
         let data_size = 48;
-        let alive_bytes_per_slot = aligned_stored_size(data_size as usize) as u64;
+        let alive_bytes_per_slot = AppendVec::calculate_stored_size(data_size as usize) as u64;
 
         // pack 2.5 ancient slots into 1 packed slot ideally
         let tuning = PackedAncientStorageTuning {
@@ -1740,7 +1743,7 @@ pub mod tests {
         // 1 account each
         // all accounts have 1 ref or all accounts have 2 refs
         let data_size = 48;
-        let alive_bytes_per_account = aligned_stored_size(data_size as usize) as u64;
+        let alive_bytes_per_account = AppendVec::calculate_stored_size(data_size as usize) as u64;
 
         // pack 1 account into a slot ideally
         let tuning = PackedAncientStorageTuning {
@@ -3177,7 +3180,9 @@ pub mod tests {
                             bytes,
                             initial_accounts
                                 .iter()
-                                .map(|(_, account)| aligned_stored_size(account.data().len()) as u64)
+                                .map(|(_, account)| AppendVec::calculate_stored_size(
+                                    account.data().len()
+                                ) as u64)
                                 .sum::<u64>()
                         );
 

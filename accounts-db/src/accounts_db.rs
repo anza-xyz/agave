@@ -50,7 +50,7 @@ use {
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        append_vec::{self, aligned_stored_size, STORE_META_OVERHEAD},
+        append_vec::{self, AppendVec, STORE_META_OVERHEAD},
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         obsolete_accounts::ObsoleteAccounts,
@@ -317,7 +317,7 @@ impl AccountFromStorage {
         &self.pubkey
     }
     pub fn stored_size(&self) -> usize {
-        aligned_stored_size(self.data_len as usize)
+        AppendVec::calculate_stored_size(self.data_len as usize)
     }
     pub fn data_len(&self) -> usize {
         self.data_len as usize
@@ -5024,7 +5024,7 @@ impl AccountsDb {
                     .unwrap_or(true);
                 if should_flush {
                     flush_stats.num_bytes_flushed +=
-                        aligned_stored_size(account.data().len()) as u64;
+                        AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_flushed += 1;
                     Some((key, account))
                 } else {
@@ -5032,7 +5032,7 @@ impl AccountsDb {
                     // index, since it's equivalent to purging
                     pubkeys.push(*key);
                     flush_stats.num_bytes_purged +=
-                        aligned_stored_size(account.data().len()) as u64;
+                        AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_purged += 1;
                     None
                 }
