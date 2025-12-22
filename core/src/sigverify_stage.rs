@@ -439,7 +439,7 @@ mod tests {
         crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
         crossbeam_channel::unbounded,
         solana_perf::{
-            packet::{to_packet_batches, Packet, RecycledPacketBatch},
+            packet::{Packet, RecycledPacketBatch, to_packet_batches},
             test_tx::test_tx,
         },
     };

@@ -2,13 +2,13 @@
 use {
     crate::consensus::Stake,
     bytemuck::{Pod, Zeroable},
-    crossbeam_channel::{bounded, Receiver, Sender},
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    crossbeam_channel::{Receiver, Sender, bounded},
+    serde::{Deserialize, Serialize, de::DeserializeOwned},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_keypair::Keypair,
     solana_packet::{Meta, Packet},
-    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_runtime::bank::Bank,
     solana_signature::SIGNATURE_BYTES,
     solana_signer::Signer,
@@ -18,8 +18,8 @@ use {
         iter::once,
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, JoinHandle},
         time::{Duration, Instant},
@@ -356,8 +356,7 @@ impl MockAlpenglowConsensus {
                 if !state.is_ready_for_slot(vote_pkt.slot_number) {
                     trace!(
                         "Packet does not have matching slot number {} != {}",
-                        vote_pkt.slot_number,
-                        state.current_slot
+                        vote_pkt.slot_number, state.current_slot
                     );
                     continue;
                 }
@@ -378,9 +377,7 @@ impl MockAlpenglowConsensus {
                 }
                 trace!(
                     "RX slot {}: {:?} from {}",
-                    vote_pkt.slot_number,
-                    votor_msg,
-                    pk
+                    vote_pkt.slot_number, votor_msg, pk
                 );
                 let toa = &mut peer_info.relative_time_of_arrival[votor_msg as u64 as usize];
                 if toa.is_none() {
@@ -397,8 +394,7 @@ impl MockAlpenglowConsensus {
                         state.alpenglow_state.notarize_stake_collected += stake;
                         trace!(
                             "{my_id}:{} of {} Notarize stake collected",
-                            state.alpenglow_state.notarize_stake_collected,
-                            stake_60_percent
+                            state.alpenglow_state.notarize_stake_collected, stake_60_percent
                         );
                         if !state.alpenglow_state.block_notarized
                             && state.alpenglow_state.notarize_stake_collected >= stake_60_percent
@@ -438,8 +434,7 @@ impl MockAlpenglowConsensus {
                         state.alpenglow_state.finalize_stake_collected += stake;
                         trace!(
                             "{my_id}:{} of {} Finalize stake collected",
-                            state.alpenglow_state.finalize_stake_collected,
-                            stake_60_percent
+                            state.alpenglow_state.finalize_stake_collected, stake_60_percent
                         );
                         if !state.alpenglow_state.block_finalized
                             && state.alpenglow_state.finalize_stake_collected >= stake_60_percent
@@ -773,9 +768,9 @@ fn get_test_config_from_account<T: DeserializeOwned>(bank: &Bank) -> Option<T> {
 mod tests {
     use {
         crate::mock_alpenglow_consensus::{
+            MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_SIZE, MockAlpenglowConsensus, NUM_VOTOR_TYPES,
+            PeerData, SendCommand, SharedState, StateArray, TestConfig, VotorMessageType,
             compute_stake_weighted_means, get_state_for_slot_index, prep_and_sign_packet,
-            MockAlpenglowConsensus, PeerData, SendCommand, SharedState, StateArray, TestConfig,
-            VotorMessageType, MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_SIZE, NUM_VOTOR_TYPES,
         },
         crossbeam_channel::bounded,
         solana_clock::Slot,
@@ -786,7 +781,7 @@ mod tests {
         std::{
             collections::HashMap,
             net::UdpSocket,
-            sync::{atomic::AtomicBool, Arc, Mutex},
+            sync::{Arc, Mutex, atomic::AtomicBool},
             thread::sleep,
             time::{Duration, Instant},
         },

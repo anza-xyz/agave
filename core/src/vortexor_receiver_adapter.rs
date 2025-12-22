@@ -6,11 +6,11 @@ use {
     crate::banking_trace::TracedSender,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_verified_packet_receiver::receiver::VerifiedPacketReceiver,
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     solana_perf::packet::PacketBatch,
     std::{
         net::UdpSocket,
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },

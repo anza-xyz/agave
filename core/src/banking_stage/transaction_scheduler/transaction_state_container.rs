@@ -64,7 +64,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     /// Get mutable transaction state by id.
     fn get_mut_transaction_state(&mut self, id: TransactionId)
-        -> Option<&mut TransactionState<Tx>>;
+    -> Option<&mut TransactionState<Tx>>;
 
     /// Get reference to `SanitizedTransactionTTL` by id.
     /// Panics if the transaction does not exist.
@@ -392,8 +392,8 @@ mod tests {
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{
-            sanitized::{MessageHash, SanitizedTransaction},
             Transaction,
+            sanitized::{MessageHash, SanitizedTransaction},
         },
         std::collections::HashSet,
     };
@@ -463,9 +463,11 @@ mod tests {
         let non_existing_id = 7;
         assert!(container.get_mut_transaction_state(existing_id).is_some());
         assert!(container.get_mut_transaction_state(existing_id).is_some());
-        assert!(container
-            .get_mut_transaction_state(non_existing_id)
-            .is_none());
+        assert!(
+            container
+                .get_mut_transaction_state(non_existing_id)
+                .is_none()
+        );
     }
 
     #[test]

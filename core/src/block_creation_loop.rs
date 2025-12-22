@@ -21,7 +21,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_poh::{
-        poh_recorder::{PohRecorder, PohRecorderError, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
+        poh_recorder::{GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS, PohRecorder, PohRecorderError},
         record_channels::RecordReceiver,
     },
     solana_pubkey::Pubkey,
@@ -33,8 +33,8 @@ use {
     stats::{LoopMetrics, SlotMetrics},
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Condvar, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},

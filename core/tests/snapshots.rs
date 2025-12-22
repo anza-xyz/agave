@@ -3,8 +3,8 @@
 use {
     crate::snapshot_utils::create_tmp_accounts_dir_for_tests,
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_archive_info::FullSnapshotArchiveInfo,
-        snapshot_config::SnapshotConfig, SnapshotInterval, SnapshotKind,
+        SnapshotInterval, SnapshotKind, paths as snapshot_paths,
+        snapshot_archive_info::FullSnapshotArchiveInfo, snapshot_config::SnapshotConfig,
     },
     crossbeam_channel::unbounded,
     itertools::Itertools,
@@ -24,7 +24,7 @@ use {
         },
         bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
-        genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
         runtime_config::RuntimeConfig,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
@@ -40,8 +40,8 @@ use {
         num::NonZeroU64,
         path::PathBuf,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },
