@@ -3,7 +3,7 @@ use {
         hardened_unpack::{self, UnpackError},
         ArchiveFormat, ArchiveFormatDecompressor,
     },
-    agave_fs::{buffered_reader, file_io::file_creator, io_setup::IoSetupState},
+    agave_fs::{buffered_reader, file_io::file_creator, io_setup::IoSetupState, FileInfo},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     std::{
@@ -26,7 +26,7 @@ const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
 
 /// Streams unpacked files across channel
 pub fn streaming_unarchive_snapshot(
-    file_sender: Sender<PathBuf>,
+    file_sender: Sender<FileInfo>,
     account_paths: Vec<PathBuf>,
     ledger_dir: PathBuf,
     snapshot_archive_path: PathBuf,
@@ -52,14 +52,15 @@ pub fn streaming_unarchive_snapshot(
             (
                 decompressor,
                 file_creator(write_buf_size, &io_setup, move |file_info| {
-                    let result = file_sender.send(file_info.path);
+                    let result = file_sender.send(file_info);
                     if let Err(err) = result {
                         panic!(
                             "failed to send path '{}' from unpacker to rebuilder: {err}",
-                            err.0.display(),
+                            err.0.path.display(),
                         );
                     }
-                    Some(file_info.file)
+                    // Don't pass `File` back to file creator, so it's not closed (owned by channel now)
+                    None
                 })?,
             )
         };
@@ -113,11 +114,11 @@ pub fn unpack_genesis_archive(
 
 fn decompressed_tar_reader(
     archive_format: ArchiveFormat,
-    archive_path: impl AsRef<Path>,
+    archive_path: &Path,
     buf_size: u64,
     io_setup: &IoSetupState,
-) -> io::Result<ArchiveFormatDecompressor<impl BufRead>> {
+) -> io::Result<ArchiveFormatDecompressor<impl BufRead + use<>>> {
     let buf_reader =
-        buffered_reader::large_file_buf_reader(archive_path.as_ref(), buf_size as usize, io_setup)?;
+        buffered_reader::large_file_buf_reader(archive_path, buf_size as usize, io_setup)?;
     ArchiveFormatDecompressor::new(archive_format, buf_reader)
 }

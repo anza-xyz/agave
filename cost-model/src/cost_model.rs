@@ -231,7 +231,23 @@ impl CostModel {
                     SystemProgramAccountAllocation::Some(space)
                 }
             }
-            _ => SystemProgramAccountAllocation::None,
+            // DEVELOPER WARNING: New allocating instructions MUST return `Failed`
+            // until activated by a feature gate
+            SystemInstruction::Assign { .. }
+            | SystemInstruction::Transfer { .. }
+            | SystemInstruction::AdvanceNonceAccount
+            | SystemInstruction::WithdrawNonceAccount(..)
+            | SystemInstruction::InitializeNonceAccount(..)
+            | SystemInstruction::AuthorizeNonceAccount(..)
+            | SystemInstruction::UpgradeNonceAccount
+            | SystemInstruction::AssignWithSeed { .. }
+            | SystemInstruction::TransferWithSeed { .. } => SystemProgramAccountAllocation::None,
+            // DEVELOPER WARNING: New non-allocating instructions MUST return `Failed`
+            // until activated by a feature gate
+            SystemInstruction::CreateAccountAllowPrefund { space: _, .. } => {
+                // pending feature-gated implementation
+                SystemProgramAccountAllocation::Failed
+            } // Do not add wildcard pattern (_)
         }
     }
 

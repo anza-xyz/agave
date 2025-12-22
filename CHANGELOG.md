@@ -39,6 +39,9 @@ Release channels have their own copy of this changelog:
 #### Breaking
 * `cargo-build-sbf --debug` now generates a file `program.so.debug` instead of `program.debug`.
 * `cargo-build-sbf --debug` places all debug related objects inside `target/deploy/debug`.
+### Geyser
+#### Changes
+* Account update notifications have their fields populated from the original account. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc zeroed out.
 
 
 ## 3.1.0

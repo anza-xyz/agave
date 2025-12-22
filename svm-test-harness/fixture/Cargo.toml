@@ -30,7 +30,6 @@ solana-account = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-pubkey = { workspace = true }
-solana-stable-layout = { workspace = true }
 thiserror = { workspace = true }
 
 [build-dependencies]

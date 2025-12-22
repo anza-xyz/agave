@@ -291,7 +291,11 @@ pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
 fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
-        if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
+        if (IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id())
+            // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
+            && *feature_id
+                != agave_feature_set::bls_pubkey_management_in_vote_account::id()
+        {
             activate_feature(genesis_config, *feature_id);
         }
     }

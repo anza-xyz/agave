@@ -417,7 +417,7 @@ solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.1.0"
 solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-bls-signatures = { version = "1.0.0", features = ["serde"] }
+solana-bls-signatures = { version = "2.0.0-alpha.1", features = ["serde"] } #TODO: change to 2.0.0 before this gets into 4.0
 solana-bn254 = "3.1.2"
 solana-borsh = "3.0.0"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -470,7 +470,7 @@ solana-gossip = { path = "gossip", version = "=4.0.0-alpha.0", features = ["agav
 solana-hard-forks = "3.0.0"
 solana-hash = "3.1.0"
 solana-inflation = "3.0.0"
-solana-instruction = "3.0.0"
+solana-instruction = "3.1.0"
 solana-instruction-error = "2.1.0"
 solana-instructions-sysvar = "3.0.0"
 solana-keccak-hasher = "3.1.0"
@@ -562,7 +562,7 @@ solana-svm-test-harness-instr = { path = "svm-test-harness/instr", version = "=4
 solana-svm-timings = { path = "svm-timings", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-system-interface = "2.0"
+solana-system-interface = { version = "3.0", features = ["alloc","bincode","serde"] }
 solana-system-program = { path = "programs/system", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-transaction = "3.0.0"
 solana-sysvar = "3.1.1"
@@ -624,7 +624,7 @@ tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.17"
-toml = "0.9.8"
+toml = "0.9.10"
 tonic = "0.9.2"
 tonic-build = "0.9.2"
 tower = "0.5.2"
@@ -639,7 +639,7 @@ url = "2.5.7"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"
-wincode = { version = "0.2.1", features = ["derive", "solana-short-vec"] }
+wincode = { version = "0.2.3", features = ["derive", "solana-short-vec"] }
 winreg = "0.55"
 x509-parser = "0.17.0"
 zeroize = { version = "1.8", default-features = false }

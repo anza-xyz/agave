@@ -17,7 +17,7 @@ pub type Block = (Slot, Hash);
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "A9wHKYuPgAR7cxidTT51ACVv5WNqHkfj2jVqJLGBC5bv")
+    frozen_abi(digest = "4nTsJNvSwHrs8FHz2TPbSBiYc8Eattw4v31XDge2c5zA")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VoteMessage {
@@ -81,7 +81,7 @@ impl CertificateType {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "CLJbmbTECu2MeBmqWNDsfTgkAC2yudxHsmNU9saww8L")
+    frozen_abi(digest = "7AATkxH9takDKv4pGT3jsqC18nqEgdRTYGUP8G2bbnGp")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Certificate {
@@ -98,7 +98,7 @@ pub struct Certificate {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "4YvBgNbve59tf9i4DSraiSZ3eoMF4Y1V5mDdUCoFv8S2")
+    frozen_abi(digest = "DaXHFwdUAESLYZvyhsgwjeBUEeUqjp3t7WfkRsSp3cEE")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]

@@ -36,6 +36,10 @@ threads-required = "num-cpus"
 filter = "package(solana-gossip) & test(/^cluster_info::tests::new_with_external_ip_test_random/)"
 threads-required = "num-cpus"
 
+[[profile.default.overrides]]
+filter = "package(solana-cargo-build-sbf)"
+test-group = "build-sbf"
+
 [[profile.ci.overrides]]
 filter = "package(solana-cargo-build-sbf)"
 test-group = "build-sbf"

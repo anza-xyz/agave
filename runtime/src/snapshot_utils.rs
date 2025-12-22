@@ -13,7 +13,7 @@ use {
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
-    agave_fs::buffered_writer::large_file_buf_writer,
+    agave_fs::{buffered_writer::large_file_buf_writer, FileInfo},
     agave_snapshots::{
         archive_snapshot,
         error::{
@@ -30,7 +30,7 @@ use {
         snapshot_hash::SnapshotHash,
         streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion,
     },
-    crossbeam_channel::{Receiver, Sender},
+    crossbeam_channel::Receiver,
     log::*,
     regex::Regex,
     semver::Version,
@@ -52,6 +52,7 @@ use {
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, LazyLock},
+        thread,
     },
     tempfile::TempDir,
 };
@@ -123,7 +124,9 @@ impl BankSnapshotInfo {
         // filled.  Check the version file as it is the last file written to avoid using a highest
         // found slot directory with missing content
         let version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-        let version_str = snapshot_version_from_file(&version_path).map_err(|err| {
+        let version_file_info = FileInfo::new_from_path(&version_path)
+            .map_err(|err| SnapshotNewFromDirError::IncompleteDir(err, version_path))?;
+        let version_str = snapshot_version_from_file(version_file_info).map_err(|err| {
             SnapshotNewFromDirError::IncompleteDir(err, bank_snapshot_dir.clone())
         })?;
 
@@ -1145,34 +1148,34 @@ fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
 /// Due to parallel unpacking, we may receive some append_vec files before the snapshot file
 /// This function will push append_vec files into a buffer until we receive the snapshot file
 fn get_version_and_snapshot_files(
-    file_receiver: &Receiver<PathBuf>,
-) -> Result<(PathBuf, PathBuf, Vec<PathBuf>)> {
+    file_receiver: &Receiver<FileInfo>,
+) -> Result<(FileInfo, FileInfo, Vec<FileInfo>)> {
     let mut append_vec_files = Vec::with_capacity(1024);
-    let mut snapshot_version_path = None;
-    let mut snapshot_file_path = None;
+    let mut snapshot_version = None;
+    let mut snapshot_bank = None;
 
     loop {
-        if let Ok(path) = file_receiver.recv() {
-            let filename = path.file_name().unwrap().to_str().unwrap();
+        if let Ok(file_info) = file_receiver.recv() {
+            let filename = file_info.path.file_name().unwrap().to_str().unwrap();
             match get_snapshot_file_kind(filename) {
                 Some(SnapshotFileKind::Version) => {
-                    snapshot_version_path = Some(path);
+                    snapshot_version = Some(file_info);
 
                     // break if we have both the snapshot file and the version file
-                    if snapshot_file_path.is_some() {
+                    if snapshot_bank.is_some() {
                         break;
                     }
                 }
                 Some(SnapshotFileKind::BankFields) => {
-                    snapshot_file_path = Some(path);
+                    snapshot_bank = Some(file_info);
 
                     // break if we have both the snapshot file and the version file
-                    if snapshot_version_path.is_some() {
+                    if snapshot_version.is_some() {
                         break;
                     }
                 }
                 Some(SnapshotFileKind::Storage) => {
-                    append_vec_files.push(path);
+                    append_vec_files.push(file_info);
                 }
                 None => {} // do nothing for other kinds of files
             }
@@ -1182,10 +1185,10 @@ fn get_version_and_snapshot_files(
             ));
         }
     }
-    let snapshot_version_path = snapshot_version_path.unwrap();
-    let snapshot_file_path = snapshot_file_path.unwrap();
+    let snapshot_version = snapshot_version.unwrap();
+    let snapshot_bank = snapshot_bank.unwrap();
 
-    Ok((snapshot_version_path, snapshot_file_path, append_vec_files))
+    Ok((snapshot_version, snapshot_bank, append_vec_files))
 }
 
 /// Fields and information parsed from the snapshot.
@@ -1193,23 +1196,22 @@ struct SnapshotFieldsBundle {
     snapshot_version: SnapshotVersion,
     bank_fields: BankFieldsToDeserialize,
     accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
-    append_vec_files: Vec<PathBuf>,
+    append_vec_files: Vec<FileInfo>,
 }
 
 /// Parses fields and information from the snapshot files provided by
 /// `file_receiver`.
-fn snapshot_fields_from_files(file_receiver: &Receiver<PathBuf>) -> Result<SnapshotFieldsBundle> {
-    let (snapshot_version_path, snapshot_file_path, append_vec_files) =
+fn snapshot_fields_from_files(file_receiver: &Receiver<FileInfo>) -> Result<SnapshotFieldsBundle> {
+    let (snapshot_version, snapshot_bank, append_vec_files) =
         get_version_and_snapshot_files(file_receiver)?;
-    let snapshot_version_str = snapshot_version_from_file(snapshot_version_path)?;
+    let snapshot_version_str = snapshot_version_from_file(snapshot_version)?;
     let snapshot_version = snapshot_version_str.parse().map_err(|err| {
         IoError::other(format!(
             "unsupported snapshot version '{snapshot_version_str}': {err}",
         ))
     })?;
 
-    let snapshot_file = fs::File::open(snapshot_file_path).unwrap();
-    let mut snapshot_stream = BufReader::new(snapshot_file);
+    let mut snapshot_stream = BufReader::new(snapshot_bank.file);
     let (bank_fields, accounts_db_fields) = match snapshot_version {
         SnapshotVersion::V1_2_0 => serde_snapshot::fields_from_stream(&mut snapshot_stream)?,
     };
@@ -1327,24 +1329,39 @@ fn unarchive_snapshot(
     snapshot_result
 }
 
-/// Streams snapshot dir files across channel
+/// Spawn thread that streams snapshot dir files across channel
+///
 /// Follow the flow of streaming_unarchive_snapshot(), but handle the from_dir case.
-fn streaming_snapshot_dir_files(
-    file_sender: Sender<PathBuf>,
-    snapshot_file_path: impl Into<PathBuf>,
-    snapshot_version_path: impl Into<PathBuf>,
+fn spawn_streaming_snapshot_dir_files(
+    snapshot_file_path: PathBuf,
+    snapshot_version_path: PathBuf,
     account_paths: &[PathBuf],
-) -> Result<()> {
-    file_sender.send(snapshot_file_path.into())?;
-    file_sender.send(snapshot_version_path.into())?;
+    writable: bool,
+) -> (Receiver<FileInfo>, thread::JoinHandle<Result<()>>) {
+    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
+    let account_paths = account_paths.to_vec();
 
-    for account_path in account_paths {
-        for file in fs::read_dir(account_path)? {
-            file_sender.send(file?.path())?;
-        }
-    }
+    let handle = thread::Builder::new()
+        .name("solSnapDirFiles".to_string())
+        .spawn(move || {
+            let snapshot_bank_file_info = FileInfo::new_from_path(snapshot_file_path)?;
+            file_sender.send(snapshot_bank_file_info)?;
+            let snapshot_version_file_info = FileInfo::new_from_path(snapshot_version_path)?;
+            file_sender.send(snapshot_version_file_info)?;
 
-    Ok(())
+            for account_path in account_paths {
+                for dir_entry_result in fs::read_dir(account_path)? {
+                    let dir_entry = dir_entry_result?;
+                    let path = dir_entry.path();
+                    let file_info = FileInfo::new_from_path_writable(path, writable)?;
+                    file_sender.send(file_info)?;
+                }
+            }
+            Ok::<_, SnapshotError>(())
+        })
+        .expect("should spawn thread");
+
+    (file_receiver, handle)
 }
 
 /// Performs the common tasks when deserializing a snapshot
@@ -1432,15 +1449,15 @@ pub fn rebuild_storages_from_snapshot_dir(
         }
     }
 
-    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let snapshot_file_path = &snapshot_info.snapshot_path();
+    let snapshot_file_path = snapshot_info.snapshot_path();
     let snapshot_version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    streaming_snapshot_dir_files(
-        file_sender,
+    #[allow(deprecated)]
+    let (file_receiver, stream_files_handle) = spawn_streaming_snapshot_dir_files(
         snapshot_file_path,
         snapshot_version_path,
         account_paths,
-    )?;
+        storage_access == StorageAccess::Mmap,
+    );
 
     let SnapshotFieldsBundle {
         bank_fields,
@@ -1460,26 +1477,21 @@ pub fn rebuild_storages_from_snapshot_dir(
         storage_access,
         obsolete_accounts,
     )?;
-
+    stream_files_handle
+        .join()
+        .expect("should join file stream thread")?;
     Ok((storage, bank_fields, accounts_db_fields))
 }
 
 /// Reads the `snapshot_version` from a file. Before opening the file, its size
 /// is compared to `MAX_SNAPSHOT_VERSION_FILE_SIZE`. If the size exceeds this
 /// threshold, it is not opened and an error is returned.
-fn snapshot_version_from_file(path: impl AsRef<Path>) -> io::Result<String> {
-    // Check file size.
-    let file_metadata = fs::metadata(&path).map_err(|err| {
-        IoError::other(format!(
-            "failed to query snapshot version file metadata '{}': {err}",
-            path.as_ref().display(),
-        ))
-    })?;
-    let file_size = file_metadata.len();
+fn snapshot_version_from_file(mut file_info: FileInfo) -> io::Result<String> {
+    let file_size = file_info.size;
     if file_size > MAX_SNAPSHOT_VERSION_FILE_SIZE {
         let error_message = format!(
             "snapshot version file too large: '{}' has {} bytes (max size is {} bytes)",
-            path.as_ref().display(),
+            file_info.path.display(),
             file_size,
             MAX_SNAPSHOT_VERSION_FILE_SIZE,
         );
@@ -1488,18 +1500,15 @@ fn snapshot_version_from_file(path: impl AsRef<Path>) -> io::Result<String> {
 
     // Read snapshot_version from file.
     let mut snapshot_version = String::new();
-    let mut file = fs::File::open(&path).map_err(|err| {
-        IoError::other(format!(
-            "failed to open snapshot version file '{}': {err}",
-            path.as_ref().display()
-        ))
-    })?;
-    file.read_to_string(&mut snapshot_version).map_err(|err| {
-        IoError::other(format!(
-            "failed to read snapshot version from file '{}': {err}",
-            path.as_ref().display()
-        ))
-    })?;
+    file_info
+        .file
+        .read_to_string(&mut snapshot_version)
+        .map_err(|err| {
+            IoError::other(format!(
+                "failed to read snapshot version from file '{}': {err}",
+                file_info.path.display()
+            ))
+        })?;
 
     Ok(snapshot_version.trim().to_string())
 }
@@ -1935,7 +1944,8 @@ mod tests {
         let file_content = SnapshotVersion::default().as_str();
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(file_content.as_bytes()).unwrap();
-        let version_from_file = snapshot_version_from_file(file.path()).unwrap();
+        let file_info = FileInfo::new_from_path(file.path()).unwrap();
+        let version_from_file = snapshot_version_from_file(file_info).unwrap();
         assert_eq!(version_from_file, file_content);
     }
 
@@ -1945,8 +1955,9 @@ mod tests {
         let file_content = vec![7u8; over_limit_size];
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(&file_content).unwrap();
+        let file_info = FileInfo::new_from_path(file.path()).unwrap();
         assert_matches!(
-            snapshot_version_from_file(file.path()),
+            snapshot_version_from_file(file_info),
             Err(ref message) if message.to_string().starts_with("snapshot version file too large")
         );
     }

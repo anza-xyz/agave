@@ -29,7 +29,22 @@ usage() {
     echo "Error: $*"
   fi
   cat <<EOF
-usage: $0 [+<cargo version>] [--debug] [--validator-only] [--release-with-debug] [--no-spl-token] <install directory>
+usage: $0 [+<cargo version>] [options] <install directory>
+  +<cargo version>      Build using <cargo version> instead of the version defined in rust-toolchain.toml.
+
+  Options:
+    --debug                     Build with debug profile instead of release profile.
+    --release-with-debug        Build with release-with-debug profile instead of release profile.
+    --release-with-lto          Build with release-with-lto profile instead of release profile.
+    --no-build-dcou-bins        Do not build DCOU binaries.
+    --no-build-deprecated-bins  Do not build deprecated binaries.
+    --no-build-dev-bins         Do not build development binaries.
+    --no-build-end-user-bins    Do not build end user binaries.
+    --no-build-platform-tools   Do not build solana-platform-tools.
+    --no-build-validator-bins   Do not build validator binaries.
+    --no-perf-libs              Do not fetch and install perf-libs. (Note: Not using this flag may require internet at build time)
+    --no-spl-token              Do not fetch and install SPL-Token. (Note: Not using this flag requires internet at build time)
+    --help                      Show this help information and exit.
 EOF
   exit $exitcode
 }
@@ -41,7 +56,15 @@ installDir=
 # will be in target/debug
 buildProfileArg='--profile release'
 buildProfile='release'
-validatorOnly=
+
+# Build selection
+noBuildDCOUBins=
+noBuildDeprecatedBins=
+noBuildDevBins=
+noBuildEndUserBins=
+noBuildPlatformTools=
+noBuildValidatorBins=
+noPerfLibs=
 noSPLToken=
 
 while [[ -n $1 ]]; do
@@ -58,11 +81,37 @@ while [[ -n $1 ]]; do
       buildProfileArg='--profile release-with-lto'
       buildProfile='release-with-lto'
       shift
-    elif [[ $1 = --validator-only ]]; then
-      validatorOnly=true
+    elif [[ $1 = --no-build-dcou-bins ]]; then
+      noBuildDCOUBins=true
+      shift
+    elif [[ $1 = --no-build-deprecated-bins ]]; then
+      noBuildDeprecatedBins=true
+      shift
+    elif [[ $1 = --no-build-dev-bins ]]; then
+      noBuildDevBins=true
+      shift
+    elif [[ $1 = --no-build-end-user-bins ]]; then
+      noBuildEndUserBins=true
+      shift
+    elif [[ $1 = --no-build-platform-tools ]]; then
+      noBuildPlatformTools=true
+      shift
+    elif [[ $1 = --no-build-validator-bins ]]; then
+      noBuildValidatorBins=true
+      shift
+    elif [[ $1 = --no-perf-libs ]]; then
+      noPerfLibs=true
       shift
     elif [[ $1 = --no-spl-token ]]; then
       noSPLToken=true
+      shift
+    elif [[ $1 = --help ]]; then
+      usage
+    elif [[ $1 = --validator-only ]]; then
+      echo "WARNING: $1 has been deprecated, use a combination of --no-build-{dev,deprecated}-bins and --no-build-platform-tools instead."
+      noBuildDevBins=true
+      noBuildDeprecatedBins=true
+      noBuildPlatformTools=true
       shift
     else
       usage "Unknown option: $1"
@@ -94,20 +143,25 @@ source "$SOLANA_ROOT"/scripts/agave-build-lists.sh
 
 BINS=()
 DCOU_BINS=()
-if [[ -n "$validatorOnly" ]]; then
-  echo "Building binaries for net.sh deploys: ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_VAL_OP[*]} ${AGAVE_BINS_DCOU[*]}"
-  BINS+=("${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_VAL_OP[@]}")
-  DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
-else
-  echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]} ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_DEPRECATED[*]}"
-  BINS+=("${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_DEPRECATED[@]}")
 
-  if [[ $OSTYPE != msys ]]; then
-    echo "Building binaries for linux and osx only: ${AGAVE_BINS_VAL_OP[*]}, ${AGAVE_BINS_DCOU[*]}"
-    BINS+=("${AGAVE_BINS_VAL_OP[@]}")
-    DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
-  fi
+# Binary selection
+if [[ -z "$noBuildDCOUBins" && $OSTYPE != msys ]]; then
+  DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
 fi
+if [[ -z "$noBuildDeprecatedBins" ]]; then
+  BINS+=("${AGAVE_BINS_DEPRECATED[@]}")
+fi
+if [[ -z "$noBuildDevBins" ]]; then
+  BINS+=("${AGAVE_BINS_DEV[@]}")
+fi
+if [[ -z "$noBuildEndUserBins" ]]; then
+  BINS+=("${AGAVE_BINS_END_USER[@]}")
+fi
+if [[ -z "$noBuildValidatorBins" && $OSTYPE != msys ]]; then
+  BINS+=("${AGAVE_BINS_VAL_OP[@]}")
+fi
+
+echo "Building binaries: ${BINS[*]} ${DCOU_BINS[*]}"
 
 binArgs=()
 for bin in "${BINS[@]}"; do
@@ -151,7 +205,9 @@ check_dcou() {
   fi
 
   # Build our production binaries without dcou.
-  cargo_build "${binArgs[@]}" --workspace
+  if [[ ${#binArgs[@]} -gt 0 ]]; then
+    cargo_build "${binArgs[@]}" --workspace
+  fi
 
   # Finally, build the remaining dev tools with dcou.
   if [[ ${#dcouBinArgs[@]} -gt 0 ]]; then
@@ -180,7 +236,7 @@ for bin in "${DCOU_BINS[@]}"; do
   cp -fv "dev-bins/target/$buildProfile/$bin" "$installDir"/bin
 done
 
-if [[ $OSTYPE != msys ]]; then
+if [[ -z "$noPerfLibs" && $OSTYPE != msys ]]; then
   ./fetch-perf-libs.sh
 
   if [[ -d target/perf-libs ]]; then
@@ -188,7 +244,7 @@ if [[ $OSTYPE != msys ]]; then
   fi
 fi
 
-if [[ -z "$validatorOnly" ]]; then
+if [[ -z "$noBuildPlatformTools" ]]; then
   # shellcheck disable=SC2086 # Don't want to double quote $rust_version
   "$cargo" $maybeRustVersion build --manifest-path syscalls/gen-syscall-list/Cargo.toml
   # shellcheck disable=SC2086 # Don't want to double quote $rust_version

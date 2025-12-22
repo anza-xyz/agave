@@ -111,7 +111,7 @@ mod tests {
         let count = Arc::new(AtomicU32::new(0));
         let handler = FakeHandler::new(count.clone());
         let listener = DuplicateShredListener::new(exit.clone(), cluster_info.clone(), handler);
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
         let next_shred_index = 353;
