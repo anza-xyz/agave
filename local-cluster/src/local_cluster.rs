@@ -298,7 +298,7 @@ impl LocalCluster {
         let leader_pubkey = leader_keypair.pubkey();
         let leader_node = Node::new_localhost_with_pubkey(&leader_pubkey);
 
-        let _feature_set = FeatureSet::all_enabled();
+        let feature_set = FeatureSet::all_enabled();
 
         let GenesisConfigInfo {
             mut genesis_config,
@@ -310,6 +310,7 @@ impl LocalCluster {
             stakes_in_genesis,
             config.cluster_type,
             false,
+            &feature_set,
         );
         genesis_config.accounts.extend(
             config

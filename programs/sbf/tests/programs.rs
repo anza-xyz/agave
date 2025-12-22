@@ -1939,7 +1939,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
     );
     let stake_pubkey = Pubkey::from_str("HGq9JF77xFXRgWRJy8VQuhdbdugrT856RvQDzr1KJo6E").unwrap();
 
-    let _feature_set = FeatureSet::all_enabled();
+    let feature_set = FeatureSet::all_enabled();
 
     let mut genesis_config = create_genesis_config_with_leader_ex(
         123,
@@ -1954,6 +1954,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
         vec![],
+        &feature_set,
     );
     genesis_config.creation_time = Duration::ZERO.as_secs() as UnixTimestamp;
 

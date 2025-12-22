@@ -815,10 +815,10 @@ impl ProgramTest {
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
 
-        let mut _feature_set = FeatureSet::all_enabled();
+        let mut feature_set = FeatureSet::all_enabled();
         for feature_id in &self.deactivate_feature_set {
             if FEATURE_NAMES.contains_key(feature_id) {
-                _feature_set.deactivate(feature_id);
+                feature_set.deactivate(feature_id);
             } else {
                 warn!(
                     "Feature {feature_id:?} set for deactivation is not a known Feature public key"
@@ -839,6 +839,7 @@ impl ProgramTest {
             rent.clone(),
             ClusterType::Development,
             std::mem::take(&mut self.genesis_accounts),
+            &feature_set,
         );
 
         // Remove features tagged to deactivate

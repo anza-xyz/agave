@@ -115,6 +115,7 @@ pub fn create_genesis_config_with_vote_accounts(
         stakes,
         ClusterType::Development,
         false,
+        &FeatureSet::all_enabled(),
     )
 }
 
@@ -129,6 +130,7 @@ pub fn create_genesis_config_with_alpenglow_vote_accounts(
         stakes,
         ClusterType::Development,
         true,
+        &FeatureSet::all_enabled(),
     )
 }
 
@@ -138,6 +140,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     stakes: Vec<u64>,
     cluster_type: ClusterType,
     is_alpenglow: bool,
+    feature_set: &FeatureSet,
 ) -> GenesisConfigInfo {
     assert!(!voting_keypairs.is_empty());
     assert_eq!(voting_keypairs.len(), stakes.len());
@@ -169,6 +172,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         Rent::free(),               // most tests don't expect rent
         cluster_type,
         vec![],
+        feature_set,
     );
 
     let mut genesis_config_info = GenesisConfigInfo {
@@ -270,6 +274,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
         vec![],
+        &FeatureSet::all_enabled(),
     );
 
     GenesisConfigInfo {
@@ -338,7 +343,7 @@ pub fn bls_pubkey_to_compressed_bytes(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn create_genesis_config_with_leader_ex_no_features(
+fn create_genesis_config_with_leader_ex_impl(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
     validator_pubkey: &Pubkey,
@@ -351,6 +356,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     rent: Rent,
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+    _feature_set: &FeatureSet,
 ) -> GenesisConfig {
     let validator_vote_account = vote_state::create_v4_account_with_authorized(
         validator_pubkey,
@@ -411,7 +417,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn create_genesis_config_with_leader_ex(
+pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
     validator_pubkey: &Pubkey,
@@ -425,7 +431,7 @@ pub fn create_genesis_config_with_leader_ex(
     cluster_type: ClusterType,
     initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+    create_genesis_config_with_leader_ex_impl(
         mint_lamports,
         mint_pubkey,
         validator_pubkey,
@@ -438,6 +444,40 @@ pub fn create_genesis_config_with_leader_ex(
         rent,
         cluster_type,
         initial_accounts,
+        &FeatureSet::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_genesis_config_with_leader_ex(
+    mint_lamports: u64,
+    mint_pubkey: &Pubkey,
+    validator_pubkey: &Pubkey,
+    validator_vote_account_pubkey: &Pubkey,
+    validator_stake_account_pubkey: &Pubkey,
+    validator_bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+    validator_stake_lamports: u64,
+    validator_lamports: u64,
+    fee_rate_governor: FeeRateGovernor,
+    rent: Rent,
+    cluster_type: ClusterType,
+    initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+    feature_set: &FeatureSet,
+) -> GenesisConfig {
+    let mut genesis_config = create_genesis_config_with_leader_ex_impl(
+        mint_lamports,
+        mint_pubkey,
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_stake_account_pubkey,
+        validator_bls_pubkey,
+        validator_stake_lamports,
+        validator_lamports,
+        fee_rate_governor,
+        rent,
+        cluster_type,
+        initial_accounts,
+        feature_set,
     );
 
     if genesis_config.cluster_type == ClusterType::Development {
