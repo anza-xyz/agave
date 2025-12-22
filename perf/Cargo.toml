@@ -42,6 +42,7 @@ bytes = { workspace = true, features = ["serde"] }
 curve25519-dalek = { workspace = true }
 dlopen2 = { workspace = true }
 fnv = { workspace = true }
+hexdump = "0.1.2"
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }

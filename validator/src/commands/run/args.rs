@@ -1280,6 +1280,14 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("enable_xdp_firewall")
+            .hidden(hidden_unless_forced())
+            .long("experimental-enable-xdp-firewall")
+            .takes_value(false)
+            .requires("retransmit_xdp_cpu_cores")
+            .help("EXPERIMENTAL: Enable XDP based firewall"),
+    )
+    .arg(
         Arg::with_name("retransmit_xdp_interface")
             .hidden(hidden_unless_forced())
             .long("experimental-retransmit-xdp-interface")

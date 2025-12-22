@@ -1141,6 +1141,8 @@ mod tests {
             let mut tx = new_test_vote_tx(&mut rng);
             tx.message.instructions[0].data = vec![1, 2, 3];
             let mut packet = BytesPacket::from_data(None, tx).unwrap();
+            hexdump::hexdump(packet.data(..).unwrap());
+            dbg!(&packet);
             let packet_offsets = do_get_packet_offsets(packet.as_ref(), 0).unwrap();
             check_for_simple_vote_transaction(&mut packet.as_mut(), &packet_offsets, 0).ok();
             assert!(packet.meta().is_simple_vote_tx());
