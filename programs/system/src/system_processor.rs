@@ -494,6 +494,10 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )?;
             assign(&mut account, &address, &owner, &signers, invoke_context)
         }
+        SystemInstruction::CreateAccountAllowPrefund { .. } => {
+            // feature-gated activation to be implemented
+            return Err(InstructionError::InvalidInstructionData);
+        }
     }
 });
 

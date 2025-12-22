@@ -50,6 +50,7 @@ pub struct Config<'a> {
     optimize_size: bool,
     lto: bool,
     install_only: bool,
+    patch_binaries_for_nix: Option<bool>,
 }
 
 impl Default for Config<'_> {
@@ -84,6 +85,7 @@ impl Default for Config<'_> {
             optimize_size: false,
             lto: false,
             install_only: false,
+            patch_binaries_for_nix: None,
         }
     }
 }
@@ -557,6 +559,14 @@ fn main() {
              decrease program size and CU consumption. The default option is LTO disabled, as one \
              may get mixed results with it.",
         ))
+        .arg(
+            Arg::new("patch_binaries_for_nix")
+                .long("patch-binaries-for-nix")
+                .takes_value(true)
+                .default_missing_value("true")
+                .possible_values(["true", "false"])
+                .help("Patch the downloaded toolchain binaries to work on nix systems"),
+        )
         .get_matches_from(args);
 
     let sbf_sdk: PathBuf = matches.value_of_t_or_exit("sbf_sdk");
@@ -630,6 +640,9 @@ fn main() {
         optimize_size: matches.is_present("optimize_size"),
         lto: matches.is_present("lto"),
         install_only: matches.is_present("install_only"),
+        patch_binaries_for_nix: matches
+            .is_present("patch_binaries_for_nix")
+            .then(|| matches.value_of_t("patch_binaries_for_nix").unwrap()),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {

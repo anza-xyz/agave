@@ -9,6 +9,7 @@ use {
             unified_scheduler::ensure_banking_stage_setup, BankingStage,
         },
         banking_trace::{self, BankingTracer, TraceError},
+        block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -668,9 +669,10 @@ pub struct Validator {
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
     completed_data_sets_service: Option<CompletedDataSetsService>,
-    snapshot_packager_service: Option<SnapshotPackagerService>,
+    snapshot_packager_service: SnapshotPackagerService,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     poh_service: PohService,
+    block_creation_loop: BlockCreationLoop,
     tpu: Tpu,
     tvu: Tvu,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
@@ -986,29 +988,20 @@ impl Validator {
         ));
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let snapshot_packager_service = if snapshot_controller
-            .snapshot_config()
-            .should_generate_snapshots()
-        {
-            let exit_backpressure = config
-                .validator_exit_backpressure
-                .get(SnapshotPackagerService::NAME)
-                .cloned();
-            let enable_gossip_push = true;
-            let snapshot_packager_service = SnapshotPackagerService::new(
-                pending_snapshot_packages.clone(),
-                starting_snapshot_hashes,
-                exit.clone(),
-                exit_backpressure,
-                cluster_info.clone(),
-                snapshot_controller.clone(),
-                enable_gossip_push,
-            );
-            Some(snapshot_packager_service)
-        } else {
-            None
-        };
-
+        let exit_backpressure = config
+            .validator_exit_backpressure
+            .get(SnapshotPackagerService::NAME)
+            .cloned();
+        let enable_gossip_push = true;
+        let snapshot_packager_service = SnapshotPackagerService::new(
+            pending_snapshot_packages.clone(),
+            starting_snapshot_hashes,
+            exit.clone(),
+            exit_backpressure,
+            cluster_info.clone(),
+            snapshot_controller.clone(),
+            enable_gossip_push,
+        );
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
@@ -1425,6 +1418,13 @@ impl Validator {
         let wait_for_vote_to_start_leader =
             !waited_for_supermajority && !config.no_wait_for_vote_to_start_leader;
 
+        // Pass RecordReceiver from PohService to BlockCreationLoop when shutting down. Gives us a strong guarentee
+        // that both block producers are not running at the same time
+        let (record_receiver_sender, record_receiver_receiver) = bounded(1);
+        // Sender for notifications about our leader window. We allow for a maximum of 7 leader windows in case we have
+        // consecutive leader windows and are slow. There is an early give up if our leader window is skipped because we
+        // are too slow, so in practice this channel should never be full.
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(7);
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -1434,7 +1434,30 @@ impl Validator {
             config.poh_hashes_per_batch,
             record_receiver,
             poh_service_message_receiver,
+            migration_status.clone(),
+            record_receiver_sender,
         );
+
+        let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
+        let highest_parent_ready = Arc::new(RwLock::default());
+
+        let block_creation_loop_config = BlockCreationLoopConfig {
+            exit: exit.clone(),
+            bank_forks: bank_forks.clone(),
+            blockstore: blockstore.clone(),
+            cluster_info: cluster_info.clone(),
+            poh_recorder: poh_recorder.clone(),
+            leader_schedule_cache: leader_schedule_cache.clone(),
+            rpc_subscriptions: rpc_subscriptions.clone(),
+            banking_tracer: banking_tracer.clone(),
+            slot_status_notifier: slot_status_notifier.clone(),
+            record_receiver_receiver,
+            leader_window_info_receiver: leader_window_info_receiver.clone(),
+            replay_highest_frozen: replay_highest_frozen.clone(),
+            highest_parent_ready: highest_parent_ready.clone(),
+        };
+        let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
+
         assert_eq!(
             blockstore.get_new_shred_signals_len(),
             1,
@@ -1552,6 +1575,7 @@ impl Validator {
                 Tower::default()
             }
         };
+        migration_status.log_phase();
         let last_vote = tower.last_vote();
 
         let outstanding_repair_requests =
@@ -1807,6 +1831,7 @@ impl Validator {
             tpu,
             tvu,
             poh_service,
+            block_creation_loop,
             poh_recorder,
             ip_echo_server,
             validator_exit: config.validator_exit.clone(),
@@ -1917,6 +1942,9 @@ impl Validator {
         drop(self.cluster_info);
 
         self.poh_service.join().expect("poh_service");
+        self.block_creation_loop
+            .join()
+            .expect("block_creation_loop");
         drop(self.poh_recorder);
 
         if let Some(json_rpc_service) = self.json_rpc_service {
@@ -1965,9 +1993,9 @@ impl Validator {
                 .expect("entry_notifier_service");
         }
 
-        if let Some(s) = self.snapshot_packager_service {
-            s.join().expect("snapshot_packager_service");
-        }
+        self.snapshot_packager_service
+            .join()
+            .expect("snapshot_packager_service");
 
         self.gossip_service.join().expect("gossip_service");
         self.repair_quic_endpoints

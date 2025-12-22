@@ -26,8 +26,8 @@ lazy-lru = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 quinn = { workspace = true }
-rand = "0.8.5"
-rand_chacha = "0.3.1"
+rand = { workspace = true }
+rand_chacha = { workspace = true }
 rayon = { workspace = true }
 rustls = { workspace = true }
 solana-clock = { workspace = true }

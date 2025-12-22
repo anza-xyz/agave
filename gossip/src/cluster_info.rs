@@ -46,7 +46,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, TrySendError},
     itertools::{Either, Itertools},
-    rand::{seq::SliceRandom, CryptoRng, Rng},
+    rand::{prelude::IndexedMutRandom, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH},
     solana_hash::Hash,
@@ -184,7 +184,7 @@ impl ClusterInfo {
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
-                &mut rand::thread_rng(),
+                &mut rand::rng(),
                 Instant::now(),
                 GOSSIP_PING_CACHE_TTL,
                 GOSSIP_PING_CACHE_RATE_LIMIT_DELAY,
@@ -1199,7 +1199,7 @@ impl ClusterInfo {
         let mut pulls = pulls.peekable();
         let entrypoint = {
             let mut entrypoints = self.entrypoints.write().unwrap();
-            let Some(entrypoint) = entrypoints.choose_mut(&mut rand::thread_rng()) else {
+            let Some(entrypoint) = entrypoints.choose_mut(&mut rand::rng()) else {
                 return Either::Left(pulls);
             };
             if pulls.peek().is_some() {
@@ -1693,7 +1693,7 @@ impl ClusterInfo {
             self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
             RecycledPacketBatch::new_with_recycler(recycler, 64, "handle_pull_requests");
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         requests.retain({
             let now = Instant::now();
             self.check_pull_request(now, &mut rng, &mut packet_batch)
@@ -2018,7 +2018,7 @@ impl ClusterInfo {
             }
         };
         let mut pings = Vec::new();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut verify_gossip_addr = |value: &CrdsValue| {
             if verify_gossip_addr(
                 &mut rng,
@@ -2681,7 +2681,7 @@ mod tests {
     #[test]
     fn test_handle_pong_messages() {
         let now = Instant::now();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let this_node = Arc::new(Keypair::new());
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
@@ -2734,7 +2734,7 @@ mod tests {
 
     #[test]
     fn test_handle_ping_messages() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let this_node = Arc::new(Keypair::new());
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
@@ -2748,7 +2748,7 @@ mod tests {
                 .collect();
         let pings: Vec<_> = remote_nodes
             .iter()
-            .map(|(keypair, _)| Ping::new(rng.gen(), keypair))
+            .map(|(keypair, _)| Ping::new(rng.random(), keypair))
             .collect();
         let pongs: Vec<_> = pings
             .iter()
@@ -3267,7 +3267,7 @@ mod tests {
         assert!(slots.is_empty());
 
         // Test with different shred versions.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let node_pubkey = Pubkey::new_unique();
         let mut node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
         node.set_shred_version(42);
@@ -3479,8 +3479,8 @@ mod tests {
             SocketAddrSpace::Unspecified,
         );
         //random should be hard to compress
-        let mut rng = rand::thread_rng();
-        let range: Vec<Slot> = repeat_with(|| rng.gen_range(1..32))
+        let mut rng = rand::rng();
+        let range: Vec<Slot> = repeat_with(|| rng.random_range(1..32))
             .scan(0, |slot, step| {
                 *slot += step;
                 Some(*slot)
@@ -3550,7 +3550,7 @@ mod tests {
         let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
         cluster_info.set_entrypoint(entrypoint);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let shred_version = cluster_info.my_shred_version();
         let mut peers: Vec<Pubkey> = vec![];
 
@@ -3590,7 +3590,7 @@ mod tests {
         let mut cursor = Cursor::default();
         assert!(cluster_info.get_duplicate_shreds(&mut cursor).is_empty());
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
         let next_shred_index = 353;
@@ -3658,7 +3658,7 @@ mod tests {
         assert!(slots.is_empty());
 
         // Test with different shred versions.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let node_pubkey = Pubkey::new_unique();
         let mut node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
         node.set_shred_version(42);
@@ -3727,7 +3727,7 @@ mod tests {
         assert_eq!(fork.from, pubkey);
 
         // Test with different shred versions.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let pubkey2 = Pubkey::new_unique();
         let mut new_node = ContactInfo::new_rand(&mut rng, Some(pubkey2));
         new_node.set_shred_version(42);
@@ -3839,7 +3839,7 @@ mod tests {
         let self_shred_version = 5555;
         let mut crds = Crds::default();
         let stats = GossipStats::default();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
 
         // create contact info with matching shred version

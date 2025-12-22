@@ -1,5 +1,8 @@
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-use std::ffi::{CStr, CString};
+use std::{
+    ffi::{CStr, CString},
+    path::Path,
+};
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
@@ -45,7 +48,7 @@ use {
         cell::RefCell,
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
-        path::{Path, PathBuf},
+        path::PathBuf,
         result::Result,
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -324,31 +327,27 @@ impl<T> SnapshotAccountsDbFields<T> {
         }
     }
 
-    /// Collapse the SnapshotAccountsDbFields into a single AccountsDbFields.  If there is no
-    /// incremental snapshot, this returns the AccountsDbFields from the full snapshot.
-    /// Otherwise, use the AccountsDbFields from the incremental snapshot, and a combination
-    /// of the storages from both the full and incremental snapshots.
-    pub fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
-        match self.incremental_snapshot_accounts_db_fields {
-            None => Ok(self.full_snapshot_accounts_db_fields),
-            Some(AccountsDbFields(
-                mut incremental_snapshot_storages,
-                incremental_snapshot_version,
-                incremental_snapshot_slot,
-                incremental_snapshot_bank_hash_info,
-                incremental_snapshot_historical_roots,
-                incremental_snapshot_historical_roots_with_hash,
-            )) => {
-                let full_snapshot_storages = self.full_snapshot_accounts_db_fields.0;
-                let full_snapshot_slot = self.full_snapshot_accounts_db_fields.2;
-
+    /// Verify the consistency of slots in incremental snapshot (if present)
+    ///
+    /// Returns error if full snapshot has some slot above its deserialized slot number that overlap
+    /// with slots from incremental snapshot.
+    fn verify_slot_ranges(&self) -> Result<(), Error> {
+        let AccountsDbFields(
+            full_snapshot_storages,
+            _full_snapshot_write_version,
+            full_snapshot_slot,
+            ..,
+        ) = &self.full_snapshot_accounts_db_fields;
+        match &self.incremental_snapshot_accounts_db_fields {
+            None => Ok(()),
+            Some(AccountsDbFields(incremental_snapshot_storages, ..)) => {
                 // filter out incremental snapshot storages with slot <= full snapshot slot
-                incremental_snapshot_storages.retain(|slot, _| *slot > full_snapshot_slot);
-
-                // There must not be any overlap in the slots of storages between the full snapshot and the incremental snapshot
+                // There must not be any overlap in the slots of storages between the full snapshot and
+                // the incremental snapshot
                 incremental_snapshot_storages
                     .iter()
-                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0))
+                    .filter(|&(slot, _)| slot > full_snapshot_slot)
+                    .all(|(slot, _)| !full_snapshot_storages.contains_key(slot))
                     .then_some(())
                     .ok_or_else(|| {
                         io::Error::new(
@@ -358,19 +357,27 @@ impl<T> SnapshotAccountsDbFields<T> {
                         )
                     })?;
 
-                let mut combined_storages = full_snapshot_storages;
-                combined_storages.extend(incremental_snapshot_storages);
-
-                Ok(AccountsDbFields(
-                    combined_storages,
-                    incremental_snapshot_version,
-                    incremental_snapshot_slot,
-                    incremental_snapshot_bank_hash_info,
-                    incremental_snapshot_historical_roots,
-                    incremental_snapshot_historical_roots_with_hash,
-                ))
+                Ok(())
             }
         }
+    }
+
+    /// Extract final write version and bank hash info from full and incremental accounts db fields.
+    ///
+    /// If there is no incremental snapshot, this returns the fields from the full snapshot.
+    /// Otherwise, gets them from the incremental snapshot.
+    fn into_write_version_and_bank_hash_info(self) -> (u64, BankHashInfo) {
+        let AccountsDbFields(
+            _snapshot_storages,
+            snapshot_write_version,
+            _snapshot_slot,
+            snapshot_bank_hash_info,
+            _snapshot_historical_roots,
+            _snapshot_historical_roots_with_hash,
+        ) = self
+            .incremental_snapshot_accounts_db_fields
+            .unwrap_or(self.full_snapshot_accounts_db_fields);
+        (snapshot_write_version, snapshot_bank_hash_info)
     }
 }
 
@@ -490,18 +497,14 @@ where
 /// Get snapshot storage lengths from accounts_db_fields
 pub(crate) fn snapshot_storage_lengths_from_fields(
     accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
-) -> HashMap<Slot, HashMap<SerializedAccountsFileId, usize>> {
+) -> HashMap<Slot, usize> {
     let AccountsDbFields(snapshot_storage, ..) = &accounts_db_fields;
     snapshot_storage
         .iter()
         .map(|(slot, slot_storage)| {
-            (
-                *slot,
-                slot_storage
-                    .iter()
-                    .map(|storage_entry| (storage_entry.id(), storage_entry.current_len()))
-                    .collect(),
-            )
+            assert_eq!(slot_storage.len(), 1, "invalid storage count (slot={slot})");
+            let storage_entry = slot_storage[0];
+            (*slot, storage_entry.current_len())
         })
         .collect()
 }
@@ -864,7 +867,7 @@ where
 
 pub(crate) fn reconstruct_single_storage(
     slot: &Slot,
-    append_vec_path: &Path,
+    append_vec_file_info: FileInfo,
     current_len: usize,
     id: AccountsFileId,
     storage_access: StorageAccess,
@@ -887,9 +890,6 @@ pub(crate) fn reconstruct_single_storage(
         (current_len, ObsoleteAccounts::default())
     };
 
-    #[allow(deprecated)]
-    let append_vec_file_info =
-        FileInfo::new_from_path_writable(append_vec_path, storage_access == StorageAccess::Mmap)?;
     let accounts_file =
         AccountsFile::new_for_startup(append_vec_file_info, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
@@ -906,14 +906,14 @@ pub(crate) fn reconstruct_single_storage(
 pub(crate) fn remap_append_vec_file(
     slot: Slot,
     old_append_vec_id: SerializedAccountsFileId,
-    append_vec_path: &Path,
+    append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
-) -> io::Result<(AccountsFileId, PathBuf)> {
+) -> io::Result<(AccountsFileId, FileInfo)> {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    let append_vec_path_cstr = cstring_from_path(append_vec_path)?;
+    let append_vec_path_cstr = cstring_from_path(&append_vec_file_info.path)?;
 
-    let mut remapped_append_vec_path = append_vec_path.to_path_buf();
+    let mut remapped_append_vec_path = append_vec_file_info.path.to_path_buf();
 
     // Break out of the loop in the following situations:
     // 1. The new ID is the same as the original ID.  This means we do not need to
@@ -929,7 +929,10 @@ pub(crate) fn remap_append_vec_file(
         }
 
         let remapped_file_name = AccountsFile::file_name(slot, remapped_append_vec_id);
-        remapped_append_vec_path = append_vec_path.parent().unwrap().join(remapped_file_name);
+        remapped_append_vec_path = remapped_append_vec_path
+            .parent()
+            .unwrap()
+            .join(remapped_file_name);
 
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         {
@@ -967,31 +970,37 @@ pub(crate) fn remap_append_vec_file(
         all(target_os = "linux", not(target_env = "gnu"))
     ))]
     if old_append_vec_id != remapped_append_vec_id as SerializedAccountsFileId {
-        std::fs::rename(append_vec_path, &remapped_append_vec_path)?;
+        std::fs::rename(&append_vec_file_info.path, &remapped_append_vec_path)?;
     }
 
-    Ok((remapped_append_vec_id, remapped_append_vec_path))
+    Ok((
+        remapped_append_vec_id,
+        FileInfo {
+            path: remapped_append_vec_path,
+            ..append_vec_file_info
+        },
+    ))
 }
 
 pub(crate) fn remap_and_reconstruct_single_storage(
     slot: Slot,
     old_append_vec_id: SerializedAccountsFileId,
     current_len: usize,
-    append_vec_path: &Path,
+    append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
     storage_access: StorageAccess,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    let (remapped_append_vec_id, remapped_append_vec_path) = remap_append_vec_file(
+    let (remapped_append_vec_id, remapped_append_vec_file_info) = remap_append_vec_file(
         slot,
         old_append_vec_id,
-        append_vec_path,
+        append_vec_file_info,
         next_append_vec_id,
         num_collisions,
     )?;
     let storage = reconstruct_single_storage(
         &slot,
-        &remapped_append_vec_path,
+        remapped_append_vec_file_info,
         current_len,
         remapped_append_vec_id,
         storage_access,
@@ -1031,14 +1040,10 @@ where
         exit,
     );
 
-    let AccountsDbFields(
-        _snapshot_storages,
-        snapshot_version,
-        _snapshot_slot,
-        snapshot_bank_hash_info,
-        _snapshot_historical_roots,
-        _snapshot_historical_roots_with_hash,
-    ) = snapshot_accounts_db_fields.collapse_into()?;
+    snapshot_accounts_db_fields.verify_slot_ranges()?;
+
+    let (snapshot_write_version, snapshot_bank_hash_info) =
+        snapshot_accounts_db_fields.into_write_version_and_bank_hash_info();
 
     // Ensure all account paths exist
     for path in &accounts_db.paths {
@@ -1070,7 +1075,7 @@ where
         .store(next_append_vec_id, Ordering::Release);
     accounts_db
         .write_version
-        .fetch_add(snapshot_version, Ordering::Release);
+        .fetch_add(snapshot_write_version, Ordering::Release);
 
     info!("Building accounts index...");
     let start = Instant::now();
