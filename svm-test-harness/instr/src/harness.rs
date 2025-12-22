@@ -206,7 +206,7 @@ pub fn execute_instr(
             None
         },
         result: result.err(),
-        modified_accounts: transaction_context
+        resulting_accounts: transaction_context
             .deconstruct_without_keys()
             .unwrap()
             .into_iter()
@@ -406,14 +406,14 @@ mod tests {
 
         // Verify account changes.
         let from_account = effects
-            .modified_accounts
+            .resulting_accounts
             .iter()
             .find(|(k, _)| k == &from_pubkey)
             .unwrap();
         assert_eq!(from_account.1.lamports, 999);
 
         let to_account = effects
-            .modified_accounts
+            .resulting_accounts
             .iter()
             .find(|(k, _)| k == &to_pubkey)
             .unwrap();
