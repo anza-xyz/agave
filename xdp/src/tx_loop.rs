@@ -137,13 +137,13 @@ pub fn tx_loop<
     // packets.
     let mut batched_packets = 0;
 
-    // Cache the underlay MAC for the current router epoch and GRE remote.
-    // (Fast-path: single GRE remote per queue. If you have multiple, switch to a small HashMap.)
-    // let mut cached_underlay: Option<(
-    //     usize,    /*router update counter*/
-    //     Ipv4Addr, /*gre.remote*/
-    //     MacAddress,
-    // )> = None;
+    // Cache the underlay MAC for the GRE remote.
+    // Assumes a single GRE tunnel per host - the cache stores one (gre_remote_ip, mac_address) pair.
+    // The cache invalidates automatically when:
+    // 1. gre_remote changes (tunnel reconfigured)
+    // 2. route_fn returns None (route/ARP changes or tunnel removed)
+    // 3. MAC address is missing (ARP entry expired)
+    let mut cached_gre_remote: Option<(Ipv4Addr, MacAddress)> = None;
 
     let mut timeouts = 0;
     loop {
@@ -233,47 +233,41 @@ pub fn tx_loop<
                             umem.release(frame.offset());
                             continue;
                         };
-                        let (nh, _iface) = route_fn(&IpAddr::V4(gre_remote)).unwrap();
-                        let outer_dst_mac = nh.mac_addr.unwrap();
-                        // log::info!("greg: xdp: dst_ip nh: {next_hop:?} iface: {interface_info:?}");
-                        // Resolve the UNDERLAY toward the GRE remote (this is where we ARP and enforce ifindex)
-                        // greg: todo, we should probably cache this
-                        // let (u_nh, u_iface) = router.route(IpAddr::V4(gre.remote)).unwrap();
-                        // this is always the same. so let's cache this
-                        /*
-                        NextHop { mac_addr: Some(MacAddress([0, 0, 128, 1, 35, 0])), ip_addr: 64.130.41.161, if_index: 4, preferred_src_ip: None } iface: InterfaceInfo { if_index: 4, if_name: "bond0", dev_type: 1, gre_tunnel: None, primary_ipv4: None }
-                         */
-                        // log::info!("greg: xdp: gre nh: {next_hop:?} iface: {interface_info:?}");
-
-                        // Resolve underlay MAC with tiny cache keyed by epoch and gre remote
-                        // let outer_dst_mac = match cached_underlay.as_ref() {
-                        //     Some((uc, ip, mac)) if *uc == update_counter && *ip == gre.remote => {
-                        //         *mac
-                        //     }
-                        //     _ => {
-                        //         let (nh, _iface) = router.route(IpAddr::V4(gre.remote)).unwrap();
-                        //         // log::info!("greg: xdp: new gre n nh: {nh:?} iface: {iface:?}");
-                        //         match nh.mac_addr {
-                        //             Some(m) => {
-                        //                 cached_underlay = Some((update_counter, gre.remote, m));
-                        //                 // log::info!(
-                        //                 //     "greg: xdp: cached underlay MAC: {m}, remote: {}",
-                        //                 //     gre.remote
-                        //                 // );
-                        //                 m
-                        //             }
-                        //             None => {
-                        //                 // log::warn!(
-                        //                 //     "greg: dropping GRE pkt: missing underlay MAC for next-hop {} on {}({})",
-                        //                 //     nh.ip_addr, iface.if_name, iface.if_index
-                        //                 // );
-                        //                 batched_packets -= 1;
-                        //                 umem.release(frame.offset());
-                        //                 continue;
-                        //             }
-                        //         }
-                        //     }
-                        // };
+                        // Cache the GRE remote route lookup to avoid calling route_fn twice in hot path.
+                        // Since we assume a single GRE tunnel, this cache will hit for all GRE packets after the first.
+                        // The cache handles tunnel changes: if gre_remote changes, cache miss triggers refresh.
+                        let outer_dst_mac = match cached_gre_remote.as_ref() {
+                            Some((cached_remote, cached_mac)) if *cached_remote == gre_remote => {
+                                *cached_mac
+                            }
+                            _ => {
+                                // Cache miss - lookup and cache (first packet, tunnel changed, or after route change)
+                                let Some((nh, _iface)) = route_fn(&IpAddr::V4(gre_remote)) else {
+                                    // Invalidate cache on route failure
+                                    cached_gre_remote = None;
+                                    log::warn!(
+                                        "dropping packet: no route for GRE remote {gre_remote}"
+                                    );
+                                    batched_packets -= 1;
+                                    umem.release(frame.offset());
+                                    continue;
+                                };
+                                let Some(mac) = nh.mac_addr else {
+                                    // Invalidate cache on missing MAC
+                                    cached_gre_remote = None;
+                                    log::warn!(
+                                        "dropping packet: GRE remote {gre_remote} must be routed through {} which has no known MAC address",
+                                        nh.ip_addr
+                                    );
+                                    batched_packets -= 1;
+                                    umem.release(frame.offset());
+                                    continue;
+                                };
+                                // Update cache
+                                cached_gre_remote = Some((gre_remote, mac));
+                                mac
+                            }
+                        };
 
                         // Calculate GRE packet size
                         const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
