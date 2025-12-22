@@ -794,6 +794,7 @@ mod tests {
                             instruction_accounts,
                             dedup_map,
                             Cow::Owned(instruction_data.clone()),
+                            None,
                         )
                         .unwrap();
                 } else {
