@@ -11,7 +11,7 @@ use {
     solana_measure::measure::Measure,
     std::{
         sync::{
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
         },
         time::Instant,
@@ -27,6 +27,8 @@ pub struct SnapshotController {
     abs_request_sender: SnapshotRequestSender,
     snapshot_config: SnapshotConfig,
     latest_abs_request_slot: AtomicU64,
+    request_fastboot_snapshot: AtomicBool,
+    latest_bank_snapshot_slot: AtomicU64,
 }
 
 impl SnapshotController {
@@ -39,6 +41,8 @@ impl SnapshotController {
             abs_request_sender,
             snapshot_config,
             latest_abs_request_slot: AtomicU64::new(root_slot),
+            request_fastboot_snapshot: AtomicBool::new(false),
+            latest_bank_snapshot_slot: AtomicU64::new(root_slot),
         }
     }
 
@@ -58,63 +62,79 @@ impl SnapshotController {
         self.latest_abs_request_slot.store(slot, Ordering::Relaxed);
     }
 
+    pub fn request_shutdown_snapshot(&self) {
+        self.request_fastboot_snapshot
+            .store(true, Ordering::Relaxed);
+    }
+
+    pub fn latest_bank_snapshot_slot(&self) -> Slot {
+        self.latest_bank_snapshot_slot.load(Ordering::Relaxed)
+    }
+
+    pub fn set_latest_bank_snapshot_slot(&self, slot: Slot) {
+        self.latest_bank_snapshot_slot
+            .store(slot, Ordering::Relaxed);
+    }
+
     pub fn handle_new_roots(&self, root: Slot, banks: &[&Arc<Bank>]) -> (bool, SquashTiming, u64) {
         let mut is_root_bank_squashed = false;
         let mut squash_timing = SquashTiming::default();
         let mut total_snapshot_ms = 0;
+        let request_fastboot_snapshot = self
+            .request_fastboot_snapshot
+            .swap(false, Ordering::Relaxed);
 
-        if let Some(SnapshotGenerationIntervals {
+        let SnapshotGenerationIntervals {
             full_snapshot_interval,
             incremental_snapshot_interval,
-        }) = self.snapshot_generation_intervals()
-        {
-            if let Some((bank, request_kind)) = banks.iter().find_map(|bank| {
-                let should_request_full_snapshot =
-                    if let SnapshotInterval::Slots(snapshot_interval) = full_snapshot_interval {
-                        bank.block_height() % snapshot_interval == 0
-                    } else {
-                        false
-                    };
-                let should_request_incremental_snapshot =
-                    if let SnapshotInterval::Slots(snapshot_interval) =
-                        incremental_snapshot_interval
-                    {
-                        bank.block_height() % snapshot_interval == 0
-                    } else {
-                        false
-                    };
+        } = self.snapshot_generation_intervals();
 
-                if bank.slot() <= self.latest_abs_request_slot() {
-                    None
-                } else if should_request_full_snapshot {
-                    Some((bank, SnapshotRequestKind::FullSnapshot))
-                } else if should_request_incremental_snapshot {
-                    Some((bank, SnapshotRequestKind::IncrementalSnapshot))
+        if let Some((bank, request_kind)) = banks.iter().find_map(|bank| {
+            let should_request_full_snapshot =
+                if let SnapshotInterval::Slots(snapshot_interval) = full_snapshot_interval {
+                    bank.block_height() % snapshot_interval == 0
                 } else {
-                    None
-                }
-            }) {
-                let bank_slot = bank.slot();
-                self.set_latest_abs_request_slot(bank_slot);
-                squash_timing += bank.squash();
+                    false
+                };
+            let should_request_incremental_snapshot =
+                if let SnapshotInterval::Slots(snapshot_interval) = incremental_snapshot_interval {
+                    bank.block_height() % snapshot_interval == 0
+                } else {
+                    false
+                };
 
-                is_root_bank_squashed = bank_slot == root;
-
-                let mut snapshot_time = Measure::start("squash::snapshot_time");
-                // Save off the status cache because these may get pruned if another
-                // `set_root()` is called before the snapshots package can be generated
-                let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
-                if let Err(e) = self.abs_request_sender.send(SnapshotRequest {
-                    snapshot_root_bank: Arc::clone(bank),
-                    status_cache_slot_deltas,
-                    request_kind,
-                    enqueued: Instant::now(),
-                }) {
-                    warn!("Error sending snapshot request for bank: {bank_slot}, err: {e:?}");
-                }
-                snapshot_time.stop();
-                total_snapshot_ms += snapshot_time.as_ms();
+            if bank.slot() <= self.latest_abs_request_slot() {
+                None
+            } else if should_request_full_snapshot {
+                Some((bank, SnapshotRequestKind::FullSnapshot))
+            } else if should_request_incremental_snapshot {
+                Some((bank, SnapshotRequestKind::IncrementalSnapshot))
+            } else if request_fastboot_snapshot {
+                Some((bank, SnapshotRequestKind::FastbootSnapshot))
+            } else {
+                None
             }
+        }) {
+            let bank_slot = bank.slot();
+            self.set_latest_abs_request_slot(bank_slot);
+            squash_timing += bank.squash();
+
+            is_root_bank_squashed = bank_slot == root;
+
+            let mut snapshot_time = Measure::start("squash::snapshot_time");
+            // Save off the status cache because these may get pruned if another
+            // `set_root()` is called before the snapshots package can be generated
+            let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
+            if let Err(e) = self.abs_request_sender.send(SnapshotRequest {
+                snapshot_root_bank: Arc::clone(bank),
+                status_cache_slot_deltas,
+                request_kind,
+                enqueued: Instant::now(),
+            }) {
+                warn!("Error sending snapshot request for bank: {bank_slot}, err: {e:?}");
+            }
+            snapshot_time.stop();
+            total_snapshot_ms += snapshot_time.as_ms();
         }
 
         (is_root_bank_squashed, squash_timing, total_snapshot_ms)
@@ -124,15 +144,20 @@ impl SnapshotController {
     ///
     /// Returns None if snapshot generation is disabled and snapshot requests
     /// should not be sent
-    fn snapshot_generation_intervals(&self) -> Option<SnapshotGenerationIntervals> {
-        self.snapshot_config
-            .should_generate_snapshots()
-            .then_some(SnapshotGenerationIntervals {
+    fn snapshot_generation_intervals(&self) -> SnapshotGenerationIntervals {
+        if self.snapshot_config.should_generate_snapshots() {
+            SnapshotGenerationIntervals {
                 full_snapshot_interval: self.snapshot_config.full_snapshot_archive_interval,
                 incremental_snapshot_interval: self
                     .snapshot_config
                     .incremental_snapshot_archive_interval,
-            })
+            }
+        } else {
+            SnapshotGenerationIntervals {
+                full_snapshot_interval: SnapshotInterval::Disabled,
+                incremental_snapshot_interval: SnapshotInterval::Disabled,
+            }
+        }
     }
 }
 
