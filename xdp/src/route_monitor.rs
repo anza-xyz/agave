@@ -1,12 +1,16 @@
 use {
     crate::{
-        netlink::{parse_rtm_newneigh, parse_rtm_newroute, parse_rtm_ifinfomsg, NetlinkMessage, NetlinkSocket},
+        netlink::{
+            parse_rtm_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage,
+            NetlinkSocket,
+        },
         route::Router,
     },
     arc_swap::ArcSwap,
     libc::{
-        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_NEIGH,
-        RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWNEIGH, RTM_NEWROUTE, RTMGRP_LINK, RTM_NEWLINK, RTM_DELLINK, 
+        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_LINK,
+        RTMGRP_NEIGH, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
+        RTM_NEWROUTE,
     },
     log::*,
     std::{
