@@ -5,7 +5,6 @@ use {
     },
     percentage::Percentage,
     std::{
-        cmp,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
@@ -24,9 +23,9 @@ pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
 pub const STREAM_THROTTLING_INTERVAL: Duration =
     Duration::from_millis(STREAM_THROTTLING_INTERVAL_MS);
 const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
-// EMA smoothing window (in 5ms buckets). Increased from 10→40 to make the load signal less
-// sensitive to short bursts (e.g. at the start of a leader slot) and only trigger
-// throttling when load is sustained near saturation. See ema_function().
+// EMA smoothing window to make the load signal less sensitive to short bursts at the start
+// of a leader slot and only trigger throttling if saturation is sustained.
+// 40 was chosen based on simulations. See ema_function().
 const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 
 // Throttling with hysteresis.
@@ -286,7 +285,7 @@ pub mod test {
         crate::quic::{
             StreamerStats, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
-        std::sync::Arc,
+        std::sync::{atomic::Ordering, Arc},
     };
 
     #[test]
@@ -296,13 +295,126 @@ pub mod test {
             DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
-        // 50K packets per ms * 20% / 500 max unstaked connections
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
                 ConnectionPeerType::Unstaked,
                 10000
             ),
             20
+        );
+    }
+
+    #[test]
+    fn test_staked_throttling_hysteresis_on_off() {
+        let mut load_ema = StakedStreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
+        );
+
+        load_ema.staked_throttling_on_load_threshold = 10;
+        load_ema.staked_throttling_off_load_threshold = 5;
+
+        load_ema.current_load_ema.store(12, Ordering::Relaxed);
+        load_ema
+            .load_in_recent_interval
+            .store(12, Ordering::Relaxed);
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
+        assert!(load_ema.staked_throttling.load(Ordering::Relaxed));
+
+        load_ema.current_load_ema.store(4, Ordering::Relaxed);
+        load_ema.load_in_recent_interval.store(0, Ordering::Relaxed);
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS));
+        assert!(!load_ema.staked_throttling.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_staked_capacity_shares_when_throttled() {
+        let mut load_ema = StakedStreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
+        );
+
+        load_ema.staked_throttling.store(true, Ordering::Relaxed);
+        load_ema.max_staked_load_in_throttling_window = 100;
+        load_ema.max_unstaked_load_in_throttling_window = 20;
+
+        assert_eq!(
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Staked(10),
+                100
+            ),
+            load_ema.max_unstaked_load_in_throttling_window + 1
+        );
+        assert_eq!(
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Staked(50),
+                100
+            ),
+            50
+        );
+    }
+
+    #[test]
+    fn test_no_throttle_below_threshold() {
+        let mut load_ema = StakedStreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
+        );
+
+        load_ema.staked_throttling.store(false, Ordering::Relaxed);
+        load_ema.max_staked_load_in_throttling_window = 100;
+        load_ema.max_unstaked_load_in_throttling_window = 20;
+
+        assert_eq!(
+            load_ema.available_load_capacity_in_throttling_duration(
+                ConnectionPeerType::Staked(10),
+                100
+            ),
+            load_ema.max_staked_load_in_throttling_window
+        );
+    }
+
+    #[test]
+    fn test_ema_decay_handles_missing_intervals() {
+        let load_ema = StakedStreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
+        );
+
+        load_ema.current_load_ema.store(100, Ordering::Relaxed);
+        load_ema
+            .load_in_recent_interval
+            .store(100, Ordering::Relaxed);
+
+        load_ema.update_ema(u128::from(STREAM_LOAD_EMA_INTERVAL_MS * 3));
+
+        let expected = StakedStreamLoadEMA::ema_function(
+            StakedStreamLoadEMA::ema_function(StakedStreamLoadEMA::ema_function(100, 100), 0),
+            0,
+        );
+        assert_eq!(
+            load_ema.current_load_ema.load(Ordering::Relaxed),
+            u64::try_from(expected).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_total_stake_zero_safety() {
+        let load_ema = StakedStreamLoadEMA::new(
+            Arc::new(StreamerStats::default()),
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
+        );
+        load_ema.staked_throttling.store(true, Ordering::Relaxed);
+
+        assert_eq!(
+            load_ema
+                .available_load_capacity_in_throttling_duration(ConnectionPeerType::Staked(10), 0),
+            load_ema.max_unstaked_load_in_throttling_window + 1
         );
     }
 }
