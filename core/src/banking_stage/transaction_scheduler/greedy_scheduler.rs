@@ -4,7 +4,7 @@ use {
     super::{
         scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
         scheduler_common::{
-            select_thread, SchedulingCommon, TransactionSchedulingError, TransactionSchedulingInfo,
+            SchedulingCommon, TransactionSchedulingError, TransactionSchedulingInfo, select_thread,
         },
         scheduler_error::SchedulerError,
         transaction_priority_id::TransactionPriorityId,
@@ -316,7 +316,7 @@ mod test {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::borrow::Borrow,
         test_case::test_case,
     };

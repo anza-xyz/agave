@@ -4,12 +4,12 @@ use {
         cluster_info_vote_listener::VoteTracker,
         cluster_slots_service::cluster_slots::ClusterSlots,
         consensus::{
-            fork_choice::{select_vote_and_reset_forks, SelectVoteAndResetForkResult},
+            Tower,
+            fork_choice::{SelectVoteAndResetForkResult, select_vote_and_reset_forks},
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
             latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
             progress_map::{ForkProgress, LockoutInterval, ProgressMap},
             tower_vote_state::TowerVoteState,
-            Tower,
         },
         repair::cluster_slot_state_verifier::{
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
@@ -26,7 +26,7 @@ use {
         bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{
-            create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+            GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
         },
     },
     solana_signer::Signer,
@@ -36,7 +36,7 @@ use {
         collections::{HashMap, HashSet, VecDeque},
         sync::{Arc, RwLock},
     },
-    trees::{tr, Tree, TreeWalk},
+    trees::{Tree, TreeWalk, tr},
 };
 
 pub struct VoteSimulator {
@@ -144,9 +144,11 @@ impl VoteSimulator {
                         .get_vote_account(&keypairs.vote_keypair.pubkey())
                         .unwrap();
                     let vote_state_view = vote_account.vote_state_view();
-                    assert!(vote_state_view
-                        .votes_iter()
-                        .any(|lockout| lockout.slot() == parent));
+                    assert!(
+                        vote_state_view
+                            .votes_iter()
+                            .any(|lockout| lockout.slot() == parent)
+                    );
                 }
             }
 
