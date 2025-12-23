@@ -534,7 +534,7 @@ pub fn serialize_snapshot(
                 stream,
                 bank_fields,
                 bank_hash_stats,
-                &get_storages_to_serialize(snapshot_storages),
+                snapshot_storages,
                 extra_fields,
                 write_version,
             )?;
@@ -1012,17 +1012,6 @@ pub fn hard_link_storages_to_snapshot(
         })?;
     }
     Ok(())
-}
-
-/// serializing needs Vec<Vec<Arc<AccountStorageEntry>>>, but data structure at runtime is Vec<Arc<AccountStorageEntry>>
-/// translates to what we need
-pub(crate) fn get_storages_to_serialize(
-    snapshot_storages: &[Arc<AccountStorageEntry>],
-) -> Vec<Vec<Arc<AccountStorageEntry>>> {
-    snapshot_storages
-        .iter()
-        .map(|storage| vec![Arc::clone(storage)])
-        .collect::<Vec<_>>()
 }
 
 /// Unarchives the given full and incremental snapshot archives, as long as they are compatible.

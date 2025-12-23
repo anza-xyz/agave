@@ -8,10 +8,7 @@ mod tests {
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
-            snapshot_utils::{
-                create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
-                StorageAndNextAccountsFileId,
-            },
+            snapshot_utils::{create_tmp_accounts_dir_for_tests, StorageAndNextAccountsFileId},
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
@@ -121,7 +118,7 @@ mod tests {
                 &mut writer,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
+                &bank2.get_snapshot_storages(None),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
                     obsolete_incremental_snapshot_persistence: None,
@@ -217,7 +214,7 @@ mod tests {
         crate::serde_snapshot::bank_to_stream(
             &mut std::io::BufWriter::new(&mut writer),
             &bank,
-            &get_storages_to_serialize(&snapshot_storages),
+            &snapshot_storages,
         )
         .unwrap();
 
@@ -379,7 +376,7 @@ mod tests {
                 serializer,
                 bank_fields,
                 BankHashStats::default(),
-                &get_storages_to_serialize(&snapshot_storages),
+                &snapshot_storages,
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
                     obsolete_incremental_snapshot_persistence: Some(

@@ -45,7 +45,6 @@ use {
     solana_serde::default_on_eof,
     solana_stake_interface::state::Delegation,
     std::{
-        cell::RefCell,
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
         path::PathBuf,
@@ -587,7 +586,7 @@ where
 pub(crate) fn bank_to_stream<W>(
     stream: &mut io::BufWriter<W>,
     bank: &Bank,
-    snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
+    snapshot_storages: &[Arc<AccountStorageEntry>],
 ) -> Result<(), Error>
 where
     W: Write,
@@ -606,7 +605,7 @@ pub fn serialize_bank_snapshot_into(
     stream: &mut dyn Write,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
+    account_storage_entries: &[Arc<AccountStorageEntry>],
     extra_fields: ExtraFieldsToSerialize,
     write_version: u64,
 ) -> Result<(), Error> {
@@ -629,7 +628,7 @@ pub fn serialize_bank_snapshot_with<S>(
     serializer: S,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
+    account_storage_entries: &[Arc<AccountStorageEntry>],
     extra_fields: ExtraFieldsToSerialize,
     write_version: u64,
 ) -> Result<S::Ok, S::Error>
@@ -650,7 +649,7 @@ where
 #[cfg(test)]
 struct SerializableBankAndStorage<'a> {
     bank: &'a Bank,
-    snapshot_storages: &'a [Vec<Arc<AccountStorageEntry>>],
+    snapshot_storages: &'a [Arc<AccountStorageEntry>],
 }
 
 #[cfg(test)]
@@ -690,7 +689,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
 #[cfg(test)]
 struct SerializableBankAndStorageNoExtra<'a> {
     bank: &'a Bank,
-    snapshot_storages: &'a [Vec<Arc<AccountStorageEntry>>],
+    snapshot_storages: &'a [Arc<AccountStorageEntry>],
 }
 
 #[cfg(test)]
@@ -733,7 +732,7 @@ impl<'a> From<SerializableBankAndStorageNoExtra<'a>> for SerializableBankAndStor
 
 struct SerializableAccountsDb<'a> {
     slot: Slot,
-    account_storage_entries: &'a [Vec<Arc<AccountStorageEntry>>],
+    account_storage_entries: &'a [Arc<AccountStorageEntry>],
     bank_hash_stats: BankHashStats,
     write_version: u64,
 }
@@ -744,14 +743,12 @@ impl Serialize for SerializableAccountsDb<'_> {
         S: serde::ser::Serializer,
     {
         // (1st of 3 elements) write the list of account storage entry lists out as a map
-        let entry_count = RefCell::<usize>::new(0);
         let entries = utils::serialize_iter_as_map(self.account_storage_entries.iter().map(|x| {
-            *entry_count.borrow_mut() += x.len();
             (
-                x.first().unwrap().slot(),
+                x.slot(),
                 utils::serialize_iter_as_seq(
-                    x.iter()
-                        .map(|x| SerializableAccountStorageEntry::new(x.as_ref(), self.slot)),
+                    [x].into_iter()
+                        .map(|x| SerializableAccountStorageEntry::new(x, self.slot)),
                 ),
             )
         }));
@@ -778,7 +775,7 @@ impl Serialize for SerializableAccountsDb<'_> {
         datapoint_info!(
             "serialize_account_storage_ms",
             ("duration", serialize_account_storage_timer.as_ms(), i64),
-            ("num_entries", *entry_count.borrow(), i64),
+            ("num_entries", self.account_storage_entries.len(), i64),
         );
         result
     }
