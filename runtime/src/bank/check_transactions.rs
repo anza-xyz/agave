@@ -5,10 +5,7 @@ use {
     solana_clock::{Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
     solana_fee::{calculate_fee_details, FeeFeatures},
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
-    solana_nonce::{
-        state::{Data as NonceData, DurableNonce},
-        NONCED_TX_MARKER_IX_INDEX,
-    },
+    solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
@@ -224,13 +221,6 @@ impl Bank {
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
-
-        let nonce_is_authorized = message
-            .get_ix_signers(NONCED_TX_MARKER_IX_INDEX as usize)
-            .any(|signer| signer == &nonce_data.authority);
-        if !nonce_is_authorized {
-            return None;
-        }
 
         Some((*nonce_address, nonce_data))
     }
