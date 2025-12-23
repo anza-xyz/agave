@@ -46,8 +46,9 @@ use {
         client_error::ErrorKind as ClientErrorKind,
         config::{
             RpcAccountInfoConfig, RpcBlockConfig, RpcGetVoteAccountsConfig,
-            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcProgramAccountsConfig,
-            RpcTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter,
+            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcLeaderScheduleConfig,
+            RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
+            RpcTransactionLogsFilter,
         },
         filter::{Memcmp, RpcFilterType},
         request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
@@ -199,6 +200,25 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .value_name("EPOCH")
                         .validator(is_epoch)
                         .help("Epoch to show leader schedule for [default: current]"),
+                )
+                .arg(
+                    Arg::with_name("vote_addresses")
+                        .long("vote-addresses")
+                        .takes_value(true)
+                        .value_name("VOTE_PUBKEY")
+                        .validator(is_valid_pubkey)
+                        .multiple(true)
+                        .conflicts_with("only_vote_addresses")
+                        .help("Display leader schedule only for these vote account addresses"),
+                )
+                .arg(
+                    Arg::with_name("only_vote_addresses")
+                        .long("only-vote-addresses")
+                        .conflicts_with("vote_addresses")
+                        .help(
+                            "Display leader schedule keyed by vote account addresses instead of \
+                             identity",
+                        ),
                 ),
         )
         .subcommand(
@@ -1021,8 +1041,14 @@ pub async fn process_first_available_block(rpc_client: &RpcClient) -> ProcessRes
 
 pub fn parse_leader_schedule(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let epoch = value_of(matches, "epoch");
+    let vote_addresses = pubkeys_of(matches, "vote_addresses");
+    let only_vote_addresses = matches.is_present("only_vote_addresses");
     Ok(CliCommandInfo::without_signers(
-        CliCommand::LeaderSchedule { epoch },
+        CliCommand::LeaderSchedule {
+            epoch,
+            vote_addresses,
+            only_vote_addresses,
+        },
     ))
 }
 
@@ -1030,6 +1056,8 @@ pub async fn process_leader_schedule(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     epoch: Option<Epoch>,
+    vote_addresses: Option<Vec<Pubkey>>,
+    only_vote_addresses: bool,
 ) -> ProcessResult {
     let epoch_info = rpc_client.get_epoch_info().await?;
     let epoch = epoch.unwrap_or(epoch_info.epoch);
@@ -1040,15 +1068,51 @@ pub async fn process_leader_schedule(
     let epoch_schedule = rpc_client.get_epoch_schedule().await?;
     let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
 
+    let mut leader_schedule_config = RpcLeaderScheduleConfig {
+        commitment: Some(config.commitment),
+        ..Default::default()
+    };
+
+    if let Some(ref addresses) = vote_addresses {
+        leader_schedule_config.vote_accounts =
+            Some(addresses.iter().map(|p| p.to_string()).collect());
+    }
+
     let leader_schedule = rpc_client
-        .get_leader_schedule(Some(first_slot_in_epoch))
+        .get_leader_schedule_with_config(Some(first_slot_in_epoch), leader_schedule_config)
         .await?;
     if leader_schedule.is_none() {
         return Err(
             format!("Unable to fetch leader schedule for slot {first_slot_in_epoch}").into(),
         );
     }
-    let leader_schedule = leader_schedule.unwrap();
+    let mut leader_schedule = leader_schedule.unwrap();
+
+    if only_vote_addresses {
+        let vote_accounts = rpc_client.get_vote_accounts().await?;
+        let mut identity_to_vote = HashMap::new();
+
+        for vote_account in vote_accounts
+            .current
+            .iter()
+            .chain(vote_accounts.delinquent.iter())
+        {
+            identity_to_vote.insert(
+                vote_account.node_pubkey.clone(),
+                vote_account.vote_pubkey.clone(),
+            );
+        }
+
+        let mut vote_keyed_schedule = HashMap::new();
+        for (identity, slots) in leader_schedule.drain() {
+            if let Some(vote_pubkey) = identity_to_vote.get(&identity) {
+                vote_keyed_schedule.insert(vote_pubkey.clone(), slots);
+            } else {
+                vote_keyed_schedule.insert(format!("{}(no-vote-account)", identity), slots);
+            }
+        }
+        leader_schedule = vote_keyed_schedule;
+    }
 
     let mut leader_per_slot_index = Vec::new();
     for (pubkey, leader_slots) in leader_schedule.iter() {
