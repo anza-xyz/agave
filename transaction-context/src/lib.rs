@@ -421,6 +421,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
+        self.transaction_frame.current_executing_instruction = index_in_trace as u32;
         self.instruction_stack.push(index_in_trace);
         if let Some(index_in_transaction) = self.find_index_of_account(&instructions::id()) {
             let mut mut_account_ref = self.accounts.try_borrow_mut(index_in_transaction)?;
@@ -461,13 +462,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();
-        if self.instruction_stack.is_empty() {
-            self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
-        } else {
+        if let Some(instr_idx) = self.instruction_stack.last() {
             self.transaction_frame.number_of_executed_cpis = self
                 .transaction_frame
                 .number_of_executed_cpis
                 .saturating_add(1);
+            self.transaction_frame.current_executing_instruction = *instr_idx as u32;
+        } else {
+            self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
         }
         if detected_an_unbalanced_instruction? {
             Err(InstructionError::UnbalancedInstruction)
@@ -847,6 +849,12 @@ mod tests {
             )
             .unwrap();
         transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            0
+        );
         transaction_context.pop().unwrap();
         assert_eq!(
             transaction_context.transaction_frame.number_of_instructions,
@@ -868,6 +876,12 @@ mod tests {
             )
             .unwrap();
         transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            1
+        );
 
         transaction_context
             .configure_cpi_instruction(
@@ -888,6 +902,13 @@ mod tests {
             0
         );
         transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            2
+        );
+
         transaction_context.pop().unwrap();
         assert_eq!(
             transaction_context.transaction_frame.number_of_instructions,
@@ -897,6 +918,12 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .number_of_executed_cpis,
+            1
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
             1
         );
         transaction_context.pop().unwrap();
