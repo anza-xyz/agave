@@ -494,7 +494,6 @@ pub fn serialize_snapshot(
         mut bank_fields,
         bank_hash_stats,
         status_cache_slot_deltas,
-        write_version,
     } = bank_snapshot_package;
     let status_cache_slot_deltas = status_cache_slot_deltas.as_slice();
     let slot = bank_fields.slot;
@@ -536,7 +535,6 @@ pub fn serialize_snapshot(
                 bank_hash_stats,
                 snapshot_storages,
                 extra_fields,
-                write_version,
             )?;
             Ok(())
         };

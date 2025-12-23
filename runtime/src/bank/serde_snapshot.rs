@@ -30,7 +30,7 @@ mod tests {
             mem,
             ops::RangeFull,
             path::Path,
-            sync::{atomic::Ordering, Arc, OnceLock},
+            sync::{Arc, OnceLock},
         },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
@@ -126,7 +126,6 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                 },
-                accounts_db.write_version.load(Ordering::Acquire),
             )
             .unwrap();
         }
@@ -386,7 +385,6 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },
-                u64::default(), // obsolete, formerly write_version
             )
         }
     }
