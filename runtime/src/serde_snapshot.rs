@@ -78,7 +78,7 @@ const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct AccountsDbFields<T>(
-    HashMap<Slot, SmallVec<[T; 1]>>,
+    Vec<(Slot, SmallVec<[T; 1]>)>,
     u64, // obsolete, formerly write_version
     Slot,
     BankHashInfo,
