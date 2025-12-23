@@ -1,6 +1,7 @@
 //! The entrypoint into votor the module responsible for voting, rooting, and notifying
 //! the core to create a new block.
 //! ```text
+//!
 //!                                Votor
 //!   ┌────────────────────────────────────────────────────────────────────────────┐
 //!   │                                                                            │
@@ -19,11 +20,11 @@
 //!   │        │         │                              │ │                        │
 //!   │   ┌────┼─────────┼───────────────┐              │ │                        │
 //!   │   │                              │              │ │      Block             │ ┌────────────────────┐
-//!   │   │   Certificate Pool Service   │              │ │  ┌─────────────────────│─┼ Replay / Broadcast │
+//!   │   │   Consensus Pool Service     │              │ │  ┌─────────────────────│─┼ Replay / Broadcast │
 //!   │   │                              │              │ │  │                     │ └────────────────────┘
 //!   │   │ ┌──────────────────────────┐ │              │ │  │                     │
 //!   │   │ │                          │ │              │ │  │                     │
-//!   │   │ │     Certificate Pool     │ │              │ │  │                     │
+//!   │   │ │     Consensus Pool       │ │              │ │  │                     │
 //!   │   │ │ ┌────────────────────┐   │ │         ┌────▼─┼──▼───────┐   Start     │
 //!   │   │ │ │Parent ready tracker│   │ │ Vote    │                 │ Leader window ┌──────────────────────┐
 //!   │   │ │ └────────────────────┘   │ ◄─────────┼  Event Handler  ┼─────────────│─►  Block creation loop │
