@@ -91,7 +91,7 @@ use {
         UiConfirmedBlock, UiTransactionEncoding,
     },
     solana_validator_exit::Exit,
-    solana_vote_program::vote_state::{VoteStateV3 as VoteState, MAX_LOCKOUT_HISTORY},
+    solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     spl_generic_token::{
         token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
         token_2022::{self, ACCOUNTTYPE_ACCOUNT},
@@ -2935,17 +2935,14 @@ pub mod rpc_minimal {
                         ))
                     })?;
 
-                    if !solana_vote_program::check_id(account.owner()) {
-                        return Err(Error::invalid_params(format!(
-                            "{vote_pubkey} is not owned by the vote program"
-                        )));
-                    }
+                    let vote_account = solana_vote::vote_account::VoteAccount::try_from(account)
+                        .map_err(|_| {
+                            Error::invalid_params(format!(
+                                "{vote_pubkey} is not a valid vote account"
+                            ))
+                        })?;
 
-                    let vote_state = VoteState::deserialize(&account.data()).map_err(|_| {
-                        Error::invalid_params(format!("{vote_pubkey} has invalid vote state data"))
-                    })?;
-
-                    allowed_identities.insert(vote_state.node_pubkey.to_string());
+                    allowed_identities.insert(vote_account.node_pubkey().to_string());
                 }
             }
 
@@ -5538,6 +5535,115 @@ pub mod tests {
             parse_success_result(rpc.handle_request_sync(request));
         let expected = Some(HashMap::default());
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_leader_schedule_by_vote_accounts() {
+        use solana_vote_interface::state::{VoteInitV2, VoteStateV4};
+
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+
+        let vote_keypair1 = Keypair::new();
+        let vote_keypair2 = Keypair::new();
+        let node_keypair1 = Keypair::new();
+        let node_keypair2 = Keypair::new();
+
+        let vote_state1 = VoteStateV4::new(
+            &VoteInitV2 {
+                node_pubkey: node_keypair1.pubkey(),
+                authorized_voter: vote_keypair1.pubkey(),
+                authorized_withdrawer: vote_keypair1.pubkey(),
+                ..Default::default()
+            },
+            &bank.get_sysvar_cache_for_tests().get_clock().unwrap(),
+        );
+        rpc.store_vote_account(&vote_keypair1.pubkey(), vote_state1);
+
+        let vote_state2 = VoteStateV4::new(
+            &VoteInitV2 {
+                node_pubkey: node_keypair2.pubkey(),
+                authorized_voter: vote_keypair2.pubkey(),
+                authorized_withdrawer: vote_keypair2.pubkey(),
+                ..Default::default()
+            },
+            &bank.get_sysvar_cache_for_tests().get_clock().unwrap(),
+        );
+        rpc.store_vote_account(&vote_keypair2.pubkey(), vote_state2);
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "voteAccounts": [vote_keypair1.pubkey().to_string()]
+            }])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(result.is_some());
+        let schedule = result.unwrap();
+        // Should only contain the node pubkey associated with vote_keypair1
+        assert!(schedule.contains_key(&node_keypair1.pubkey().to_string())
+            || schedule.is_empty()); // empty if node_keypair1 is not a leader in this epoch
+
+        // Test filtering by multiple vote accounts
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "voteAccounts": [
+                    vote_keypair1.pubkey().to_string(),
+                    vote_keypair2.pubkey().to_string()
+                ]
+            }])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(result.is_some());
+        let schedule = result.unwrap();
+        for node_pubkey in schedule.keys() {
+            assert!(
+                *node_pubkey == node_keypair1.pubkey().to_string()
+                    || *node_pubkey == node_keypair2.pubkey().to_string()
+            );
+        }
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "identity": rpc.leader_pubkey().to_string(),
+                "voteAccounts": [vote_keypair1.pubkey().to_string()]
+            }])),
+        );
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            ErrorCode::InvalidParams.code(),
+            String::from("Cannot specify both 'identity' and 'voteAccounts'"),
+        );
+        assert_eq!(response, expected);
+
+        let fake_vote_keypair = Keypair::new();
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "voteAccounts": [fake_vote_keypair.pubkey().to_string()]
+            }])),
+        );
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(response.0, ErrorCode::InvalidParams.code());
+        assert!(response.1.contains("does not exist"));
+
+        // Test with invalid vote account (not owned by vote program)
+        let regular_account = Keypair::new();
+        bank.transfer(1_000_000, &rpc.mint_keypair, &regular_account.pubkey())
+            .unwrap();
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "voteAccounts": [regular_account.pubkey().to_string()]
+            }])),
+        );
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(response.0, ErrorCode::InvalidParams.code());
+        assert!(response.1.contains("not a valid vote account"));
     }
 
     #[test]
