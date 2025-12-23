@@ -204,7 +204,8 @@ impl<B> IoUringFileCreator<'_, B> {
             // Safety: the buffer points to the valid memory backed by `self._backing_buffer`.
             // It's obtained from the queue of free buffers and is written to exclusively
             // here before being handled to the kernel or backlog in `file`.
-            let mut_slice = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
+            let mut_slice =
+                unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len() as usize) };
             let len = src.read(mut_slice)?;
 
             if len == 0 {
