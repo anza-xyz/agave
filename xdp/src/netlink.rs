@@ -531,7 +531,7 @@ fn parse_linkinfo_kind_and_data<'a>(
 }
 
 /// Represents an entry in the neighbor table (ARP/NDP cache)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NeighborEntry {
     // IPv4 or IPv6 address
     pub destination: Option<IpAddr>,

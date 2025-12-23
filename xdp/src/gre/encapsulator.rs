@@ -2,9 +2,9 @@
 
 use {
     crate::{
-        gre::packet::{construct_gre_packet, PacketError, INNER_PACKET_HEADER_SIZE},
+        gre::packet::{construct_gre_packet, GreConfig, PacketError, INNER_PACKET_HEADER_SIZE},
         netlink::{GreTunnelInfo, InterfaceInfo, MacAddress},
-        packet::{ETH_HEADER_SIZE, GRE_HEADER_SIZE, IP_HEADER_SIZE},
+        packet::{ETH_HEADER_SIZE, IP_HEADER_SIZE},
         route::NextHop,
     },
     std::net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -71,8 +71,15 @@ impl GreEncapsulator {
     }
 
     /// Calculate the size of a GRE-encapsulated packet
-    pub fn calculate_packet_size(payload_len: usize) -> usize {
-        ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE + INNER_PACKET_HEADER_SIZE + payload_len
+    /// Takes into account optional GRE key field
+    pub fn calculate_packet_size(payload_len: usize, config: &GreConfig) -> usize {
+        use crate::gre::packet::{GRE_HEADER_BASE_SIZE, GRE_KEY_SIZE};
+        let gre_header_size = if config.okey.is_some() {
+            GRE_HEADER_BASE_SIZE + GRE_KEY_SIZE
+        } else {
+            GRE_HEADER_BASE_SIZE
+        };
+        ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size + INNER_PACKET_HEADER_SIZE + payload_len
     }
 
     /// Encapsulate a packet with GRE and write it to the packet buffer
@@ -97,19 +104,15 @@ impl GreEncapsulator {
         src_port: u16,
         src_mac: MacAddress,
         next_hop: &NextHop,
-        gre: &GreTunnelInfo,
+        gre_config: &GreConfig,
         route_fn: &R,
     ) -> Result<usize, EncapsulationError>
     where
         R: Fn(&IpAddr) -> Option<(NextHop, InterfaceInfo)>,
     {
-        // Extract GRE endpoints
-        let (gre_local, gre_remote) =
-            Self::extract_gre_endpoints(gre).ok_or(EncapsulationError::InvalidEndpoints)?;
-
         // Get outer destination MAC (cached for performance)
         let outer_dst_mac = self
-            .get_outer_dst_mac(gre_remote, route_fn)
+            .get_outer_dst_mac(gre_config.remote, route_fn)
             .ok_or(EncapsulationError::RouteLookupFailed)?;
 
         let inner_src_ip = next_hop.preferred_src_ip.unwrap_or(src_ip);
@@ -126,10 +129,9 @@ impl GreEncapsulator {
             src_port,
             dst_addr.port(),
             payload,
-            gre_local,
-            gre_remote,
             &src_mac.0,
             &outer_dst_mac.0,
+            gre_config,
         )?;
 
         Ok(gre_packet_len)
