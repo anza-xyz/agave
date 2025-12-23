@@ -20,10 +20,10 @@ use {
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     smallvec::SmallVec,
     solana_accounts_db::{
+        account_storage_entry::AccountStorageEntry,
         accounts::Accounts,
         accounts_db::{
-            AccountStorageEntry, AccountsDb, AccountsDbConfig, AccountsFileId,
-            AtomicAccountsFileId, IndexGenerationInfo,
+            AccountsDb, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo,
         },
         accounts_file::{AccountsFile, StorageAccess},
         accounts_hash::AccountsLtHash,

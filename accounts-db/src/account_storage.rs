@@ -1,7 +1,7 @@
 //! Manage the map of slot -> append vec
 
 use {
-    crate::accounts_db::{AccountStorageEntry, AccountsFileId},
+    crate::{account_storage_entry::AccountStorageEntry, accounts_db::AccountsFileId},
     dashmap::DashMap,
     rand::seq::SliceRandom,
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},

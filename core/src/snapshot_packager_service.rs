@@ -5,7 +5,7 @@ use {
         snapshot_hash::StartingSnapshotHashes, SnapshotKind,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
-    solana_accounts_db::accounts_db::AccountStorageEntry,
+    solana_accounts_db::account_storage_entry::AccountStorageEntry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::{meas_dur, measure::Measure, measure_us},

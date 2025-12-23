@@ -36,7 +36,8 @@ use {
     semver::Version,
     solana_accounts_db::{
         account_storage::AccountStorageMap,
-        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
+        account_storage_entry::AccountStorageEntry,
+        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_file::{AccountsFile, StorageAccess},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },

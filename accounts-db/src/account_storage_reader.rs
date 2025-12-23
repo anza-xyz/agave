@@ -1,7 +1,7 @@
 use {
     crate::{
         account_info::Offset,
-        accounts_db::AccountStorageEntry,
+        account_storage_entry::AccountStorageEntry,
         accounts_file::{AccountsFile, InternalsForArchive},
     },
     solana_clock::Slot,
@@ -135,7 +135,8 @@ mod tests {
     use {
         super::*,
         crate::{
-            accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
+            account_storage_entry::AccountStorageEntry,
+            accounts_db::get_temp_accounts_paths,
             accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
             ObsoleteAccounts,
         },
