@@ -25,6 +25,8 @@ use {
     test_case::{test_case, test_matrix},
 };
 
+const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
+
 fn linear_ancestors(end_slot: u64) -> Ancestors {
     let mut ancestors: Ancestors = vec![(0, 0)].into_iter().collect();
     for i in 1..end_slot {
@@ -863,10 +865,7 @@ fn test_account_update() {
 fn test_account_grow_many() {
     let (_accounts_dir, paths) = get_temp_accounts_paths(2).unwrap();
     let size = 4096;
-    let accounts = AccountsDb {
-        file_size: size,
-        ..AccountsDb::new_for_tests(paths)
-    };
+    let accounts = AccountsDb::new_for_tests(paths);
     let mut keys = vec![];
     for i in 0..9 {
         let key = solana_pubkey::new_rand();
@@ -2099,10 +2098,7 @@ fn test_verify_bank_capitalization() {
 #[test]
 fn test_storage_finder() {
     agave_logger::setup();
-    let db = AccountsDb {
-        file_size: 16 * 1024,
-        ..AccountsDb::new_single_for_tests()
-    };
+    let db = AccountsDb::new_single_for_tests();
     let key = solana_pubkey::new_rand();
     let lamports = 100;
     let data_len = 8190;
@@ -2224,7 +2220,7 @@ define_accounts_db_test!(
     }
 );
 
-fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_size: u64) {
+fn do_full_clean_refcount(accounts: AccountsDb, store1_first: bool) {
     let pubkey1 = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
     let pubkey2 = Pubkey::from_str("My22211111111111111111111111111111111111111").unwrap();
     let pubkey3 = Pubkey::from_str("My33311111111111111111111111111111111111111").unwrap();
@@ -2245,7 +2241,6 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
     let zero_lamport_account = AccountSharedData::new(zero_lamport, data_size, &owner);
 
     let mut current_slot = 0;
-    accounts.file_size = store_size;
 
     // A: Initialize AccountsDb with pubkey1 and pubkey2
     current_slot += 1;
@@ -2323,24 +2318,19 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
     accounts.assert_ref_count(&pubkey3, 0);
 }
 
-// Setup 3 scenarios which try to differentiate between pubkey1 being in an
+// Setup 2 scenarios which try to differentiate between pubkey1 being in an
 // Available slot or a Full slot which would cause a different reset behavior
 // when pubkey1 is cleaned and therefore cause the ref count to be incorrect
 // preventing a removal of that key.
-//
-// do stores with a 4mb size so only 1 store is created per slot
-define_accounts_db_test!(test_full_clean_refcount_no_first_4m, |accounts| {
-    do_full_clean_refcount(accounts, false, 4 * 1024 * 1024);
-});
 
 // do stores with a 4k size and store pubkey1 first
-define_accounts_db_test!(test_full_clean_refcount_no_first_4k, |accounts| {
-    do_full_clean_refcount(accounts, false, 4 * 1024);
+define_accounts_db_test!(test_full_clean_refcount_no_first, |accounts| {
+    do_full_clean_refcount(accounts, false);
 });
 
 // do stores with a 4k size and store pubkey1 2nd
-define_accounts_db_test!(test_full_clean_refcount_first_4k, |accounts| {
-    do_full_clean_refcount(accounts, true, 4 * 1024);
+define_accounts_db_test!(test_full_clean_refcount_first, |accounts| {
+    do_full_clean_refcount(accounts, true);
 });
 
 #[test]

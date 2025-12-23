@@ -101,7 +101,6 @@ const SCAN_SLOT_PAR_ITER_THRESHOLD: usize = 4000;
 
 const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 
-const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 const DEFAULT_NUM_DIRS: u32 = 4;
 
 // This value reflects recommended memory lock limit documented in the validator's
@@ -1128,9 +1127,6 @@ pub struct AccountsDb {
     #[allow(dead_code)]
     pub temp_paths: Option<Vec<TempDir>>,
 
-    /// Starting file size of appendvecs
-    file_size: u64,
-
     /// Thread pool for foreground tasks, e.g. transaction processing
     pub thread_pool_foreground: ThreadPool,
     /// Thread pool for background tasks, e.g. AccountsBackgroundService and flush/clean/shrink
@@ -1363,7 +1359,6 @@ impl AccountsDb {
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
-            file_size: DEFAULT_FILE_SIZE,
             external_purge_slots_stats: PurgeStats::default(),
             clean_accounts_stats: CleanAccountsStats::default(),
             shrink_stats: ShrinkStats::default(),
@@ -1390,10 +1385,6 @@ impl AccountsDb {
             }
         }
         new
-    }
-
-    pub fn file_size(&self) -> u64 {
-        self.file_size
     }
 
     /// Get the base working directory
@@ -6033,8 +6024,7 @@ impl AccountsDb {
                         infos.len(),
                         accounts_and_meta_to_store.len()
                     );
-                    let special_store_size = std::cmp::max(data_len * 2, self.file_size);
-                    self.create_and_insert_store(slot, special_store_size, "large create");
+                    self.create_and_insert_store(slot, data_len * 2, "large create");
                 }
                 continue;
             };
