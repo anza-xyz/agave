@@ -316,6 +316,28 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
+    pub fn configure_cpi_instruction(
+        &mut self,
+        program_index: IndexOfAccount,
+        instruction_accounts: Vec<InstructionAccount>,
+        deduplication_map: Vec<u16>,
+        instruction_data: Cow<'ix_data, [u8]>,
+        parent_index: Option<u16>,
+    ) -> Result<(), InstructionError> {
+        self.configure_next_instruction(
+            program_index,
+            instruction_accounts,
+            deduplication_map,
+            instruction_data,
+            parent_index,
+        )?;
+        self.transaction_frame.number_of_instructions = self
+            .transaction_frame
+            .number_of_instructions
+            .saturating_add(1);
+        Ok(())
+    }
+
     /// Configures the next instruction.
     ///
     /// The last InstructionContext is always empty and pre-reserved for the next instruction.
@@ -441,6 +463,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.instruction_stack.pop();
         if self.instruction_stack.is_empty() {
             self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
+        } else {
+            self.transaction_frame.number_of_executed_cpis = self
+                .transaction_frame
+                .number_of_executed_cpis
+                .saturating_add(1);
         }
         if detected_an_unbalanced_instruction? {
             Err(InstructionError::UnbalancedInstruction)
@@ -793,5 +820,96 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_number_of_instructions() {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            3
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            0
+        );
+
+        transaction_context
+            .configure_next_instruction(
+                0,
+                vec![InstructionAccount::new(1, false, false)],
+                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                Vec::new().into(),
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            3
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            0
+        );
+
+        transaction_context
+            .configure_next_instruction(
+                0,
+                vec![InstructionAccount::new(1, false, false)],
+                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                Vec::new().into(),
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+
+        transaction_context
+            .configure_cpi_instruction(
+                0,
+                vec![InstructionAccount::new(2, false, true)],
+                vec![0; 256],
+                Vec::new().into(),
+            )
+            .unwrap();
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            4
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            0
+        );
+        transaction_context.push().unwrap();
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            4
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            1
+        );
+        transaction_context.pop().unwrap();
+
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            4
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            1
+        );
     }
 }
