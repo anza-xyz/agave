@@ -5582,8 +5582,7 @@ pub mod tests {
         assert!(result.is_some());
         let schedule = result.unwrap();
         // Should only contain the node pubkey associated with vote_keypair1
-        assert!(schedule.contains_key(&node_keypair1.pubkey().to_string())
-            || schedule.is_empty()); // empty if node_keypair1 is not a leader in this epoch
+        assert!(schedule.contains_key(&node_keypair1.pubkey().to_string()) || schedule.is_empty());
 
         // Test filtering by multiple vote accounts
         let request = create_test_request(
