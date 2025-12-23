@@ -169,3 +169,73 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use {super::*, agave_votor_messages::vote::Vote, solana_keypair::Keypair, tempfile::TempDir};
+
+    #[test]
+    fn test_file_vote_history_storage() {
+        agave_logger::setup();
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        assert_eq!(
+            storage.filename(&pubkey),
+            PathBuf::from(format!(
+                "{}/vote_history-{}.bin",
+                tmp_dir.path().display(),
+                pubkey
+            ))
+        );
+
+        let mut vote_history = VoteHistory::new(pubkey, 0);
+        let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();
+        let saved_vote_history_versions = SavedVoteHistoryVersions::from(saved_vote_history);
+        storage.store(&saved_vote_history_versions).unwrap();
+        let restored_vote_history = storage.load(&pubkey).unwrap();
+        assert_eq!(restored_vote_history.root(), 0);
+
+        // Overwrite and check we get the new one
+        vote_history.set_root(1);
+        vote_history.add_vote(Vote::new_skip_vote(2));
+        let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();
+        let saved_vote_history_versions = SavedVoteHistoryVersions::from(saved_vote_history);
+        storage.store(&saved_vote_history_versions).unwrap();
+        let restored_vote_history = storage.load(&pubkey).unwrap();
+        assert_eq!(restored_vote_history.root(), 1);
+        assert_eq!(
+            restored_vote_history.votes_cast_since(0),
+            vote_history.votes_cast_since(0)
+        );
+
+        // Load with a wrong pubkey should fail
+        let error = storage.load(&Pubkey::new_unique()).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::IoError(_)));
+        // Move Vote history to a wrong location should fail
+        let original_path = storage.filename(&pubkey);
+        let new_pubkey = Pubkey::new_unique();
+        let new_path = storage.filename(&new_pubkey);
+        // Copy the old file to new_path
+        fs::copy(&original_path, &new_path).unwrap();
+        let error = storage.load(&new_pubkey).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::InvalidSignature));
+    }
+
+    #[test]
+    fn test_null_vote_history_storage() {
+        let storage = NullVoteHistoryStorage::default();
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        // NullVoteHistoryStorage::load() always fails
+        assert!(storage.load(&pubkey).is_err());
+
+        let vote_history = VoteHistory::new(pubkey, 0);
+        let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();
+        let saved_vote_history_versions = SavedVoteHistoryVersions::from(saved_vote_history);
+        // NullVoteHistoryStorage::save() always succeeds
+        storage.store(&saved_vote_history_versions).unwrap();
+        assert!(storage.load(&pubkey).is_err());
+    }
+}
