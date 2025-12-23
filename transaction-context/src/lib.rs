@@ -16,6 +16,7 @@ use {
         instruction::{InstructionContext, InstructionFrame},
         instruction_accounts::InstructionAccount,
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
+        vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
@@ -78,6 +79,28 @@ pub type InstructionTrace<'ix_data> = (
     Vec<Cow<'ix_data, [u8]>>,
 );
 
+/// This data structure is shared with programs in ABIv2, providing information about the
+/// transaction metadata.
+///
+/// Modifications without a feature gate and proper versioning might break programs.
+#[repr(C)]
+#[derive(Debug)]
+struct TransactionFrame {
+    /// Pubkey of the last program to write to the return data scratchpad
+    return_data_pubkey: Pubkey,
+    return_data_scratchpad: VmSlice<u8>,
+    /// Scratchpad for programs to write CPI instruction data
+    cpi_scratchpad: VmSlice<u8>,
+    /// Index of current executing instruction
+    current_executing_instruction: u32,
+    /// Number of instructions in transaction
+    number_of_instructions: u32,
+    /// Number of executed CPIs
+    number_of_executed_cpis: u32,
+    /// Number of transaction accounts
+    number_of_transaction_accounts: u32,
+}
+
 /// Loaded transaction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a transaction being processed.
@@ -88,8 +111,9 @@ pub struct TransactionContext<'ix_data> {
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
     instruction_trace: Vec<InstructionFrame>,
+    transaction_frame: TransactionFrame,
+    return_data_bytes: Vec<u8>,
     top_level_instruction_index: usize,
-    return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
     rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
@@ -112,14 +136,25 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
     ) -> Self {
+        let transaction_frame = TransactionFrame {
+            return_data_pubkey: Pubkey::default(),
+            return_data_scratchpad: VmSlice::new(0, 0),
+            cpi_scratchpad: VmSlice::new(0, 0),
+            current_executing_instruction: 0,
+            number_of_instructions: 0,
+            number_of_executed_cpis: 0,
+            number_of_transaction_accounts: 0,
+        };
+
         Self {
             accounts: Rc::new(TransactionAccounts::new(transaction_accounts)),
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
             instruction_trace: vec![InstructionFrame::default()],
+            return_data_bytes: Vec::new(),
+            transaction_frame,
             top_level_instruction_index: 0,
-            return_data: TransactionReturnData::default(),
             rent,
             instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
             deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
@@ -414,7 +449,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
     /// Gets the return data of the current instruction or any above
     pub fn get_return_data(&self) -> (&Pubkey, &[u8]) {
-        (&self.return_data.program_id, &self.return_data.data)
+        (
+            &self.transaction_frame.return_data_pubkey,
+            &self.return_data_bytes,
+        )
     }
 
     /// Set the return data of the current instruction
@@ -423,7 +461,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         program_id: Pubkey,
         data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        self.return_data = TransactionReturnData { program_id, data };
+        self.transaction_frame.return_data_pubkey = program_id;
+        self.return_data_bytes = data;
         Ok(())
     }
 
@@ -541,9 +580,15 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
             .fold(0usize, |accumulator, was_touched| {
                 accumulator.saturating_add(was_touched.get() as usize)
             }) as u64;
+
+        let return_data = TransactionReturnData {
+            program_id: context.transaction_frame.return_data_pubkey,
+            data: context.return_data_bytes,
+        };
+
         Self {
             accounts,
-            return_data: context.return_data,
+            return_data,
             touched_account_count,
             accounts_resize_delta: Cell::into_inner(resize_delta),
         }
