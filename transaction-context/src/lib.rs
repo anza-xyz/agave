@@ -144,7 +144,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             current_executing_instruction: 0,
             number_of_instructions: 0,
             number_of_executed_cpis: 0,
-            number_of_transaction_accounts: 0,
+            number_of_transaction_accounts: transaction_accounts.len() as u32,
         };
 
         Self {
