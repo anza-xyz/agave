@@ -350,9 +350,9 @@ pub fn bank_from_snapshot_dir(
 
     // Clear the contents of the account paths run directories.  When constructing the bank, the appendvec
     // files will be extracted from the snapshot hardlink directories into these run/ directories.
-    for path in account_paths {
-        dirs::remove_dir_contents(path);
-    }
+    // for path in account_paths {
+    //     dirs::remove_dir_contents(path);
+    // }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
 
