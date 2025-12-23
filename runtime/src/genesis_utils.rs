@@ -2,7 +2,7 @@
 use solana_stake_interface::config::Config as StakeConfig;
 use {
     crate::stake_utils,
-    agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{vote_state_v4, FeatureSet, FEATURE_NAMES},
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     bincode::serialize,
     log::*,
@@ -182,6 +182,8 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         validator_pubkey,
     };
 
+    let vote_state_v4_active = feature_set.is_active(&vote_state_v4::id());
+
     for (validator_voting_keypairs, stake) in voting_keypairs[1..].iter().zip(&stakes[1..]) {
         let node_pubkey = validator_voting_keypairs.borrow().node_keypair.pubkey();
         let vote_pubkey = validator_voting_keypairs.borrow().vote_keypair.pubkey();
@@ -199,14 +201,30 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         } else {
             None
         };
-        let vote_account = vote_state::create_v4_account_with_authorized(
-            &node_pubkey,
-            &vote_pubkey,
-            &vote_pubkey,
-            bls_pubkey_compressed,
-            0,
-            *stake,
-        );
+        let vote_account = if vote_state_v4_active {
+            vote_state::create_v4_account_with_authorized(
+                &node_pubkey,
+                &vote_pubkey,
+                &vote_pubkey,
+                bls_pubkey_compressed,
+                0,
+                *stake,
+            )
+        } else {
+            if bls_pubkey_compressed.is_some() {
+                warn!(
+                    "BLS pubkey provided but vote_state_v4 feature is not active. BLS pubkey will \
+                     be ignored."
+                );
+            }
+            vote_state::create_v3_account_with_authorized(
+                &node_pubkey,
+                &vote_pubkey,
+                &vote_pubkey,
+                0,
+                *stake,
+            )
+        };
         let stake_account = Account::from(stake_utils::create_stake_account(
             &stake_pubkey,
             &vote_pubkey,
@@ -356,16 +374,34 @@ fn create_genesis_config_with_leader_ex_impl(
     rent: Rent,
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
-    _feature_set: &FeatureSet,
+    feature_set: &FeatureSet,
 ) -> GenesisConfig {
-    let validator_vote_account = vote_state::create_v4_account_with_authorized(
-        validator_pubkey,
-        validator_vote_account_pubkey,
-        validator_vote_account_pubkey,
-        validator_bls_pubkey,
-        0,
-        validator_stake_lamports,
-    );
+    let vote_state_v4_active = feature_set.is_active(&vote_state_v4::id());
+
+    let validator_vote_account = if vote_state_v4_active {
+        vote_state::create_v4_account_with_authorized(
+            validator_pubkey,
+            validator_vote_account_pubkey,
+            validator_vote_account_pubkey,
+            validator_bls_pubkey,
+            0,
+            validator_stake_lamports,
+        )
+    } else {
+        if validator_bls_pubkey.is_some() {
+            warn!(
+                "BLS pubkey provided but vote_state_v4 feature is not active. BLS pubkey will be \
+                 ignored."
+            );
+        }
+        vote_state::create_v3_account_with_authorized(
+            validator_pubkey,
+            validator_vote_account_pubkey,
+            validator_vote_account_pubkey,
+            0,
+            validator_stake_lamports,
+        )
+    };
 
     let validator_stake_account = stake_utils::create_stake_account(
         validator_stake_account_pubkey,
@@ -481,7 +517,11 @@ pub fn create_genesis_config_with_leader_ex(
     );
 
     if genesis_config.cluster_type == ClusterType::Development {
-        activate_all_features(&mut genesis_config);
+        for feature_id in feature_set.active().keys() {
+            if *feature_id != agave_feature_set::alpenglow::id() {
+                activate_feature(&mut genesis_config, *feature_id);
+            }
+        }
     }
 
     genesis_config
