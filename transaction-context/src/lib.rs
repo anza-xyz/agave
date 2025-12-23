@@ -136,13 +136,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
         rent: Rent,
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
+        number_of_instructions: usize,
     ) -> Self {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
             return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
             cpi_scratchpad: VmSlice::new(0, 0),
             current_executing_instruction: 0,
-            number_of_instructions: 0,
+            number_of_instructions: number_of_instructions as u32,
             number_of_executed_cpis: 0,
             number_of_transaction_accounts: transaction_accounts.len() as u32,
         };
@@ -611,6 +612,7 @@ mod tests {
                 Rent::default(),
                 /* max_instruction_stack_depth */ 2,
                 /* max_instruction_trace_length */ 2,
+                1,
             )
         };
 
@@ -652,6 +654,7 @@ mod tests {
             Rent::default(),
             20,
             20,
+            1,
         );
 
         transaction_context
@@ -677,7 +680,7 @@ mod tests {
     fn test_instruction_shared_items() {
         let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 10];
         let mut transaction_context =
-            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20);
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
 
         let instruction_accounts_1 = vec![
             InstructionAccount::new(0, false, true),

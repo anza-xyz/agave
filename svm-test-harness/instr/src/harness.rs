@@ -19,7 +19,7 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
     solana_transaction_context::TransactionContext,
     std::{collections::HashSet, rc::Rc, sync::Arc},
 };
@@ -109,6 +109,7 @@ pub fn execute_instr(
         (*rent).clone(),
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
+        sanitized_message.num_instructions(),
     );
 
     let environments = ProgramRuntimeEnvironments {

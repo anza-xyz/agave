@@ -798,6 +798,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
+            1,
         );
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {
@@ -1168,6 +1169,7 @@ mod tests {
             )],
             Rent::default(),
             1,
+            MAX_INSTRUCTIONS,
             MAX_INSTRUCTIONS,
         );
         for _ in 0..MAX_INSTRUCTIONS {
