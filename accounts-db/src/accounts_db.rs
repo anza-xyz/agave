@@ -1115,11 +1115,11 @@ pub struct AccountsDb {
     /// Set of storage paths to pick from
     pub paths: Vec<PathBuf>,
 
-    /// Base directory for various necessary files
-    base_working_path: PathBuf,
+    /// directory for bank hash details files
+    bank_hash_details_dir: PathBuf,
     // used by tests - held until we are dropped
     #[allow(dead_code)]
-    base_working_temp_dir: Option<TempDir>,
+    bank_hash_details_temp_dir: Option<TempDir>,
 
     shrink_paths: Vec<PathBuf>,
 
@@ -1264,14 +1264,14 @@ impl AccountsDb {
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
-        let base_working_path = accounts_db_config.base_working_path.clone();
-        let (base_working_path, base_working_temp_dir) =
-            if let Some(base_working_path) = base_working_path {
-                (base_working_path, None)
+        let bank_hash_details_dir = accounts_db_config.bank_hash_details_dir.clone();
+        let (bank_hash_details_dir, bank_hash_details_temp_dir) =
+            if let Some(bank_hash_details_dir) = bank_hash_details_dir {
+                (bank_hash_details_dir, None)
             } else {
-                let base_working_temp_dir = TempDir::new().unwrap();
-                let base_working_path = base_working_temp_dir.path().to_path_buf();
-                (base_working_path, Some(base_working_temp_dir))
+                let bank_hash_details_temp_dir = TempDir::new().unwrap();
+                let bank_hash_details_dir = bank_hash_details_temp_dir.path().to_path_buf();
+                (bank_hash_details_dir, Some(bank_hash_details_temp_dir))
             };
 
         let (paths, temp_paths) = if paths.is_empty() {
@@ -1323,8 +1323,8 @@ impl AccountsDb {
         let new = Self {
             accounts_index,
             paths,
-            base_working_path,
-            base_working_temp_dir,
+            bank_hash_details_dir,
+            bank_hash_details_temp_dir,
             temp_paths,
             shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
@@ -1387,9 +1387,8 @@ impl AccountsDb {
         new
     }
 
-    /// Get the base working directory
-    pub fn get_base_working_path(&self) -> PathBuf {
-        self.base_working_path.clone()
+    pub fn bank_hash_details_dir(&self) -> &Path {
+        &self.bank_hash_details_dir
     }
 
     /// Returns true if there is an accounts update notifier.

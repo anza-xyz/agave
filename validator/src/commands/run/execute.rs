@@ -421,7 +421,7 @@ pub fn execute(
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
-        base_working_path: Some(ledger_path.clone()),
+        bank_hash_details_dir: Some(ledger_path.clone()),
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
