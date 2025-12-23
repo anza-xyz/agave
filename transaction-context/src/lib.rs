@@ -16,6 +16,7 @@ use {
         instruction::{InstructionContext, InstructionFrame},
         instruction_accounts::InstructionAccount,
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
+        vm_addresses::RETURN_DATA_SCRATCHPAD,
         vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount},
@@ -138,7 +139,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     ) -> Self {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
-            return_data_scratchpad: VmSlice::new(0, 0),
+            return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
             cpi_scratchpad: VmSlice::new(0, 0),
             current_executing_instruction: 0,
             number_of_instructions: 0,
