@@ -2,7 +2,7 @@
 
 use {
     super::{
-        memory::{FixedIoBuffer, LargeBuffer},
+        memory::{FixedIoBuffer, PageAlignedMemory},
         IO_PRIO_BE_HIGHEST,
     },
     crate::io_uring::sqpoll,
@@ -74,9 +74,9 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         self,
         path: impl AsRef<Path>,
         buf_capacity: usize,
-    ) -> io::Result<SequentialFileReader<LargeBuffer>> {
+    ) -> io::Result<SequentialFileReader> {
         let buf_capacity = buf_capacity.max(self.read_capacity);
-        let buffer = LargeBuffer::new(buf_capacity);
+        let buffer = PageAlignedMemory::new(buf_capacity)?;
         self.build_with_buffer(path, buffer)
     }
 
@@ -86,11 +86,11 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     ///
     /// Initially the reader is idle and starts reading after the first file is added.
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
-    pub fn build_with_buffer<B: AsMut<[u8]>>(
+    fn build_with_buffer(
         self,
         path: impl AsRef<Path>,
-        mut buffer: B,
-    ) -> io::Result<SequentialFileReader<B>> {
+        mut buffer: PageAlignedMemory,
+    ) -> io::Result<SequentialFileReader> {
         // Align buffer capacity to read capacity, so we always read equally sized chunks
         let buf_capacity = buffer.as_mut().len() / self.read_capacity * self.read_capacity;
         assert_ne!(buf_capacity, 0, "read size aligned buffer is too small");
@@ -143,15 +143,15 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 /// Reader for non-seekable files.
 ///
 /// Implements read-ahead using io_uring.
-pub struct SequentialFileReader<B> {
+pub struct SequentialFileReader {
     // Note: state is tied to `backing_buffer` and contains unsafe pointer references to it
     inner: Ring<SequentialFileReaderState, ReadOp>,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
-    _backing_buffer: B,
+    _backing_buffer: PageAlignedMemory,
 }
 
-impl<B: AsMut<[u8]>> SequentialFileReader<B> {
+impl SequentialFileReader {
     fn start_reading(&mut self) -> io::Result<()> {
         for i in 0..self.inner.context().buffers.len() {
             self.start_reading_buf(i)?;
@@ -204,7 +204,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
 }
 
 // BufRead requires Read, but we never really use the Read interface.
-impl<B: AsMut<[u8]>> Read for SequentialFileReader<B> {
+impl Read for SequentialFileReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let available = self.fill_buf()?;
         if available.is_empty() {
@@ -218,7 +218,7 @@ impl<B: AsMut<[u8]>> Read for SequentialFileReader<B> {
     }
 }
 
-impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
+impl BufRead for SequentialFileReader {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         let _have_data = loop {
             let state = self.inner.context_mut();
@@ -471,7 +471,7 @@ mod tests {
         }
         io::Write::write_all(&mut temp_file, &pattern[..file_size % pattern.len()]).unwrap();
 
-        let buf = vec![0; backing_buffer_size];
+        let buf = PageAlignedMemory::new(backing_buffer_size).unwrap();
         let mut reader = SequentialFileReaderBuilder::new()
             .read_capacity(read_capacity)
             .build_with_buffer(temp_file.path(), buf)

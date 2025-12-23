@@ -20,8 +20,7 @@ use {
 pub struct AccountsDbConfig {
     pub index: Option<AccountsIndexConfig>,
     pub account_indexes: Option<AccountSecondaryIndexes>,
-    /// Base directory for various necessary files
-    pub base_working_path: Option<PathBuf>,
+    pub bank_hash_details_dir: Option<PathBuf>,
     pub shrink_paths: Option<Vec<PathBuf>>,
     pub shrink_ratio: AccountShrinkThreshold,
     /// The low and high watermark sizes for the read cache, in bytes.
@@ -55,7 +54,7 @@ pub struct AccountsDbConfig {
 pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
     account_indexes: None,
-    base_working_path: None,
+    bank_hash_details_dir: None,
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
@@ -78,7 +77,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
     account_indexes: None,
-    base_working_path: None,
+    bank_hash_details_dir: None,
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,

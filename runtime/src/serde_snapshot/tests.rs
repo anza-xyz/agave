@@ -7,7 +7,7 @@ mod serde_snapshot_tests {
                 deserialize_accounts_db_fields, reconstruct_accountsdb_from_fields,
                 remap_append_vec_file, SerializableAccountsDb, SnapshotAccountsDbFields,
             },
-            snapshot_utils::{get_storages_to_serialize, StorageAndNextAccountsFileId},
+            snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::FileInfo,
         bincode::{serialize_into, Error},
@@ -96,24 +96,21 @@ mod serde_snapshot_tests {
         )
     }
 
-    fn accountsdb_to_stream<W>(
+    fn account_storages_to_stream<W>(
         stream: &mut W,
-        accounts_db: &AccountsDb,
         slot: Slot,
-        account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
+        account_storage_entries: &[Arc<AccountStorageEntry>],
     ) -> Result<(), Error>
     where
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        let write_version = accounts_db.write_version.load(Ordering::Acquire);
         serialize_into(
             stream,
             &SerializableAccountsDb {
                 slot,
                 account_storage_entries,
                 bank_hash_stats,
-                write_version,
             },
         )
     }
@@ -162,13 +159,7 @@ mod serde_snapshot_tests {
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
         let snapshot_storages = accounts.get_storages(..=slot).0;
-        accountsdb_to_stream(
-            &mut writer,
-            accounts,
-            slot,
-            &get_storages_to_serialize(&snapshot_storages),
-        )
-        .unwrap();
+        account_storages_to_stream(&mut writer, slot, &snapshot_storages).unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
@@ -231,11 +222,10 @@ mod serde_snapshot_tests {
             .calculate_accounts_lt_hash_at_startup_from_index(&Ancestors::default(), slot);
 
         let mut writer = Cursor::new(vec![]);
-        accountsdb_to_stream(
+        account_storages_to_stream(
             &mut writer,
-            &accounts.accounts_db,
             slot,
-            &get_storages_to_serialize(&accounts.accounts_db.get_storages(..=slot).0),
+            &accounts.accounts_db.get_storages(..=slot).0,
         )
         .unwrap();
 

@@ -249,7 +249,7 @@ pub fn write_bank_hash_details_file(bank: &Bank) -> std::result::Result<(), Stri
         .rc
         .accounts
         .accounts_db
-        .get_base_working_path()
+        .bank_hash_details_dir()
         .join("bank_hash_details");
     let path = parent_dir.join(details.filename()?);
     // A file with the same name implies the same hash for this slot. Skip

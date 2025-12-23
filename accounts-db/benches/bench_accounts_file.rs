@@ -136,7 +136,7 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         _ = std::fs::remove_file(&append_vec_path);
         let file_size = storable_accounts
             .iter()
-            .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
+            .map(|(_, account)| AppendVec::calculate_stored_size(account.data().len()))
             .sum();
         let append_vec = AppendVec::new(append_vec_path, true, file_size, StorageAccess::File);
         let stored_accounts_info = append_vec
@@ -226,7 +226,7 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
         _ = std::fs::remove_file(&append_vec_path);
         let file_size = storable_accounts
             .iter()
-            .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
+            .map(|(_, account)| AppendVec::calculate_stored_size(account.data().len()))
             .sum();
         let append_vec = AppendVec::new(append_vec_path, true, file_size, StorageAccess::File);
         let stored_accounts_info = append_vec
