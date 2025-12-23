@@ -202,14 +202,10 @@ pub fn parse_system(
             lamports,
             space,
             owner,
-        } => match instruction.accounts.len() {
-            1 => {
-                // With only 1 account, lamports to transfer must be 0 (no payer case)
-                if lamports > 0 {
-                    return Err(ParseInstructionError::InstructionKeyMismatch(
-                        ParsableProgram::System,
-                    ));
-                }
+        } => {
+            if lamports == 0 {
+                // No payer case: only need newAccount
+                check_num_system_accounts(&instruction.accounts, 1)?;
                 Ok(ParsedInstructionEnum {
                     instruction_type: "createAccountAllowPrefund".to_string(),
                     info: json!({
@@ -218,21 +214,21 @@ pub fn parse_system(
                         "owner": owner.to_string(),
                     }),
                 })
+            } else {
+                // With payer: need newAccount and source
+                check_num_system_accounts(&instruction.accounts, 2)?;
+                Ok(ParsedInstructionEnum {
+                    instruction_type: "createAccountAllowPrefund".to_string(),
+                    info: json!({
+                        "newAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "source": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "lamports": lamports,
+                        "space": space,
+                        "owner": owner.to_string(),
+                    }),
+                })
             }
-            2 => Ok(ParsedInstructionEnum {
-                instruction_type: "createAccountAllowPrefund".to_string(),
-                info: json!({
-                    "newAccount": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "source": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "lamports": lamports,
-                    "space": space,
-                    "owner": owner.to_string(),
-                }),
-            }),
-            _ => Err(ParseInstructionError::InstructionKeyMismatch(
-                ParsableProgram::System,
-            )),
-        },
+        }
     }
 }
 
