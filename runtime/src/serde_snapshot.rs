@@ -753,7 +753,7 @@ impl Serialize for SerializableAccountsDb<'_> {
         let mut serialize_account_storage_timer = Measure::start("serialize_account_storage_ms");
         let result = (
             entries,
-            0u64,
+            0u64, // obsolete, formerly write_version
             self.slot,
             bank_hash_info,
             historical_roots,
