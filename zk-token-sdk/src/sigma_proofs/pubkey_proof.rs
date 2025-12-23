@@ -6,12 +6,12 @@
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
+        UNIT_LEN,
         encryption::{
             elgamal::{ElGamalKeypair, ElGamalPubkey},
             pedersen::H,
         },
         sigma_proofs::{canonical_scalar_from_optional_slice, ristretto_point_from_optional_slice},
-        UNIT_LEN,
     },
     rand::rngs::OsRng,
     zeroize::Zeroize,
@@ -149,9 +149,11 @@ mod test {
         let mut verifier_transcript = Transcript::new(b"test");
 
         let proof = PubkeyValidityProof::new(&keypair, &mut prover_transcript);
-        assert!(proof
-            .verify(keypair.pubkey(), &mut verifier_transcript)
-            .is_ok());
+        assert!(
+            proof
+                .verify(keypair.pubkey(), &mut verifier_transcript)
+                .is_ok()
+        );
 
         // derived ElGamal keypair
         let keypair =
@@ -161,8 +163,10 @@ mod test {
         let mut verifier_transcript = Transcript::new(b"test");
 
         let proof = PubkeyValidityProof::new(&keypair, &mut prover_transcript);
-        assert!(proof
-            .verify(keypair.pubkey(), &mut verifier_transcript)
-            .is_ok());
+        assert!(
+            proof
+                .verify(keypair.pubkey(), &mut verifier_transcript)
+                .is_ok()
+        );
     }
 }

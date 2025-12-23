@@ -7,7 +7,7 @@ use {
     im::HashMap as ImHashMap,
     log::error,
     num_derive::ToPrimitive,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     serde::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
@@ -28,8 +28,8 @@ use {
 };
 
 mod serde_stakes;
-pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
 pub use serde_stakes::SerdeStakesToStakeFormat;
+pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
 
 #[derive(Debug, Error)]
 pub enum Error {

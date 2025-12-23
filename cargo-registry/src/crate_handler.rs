@@ -6,8 +6,8 @@ use {
         sparse_index::{IndexEntry, RegistryIndex},
     },
     flate2::{
-        read::{GzDecoder, GzEncoder},
         Compression,
+        read::{GzDecoder, GzEncoder},
     },
     hyper::body::Bytes,
     log::*,
@@ -28,7 +28,7 @@ use {
         sync::Arc,
     },
     tar::{Archive, Builder, HeaderMode},
-    tempfile::{tempdir, TempDir},
+    tempfile::{TempDir, tempdir},
 };
 
 const APPEND_CRATE_TO_ELF: bool = true;

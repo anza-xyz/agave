@@ -8,4 +8,4 @@
 //! [`ZK Token proof`]: https://docs.anza.xyz/runtime/zk-elgamal-proof
 
 // Program Id of the ZkToken Proof program
-pub use solana_sdk_ids::zk_token_proof_program::{check_id, id, ID};
+pub use solana_sdk_ids::zk_token_proof_program::{ID, check_id, id};

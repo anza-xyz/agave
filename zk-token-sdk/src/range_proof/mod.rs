@@ -445,9 +445,11 @@ mod tests {
         let proof =
             RangeProof::new(vec![55], vec![32], vec![&open], &mut transcript_create).unwrap();
 
-        assert!(proof
-            .verify(vec![&comm], vec![32], &mut transcript_verify)
-            .is_ok());
+        assert!(
+            proof
+                .verify(vec![&comm], vec![32], &mut transcript_verify)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -467,13 +469,15 @@ mod tests {
         )
         .unwrap();
 
-        assert!(proof
-            .verify(
-                vec![&comm_1, &comm_2, &comm_3],
-                vec![64, 32, 32],
-                &mut transcript_verify,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    vec![&comm_1, &comm_2, &comm_3],
+                    vec![64, 32, 32],
+                    &mut transcript_verify,
+                )
+                .is_ok()
+        );
     }
 
     // TODO: write test for serialization/deserialization

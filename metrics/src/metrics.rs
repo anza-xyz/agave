@@ -2,7 +2,7 @@
 
 use {
     crate::{counter::CounterPoint, datapoint::DataPoint},
-    crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
     gethostname::gethostname,
     log::*,
     solana_cluster_type::ClusterType,

@@ -4,7 +4,7 @@
 //! token-2022 where the plaintext is always `u64`.
 use {
     crate::errors::AuthenticatedEncryptionError,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     sha3::{Digest, Sha3_512},
     solana_derivation_path::DerivationPath,
     solana_seed_derivable::SeedDerivable,
@@ -22,10 +22,10 @@ use {
 #[cfg(not(target_os = "solana"))]
 use {
     aes_gcm_siv::{
-        aead::{Aead, KeyInit},
         Aes128GcmSiv,
+        aead::{Aead, KeyInit},
     },
-    rand::{rngs::OsRng, Rng},
+    rand::{Rng, rngs::OsRng},
 };
 
 /// Byte length of an authenticated encryption secret key

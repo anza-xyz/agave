@@ -13,10 +13,10 @@ use {
         instruction::{
             errors::InstructionError,
             transfer::{
+                FeeParameters, Role,
                 encryption::{FeeEncryption, TransferAmountCiphertext},
                 try_combine_lo_hi_ciphertexts, try_combine_lo_hi_commitments,
-                try_combine_lo_hi_openings, try_combine_lo_hi_u64, try_split_u64, FeeParameters,
-                Role,
+                try_combine_lo_hi_openings, try_combine_lo_hi_u64, try_split_u64,
             },
         },
         range_proof::RangeProof,

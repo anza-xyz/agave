@@ -26,9 +26,9 @@ pub use {
         BatchedGroupedCiphertext3HandlesValidityProofData,
     },
     batched_range_proof::{
+        BatchedRangeProofContext, batched_range_proof_u64::BatchedRangeProofU64Data,
         batched_range_proof_u128::BatchedRangeProofU128Data,
         batched_range_proof_u256::BatchedRangeProofU256Data,
-        batched_range_proof_u64::BatchedRangeProofU64Data, BatchedRangeProofContext,
     },
     bytemuck::Pod,
     ciphertext_ciphertext_equality::{

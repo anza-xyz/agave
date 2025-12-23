@@ -10,7 +10,7 @@ use {
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
-    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     test::Bencher,
 };
 

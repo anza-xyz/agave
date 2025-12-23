@@ -135,15 +135,15 @@ mod tests {
     use {
         super::*,
         crate::{
-            accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
-            accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
             ObsoleteAccounts,
+            accounts_db::{AccountStorageEntry, get_temp_accounts_paths},
+            accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         },
         log::*,
         rand::{
+            SeedableRng,
             rngs::StdRng,
             seq::{IndexedMutRandom as _, IndexedRandom},
-            SeedableRng,
         },
         solana_account::AccountSharedData,
         solana_pubkey::Pubkey,

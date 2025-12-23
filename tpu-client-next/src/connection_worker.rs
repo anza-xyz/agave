@@ -4,11 +4,11 @@
 use {
     super::SendTransactionStats,
     crate::{
+        QuicError,
         logging::{debug, error, trace, warn},
         quic_networking::send_data_over_stream,
         send_transaction_stats::record_error,
         transaction_batch::TransactionBatch,
-        QuicError,
     },
     quinn::{ConnectError, Connection, ConnectionError, Endpoint},
     solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -17,11 +17,11 @@ use {
     solana_tls_utils::socket_addr_to_quic_server_name,
     std::{
         net::SocketAddr,
-        sync::{atomic::Ordering, Arc},
+        sync::{Arc, atomic::Ordering},
     },
     tokio::{
         sync::mpsc,
-        time::{sleep, timeout, Duration},
+        time::{Duration, sleep, timeout},
     },
     tokio_util::sync::CancellationToken,
 };

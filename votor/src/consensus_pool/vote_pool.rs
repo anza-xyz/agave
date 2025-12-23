@@ -9,7 +9,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::collections::{btree_map::Entry, BTreeMap},
+    std::collections::{BTreeMap, btree_map::Entry},
     thiserror::Error,
 };
 

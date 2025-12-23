@@ -478,32 +478,36 @@ mod tests {
         )
         .unwrap();
 
-        assert!(proof
-            .verify(
-                n,
-                iter::repeat_n(Scalar::ONE, n),
-                util::exp_iter(y_inv).take(n),
-                &P,
-                &Q,
-                &G,
-                &H,
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    n,
+                    iter::repeat_n(Scalar::ONE, n),
+                    util::exp_iter(y_inv).take(n),
+                    &P,
+                    &Q,
+                    &G,
+                    &H,
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
 
         let proof = InnerProductProof::from_bytes(proof.to_bytes().as_slice()).unwrap();
         let mut verifier_transcript = Transcript::new(b"innerproducttest");
-        assert!(proof
-            .verify(
-                n,
-                iter::repeat_n(Scalar::ONE, n),
-                util::exp_iter(y_inv).take(n),
-                &P,
-                &Q,
-                &G,
-                &H,
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    n,
+                    iter::repeat_n(Scalar::ONE, n),
+                    util::exp_iter(y_inv).take(n),
+                    &P,
+                    &Q,
+                    &G,
+                    &H,
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 }

@@ -24,7 +24,7 @@ pub mod zero_balance_proof;
 
 #[cfg(not(target_os = "solana"))]
 use {
-    crate::{sigma_proofs::errors::SigmaProofVerificationError, RISTRETTO_POINT_LEN, SCALAR_LEN},
+    crate::{RISTRETTO_POINT_LEN, SCALAR_LEN, sigma_proofs::errors::SigmaProofVerificationError},
     curve25519_dalek::{ristretto::CompressedRistretto, scalar::Scalar},
 };
 

@@ -6,12 +6,12 @@
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
+        UNIT_LEN,
         encryption::{
             elgamal::{ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey},
-            pedersen::{PedersenOpening, G, H},
+            pedersen::{G, H, PedersenOpening},
         },
         sigma_proofs::{canonical_scalar_from_optional_slice, ristretto_point_from_optional_slice},
-        UNIT_LEN,
     },
     curve25519_dalek::traits::MultiscalarMul,
     rand::rngs::OsRng,
@@ -294,15 +294,17 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                destination_keypair.pubkey(),
-                &source_ciphertext,
-                &destination_ciphertext,
-                &mut verifier_transcript
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    destination_keypair.pubkey(),
+                    &source_ciphertext,
+                    &destination_ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_ok()
+        );
 
         // fail case: encrypted and committed messages are different
         let source_message: u64 = 55;
@@ -327,14 +329,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                destination_keypair.pubkey(),
-                &source_ciphertext,
-                &destination_ciphertext,
-                &mut verifier_transcript
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    destination_keypair.pubkey(),
+                    &source_ciphertext,
+                    &destination_ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_err()
+        );
     }
 }

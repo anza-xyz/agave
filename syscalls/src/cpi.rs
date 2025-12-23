@@ -2,9 +2,9 @@ use {
     super::*,
     solana_instruction::Instruction,
     solana_program_runtime::cpi::{
-        cpi_common, translate_accounts_c, translate_accounts_rust, translate_instruction_c,
-        translate_instruction_rust, translate_signers_c, translate_signers_rust,
-        SyscallInvokeSigned, TranslatedAccount,
+        SyscallInvokeSigned, TranslatedAccount, cpi_common, translate_accounts_c,
+        translate_accounts_rust, translate_instruction_c, translate_instruction_rust,
+        translate_signers_c, translate_signers_rust,
     },
 };
 

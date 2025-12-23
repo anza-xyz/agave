@@ -8,7 +8,7 @@ pub(crate) mod tests {
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_signer::{signers::Signers, Signer},
+        solana_signer::{Signer, signers::Signers},
         solana_stake_interface::{
             program as stake_program,
             stake_flags::StakeFlags,

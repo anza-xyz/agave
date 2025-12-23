@@ -2,12 +2,12 @@
 
 use {
     super::{
-        memory::{FixedIoBuffer, LargeBuffer},
         IO_PRIO_BE_HIGHEST,
+        memory::{FixedIoBuffer, LargeBuffer},
     },
     crate::io_uring::sqpoll,
     agave_io_uring::{Completion, Ring, RingOp},
-    io_uring::{opcode, squeue, types, IoUring},
+    io_uring::{IoUring, opcode, squeue, types},
     std::{
         fs::{File, OpenOptions},
         io::{self, BufRead, Cursor, Read},

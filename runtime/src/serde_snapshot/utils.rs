@@ -1,6 +1,6 @@
 use serde::{
-    ser::{SerializeSeq, SerializeTuple},
     Serialize, Serializer,
+    ser::{SerializeSeq, SerializeTuple},
 };
 #[cfg(all(test, feature = "frozen-abi"))]
 use solana_frozen_abi::abi_example::TransparentAsHelper;

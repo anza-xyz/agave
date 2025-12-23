@@ -12,7 +12,7 @@ use {
 };
 use {
     crate::{
-        instruction::{batched_range_proof::BatchedRangeProofContext, ProofType, ZkProofData},
+        instruction::{ProofType, ZkProofData, batched_range_proof::BatchedRangeProofContext},
         zk_token_elgamal::pod,
     },
     bytemuck_derive::{Pod, Zeroable},

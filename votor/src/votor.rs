@@ -78,8 +78,8 @@ use {
     std::{
         collections::HashMap,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Condvar, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, JoinHandle},
         time::Duration,

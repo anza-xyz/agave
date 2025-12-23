@@ -1,16 +1,16 @@
 use {
     crate::vote_state_view::VoteStateView,
     serde::{
+        Deserialize, Serialize,
         de::{MapAccess, Visitor},
         ser::Serializer,
-        Deserialize, Serialize,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
-        collections::{hash_map::Entry, HashMap},
+        collections::{HashMap, hash_map::Entry},
         fmt,
         iter::FromIterator,
         mem,

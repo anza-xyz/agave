@@ -3,7 +3,7 @@
 // `solana-zk-token-sdk` will be removed
 #![allow(deprecated)]
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     curve25519_dalek::scalar::Scalar,
     solana_zk_token_sdk::{
         encryption::{
@@ -12,13 +12,14 @@ use {
             pedersen::{Pedersen, PedersenOpening},
         },
         instruction::{
-            transfer::FeeParameters, BatchedGroupedCiphertext2HandlesValidityProofData,
-            BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
-            BatchedRangeProofU256Data, BatchedRangeProofU64Data,
+            BatchedGroupedCiphertext2HandlesValidityProofData,
+            BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU64Data,
+            BatchedRangeProofU128Data, BatchedRangeProofU256Data,
             CiphertextCiphertextEqualityProofData, CiphertextCommitmentEqualityProofData,
             FeeSigmaProofData, GroupedCiphertext2HandlesValidityProofData,
             GroupedCiphertext3HandlesValidityProofData, PubkeyValidityData, RangeProofU64Data,
             TransferData, TransferWithFeeData, WithdrawData, ZeroBalanceProofData, ZkProofData,
+            transfer::FeeParameters,
         },
     },
 };

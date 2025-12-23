@@ -11,12 +11,12 @@
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
+        UNIT_LEN,
         encryption::{
             elgamal::{ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey},
-            pedersen::{PedersenCommitment, PedersenOpening, G, H},
+            pedersen::{G, H, PedersenCommitment, PedersenOpening},
         },
         sigma_proofs::{canonical_scalar_from_optional_slice, ristretto_point_from_optional_slice},
-        UNIT_LEN,
     },
     curve25519_dalek::traits::MultiscalarMul,
     rand::rngs::OsRng,
@@ -267,14 +267,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &source_ciphertext,
-                &destination_commitment,
-                &mut verifier_transcript
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &source_ciphertext,
+                    &destination_commitment,
+                    &mut verifier_transcript
+                )
+                .is_ok()
+        );
 
         // fail case: encrypted and committed messages are different
         let source_keypair = ElGamalKeypair::new_rand();
@@ -295,14 +297,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &source_ciphertext,
-                &destination_commitment,
-                &mut verifier_transcript
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &source_ciphertext,
+                    &destination_commitment,
+                    &mut verifier_transcript
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -328,14 +332,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                elgamal_keypair.pubkey(),
-                &ciphertext,
-                &commitment,
-                &mut verifier_transcript
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    elgamal_keypair.pubkey(),
+                    &ciphertext,
+                    &commitment,
+                    &mut verifier_transcript
+                )
+                .is_err()
+        );
 
         // if ciphertext is all-zero (valid commitment of 0) and commitment is also all-zero, then
         // the proof should still accept
@@ -357,14 +363,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                elgamal_keypair.pubkey(),
-                &ciphertext,
-                &commitment,
-                &mut verifier_transcript
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    elgamal_keypair.pubkey(),
+                    &ciphertext,
+                    &commitment,
+                    &mut verifier_transcript
+                )
+                .is_ok()
+        );
 
         // if commitment is all-zero and the ciphertext is a correct encryption of 0, then the
         // proof should still accept
@@ -386,14 +394,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                elgamal_keypair.pubkey(),
-                &ciphertext,
-                &commitment,
-                &mut verifier_transcript
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    elgamal_keypair.pubkey(),
+                    &ciphertext,
+                    &commitment,
+                    &mut verifier_transcript
+                )
+                .is_ok()
+        );
 
         // if ciphertext is all zero and commitment correctly encodes 0, then the proof should
         // still accept
@@ -414,13 +424,15 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                elgamal_keypair.pubkey(),
-                &ciphertext,
-                &commitment,
-                &mut verifier_transcript
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    elgamal_keypair.pubkey(),
+                    &ciphertext,
+                    &commitment,
+                    &mut verifier_transcript
+                )
+                .is_ok()
+        );
     }
 }

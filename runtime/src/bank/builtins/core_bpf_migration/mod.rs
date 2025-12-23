@@ -5,7 +5,7 @@ mod target_builtin;
 mod target_core_bpf;
 
 use {
-    crate::bank::{builtins::core_bpf_migration::target_bpf_v2::TargetBpfV2, Bank},
+    crate::bank::{Bank, builtins::core_bpf_migration::target_bpf_v2::TargetBpfV2},
     error::CoreBpfMigrationError,
     num_traits::{CheckedAdd, CheckedSub},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -487,9 +487,9 @@ pub(crate) mod tests {
         super::*,
         crate::{
             bank::{
+                Bank,
                 test_utils::goto_end_of_slot,
                 tests::{create_genesis_config, create_simple_test_bank},
-                Bank,
             },
             runtime_config::RuntimeConfig,
             snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
@@ -499,13 +499,13 @@ pub(crate) mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         assert_matches::assert_matches,
         solana_account::{
-            state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount,
+            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
         },
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_builtins::{
+            BUILTINS,
             core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
             prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
-            BUILTINS,
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
@@ -702,12 +702,14 @@ pub(crate) mod tests {
 
             // The bank's builtins should not contain the target program
             // address.
-            assert!(!bank
-                .transaction_processor
-                .builtin_program_ids
-                .read()
-                .unwrap()
-                .contains(&self.target_program_address));
+            assert!(
+                !bank
+                    .transaction_processor
+                    .builtin_program_ids
+                    .read()
+                    .unwrap()
+                    .contains(&self.target_program_address)
+            );
 
             // The cache should contain the target program.
             let program_cache = bank
@@ -1501,12 +1503,13 @@ pub(crate) mod tests {
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1519,12 +1522,13 @@ pub(crate) mod tests {
         // Again, assert the feature is still active and the program still was
         // not migrated.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1587,12 +1591,13 @@ pub(crate) mod tests {
 
         // Assert the feature is active and the bank still added the builtin.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1605,12 +1610,13 @@ pub(crate) mod tests {
 
         // Assert the feature is active but the builtin was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
-        assert!(bank
-            .transaction_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(builtin_id));
+        assert!(
+            bank.transaction_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(builtin_id)
+        );
         assert_eq!(
             bank.get_account(builtin_id).unwrap().owner(),
             &native_loader::id()
@@ -1668,12 +1674,14 @@ pub(crate) mod tests {
         let check_builtin_is_bpf = |bank: &Bank| {
             // The bank's transaction processor should not contain the builtin
             // in its list of builtin program IDs.
-            assert!(!bank
-                .transaction_processor
-                .builtin_program_ids
-                .read()
-                .unwrap()
-                .contains(builtin_id));
+            assert!(
+                !bank
+                    .transaction_processor
+                    .builtin_program_ids
+                    .read()
+                    .unwrap()
+                    .contains(builtin_id)
+            );
             // The builtin should be owned by the upgradeable loader and have
             // the correct state.
             let fetched_builtin_program_account = bank.get_account(builtin_id).unwrap();

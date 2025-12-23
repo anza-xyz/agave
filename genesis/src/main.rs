@@ -3,8 +3,8 @@
 
 use {
     agave_feature_set::FEATURE_NAMES,
-    base64::{prelude::BASE64_STANDARD, Engine},
-    clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
+    base64::{Engine, prelude::BASE64_STANDARD},
+    clap::{App, Arg, ArgMatches, crate_description, crate_name, value_t, value_t_or_exit},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
@@ -26,13 +26,13 @@ use {
     solana_feature_gate_interface as feature,
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis::{
-        genesis_accounts::add_genesis_stake_accounts, Base64Account, StakedValidatorAccountInfo,
-        ValidatorAccountsFile,
+        Base64Account, StakedValidatorAccountInfo, ValidatorAccountsFile,
+        genesis_accounts::add_genesis_stake_accounts,
     },
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_inflation::Inflation,
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_native_token::LAMPORTS_PER_SOL,
@@ -1320,13 +1320,15 @@ mod tests {
         use_compressed_pubkey: bool,
     ) {
         // Test invalid file returns error
-        assert!(load_validator_accounts(
-            "unknownfile",
-            100,
-            &Rent::default(),
-            &mut GenesisConfig::default(),
-        )
-        .is_err());
+        assert!(
+            load_validator_accounts(
+                "unknownfile",
+                100,
+                &Rent::default(),
+                &mut GenesisConfig::default(),
+            )
+            .is_err()
+        );
 
         let mut genesis_config = GenesisConfig::default();
 

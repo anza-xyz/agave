@@ -11,12 +11,12 @@
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
+        UNIT_LEN,
         encryption::{
             elgamal::{DecryptHandle, ElGamalPubkey},
-            pedersen::{PedersenCommitment, PedersenOpening, G, H},
+            pedersen::{G, H, PedersenCommitment, PedersenOpening},
         },
         sigma_proofs::{canonical_scalar_from_optional_slice, ristretto_point_from_optional_slice},
-        UNIT_LEN,
     },
     curve25519_dalek::traits::MultiscalarMul,
     rand::rngs::OsRng,
@@ -261,14 +261,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                &commitment,
-                (destination_pubkey, auditor_pubkey),
-                (&destination_handle, &auditor_handle),
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    (destination_pubkey, auditor_pubkey),
+                    (&destination_handle, &auditor_handle),
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 
     #[test]
@@ -295,14 +297,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                &commitment,
-                (&destination_pubkey, auditor_pubkey),
-                (&destination_handle, &auditor_handle),
-                &mut verifier_transcript,
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    (&destination_pubkey, auditor_pubkey),
+                    (&destination_handle, &auditor_handle),
+                    &mut verifier_transcript,
+                )
+                .is_err()
+        );
 
         // all zeroed ciphertext should still be valid
         let destination_keypair = ElGamalKeypair::new_rand();
@@ -328,14 +332,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                &commitment,
-                (destination_pubkey, auditor_pubkey),
-                (&destination_handle, &auditor_handle),
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    (destination_pubkey, auditor_pubkey),
+                    (&destination_handle, &auditor_handle),
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
 
         // decryption handles can be zero as long as the Pedersen commitment is valid
         let destination_keypair = ElGamalKeypair::new_rand();
@@ -360,13 +366,15 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                &commitment,
-                (destination_pubkey, auditor_pubkey),
-                (&destination_handle, &auditor_handle),
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    (destination_pubkey, auditor_pubkey),
+                    (&destination_handle, &auditor_handle),
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 }

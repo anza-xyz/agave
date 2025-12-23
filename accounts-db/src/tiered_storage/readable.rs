@@ -3,11 +3,11 @@ use {
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         tiered_storage::{
+            TieredStorageResult,
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
             hot::HotStorageReader,
             index::IndexOffset,
-            TieredStorageResult,
         },
     },
     solana_account::AccountSharedData,

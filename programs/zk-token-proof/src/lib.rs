@@ -14,7 +14,7 @@
 
 use {
     bytemuck::Pod,
-    solana_instruction::{error::InstructionError, TRANSACTION_LEVEL_STACK_HEIGHT},
+    solana_instruction::{TRANSACTION_LEVEL_STACK_HEIGHT, error::InstructionError},
     solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},
     solana_sdk_ids::system_program,
     solana_svm_log_collector::ic_msg,

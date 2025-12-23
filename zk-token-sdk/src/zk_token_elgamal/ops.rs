@@ -1,7 +1,7 @@
 use {
     crate::zk_token_elgamal::pod,
     solana_curve25519::{
-        ristretto::{add_ristretto, multiply_ristretto, subtract_ristretto, PodRistrettoPoint},
+        ristretto::{PodRistrettoPoint, add_ristretto, multiply_ristretto, subtract_ristretto},
         scalar::PodScalar,
     },
 };

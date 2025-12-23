@@ -1,7 +1,7 @@
 use {
     crate::{
-        policy::{apply_policy, parse_policy, CoreAllocation},
         MAX_THREAD_NAME_CHARS,
+        policy::{CoreAllocation, apply_policy, parse_policy},
     },
     anyhow::Ok,
     serde::{Deserialize, Serialize},

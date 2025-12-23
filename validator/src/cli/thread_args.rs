@@ -1,7 +1,7 @@
 //! Arguments for controlling the number of threads allocated for various tasks
 
 use {
-    clap::{value_t_or_exit, Arg, ArgMatches},
+    clap::{Arg, ArgMatches, value_t_or_exit},
     solana_accounts_db::{accounts_db, accounts_index},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
     solana_core::banking_stage::BankingStage,

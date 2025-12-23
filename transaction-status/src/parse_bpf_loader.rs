@@ -1,13 +1,13 @@
 use {
     crate::parse_instruction::{
-        check_num_accounts, ParsableProgram, ParseInstructionError, ParsedInstructionEnum,
+        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     bincode::deserialize,
     serde_json::json,
     solana_loader_v2_interface::LoaderInstruction,
     solana_loader_v3_interface::instruction::UpgradeableLoaderInstruction,
-    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
 };
 
 pub fn parse_bpf_loader(
@@ -274,17 +274,21 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&missing_account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&missing_account_keys, None)
+            )
+            .is_err()
+        );
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&account_keys, None)
+            )
+            .is_err()
+        );
 
         #[allow(deprecated)]
         let instruction = solana_loader_v2_interface::finalize(&account_pubkey, &program_id);
@@ -302,39 +306,47 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&missing_account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&missing_account_keys, None)
+            )
+            .is_err()
+        );
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&account_keys, None)
+            )
+            .is_err()
+        );
 
         let bad_compiled_instruction = CompiledInstruction {
             program_id_index: 3,
             accounts: vec![1, 2],
             data: vec![2, 0, 0, 0], // LoaderInstruction enum only has 2 variants
         };
-        assert!(parse_bpf_loader(
-            &bad_compiled_instruction,
-            &AccountKeys::new(&account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_loader(
+                &bad_compiled_instruction,
+                &AccountKeys::new(&account_keys, None)
+            )
+            .is_err()
+        );
 
         let bad_compiled_instruction = CompiledInstruction {
             program_id_index: 3,
             accounts: vec![],
             data: vec![1, 0, 0, 0],
         };
-        assert!(parse_bpf_loader(
-            &bad_compiled_instruction,
-            &AccountKeys::new(&account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_loader(
+                &bad_compiled_instruction,
+                &AccountKeys::new(&account_keys, None)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -367,19 +379,20 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[1],
-            &AccountKeys::new(&message.account_keys[0..2], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[1],
+                &AccountKeys::new(&message.account_keys[0..2], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[1].accounts.pop();
         message.instructions[1].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[1],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[1], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -412,18 +425,19 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[0], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -471,18 +485,19 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[1],
-            &AccountKeys::new(&message.account_keys[0..7], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[1],
+                &AccountKeys::new(&message.account_keys[0..7], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[1].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[1],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[1], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -522,18 +537,19 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..6], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..6], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[0], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -562,19 +578,20 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[0], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -603,11 +620,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..2], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..2], None)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -640,19 +659,20 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[0], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
 
         let instruction = bpf_loader_upgradeable::set_upgrade_authority(
             &program_address,
@@ -675,18 +695,19 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[0], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -720,11 +741,13 @@ mod test {
             }
         );
 
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..2], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..2], None)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -751,18 +774,19 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[0], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 
     #[test]
@@ -794,18 +818,19 @@ mod test {
                 }),
             }
         );
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         message.instructions[0].accounts.pop();
-        assert!(parse_bpf_upgradeable_loader(
-            &message.instructions[0],
-            &AccountKeys::new(&keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_bpf_upgradeable_loader(&message.instructions[0], &AccountKeys::new(&keys, None))
+                .is_err()
+        );
     }
 }

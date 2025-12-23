@@ -1,10 +1,10 @@
 use {
     crate::handshake::{
+        ClientLogon,
         shared::{
             GLOBAL_ALLOCATORS, LOGON_FAILURE, LOGON_SUCCESS, MAX_ALLOCATOR_HANDLES, MAX_WORKERS,
             VERSION,
         },
-        ClientLogon,
     },
     agave_scheduler_bindings::{
         PackToWorkerMessage, ProgressMessage, TpuToPackMessage, WorkerToPackMessage,

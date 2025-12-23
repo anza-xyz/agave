@@ -1,5 +1,14 @@
 //! Plain Old Data types for the ElGamal encryption scheme.
 
+use {
+    crate::{
+        RISTRETTO_POINT_LEN,
+        zk_token_elgamal::pod::{impl_from_str, pedersen::PEDERSEN_COMMITMENT_LEN},
+    },
+    base64::{Engine, prelude::BASE64_STANDARD},
+    bytemuck::Zeroable,
+    std::fmt,
+};
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
@@ -7,15 +16,6 @@ use {
         errors::ElGamalError,
     },
     curve25519_dalek::ristretto::CompressedRistretto,
-};
-use {
-    crate::{
-        zk_token_elgamal::pod::{impl_from_str, pedersen::PEDERSEN_COMMITMENT_LEN},
-        RISTRETTO_POINT_LEN,
-    },
-    base64::{prelude::BASE64_STANDARD, Engine},
-    bytemuck::Zeroable,
-    std::fmt,
 };
 
 /// Byte length of an ElGamal public key

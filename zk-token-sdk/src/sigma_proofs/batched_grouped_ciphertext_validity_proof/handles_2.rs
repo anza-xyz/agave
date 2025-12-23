@@ -145,14 +145,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                (destination_pubkey, auditor_pubkey),
-                (&commitment_lo, &commitment_hi),
-                (&destination_handle_lo, &destination_handle_hi),
-                (&auditor_handle_lo, &auditor_handle_hi),
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    (destination_pubkey, auditor_pubkey),
+                    (&commitment_lo, &commitment_hi),
+                    (&destination_handle_lo, &destination_handle_hi),
+                    (&auditor_handle_lo, &auditor_handle_hi),
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 }

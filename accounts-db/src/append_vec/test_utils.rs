@@ -1,7 +1,7 @@
 //! Helpers for AppendVec tests and benches
 #![cfg(feature = "dev-context-only-utils")]
 use {
-    rand::{distr::Alphanumeric, Rng},
+    rand::{Rng, distr::Alphanumeric},
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     std::path::PathBuf,

@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        bucket_api::BucketApi, bucket_stats::BucketMapStats, restart::Restart, MaxSearch, RefCount,
+        MaxSearch, RefCount, bucket_api::BucketApi, bucket_stats::BucketMapStats, restart::Restart,
     },
     solana_pubkey::Pubkey,
     std::{
@@ -211,7 +211,7 @@ mod tests {
     use {
         super::*,
         crate::index_entry::MAX_LEGAL_REFCOUNT,
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         std::{collections::HashMap, sync::RwLock},
     };
 

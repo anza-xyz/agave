@@ -2,14 +2,14 @@
 use solana_stake_interface::config::Config as StakeConfig;
 use {
     crate::stake_utils,
-    agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     bincode::serialize,
     log::*,
-    solana_account::{state_traits::StateMut, Account, AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-        Pubkey as BLSPubkey,
+        Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair,
+        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_cluster_type::ClusterType,
     solana_config_interface::state::ConfigKeys,
@@ -26,8 +26,8 @@ use {
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
     solana_sysvar::{
-        epoch_rewards::{self, EpochRewards},
         SysvarSerialize,
+        epoch_rewards::{self, EpochRewards},
     },
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::vote_state,
