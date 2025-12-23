@@ -358,14 +358,14 @@ impl<T> SnapshotAccountsDbFields<T> {
         }
     }
 
-    /// Extract final write version and bank hash info from full and incremental accounts db fields.
+    /// Extract final bank hash info from full and incremental accounts db fields.
     ///
-    /// If there is no incremental snapshot, this returns the fields from the full snapshot.
-    /// Otherwise, gets them from the incremental snapshot.
-    fn into_write_version_and_bank_hash_info(self) -> (u64, BankHashInfo) {
+    /// If there is no incremental snapshot, this returns the field from the full snapshot.
+    /// Otherwise, gets it from the incremental snapshot.
+    fn into_bank_hash_info(self) -> BankHashInfo {
         let AccountsDbFields(
             _snapshot_storages,
-            snapshot_write_version,
+            _snapshot_write_version,
             _snapshot_slot,
             snapshot_bank_hash_info,
             _snapshot_historical_roots,
@@ -373,7 +373,7 @@ impl<T> SnapshotAccountsDbFields<T> {
         ) = self
             .incremental_snapshot_accounts_db_fields
             .unwrap_or(self.full_snapshot_accounts_db_fields);
-        (snapshot_write_version, snapshot_bank_hash_info)
+        snapshot_bank_hash_info
     }
 }
 
@@ -1019,8 +1019,7 @@ where
         exit,
     );
 
-    let (snapshot_write_version, snapshot_bank_hash_info) =
-        snapshot_accounts_db_fields.into_write_version_and_bank_hash_info();
+    let snapshot_bank_hash_info = snapshot_accounts_db_fields.into_bank_hash_info();
 
     // Ensure all account paths exist
     for path in &accounts_db.paths {
@@ -1050,9 +1049,6 @@ where
     accounts_db
         .next_id
         .store(next_append_vec_id, Ordering::Release);
-    accounts_db
-        .write_version
-        .fetch_add(snapshot_write_version, Ordering::Release);
 
     info!("Building accounts index...");
     let start = Instant::now();
