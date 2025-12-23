@@ -4,16 +4,10 @@
 //! to use either the `log` crate (default) or the `tracing` crate.
 //! The features are mutually exclusive - only one can be enabled at a time.
 
-#[cfg(feature = "log")]
+#[cfg(not(feature = "tracing"))]
 pub use log::{debug, error, info, trace, warn};
 #[cfg(feature = "tracing")]
 pub use tracing::{debug, error, info, trace, warn};
-
-#[cfg(not(any(feature = "log", feature = "tracing")))]
-compile_error!("Either 'log' or 'tracing' feature must be enabled");
-
-#[cfg(all(feature = "log", feature = "tracing"))]
-compile_error!("'log' and 'tracing' features are mutually exclusive");
 
 #[cfg(test)]
 mod tests {
