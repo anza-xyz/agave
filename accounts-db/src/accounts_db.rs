@@ -1117,9 +1117,6 @@ pub struct AccountsDb {
 
     /// directory for bank hash details files
     bank_hash_details_dir: PathBuf,
-    // used by tests - held until we are dropped
-    #[allow(dead_code)]
-    bank_hash_details_temp_dir: Option<TempDir>,
 
     shrink_paths: Vec<PathBuf>,
 
@@ -1264,15 +1261,10 @@ impl AccountsDb {
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
-        let bank_hash_details_dir = accounts_db_config.bank_hash_details_dir.clone();
-        let (bank_hash_details_dir, bank_hash_details_temp_dir) =
-            if let Some(bank_hash_details_dir) = bank_hash_details_dir {
-                (bank_hash_details_dir, None)
-            } else {
-                let bank_hash_details_temp_dir = TempDir::new().unwrap();
-                let bank_hash_details_dir = bank_hash_details_temp_dir.path().to_path_buf();
-                (bank_hash_details_dir, Some(bank_hash_details_temp_dir))
-            };
+        let bank_hash_details_dir = accounts_db_config.bank_hash_details_dir.unwrap_or_else(|| {
+            warn!("bank hash details dir is unset");
+            PathBuf::new()
+        });
 
         let (paths, temp_paths) = if paths.is_empty() {
             // Create a temporary set of accounts directories, used primarily
@@ -1324,7 +1316,6 @@ impl AccountsDb {
             accounts_index,
             paths,
             bank_hash_details_dir,
-            bank_hash_details_temp_dir,
             temp_paths,
             shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
