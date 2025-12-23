@@ -84,6 +84,7 @@ dependencies = [
  "log",
  "slab",
  "smallvec",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

@@ -132,6 +132,7 @@ dependencies = [
  "smallvec",
  "tempfile",
  "test-case",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

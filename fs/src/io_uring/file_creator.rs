@@ -4,7 +4,7 @@ use {
     crate::{
         file_io::FileCreator,
         io_uring::{
-            memory::{FixedIoBuffer, LargeBuffer},
+            memory::{FixedIoBuffer, PageAlignedMemory},
             sqpoll, IO_PRIO_BE_HIGHEST,
         },
         FileInfo,
@@ -53,14 +53,14 @@ const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::fro
 
 /// Multiple files creator with `io_uring` queue for open -> write -> close
 /// operations.
-pub struct IoUringFileCreator<'a, B = LargeBuffer> {
+pub struct IoUringFileCreator<'a> {
     ring: Ring<FileCreatorState<'a>, FileCreatorOp>,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `ring`
     /// (should get dropped last)
-    _backing_buffer: B,
+    _backing_buffer: PageAlignedMemory,
 }
 
-impl<'a> IoUringFileCreator<'a, LargeBuffer> {
+impl<'a> IoUringFileCreator<'a> {
     /// Create a new `IoUringFileCreator` using internally allocated buffer of specified
     /// `buf_size` and default write size.
     pub fn with_buffer_capacity<F: FnMut(FileInfo) -> Option<File> + 'a>(
@@ -69,7 +69,7 @@ impl<'a> IoUringFileCreator<'a, LargeBuffer> {
         file_complete: F,
     ) -> io::Result<Self> {
         Self::with_buffer(
-            LargeBuffer::new(buf_size),
+            PageAlignedMemory::new(buf_size)?,
             DEFAULT_WRITE_SIZE,
             shared_sqpoll_fd,
             file_complete,
@@ -77,7 +77,7 @@ impl<'a> IoUringFileCreator<'a, LargeBuffer> {
     }
 }
 
-impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
+impl<'a> IoUringFileCreator<'a> {
     /// Create a new `IoUringFileCreator` using provided `buffer` and `file_complete`
     /// to notify caller with already written file.
     ///
@@ -88,7 +88,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
     /// `file_complete` callback receives `FileInfo` with open file and its context, its return
     /// `Option<File>` allows passing file ownership back such that it's closed as no longer used.
     pub fn with_buffer<F: FnMut(FileInfo) -> Option<File> + 'a>(
-        mut buffer: B,
+        mut buffer: PageAlignedMemory,
         write_capacity: usize,
         shared_sqpoll_fd: Option<BorrowedFd>,
         file_complete: F,
@@ -108,7 +108,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
 
     fn with_buffer_and_ring<F: FnMut(FileInfo) -> Option<File> + 'a>(
         ring: IoUring,
-        mut backing_buffer: B,
+        mut backing_buffer: PageAlignedMemory,
         write_capacity: usize,
         file_complete: F,
     ) -> io::Result<Self> {
@@ -135,7 +135,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
     }
 }
 
-impl<B> FileCreator for IoUringFileCreator<'_, B> {
+impl FileCreator for IoUringFileCreator<'_> {
     fn schedule_create_at_dir(
         &mut self,
         path: PathBuf,
@@ -159,7 +159,7 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
     }
 }
 
-impl<B> IoUringFileCreator<'_, B> {
+impl IoUringFileCreator<'_> {
     /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
