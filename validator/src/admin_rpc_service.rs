@@ -24,6 +24,7 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
+    solana_metrics::datapoint_warn,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -315,11 +316,18 @@ impl AdminRpc for AdminRpcImpl {
                     while snapshot_controller.latest_bank_snapshot_slot() == latest_snapshot_slot {
                         if start_time.elapsed() > timeout {
                             warn!("Timeout waiting for snapshot to complete");
+                            datapoint_warn!(
+                                "admin-rpc-snapshot-timeout",
+                                ("timeout_msecs", start_time.elapsed().as_millis(), i64)
+                            );
                             break;
                         }
                         thread::sleep(Duration::from_millis(100));
                     }
-                    info!("Completed waiting for new snapshot in {:?}", start_time.elapsed());
+                    info!(
+                        "Requesting fastboot snapshot before exit... Done in {:?}",
+                        start_time.elapsed()
+                    );
                 }
 
                 info!("validator exit requested");

@@ -33,8 +33,7 @@ Release channels have their own copy of this changelog:
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 #### Changes
-* When running the cli command agave-validator exit, the validator will now create a fastboot snapshot. This is a minimal snapshot which does not include archives. This snapshot allows for fastboot when all other snapshots are disabled.
-### CLI
+* `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when other snapshots are disabled.
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`
 ### Platform tools
