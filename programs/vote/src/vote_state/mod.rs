@@ -1412,6 +1412,7 @@ mod tests {
             rent.clone(),
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -1583,6 +1584,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -3943,6 +3945,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -4029,6 +4032,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(

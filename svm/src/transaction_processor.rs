@@ -953,6 +953,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment.rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
+            tx.num_instructions(),
         );
 
         let pre_account_state_info =
@@ -1359,6 +1360,7 @@ mod tests {
             )],
             Rent::default(),
             3,
+            instruction_trace.len(),
             instruction_trace.len(),
         );
         for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
