@@ -53,12 +53,12 @@
 mod config;
 mod config_input;
 use std::{
-    fs::{create_dir_all, File},
+    fs::{File, create_dir_all},
     io::{self, Write},
     path::Path,
 };
 pub use {
-    config::{Config, CONFIG_FILE},
+    config::{CONFIG_FILE, Config},
     config_input::{ConfigInput, SettingType},
 };
 

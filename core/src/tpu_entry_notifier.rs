@@ -5,8 +5,8 @@ use {
     solana_poh::poh_recorder::WorkingBankEntry,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,

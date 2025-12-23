@@ -4,7 +4,7 @@
 use crate::{encryption::auth_encryption as decoded, errors::AuthenticatedEncryptionError};
 use {
     crate::zk_token_elgamal::pod::impl_from_str,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     bytemuck::{Pod, Zeroable},
     std::fmt,
 };

@@ -614,9 +614,11 @@ pub mod tests {
 
         // Try adding a response from an invalid peer, should not be registered
         let rand_addr = create_rand_socket_addr();
-        assert!(status
-            .add_response(&rand_addr, vec![(99, Hash::new_unique())], &blockstore)
-            .is_none());
+        assert!(
+            status
+                .add_response(&rand_addr, vec![(99, Hash::new_unique())], &blockstore)
+                .is_none()
+        );
         assert_eq!(status.num_responses, 0);
         assert!(status.ancestor_request_responses.is_empty());
     }
@@ -647,9 +649,11 @@ pub mod tests {
             } else {
                 incorrect_ancestors_response.clone()
             };
-            assert!(status
-                .add_response(responder_addr, response, &blockstore)
-                .is_none());
+            assert!(
+                status
+                    .add_response(responder_addr, response, &blockstore)
+                    .is_none()
+            );
             assert_eq!(status.num_responses, 1);
             assert_eq!(status.ancestor_request_responses.len(), 1);
             let correct_responses = status

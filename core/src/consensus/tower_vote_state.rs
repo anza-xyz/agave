@@ -2,7 +2,7 @@ use {
     solana_clock::Slot,
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::vote_state::{
-        Lockout, VoteState1_14_11, VoteStateV3, VoteStateV4, MAX_LOCKOUT_HISTORY,
+        Lockout, MAX_LOCKOUT_HISTORY, VoteState1_14_11, VoteStateV3, VoteStateV4,
     },
     std::collections::VecDeque,
 };

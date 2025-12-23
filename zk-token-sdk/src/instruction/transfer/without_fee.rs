@@ -9,8 +9,8 @@ use {
         instruction::{
             errors::InstructionError,
             transfer::{
-                encryption::TransferAmountCiphertext, try_combine_lo_hi_ciphertexts, try_split_u64,
-                Role,
+                Role, encryption::TransferAmountCiphertext, try_combine_lo_hi_ciphertexts,
+                try_split_u64,
             },
         },
         range_proof::RangeProof,

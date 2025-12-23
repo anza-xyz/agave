@@ -1626,9 +1626,11 @@ mod test {
             &mut purge_repair_slot_counter,
             vec![ResultingStateChange::MarkSlotDuplicate(duplicate_slot_hash)],
         );
-        assert!(!heaviest_subtree_fork_choice
-            .is_candidate(&(duplicate_slot, duplicate_slot_hash))
-            .unwrap());
+        assert!(
+            !heaviest_subtree_fork_choice
+                .is_candidate(&(duplicate_slot, duplicate_slot_hash))
+                .unwrap()
+        );
         for child_slot in descendants
             .get(&duplicate_slot)
             .unwrap()
@@ -1794,16 +1796,20 @@ mod test {
             .iter()
             .chain(std::iter::once(&duplicate_slot))
         {
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(&(
-                    *child_slot,
-                    bank_forks.read().unwrap().get(*child_slot).unwrap().hash()
-                ))
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(&(
+                        *child_slot,
+                        bank_forks.read().unwrap().get(*child_slot).unwrap().hash()
+                    ))
+                    .is_none()
+            );
         }
-        assert!(heaviest_subtree_fork_choice
-            .is_candidate(&(duplicate_slot, our_duplicate_slot_hash))
-            .unwrap());
+        assert!(
+            heaviest_subtree_fork_choice
+                .is_candidate(&(duplicate_slot, our_duplicate_slot_hash))
+                .unwrap()
+        );
         assert!(duplicate_slots_to_repair.is_empty());
         assert!(purge_repair_slot_counter.is_empty());
         assert_eq!(
@@ -1875,9 +1881,11 @@ mod test {
         // Nothing should be applied yet to fork choice, since bank was not yet frozen
         for slot in 2..=3 {
             let slot_hash = bank_forks.read().unwrap().get(slot).unwrap().hash();
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(&(slot, slot_hash))
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(&(slot, slot_hash))
+                    .is_none()
+            );
         }
 
         // Now freeze the bank
@@ -1910,9 +1918,11 @@ mod test {
 
         // Progress map should have the correct updates, fork choice should mark duplicate
         // as unvotable
-        assert!(heaviest_subtree_fork_choice
-            .is_unconfirmed_duplicate(&(duplicate_slot, frozen_duplicate_slot_hash))
-            .unwrap());
+        assert!(
+            heaviest_subtree_fork_choice
+                .is_unconfirmed_duplicate(&(duplicate_slot, frozen_duplicate_slot_hash))
+                .unwrap()
+        );
 
         // The ancestor of the duplicate slot should be the best slot now
         let (duplicate_ancestor, duplicate_parent_hash) = {
@@ -1979,21 +1989,27 @@ mod test {
             &mut purge_repair_slot_counter,
             SlotStateUpdate::DuplicateConfirmed(duplicate_confirmed_state),
         );
-        assert!(heaviest_subtree_fork_choice
-            .is_duplicate_confirmed(&(2, slot2_hash))
-            .unwrap());
+        assert!(
+            heaviest_subtree_fork_choice
+                .is_duplicate_confirmed(&(2, slot2_hash))
+                .unwrap()
+        );
         assert_eq!(
             heaviest_subtree_fork_choice.best_overall_slot(),
             (3, slot3_hash)
         );
         for slot in 0..=2 {
             let slot_hash = bank_forks.read().unwrap().get(slot).unwrap().hash();
-            assert!(heaviest_subtree_fork_choice
-                .is_duplicate_confirmed(&(slot, slot_hash))
-                .unwrap());
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(&(slot, slot_hash))
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .is_duplicate_confirmed(&(slot, slot_hash))
+                    .unwrap()
+            );
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(&(slot, slot_hash))
+                    .is_none()
+            );
         }
 
         // Mark 3 as duplicate, should not remove the duplicate confirmed slot 2 from
@@ -2025,16 +2041,22 @@ mod test {
         for slot in 0..=3 {
             let slot_hash = bank_forks.read().unwrap().get(slot).unwrap().hash();
             if slot <= 2 {
-                assert!(heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(&(slot, slot_hash))
-                    .unwrap());
-                assert!(heaviest_subtree_fork_choice
-                    .latest_invalid_ancestor(&(slot, slot_hash))
-                    .is_none());
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(&(slot, slot_hash))
+                        .unwrap()
+                );
+                assert!(
+                    heaviest_subtree_fork_choice
+                        .latest_invalid_ancestor(&(slot, slot_hash))
+                        .is_none()
+                );
             } else {
-                assert!(!heaviest_subtree_fork_choice
-                    .is_duplicate_confirmed(&(slot, slot_hash))
-                    .unwrap());
+                assert!(
+                    !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(&(slot, slot_hash))
+                        .unwrap()
+                );
                 assert_eq!(
                     heaviest_subtree_fork_choice
                         .latest_invalid_ancestor(&(slot, slot_hash))
@@ -2127,12 +2149,16 @@ mod test {
         );
         for slot in 0..=3 {
             let slot_hash = bank_forks.read().unwrap().get(slot).unwrap().hash();
-            assert!(heaviest_subtree_fork_choice
-                .is_duplicate_confirmed(&(slot, slot_hash))
-                .unwrap());
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(&(slot, slot_hash))
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .is_duplicate_confirmed(&(slot, slot_hash))
+                    .unwrap()
+            );
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(&(slot, slot_hash))
+                    .is_none()
+            );
         }
         assert_eq!(
             heaviest_subtree_fork_choice.best_overall_slot(),
@@ -2157,9 +2183,11 @@ mod test {
                     .unwrap(),
                 expected_is_duplicate_confirmed
             );
-            assert!(heaviest_subtree_fork_choice
-                .latest_invalid_ancestor(&(slot, slot_hash))
-                .is_none());
+            assert!(
+                heaviest_subtree_fork_choice
+                    .latest_invalid_ancestor(&(slot, slot_hash))
+                    .is_none()
+            );
         }
     }
 

@@ -1,6 +1,6 @@
 use {
     rustls::{
-        client::WantsClientCert, server::WantsServerCert, ClientConfig, ConfigBuilder, ServerConfig,
+        ClientConfig, ConfigBuilder, ServerConfig, client::WantsClientCert, server::WantsServerCert,
     },
     std::sync::Arc,
 };

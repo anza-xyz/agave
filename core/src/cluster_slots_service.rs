@@ -10,8 +10,8 @@ use {
     solana_runtime::bank_forks::BankForks,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},

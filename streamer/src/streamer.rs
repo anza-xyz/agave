@@ -4,19 +4,19 @@
 use {
     crate::{
         packet::{
-            self, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
-            PACKETS_PER_BATCH,
+            self, PACKETS_PER_BATCH, Packet, PacketBatch, PacketBatchRecycler, PacketRef,
+            RecycledPacketBatch,
         },
-        sendmmsg::{batch_send, SendPktsError},
+        sendmmsg::{SendPktsError, batch_send},
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     solana_net_utils::{
+        SocketAddrSpace,
         multihomed_sockets::{
             BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
             SocketProvider,
         },
-        SocketAddrSpace,
     },
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
@@ -25,10 +25,10 @@ use {
         collections::HashMap,
         net::{IpAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -237,7 +237,7 @@ fn recv_loop<P: SocketProvider>(
                             stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                         }
                         Err(TrySendError::Disconnected(err)) => {
-                            return Err(StreamerError::Send(SendError(err)))
+                            return Err(StreamerError::Send(SendError(err)));
                         }
                     }
                 }
@@ -605,7 +605,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, RecycledPacketBatch, PACKET_DATA_SIZE},
+            packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -614,8 +614,8 @@ mod test {
         std::{
             io::{self, Write},
             sync::{
-                atomic::{AtomicBool, Ordering},
                 Arc,
+                atomic::{AtomicBool, Ordering},
             },
             time::Duration,
         },

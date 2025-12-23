@@ -19,12 +19,12 @@ use crate::encryption::{
 };
 use {
     crate::{
+        UNIT_LEN,
         sigma_proofs::{
             errors::ValidityProofVerificationError,
             grouped_ciphertext_validity_proof::GroupedCiphertext3HandlesValidityProof,
         },
         transcript::TranscriptProtocol,
-        UNIT_LEN,
     },
     curve25519_dalek::scalar::Scalar,
     merlin::Transcript,
@@ -176,21 +176,23 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                source_pubkey,
-                destination_pubkey,
-                auditor_pubkey,
-                &commitment_lo,
-                &commitment_hi,
-                &source_handle_lo,
-                &source_handle_hi,
-                &destination_handle_lo,
-                &destination_handle_hi,
-                &auditor_handle_lo,
-                &auditor_handle_hi,
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    source_pubkey,
+                    destination_pubkey,
+                    auditor_pubkey,
+                    &commitment_lo,
+                    &commitment_hi,
+                    &source_handle_lo,
+                    &source_handle_hi,
+                    &destination_handle_lo,
+                    &destination_handle_hi,
+                    &auditor_handle_lo,
+                    &auditor_handle_hi,
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 }

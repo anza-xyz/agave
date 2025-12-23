@@ -13,12 +13,12 @@
 
 use {
     crate::{
+        RISTRETTO_POINT_LEN,
         encryption::{
             discrete_log::DiscreteLog,
             elgamal::{DecryptHandle, ElGamalCiphertext, ElGamalPubkey, ElGamalSecretKey},
             pedersen::{Pedersen, PedersenCommitment, PedersenOpening},
         },
-        RISTRETTO_POINT_LEN,
     },
     curve25519_dalek::scalar::Scalar,
     thiserror::Error,

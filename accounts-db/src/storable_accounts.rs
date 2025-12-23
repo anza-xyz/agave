@@ -363,11 +363,11 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
+            accounts_db::{AccountStorageEntry, get_temp_accounts_paths},
             accounts_file::AccountsFileProvider,
         },
         rand::Rng,
-        solana_account::{accounts_equal, AccountSharedData},
+        solana_account::{AccountSharedData, accounts_equal},
         std::sync::Arc,
     };
 

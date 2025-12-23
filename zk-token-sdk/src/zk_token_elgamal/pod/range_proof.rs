@@ -2,8 +2,8 @@
 
 #[cfg(not(target_os = "solana"))]
 use crate::{
-    range_proof::{self as decoded, errors::RangeProofVerificationError},
     UNIT_LEN,
+    range_proof::{self as decoded, errors::RangeProofVerificationError},
 };
 use {
     crate::{RISTRETTO_POINT_LEN, SCALAR_LEN},

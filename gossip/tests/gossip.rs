@@ -18,15 +18,15 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
-    solana_streamer::sendmmsg::{multi_target_send, SendPktsError},
+    solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
         net::UdpSocket,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
         time::Duration,
@@ -290,7 +290,7 @@ pub fn cluster_info_scale() {
         solana_perf::test_tx::test_tx,
         solana_runtime::{
             bank::Bank,
-            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
     };
     agave_logger::setup();

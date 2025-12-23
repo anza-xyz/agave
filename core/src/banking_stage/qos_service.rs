@@ -5,8 +5,8 @@
 
 use {
     super::{
-        committer::CommitTransactionDetails, BatchedTransactionCostDetails,
-        BatchedTransactionDetails, BatchedTransactionErrorDetails,
+        BatchedTransactionCostDetails, BatchedTransactionDetails, BatchedTransactionErrorDetails,
+        committer::CommitTransactionDetails,
     },
     agave_feature_set::FeatureSet,
     solana_clock::Slot,
@@ -595,7 +595,7 @@ mod tests {
         solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,

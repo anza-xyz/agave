@@ -1,5 +1,5 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{Criterion, Throughput, criterion_group, criterion_main},
     solana_message::compiled_instruction::CompiledInstruction,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::signature_details::get_precompile_signature_details,

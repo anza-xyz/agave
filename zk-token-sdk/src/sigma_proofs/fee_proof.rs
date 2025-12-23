@@ -13,9 +13,9 @@
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
-        encryption::pedersen::{PedersenCommitment, PedersenOpening, G, H},
-        sigma_proofs::{canonical_scalar_from_optional_slice, ristretto_point_from_optional_slice},
         UNIT_LEN,
+        encryption::pedersen::{G, H, PedersenCommitment, PedersenOpening},
+        sigma_proofs::{canonical_scalar_from_optional_slice, ristretto_point_from_optional_slice},
     },
     rand::rngs::OsRng,
 };
@@ -554,15 +554,17 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                &fee_commitment,
-                &delta_commitment,
-                &claimed_commitment,
-                max_fee,
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    &fee_commitment,
+                    &delta_commitment,
+                    &claimed_commitment,
+                    max_fee,
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 
     #[test]
@@ -601,15 +603,17 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                &fee_commitment,
-                &delta_commitment,
-                &claimed_commitment,
-                max_fee,
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    &fee_commitment,
+                    &delta_commitment,
+                    &claimed_commitment,
+                    max_fee,
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 
     #[test]
@@ -643,14 +647,16 @@ mod test {
             &mut prover_transcript,
         );
 
-        assert!(proof
-            .verify(
-                &fee_commitment,
-                &delta_commitment,
-                &claimed_commitment,
-                max_fee,
-                &mut verifier_transcript,
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    &fee_commitment,
+                    &delta_commitment,
+                    &claimed_commitment,
+                    max_fee,
+                    &mut verifier_transcript,
+                )
+                .is_ok()
+        );
     }
 }

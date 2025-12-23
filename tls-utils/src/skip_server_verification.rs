@@ -1,10 +1,10 @@
 use {
     crate::crypto_provider,
     rustls::{
-        client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-        crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider},
-        pki_types::{CertificateDer, ServerName, UnixTime},
         DigitallySignedStruct, Error, SignatureScheme,
+        client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+        crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
+        pki_types::{CertificateDer, ServerName, UnixTime},
     },
     std::{
         fmt::{self, Debug, Formatter},

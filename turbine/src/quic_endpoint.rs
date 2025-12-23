@@ -4,14 +4,14 @@ use {
     futures::future::TryJoin,
     log::error,
     quinn::{
-        crypto::rustls::{QuicClientConfig, QuicServerConfig},
         ClientConfig, ConnectError, Connecting, Connection, ConnectionError, Endpoint,
         EndpointConfig, IdleTimeout, SendDatagramError, ServerConfig, TokioRuntime,
         TransportConfig, VarInt,
+        crypto::rustls::{QuicClientConfig, QuicServerConfig},
     },
     rustls::{
-        pki_types::{CertificateDer, PrivateKeyDer},
         CertificateError, KeyLogFile,
+        pki_types::{CertificateDer, PrivateKeyDer},
     },
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
@@ -22,20 +22,20 @@ use {
     },
     std::{
         cmp::Reverse,
-        collections::{hash_map::Entry, HashMap},
+        collections::{HashMap, hash_map::Entry},
         io::Error as IoError,
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::Duration,
     },
     thiserror::Error,
     tokio::{
         sync::{
-            mpsc::{error::TrySendError, Receiver as AsyncReceiver, Sender as AsyncSender},
             Mutex, RwLock as AsyncRwLock,
+            mpsc::{Receiver as AsyncReceiver, Sender as AsyncSender, error::TrySendError},
         },
         task::JoinHandle,
     },
@@ -818,7 +818,7 @@ mod tests {
     use {
         super::*,
         itertools::{izip, multiunzip},
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         solana_runtime::bank::Bank,
         solana_signer::Signer,

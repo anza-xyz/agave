@@ -2,7 +2,7 @@ use {
     crate::{
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
-        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
+        spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
     bincode::{deserialize, serialized_size},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -10,10 +10,10 @@ use {
     serde_json::{Map, Value},
     solana_account::Account,
     solana_account_decoder::validator_info::{
-        self, ValidatorInfo, MAX_LONG_FIELD_LENGTH, MAX_SHORT_FIELD_LENGTH, MAX_VALIDATOR_INFO,
+        self, MAX_LONG_FIELD_LENGTH, MAX_SHORT_FIELD_LENGTH, MAX_VALIDATOR_INFO, ValidatorInfo,
     },
     solana_clap_utils::{
-        compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
+        compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
         hidden_unless_forced,
         input_parsers::{pubkey_of, value_of},
         input_validators::{is_pubkey, is_url},
@@ -22,7 +22,7 @@ use {
     solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec},
     solana_config_interface::{
         instruction::{self as config_instruction},
-        state::{get_config_data, ConfigKeys},
+        state::{ConfigKeys, get_config_data},
     },
     solana_keypair::Keypair,
     solana_message::Message,
@@ -609,16 +609,18 @@ mod tests {
 
     #[test]
     fn test_parse_validator_info_not_validator_info_account() {
-        assert!(parse_validator_info(
-            &Pubkey::default(),
-            &Account {
-                owner: solana_pubkey::new_rand(),
-                ..Account::default()
-            }
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("is not a validator info account"));
+        assert!(
+            parse_validator_info(
+                &Pubkey::default(),
+                &Account {
+                    owner: solana_pubkey::new_rand(),
+                    ..Account::default()
+                }
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("is not a validator info account")
+        );
     }
 
     #[test]
@@ -629,17 +631,19 @@ mod tests {
         };
         let data = serialize(&(config, validator_info)).unwrap();
 
-        assert!(parse_validator_info(
-            &Pubkey::default(),
-            &Account {
-                owner: solana_config_interface::id(),
-                data,
-                ..Account::default()
-            },
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("could not be parsed as a validator info account"));
+        assert!(
+            parse_validator_info(
+                &Pubkey::default(),
+                &Account {
+                    owner: solana_config_interface::id(),
+                    data,
+                    ..Account::default()
+                },
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("could not be parsed as a validator info account")
+        );
     }
 
     #[test]

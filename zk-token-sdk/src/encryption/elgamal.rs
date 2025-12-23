@@ -16,16 +16,16 @@
 
 use {
     crate::{
+        RISTRETTO_POINT_LEN, SCALAR_LEN,
         encryption::{
             discrete_log::DiscreteLog,
             pedersen::{
-                Pedersen, PedersenCommitment, PedersenOpening, G, H, PEDERSEN_COMMITMENT_LEN,
+                G, H, PEDERSEN_COMMITMENT_LEN, Pedersen, PedersenCommitment, PedersenOpening,
             },
         },
         errors::ElGamalError,
-        RISTRETTO_POINT_LEN, SCALAR_LEN,
     },
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     core::ops::{Add, Mul, Sub},
     curve25519_dalek::{
         ristretto::{CompressedRistretto, RistrettoPoint},

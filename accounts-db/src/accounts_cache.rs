@@ -8,8 +8,8 @@ use {
         collections::BTreeSet,
         ops::Deref,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
 };

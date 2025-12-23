@@ -1,5 +1,5 @@
 use {
-    clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
+    clap::{App, Arg, ArgMatches, crate_description, crate_name, value_t, value_t_or_exit},
     solana_clap_utils::{
         hidden_unless_forced,
         input_validators::is_url_or_moniker,
@@ -8,7 +8,7 @@ use {
     solana_cli::cli::{CliConfig, DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS, DEFAULT_RPC_TIMEOUT_SECONDS},
     solana_cli_config::{Config, ConfigInput},
     solana_commitment_config::CommitmentConfig,
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
     std::{error, sync::Arc, time::Duration},

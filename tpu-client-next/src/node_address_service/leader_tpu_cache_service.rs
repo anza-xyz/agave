@@ -9,7 +9,7 @@ use {
         node_address_service::SlotReceiver,
     },
     async_trait::async_trait,
-    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_pubkey::Pubkey,
     solana_quic_definitions::QUIC_PORT_OFFSET,
@@ -23,7 +23,7 @@ use {
     tokio::{
         sync::watch,
         task::JoinHandle,
-        time::{interval, Duration},
+        time::{Duration, interval},
     },
     tokio_util::sync::CancellationToken,
 };

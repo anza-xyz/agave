@@ -88,9 +88,11 @@ mod tests {
         let proof_serialized: pod::RangeProofU64 = proof.try_into().unwrap();
         let proof_deserialized: RangeProof = proof_serialized.try_into().unwrap();
 
-        assert!(proof_deserialized
-            .verify(vec![&comm], vec![64], &mut transcript_verify)
-            .is_ok());
+        assert!(
+            proof_deserialized
+                .verify(vec![&comm], vec![64], &mut transcript_verify)
+                .is_ok()
+        );
 
         // should fail to serialize to pod::RangeProof128
         let proof =
@@ -119,13 +121,15 @@ mod tests {
         let proof_serialized: pod::RangeProofU128 = proof.try_into().unwrap();
         let proof_deserialized: RangeProof = proof_serialized.try_into().unwrap();
 
-        assert!(proof_deserialized
-            .verify(
-                vec![&comm_1, &comm_2, &comm_3],
-                vec![64, 32, 32],
-                &mut transcript_verify,
-            )
-            .is_ok());
+        assert!(
+            proof_deserialized
+                .verify(
+                    vec![&comm_1, &comm_2, &comm_3],
+                    vec![64, 32, 32],
+                    &mut transcript_verify,
+                )
+                .is_ok()
+        );
 
         // should fail to serialize to pod::RangeProof64
         let proof = RangeProof::new(

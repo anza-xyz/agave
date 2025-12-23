@@ -6,12 +6,12 @@
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
+        UNIT_LEN,
         encryption::{
             elgamal::{ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey},
             pedersen::H,
         },
         sigma_proofs::{canonical_scalar_from_optional_slice, ristretto_point_from_optional_slice},
-        UNIT_LEN,
     },
     curve25519_dalek::traits::MultiscalarMul,
     rand::rngs::OsRng,
@@ -197,25 +197,29 @@ mod test {
         let elgamal_ciphertext = source_keypair.pubkey().encrypt(0_u64);
         let proof =
             ZeroBalanceProof::new(&source_keypair, &elgamal_ciphertext, &mut prover_transcript);
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &elgamal_ciphertext,
-                &mut verifier_transcript
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &elgamal_ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_ok()
+        );
 
         // general case: encryption of > 0
         let elgamal_ciphertext = source_keypair.pubkey().encrypt(1_u64);
         let proof =
             ZeroBalanceProof::new(&source_keypair, &elgamal_ciphertext, &mut prover_transcript);
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &elgamal_ciphertext,
-                &mut verifier_transcript
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &elgamal_ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -230,13 +234,15 @@ mod test {
 
         let proof = ZeroBalanceProof::new(&source_keypair, &ciphertext, &mut prover_transcript);
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &ciphertext,
-                &mut verifier_transcript
-            )
-            .is_ok());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_ok()
+        );
 
         // if only either commitment or handle is zero, the ciphertext is always invalid and proof
         // verification should always reject
@@ -255,13 +261,15 @@ mod test {
 
         let proof = ZeroBalanceProof::new(&source_keypair, &ciphertext, &mut prover_transcript);
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &ciphertext,
-                &mut verifier_transcript
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_err()
+        );
 
         let mut prover_transcript = Transcript::new(b"test");
         let mut verifier_transcript = Transcript::new(b"test");
@@ -274,13 +282,15 @@ mod test {
 
         let proof = ZeroBalanceProof::new(&source_keypair, &ciphertext, &mut prover_transcript);
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &ciphertext,
-                &mut verifier_transcript
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_err()
+        );
 
         // if public key is always zero, then the proof should always reject
         let mut prover_transcript = Transcript::new(b"test");
@@ -291,12 +301,14 @@ mod test {
 
         let proof = ZeroBalanceProof::new(&source_keypair, &ciphertext, &mut prover_transcript);
 
-        assert!(proof
-            .verify(
-                source_keypair.pubkey(),
-                &ciphertext,
-                &mut verifier_transcript
-            )
-            .is_err());
+        assert!(
+            proof
+                .verify(
+                    source_keypair.pubkey(),
+                    &ciphertext,
+                    &mut verifier_transcript
+                )
+                .is_err()
+        );
     }
 }

@@ -4,7 +4,7 @@
 //! as connections.
 use {
     cfg_if::cfg_if,
-    dashmap::{mapref::entry::Entry, DashMap},
+    dashmap::{DashMap, mapref::entry::Entry},
     solana_svm_type_overrides::sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     std::{borrow::Borrow, cmp::Reverse, hash::Hash, time::Instant},
 };

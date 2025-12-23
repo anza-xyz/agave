@@ -27,7 +27,7 @@ use {
         encryption::pedersen::{PedersenCommitment, PedersenOpening},
         errors::{ProofGenerationError, ProofVerificationError},
     },
-    bytemuck::{bytes_of, Zeroable},
+    bytemuck::{Zeroable, bytes_of},
     curve25519_dalek::traits::IsIdentity,
     merlin::Transcript,
     std::convert::TryInto,

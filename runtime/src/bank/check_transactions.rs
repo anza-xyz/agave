@@ -1,15 +1,15 @@
 use {
     super::{Bank, BankStatusCache},
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet},
-    solana_account::{state_traits::StateMut, AccountSharedData},
+    agave_feature_set::{FeatureSet, raise_cpi_nesting_limit_to_8},
+    solana_account::{AccountSharedData, state_traits::StateMut},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-    solana_clock::{Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
-    solana_fee::{calculate_fee_details, FeeFeatures},
+    solana_clock::{MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot},
+    solana_fee::{FeeFeatures, calculate_fee_details},
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_nonce::{
+        NONCED_TX_MARKER_IX_INDEX,
         state::{Data as NonceData, DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
-        NONCED_TX_MARKER_IX_INDEX,
     },
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -325,10 +325,10 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{
-            compiled_instruction::CompiledInstruction,
-            v0::{self, LoadedAddresses, MessageAddressTableLookup},
             Message, MessageHeader, SanitizedMessage, SanitizedVersionedMessage,
             SimpleAddressLoader, VersionedMessage,
+            compiled_instruction::CompiledInstruction,
+            v0::{self, LoadedAddresses, MessageAddressTableLookup},
         },
         solana_signer::Signer,
         solana_system_interface::{
@@ -421,13 +421,14 @@ mod tests {
             &nonce_hash,
         ));
         let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
-        assert!(bank
-            .check_load_and_advance_message_nonce_account(
+        assert!(
+            bank.check_load_and_advance_message_nonce_account(
                 &message,
                 &bank.next_durable_nonce(),
                 lamports_per_signature
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -455,13 +456,14 @@ mod tests {
         );
         message.instructions[0].accounts.clear();
         let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
-        assert!(bank
-            .check_load_and_advance_message_nonce_account(
+        assert!(
+            bank.check_load_and_advance_message_nonce_account(
                 &new_sanitized_message(message),
                 &bank.next_durable_nonce(),
                 lamports_per_signature,
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -490,13 +492,14 @@ mod tests {
             &nonce_hash,
         ));
         let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
-        assert!(bank
-            .check_load_and_advance_message_nonce_account(
+        assert!(
+            bank.check_load_and_advance_message_nonce_account(
                 &message,
                 &bank.next_durable_nonce(),
                 lamports_per_signature
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -522,13 +525,14 @@ mod tests {
             &Hash::default(),
         ));
         let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
-        assert!(bank
-            .check_load_and_advance_message_nonce_account(
+        assert!(
+            bank.check_load_and_advance_message_nonce_account(
                 &message,
                 &bank.next_durable_nonce(),
                 lamports_per_signature,
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test_case(true; "test_check_and_load_message_nonce_account_nonce_is_alt_disallowed")]

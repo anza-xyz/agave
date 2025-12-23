@@ -5,7 +5,7 @@ version = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = { workspace = true }
+edition = "2024"
 publish = true
 
 [features]

@@ -19,7 +19,7 @@ pub use {
     grouped_elgamal::{GroupedElGamalCiphertext2Handles, GroupedElGamalCiphertext3Handles},
     instruction::{FeeEncryption, FeeParameters, TransferAmountCiphertext},
     pedersen::PedersenCommitment,
-    range_proof::{RangeProofU128, RangeProofU256, RangeProofU64},
+    range_proof::{RangeProofU64, RangeProofU128, RangeProofU256},
     sigma_proofs::{
         BatchedGroupedCiphertext2HandlesValidityProof,
         BatchedGroupedCiphertext3HandlesValidityProof, CiphertextCiphertextEqualityProof,

@@ -1,6 +1,6 @@
 use {
     crate::{zk_token_elgamal::pod::PodProofType, zk_token_proof_instruction::ProofType},
-    bytemuck::{bytes_of, Pod, Zeroable},
+    bytemuck::{Pod, Zeroable, bytes_of},
     num_traits::ToPrimitive,
     solana_instruction::error::{InstructionError, InstructionError::InvalidAccountData},
     solana_pubkey::Pubkey,

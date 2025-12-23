@@ -9,14 +9,6 @@
 )]
 //! The `net_utils` module assists with networking
 
-// Activate some of the Rust 2024 lints to make the future migration easier.
-#![warn(if_let_rescope)]
-#![warn(keyword_idents_2024)]
-#![warn(rust_2024_incompatible_pat)]
-#![warn(tail_expr_drop_order)]
-#![warn(unsafe_attr_outside_unsafe)]
-#![warn(unsafe_op_in_unsafe_fn)]
-
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
@@ -30,7 +22,7 @@ pub mod tooling_for_tests;
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     std::{
         io::{self},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
@@ -39,8 +31,8 @@ use {
 };
 pub use {
     ip_echo_server::{
-        ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
-        MINIMUM_IP_ECHO_SERVER_THREADS,
+        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE,
+        MINIMUM_IP_ECHO_SERVER_THREADS, ip_echo_server,
     },
     socket_addr_space::SocketAddrSpace,
 };

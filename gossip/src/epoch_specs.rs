@@ -1,5 +1,5 @@
 use {
-    solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch},
     solana_epoch_schedule::EpochSchedule,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -87,7 +87,7 @@ mod tests {
     use {
         super::*,
         solana_clock::Slot,
-        solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
     };
 
     #[test]

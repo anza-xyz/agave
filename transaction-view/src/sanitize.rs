@@ -121,9 +121,9 @@ mod tests {
         crate::transaction_view::TransactionView,
         solana_hash::Hash,
         solana_message::{
+            Message, MessageHeader, VersionedMessage,
             compiled_instruction::CompiledInstruction,
             v0::{self, MessageAddressTableLookup},
-            Message, MessageHeader, VersionedMessage,
         },
         solana_pubkey::Pubkey,
         solana_signature::Signature,

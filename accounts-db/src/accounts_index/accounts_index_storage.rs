@@ -1,15 +1,15 @@
 use {
     super::{
-        bucket_map_holder::BucketMapHolder, in_mem_accounts_index::InMemAccountsIndex,
         AccountsIndexConfig, DiskIndexValue, IndexValue, Startup,
+        bucket_map_holder::BucketMapHolder, in_mem_accounts_index::InMemAccountsIndex,
     },
     crate::{accounts_index, waitable_condvar::WaitableCondvar},
     std::{
         fmt::Debug,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle},
     },
