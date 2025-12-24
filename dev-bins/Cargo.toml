@@ -159,7 +159,7 @@ solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = 
 solana-version = { path = "../version", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote = { path = "../vote", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote-program = { path = "../programs/vote", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
-tempfile = "3.23.0"
+tempfile = "3.24.0"
 thiserror = "2.0.17"
 tokio = "1.48.0"
 
