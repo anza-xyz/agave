@@ -222,12 +222,21 @@ where
 {
     /// Creates a new KeyedRateLimiter with a specified target capacity and shard amount for the
     /// underlying DashMap. This uses a LazyLRU style eviction policy, so actual memory consumption
-    /// will be 2 * target_capacity.
+    /// will be <= 2 * target_capacity.
     ///
-    /// shard_amount should be greater than 0 and be a power of two.
-    /// If a shard_amount which is not a power of two is provided, the function will panic.
+    /// shard_amount must be greater than 0 and be a power of two; otherwise this function panics.
+    /// target_capacity must be >= shard_amount; otherwise this function panics.
     #[allow(clippy::arithmetic_side_effects)]
     pub fn new(target_capacity: usize, prototype_bucket: TokenBucket, shard_amount: usize) -> Self {
+        assert!(
+            shard_amount > 0 && shard_amount.is_power_of_two(),
+            "KeyedRateLimiter shard_amount ({shard_amount}) must be > 0 and a power of two"
+        );
+        assert!(
+            target_capacity >= shard_amount,
+            "KeyedRateLimiter target_capacity ({target_capacity}) must be >= shard_amount \
+             ({shard_amount})"
+        );
         let shrink_interval = target_capacity / 4;
         Self {
             data: DashMap::with_capacity_and_shard_amount(target_capacity * 2, shard_amount),
@@ -309,6 +318,9 @@ where
     fn maybe_shrink(&self) {
         let mut actual_len = 0;
         let target_shard_size = self.target_capacity / self.data.shards().len();
+        if target_shard_size == 0 {
+            return;
+        }
         let mut entries = Vec::with_capacity(target_shard_size * 2);
         for shardlock in self.data.shards() {
             let mut shard = shardlock.write();
@@ -463,6 +475,14 @@ pub mod test {
         );
         rl.consume_tokens(ip2, 100)
             .expect("New bucket should have been made for ip2");
+    }
+
+    #[test]
+    #[should_panic(expected = "must be >= shard_amount")]
+    fn test_keyed_rate_limiter_capacity_less_than_shards_panics() {
+        let tb = TokenBucket::new(1, 1, 1.0);
+        // target_capacity (1) < shard_amount (2) should panic
+        let _ = KeyedRateLimiter::<u64>::new(1, tb, 2);
     }
 
     #[cfg(feature = "shuttle-test")]
