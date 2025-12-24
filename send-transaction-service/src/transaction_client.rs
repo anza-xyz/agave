@@ -7,7 +7,7 @@ use {
     solana_quic_definitions::NotifyKeyUpdate,
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, ResumptionStrategy, StakeIdentity,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
@@ -182,6 +182,7 @@ impl TpuClientNextClient {
                 connect: leader_forward_count + 1,
                 send: leader_forward_count,
             },
+            resumption: ResumptionStrategy::InMemory(1024),
         }
     }
 
