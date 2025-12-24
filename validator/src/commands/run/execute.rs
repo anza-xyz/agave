@@ -317,10 +317,14 @@ pub fn execute(
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
 
-    accounts_index_config.index_limit = if !matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::InMemOnly
+    accounts_index_config.index_limit = if matches.is_present("enable_accounts_disk_index") {
+        if let Ok(limit_bytes) = value_t!(matches, "accounts_index_limit_bytes", u64) {
+            IndexLimit::Threshold(limit_bytes)
+        } else {
+            IndexLimit::Minimal
+        }
     } else {
-        IndexLimit::Minimal
+        IndexLimit::InMemOnly
     };
 
     {
