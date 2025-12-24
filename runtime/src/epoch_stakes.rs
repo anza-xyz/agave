@@ -208,35 +208,30 @@ impl VersionedEpochStakes {
         leader_schedule_epoch: Epoch,
     ) -> (u64, NodeIdToVoteAccounts, EpochAuthorizedVoters) {
         let mut node_id_to_vote_accounts: NodeIdToVoteAccounts = HashMap::new();
-        let total_stake = epoch_vote_accounts
-            .iter()
-            .map(|(_, (stake, _))| stake)
-            .sum();
-        let epoch_authorized_voters = epoch_vote_accounts
-            .iter()
-            .filter_map(|(key, (stake, account))| {
-                let vote_state = account.vote_state_view();
+        let mut epoch_authorized_voters: EpochAuthorizedVoters = HashMap::new();
+        let mut total_stake: u64 = 0;
 
-                if *stake > 0 {
-                    if let Some(authorized_voter) =
-                        vote_state.get_authorized_voter(leader_schedule_epoch)
-                    {
-                        let node_vote_accounts = node_id_to_vote_accounts
-                            .entry(*vote_state.node_pubkey())
-                            .or_default();
+        for (key, (stake, account)) in epoch_vote_accounts.iter() {
+            total_stake += *stake;
 
-                        node_vote_accounts.total_stake += stake;
-                        node_vote_accounts.vote_accounts.push(*key);
+            if *stake == 0 {
+                continue;
+            }
 
-                        Some((*key, *authorized_voter))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect();
+            let vote_state = account.vote_state_view();
+
+            if let Some(authorized_voter) = vote_state.get_authorized_voter(leader_schedule_epoch) {
+                let node_vote_accounts = node_id_to_vote_accounts
+                    .entry(*vote_state.node_pubkey())
+                    .or_default();
+
+                node_vote_accounts.total_stake += stake;
+                node_vote_accounts.vote_accounts.push(*key);
+
+                epoch_authorized_voters.insert(*key, *authorized_voter);
+            }
+        }
+
         (
             total_stake,
             node_id_to_vote_accounts,
