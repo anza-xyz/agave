@@ -1,7 +1,9 @@
 use {
-    crate::shred::Error, solana_hash::Hash, solana_sha256_hasher::hashv,
+    crate::shred::Error, fec_set_root::FecSetRoot, solana_hash::Hash, solana_sha256_hasher::hashv,
     static_assertions::const_assert_eq, std::iter::successors,
 };
+
+pub mod fec_set_root;
 
 pub(crate) const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
 const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
@@ -61,9 +63,9 @@ impl MerkleTree {
     }
 
     /// Returns a reference to the root of the tree.
-    pub(crate) fn root(&self) -> &Hash {
+    pub(crate) fn root(&self) -> FecSetRoot {
         // constructor ensures that the tree contains at least one node so this unwrap() should be safe.
-        self.nodes.last().unwrap()
+        FecSetRoot::from_hash(*self.nodes.last().unwrap())
     }
 
     pub(crate) fn make_merkle_proof(
@@ -105,7 +107,7 @@ fn join_nodes<S: AsRef<[u8]>, T: AsRef<[u8]>>(node: S, other: T) -> Hash {
 
 // Recovers root of the merkle tree from a leaf node
 // at the given index and the respective proof.
-pub fn get_merkle_root<'a, I>(index: usize, node: Hash, proof: I) -> Result<Hash, Error>
+pub fn get_merkle_root<'a, I>(index: usize, node: Hash, proof: I) -> Result<FecSetRoot, Error>
 where
     I: IntoIterator<Item = &'a MerkleProofEntry>,
 {
@@ -120,7 +122,7 @@ where
             (index >> 1, parent)
         });
     (index == 0)
-        .then_some(root)
+        .then_some(FecSetRoot::from_hash(root))
         .ok_or(Error::InvalidMerkleProof)
 }
 
@@ -186,7 +188,7 @@ mod tests {
         let nodes = repeat_with(|| rng.random::<[u8; 32]>()).map(Hash::from);
         let nodes: Vec<_> = nodes.take(size).collect();
         let tree = MerkleTree::try_new(nodes.iter().cloned().map(Ok)).unwrap();
-        let root = *tree.root();
+        let root = tree.root();
         for index in 0..size {
             for (k, &node) in nodes.iter().enumerate() {
                 let proof = tree.make_merkle_proof(index, size).map(Result::unwrap);

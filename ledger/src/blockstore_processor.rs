@@ -2194,7 +2194,7 @@ pub fn process_single_slot(
                 );
             }
         })?;
-    bank.set_block_id(block_id);
+    bank.set_block_id(block_id.map(Hash::from));
     bank.freeze(); // all banks handled by this routine are created from complete slots
 
     if let Some(slot_callback) = &opts.slot_callback {
