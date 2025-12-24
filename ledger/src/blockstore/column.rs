@@ -2,7 +2,7 @@
 use {
     crate::{
         blockstore::error::Result,
-        blockstore_meta::{self},
+        blockstore_meta::{self, PerfSampleV2},
     },
     bincode::Options as BincodeOptions,
     serde::{de::DeserializeOwned, Serialize},
@@ -592,6 +592,27 @@ impl TypedColumn for columns::Blocktime {
 impl SlotColumn for columns::PerfSamples {}
 impl ColumnName for columns::PerfSamples {
     const NAME: &'static str = "perf_samples";
+}
+
+impl TypedColumn for columns::PerfSamples {
+    type Type = PerfSampleV2;
+
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
+        let res = bincode::deserialize::<PerfSampleV2>(data).or_else(|err| {
+            match &*err {
+                bincode::ErrorKind::Io(io_err)
+                    if matches!(io_err.kind(), std::io::ErrorKind::UnexpectedEof) =>
+                {
+                    // Not enough bytes to deserialize as `PerfSampleV2`.
+                }
+                _ => return Err(err),
+            }
+
+            bincode::deserialize::<PerfSampleV2>(data)
+        });
+
+        Ok(res?)
+    }
 }
 
 impl SlotColumn for columns::BlockHeight {}
