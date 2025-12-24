@@ -1,9 +1,3 @@
-//! Logging abstraction module that supports both `log` and `tracing` libraries.
-//!
-//! This module provides a unified logging interface that can be configured
-//! to use either the `log` crate (default) or the `tracing` crate.
-//! The features are mutually exclusive - only one can be enabled at a time.
-
 #[cfg(not(feature = "tracing"))]
 pub use log::{debug, error, info, trace, warn};
 #[cfg(feature = "tracing")]
