@@ -1,0 +1,8 @@
+[package]
+name = "d"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+a = { workspace = true }
+c = { workspace = true }
