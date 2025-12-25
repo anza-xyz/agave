@@ -441,6 +441,7 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
+        use_fixed_point_stake_math: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -488,6 +489,7 @@ impl Bank {
             stake_history,
             reward_calc_tracer,
             new_rate_activation_epoch,
+            use_fixed_point_stake_math,
         ) {
             Ok((stake_reward, vote_rewards, stake)) => {
                 let stake_reward = PartitionedStakeReward {
@@ -532,6 +534,7 @@ impl Bank {
         let delay_commission_updates = self
             .feature_set
             .is_active(&agave_feature_set::delay_commission_updates::id());
+        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -562,6 +565,7 @@ impl Bank {
                                 reward_calc_tracer.as_ref(),
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
+                                use_fixed_point_stake_math,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
@@ -642,6 +646,7 @@ impl Bank {
 
         let solana_vote_program: Pubkey = solana_vote_program::id();
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
@@ -662,6 +667,7 @@ impl Bank {
                         DelegatedVoteState::from(vote_account.vote_state_view()),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
+                        use_fixed_point_stake_math,
                     )
                     .unwrap_or(0)
                 })

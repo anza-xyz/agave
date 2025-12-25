@@ -831,6 +831,10 @@ pub mod reduce_stake_warmup_cooldown {
     solana_pubkey::declare_id!("GwtDQBghCTBgmX2cpEGNPxTEBUTQRaDMGTr5qychdGMj");
 }
 
+pub mod stake_program_fixed_point_warmup_cooldown {
+    solana_pubkey::declare_id!("FvA7BcL3RG2wL5QbDoRhFKi5o9nSxoarQrsLx6EHTcmC");
+}
+
 pub mod revise_turbine_epoch_stakes {
     solana_pubkey::declare_id!("BTWmtJC8U5ZLMbBUUA1k6As62sYjPEjAiNAT55xYGdJU");
 }
@@ -1800,6 +1804,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             reduce_stake_warmup_cooldown::id(),
             "reduce stake warmup cooldown from 25% to 9%",
+        ),
+        (
+            stake_program_fixed_point_warmup_cooldown::id(),
+            "SIMD-0391: use fixed-point stake warmup/cooldown math",
         ),
         (
             revise_turbine_epoch_stakes::id(),

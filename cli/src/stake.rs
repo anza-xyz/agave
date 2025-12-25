@@ -2436,6 +2436,7 @@ pub fn build_stake_state(
     stake_history: &StakeHistory,
     clock: &Clock,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
     use_csv: bool,
 ) -> CliStakeState {
     match stake_state {
@@ -2453,11 +2454,20 @@ pub fn build_stake_state(
                 effective,
                 activating,
                 deactivating,
-            } = stake.delegation.stake_activating_and_deactivating(
-                current_epoch,
-                stake_history,
-                new_rate_activation_epoch,
-            );
+            } = if use_fixed_point_stake_math {
+                stake.delegation.stake_activating_and_deactivating_v2(
+                    current_epoch,
+                    stake_history,
+                    new_rate_activation_epoch,
+                )
+            } else {
+                #[allow(deprecated)]
+                stake.delegation.stake_activating_and_deactivating(
+                    current_epoch,
+                    stake_history,
+                    new_rate_activation_epoch,
+                )
+            };
             let lockup = if lockup.is_in_force(clock, None) {
                 Some(lockup.into())
             } else {
@@ -2723,6 +2733,13 @@ pub async fn get_account_stake_state(
                 &agave_feature_set::reduce_stake_warmup_cooldown::id(),
             )
             .await?;
+            let fixed_point_activation_epoch = get_feature_activation_epoch(
+                rpc_client,
+                &agave_feature_set::stake_program_fixed_point_warmup_cooldown::id(),
+            )
+            .await?;
+            let use_fixed_point_stake_math = fixed_point_activation_epoch
+                .is_some_and(|activation_epoch| clock.epoch >= activation_epoch);
 
             let mut state = build_stake_state(
                 stake_account.lamports,
@@ -2731,6 +2748,7 @@ pub async fn get_account_stake_state(
                 &stake_history,
                 &clock,
                 new_rate_activation_epoch,
+                use_fixed_point_stake_math,
                 use_csv,
             );
 

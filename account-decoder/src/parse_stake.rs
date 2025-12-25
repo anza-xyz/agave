@@ -6,7 +6,9 @@ use {
     bincode::deserialize,
     serde::{Deserialize, Serialize},
     solana_clock::{Epoch, UnixTimestamp},
-    solana_stake_interface::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
+    solana_stake_interface::{
+        state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
+    },
 };
 
 pub fn parse_stake(data: &[u8]) -> Result<StakeAccountType, ParseAccountError> {
@@ -118,22 +120,15 @@ pub struct UiDelegation {
     pub stake: StringAmount,
     pub activation_epoch: StringAmount,
     pub deactivation_epoch: StringAmount,
-    #[deprecated(
-        since = "1.16.7",
-        note = "Please use `solana_stake_interface::state::warmup_cooldown_rate()` instead"
-    )]
-    pub warmup_cooldown_rate: f64,
 }
 
 impl From<Delegation> for UiDelegation {
     fn from(delegation: Delegation) -> Self {
-        #[allow(deprecated)]
         Self {
             voter: delegation.voter_pubkey.to_string(),
             stake: delegation.stake.to_string(),
             activation_epoch: delegation.activation_epoch.to_string(),
             deactivation_epoch: delegation.deactivation_epoch.to_string(),
-            warmup_cooldown_rate: delegation.warmup_cooldown_rate,
         }
     }
 }
@@ -194,7 +189,7 @@ mod test {
                 stake: 20,
                 activation_epoch: 2,
                 deactivation_epoch: u64::MAX,
-                warmup_cooldown_rate: 0.25,
+                _reserved: [0; 8],
             },
             credits_observed: 10,
         };
@@ -222,7 +217,6 @@ mod test {
                         stake: 20.to_string(),
                         activation_epoch: 2.to_string(),
                         deactivation_epoch: u64::MAX.to_string(),
-                        warmup_cooldown_rate: 0.25,
                     },
                     credits_observed: 10,
                 })

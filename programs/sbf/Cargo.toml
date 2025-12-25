@@ -158,7 +158,7 @@ solana-sbpf = "=0.13.1"
 solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.1.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
-solana-stake-interface = { version = "=2.0.2", features = ["bincode"] }
+solana-stake-interface = { workspace = true, features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.0.0-alpha.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=4.0.0-alpha.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.0.0-alpha.0" }
@@ -239,7 +239,7 @@ solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "3.1.0"
 solana-signer = "3.0.0"
-solana-stake-interface = "2.0.2"
+solana-stake-interface = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
@@ -310,3 +310,4 @@ name = "bpf_loader"
 # There is a similar override in `../../Cargo.toml`.  Please keep both comments
 # and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
+solana-stake-interface = { git = "https://github.com/solana-program/stake", rev = "5f3fe65d94213f7514a0cc45662a5fe0cc2dbe15" }

@@ -5,6 +5,7 @@ use {
         calculate_stake_points_and_credits, CalculatedStakePoints, DelegatedVoteState,
         InflationPointCalculationEvent, PointValue, SkippedReason,
     },
+    crate::stake_delegation::stake_effective,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_stake_interface::{
@@ -37,14 +38,17 @@ pub(crate) fn redeem_rewards(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
 ) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(
-                &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(stake.stake(
+                &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(stake_effective(
+                    stake,
                     rewarded_epoch,
                     stake_history,
                     new_rate_activation_epoch,
+                    use_fixed_point_stake_math,
                 )),
             );
             inflation_point_calc_tracer(&InflationPointCalculationEvent::RentExemptReserve(
@@ -65,6 +69,7 @@ pub(crate) fn redeem_rewards(
             stake_history,
             inflation_point_calc_tracer,
             new_rate_activation_epoch,
+            use_fixed_point_stake_math,
         ) {
             Ok((stakers_reward, voters_reward, stake))
         } else {
@@ -84,6 +89,7 @@ fn redeem_stake_rewards(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
 ) -> Option<(u64, u64)> {
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::CreditsObserved(
@@ -100,6 +106,7 @@ fn redeem_stake_rewards(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
+        use_fixed_point_stake_math,
     )
     .map(|calculated_stake_rewards| {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer {
@@ -133,6 +140,7 @@ fn calculate_stake_rewards(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
 ) -> Option<CalculatedStakeRewards> {
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
@@ -145,6 +153,7 @@ fn calculate_stake_rewards(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
+        use_fixed_point_stake_math,
     );
 
     // Drive credits_observed forward unconditionally when rewards are disabled
@@ -285,8 +294,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_stake_state_redeem_rewards() {
+    #[test_case(false; "legacy_float")]
+    #[test_case(true; "fixed_point")]
+    fn test_stake_state_redeem_rewards(use_fixed_point: bool) {
         let mut vote_state = VoteStateV4::default();
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
@@ -308,6 +318,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -330,6 +341,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -340,8 +352,9 @@ mod tests {
         assert_eq!(stake.credits_observed, 2);
     }
 
-    #[test]
-    fn test_stake_state_calculate_rewards() {
+    #[test_case(false; "legacy_float")]
+    #[test_case(true; "fixed_point")]
+    fn test_stake_state_calculate_rewards(use_fixed_point: bool) {
         let mut vote_state = VoteStateV4::default();
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
@@ -362,6 +375,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -388,6 +402,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -411,6 +426,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -437,6 +453,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -461,6 +478,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -487,6 +505,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -507,6 +526,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
         vote_state.inflation_rewards_commission_bps = 9900;
@@ -524,6 +544,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -548,6 +569,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -572,6 +594,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -586,7 +609,8 @@ mod tests {
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
-                None
+                None,
+                use_fixed_point,
             )
         );
 
@@ -605,7 +629,8 @@ mod tests {
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
-                None
+                None,
+                use_fixed_point,
             )
         );
         // this is new behavior 2; don't hint when credits both from stake and vote are identical
@@ -621,7 +646,8 @@ mod tests {
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
-                None
+                None,
+                use_fixed_point,
             )
         );
 
@@ -647,6 +673,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
 
@@ -672,6 +699,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                use_fixed_point,
             )
         );
     }
@@ -694,6 +722,7 @@ mod tests {
             &StakeHistory::default(),
             null_tracer(),
             None,
+            false,
         );
     }
 
@@ -725,6 +754,7 @@ mod tests {
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
+                false,
             )
         );
     }

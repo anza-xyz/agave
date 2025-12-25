@@ -1630,6 +1630,11 @@ impl Bank {
         }
     }
 
+    fn use_fixed_point_stake_math(&self) -> bool {
+        self.feature_set
+            .is_active(&agave_feature_set::stake_program_fixed_point_warmup_cooldown::id())
+    }
+
     /// Returns updated stake history and vote accounts that includes new
     /// activated stake from the last epoch.
     fn compute_new_epoch_caches_and_rewards(
@@ -1649,7 +1654,8 @@ impl Bank {
                 self.epoch(),
                 thread_pool,
                 self.new_warmup_cooldown_rate_epoch(),
-                &stake_delegations
+                &stake_delegations,
+                self.use_fixed_point_stake_math(),
             ));
 
         // Apply stake rewards and commission using new snapshots.
@@ -4069,6 +4075,7 @@ impl Bank {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
 
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
@@ -4076,6 +4083,7 @@ impl Bank {
                     account.pubkey(),
                     &account,
                     new_warmup_cooldown_rate_epoch,
+                    use_fixed_point_stake_math,
                 )
             })
         });
@@ -5020,6 +5028,7 @@ impl Bank {
     ) {
         debug_assert_eq!(txs.len(), processing_results.len());
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         txs.iter()
             .zip(processing_results)
             .filter_map(|(tx, processing_result)| {
@@ -5041,8 +5050,12 @@ impl Bank {
             .for_each(|(pubkey, account)| {
                 // note that this could get timed to: self.rc.accounts.accounts_db.stats.stakes_cache_check_and_store_us,
                 //  but this code path is captured separately in ExecuteTimingType::UpdateStakesCacheUs
-                self.stakes_cache
-                    .check_and_store(pubkey, account, new_warmup_cooldown_rate_epoch);
+                self.stakes_cache.check_and_store(
+                    pubkey,
+                    account,
+                    new_warmup_cooldown_rate_epoch,
+                    use_fixed_point_stake_math,
+                );
             });
     }
 

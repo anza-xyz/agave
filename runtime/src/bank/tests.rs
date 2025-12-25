@@ -14,6 +14,7 @@ use {
             create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
             GenesisConfigInfo, ValidatorVoteKeypairs,
         },
+        stake_delegation::stake_effective,
         stake_history::StakeHistory,
         stake_utils,
         stakes::InvalidCacheEntryReason,
@@ -2960,8 +2961,9 @@ fn test_bank_update_sysvar_account() {
     }
 }
 
-#[test]
-fn test_bank_epoch_vote_accounts() {
+#[test_case(false; "legacy_float")]
+#[test_case(true; "fixed_point")]
+fn test_bank_epoch_vote_accounts(use_fixed_point_stake_math: bool) {
     let leader_pubkey = solana_pubkey::new_rand();
     let leader_lamports = 3;
     let mut genesis_config =
@@ -3015,7 +3017,7 @@ fn test_bank_epoch_vote_accounts() {
         // epoch_stakes are a snapshot at the leader_schedule_slot_offset boundary
         //   in the prior epoch (0 in this case)
         assert_eq!(
-            leader_stake.stake(0, &StakeHistory::default(), None),
+            stake_effective(&leader_stake, 0, &StakeHistory::default(), None, use_fixed_point_stake_math),
             vote_accounts.unwrap().get(&leader_vote_account).unwrap().0
         );
 
@@ -3031,7 +3033,7 @@ fn test_bank_epoch_vote_accounts() {
 
     assert!(child.epoch_vote_accounts(epoch).is_some());
     assert_eq!(
-        leader_stake.stake(child.epoch(), &StakeHistory::default(), None),
+        stake_effective(&leader_stake, child.epoch(), &StakeHistory::default(), None, use_fixed_point_stake_math),
         child
             .epoch_vote_accounts(epoch)
             .unwrap()
@@ -3049,7 +3051,7 @@ fn test_bank_epoch_vote_accounts() {
     );
     assert!(child.epoch_vote_accounts(epoch).is_some());
     assert_eq!(
-        leader_stake.stake(child.epoch(), &StakeHistory::default(), None),
+        stake_effective(&leader_stake, child.epoch(), &StakeHistory::default(), None, use_fixed_point_stake_math),
         child
             .epoch_vote_accounts(epoch)
             .unwrap()
