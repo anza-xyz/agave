@@ -841,9 +841,13 @@ dependencies = [
 
 [[package]]
 name = "array-bytes"
-version = "1.4.1"
+version = "9.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ad284aeb45c13f2fb4f084de4a420ebf447423bdf9386c0540ce33cb3ef4b8c"
+checksum = "27d55334c98d756b32dcceb60248647ab34f027690f87f9a362fd292676ee927"
+dependencies = [
+ "smallvec",
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "arrayref"
