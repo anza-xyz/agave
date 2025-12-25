@@ -14,7 +14,6 @@ use {
 };
 
 struct Config<'a> {
-    sbf_sdk: Option<String>,
     sbf_out_dir: Option<String>,
     platform_tools_version: Option<String>,
     cargo: PathBuf,
@@ -36,7 +35,6 @@ struct Config<'a> {
 impl Default for Config<'_> {
     fn default() -> Self {
         Self {
-            sbf_sdk: None,
             sbf_out_dir: None,
             platform_tools_version: None,
             cargo: PathBuf::from("cargo"),
@@ -141,10 +139,6 @@ fn test_solana_package(
     }
 
     let mut build_sbf_args = cargo_args.clone();
-    if let Some(sbf_sdk) = config.sbf_sdk.as_ref() {
-        build_sbf_args.push("--sbf-sdk");
-        build_sbf_args.push(sbf_sdk);
-    }
     build_sbf_args.push("--sbf-out-dir");
     build_sbf_args.push(&sbf_out_dir);
 
@@ -288,7 +282,7 @@ fn main() {
                 .long("sbf-sdk")
                 .value_name("PATH")
                 .takes_value(true)
-                .help("Path to the Solana SBF SDK"),
+                .help("UNUSED: Path to the Solana SBF SDK"),
         )
         .arg(
             Arg::new("features")
@@ -404,8 +398,13 @@ fn main() {
         )
         .get_matches_from(args);
 
+    if matches.is_present("sbf_sdk") {
+        println!(
+            "--sbf-sdk ignored, argument has been deprecated and will be removed in a future \
+             release."
+        );
+    }
     let mut config = Config {
-        sbf_sdk: matches.value_of_t("sbf_sdk").ok(),
         sbf_out_dir: matches.value_of_t("sbf_out_dir").ok(),
         extra_cargo_test_args: matches
             .values_of_t("extra_cargo_test_args")

@@ -8,8 +8,8 @@ use {
         post_processing::post_process,
         toolchain::{
             corrupted_toolchain, generate_toolchain_name, get_base_rust_version,
-            install_and_link_tools, install_tools, rust_target_triple,
-            validate_platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION,
+            install_and_link_tools, install_tools, make_platform_tools_path_for_version,
+            rust_target_triple, validate_platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION,
         },
         utils::spawn,
     },
@@ -21,7 +21,7 @@ use {
         borrow::Cow,
         env,
         fs::{self},
-        path::PathBuf,
+        path::{Path, PathBuf},
         process::exit,
     },
 };
@@ -31,7 +31,6 @@ pub struct Config<'a> {
     cargo_args: Vec<&'a str>,
     target_directory: Option<Utf8PathBuf>,
     sbf_out_dir: Option<PathBuf>,
-    sbf_sdk: PathBuf,
     platform_tools_version: Option<&'a str>,
     dump: bool,
     features: Vec<String>,
@@ -59,13 +58,6 @@ impl Default for Config<'_> {
         Self {
             cargo_args: vec![],
             target_directory: None,
-            sbf_sdk: env::current_exe()
-                .expect("Unable to get current executable")
-                .parent()
-                .expect("Unable to get parent directory")
-                .to_path_buf()
-                .join("platform-tools-sdk")
-                .join("sbf"),
             sbf_out_dir: None,
             platform_tools_version: None,
             dump: false,
@@ -148,10 +140,9 @@ fn prepare_environment(
     install_and_link_tools(config, package, metadata)
 }
 
-fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
+fn invoke_cargo(config: &Config, platform_tools_dir: &Path, validated_toolchain_version: String) {
     let target_triple = rust_target_triple(config);
 
-    info!("Solana SDK: {}", config.sbf_sdk.display());
     if config.no_default_features {
         info!("No default features");
     }
@@ -159,7 +150,7 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         info!("Features: {}", config.features.join(" "));
     }
 
-    if corrupted_toolchain(config) {
+    if corrupted_toolchain(platform_tools_dir) {
         error!(
             "The Solana toolchain is corrupted. Please, run cargo-build-sbf with the \
              --force-tools-install argument to fix it."
@@ -167,12 +158,7 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         exit(1);
     }
 
-    let llvm_bin = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
-        .join("llvm")
-        .join("bin");
+    let llvm_bin = platform_tools_dir.join("llvm").join("bin");
     // Override the behavior of cargo to use the Solana toolchain.
     // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
     unsafe {
@@ -334,14 +320,22 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
             let program_name = generate_program_name(root_package);
             let validated_toolchain_version =
                 prepare_environment(&config, Some(root_package), &metadata);
-            invoke_cargo(&config, validated_toolchain_version);
-            post_process(&config, target_dir.as_ref(), program_name);
+            let platform_tools_dir =
+                make_platform_tools_path_for_version(&validated_toolchain_version);
+            invoke_cargo(&config, &platform_tools_dir, validated_toolchain_version);
+            post_process(
+                &config,
+                &platform_tools_dir,
+                target_dir.as_ref(),
+                program_name,
+            );
             return;
         }
     }
 
     let validated_toolchain_version = prepare_environment(&config, None, &metadata);
-    invoke_cargo(&config, validated_toolchain_version);
+    let platform_tools_dir = make_platform_tools_path_for_version(&validated_toolchain_version);
+    invoke_cargo(&config, &platform_tools_dir, validated_toolchain_version);
 
     let all_sbf_packages = metadata
         .packages
@@ -360,15 +354,17 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
 
     for package in all_sbf_packages {
         let program_name = generate_program_name(package);
-        post_process(&config, target_dir.as_ref(), program_name);
+        post_process(
+            &config,
+            &platform_tools_dir,
+            target_dir.as_ref(),
+            program_name,
+        );
     }
 }
 
 fn main() {
     agave_logger::setup();
-    let default_config = Config::default();
-    let default_sbf_sdk = format!("{}", default_config.sbf_sdk.display());
-
     let mut args = env::args().collect::<Vec<_>>();
     // When run as a cargo subcommand, the first program argument is the subcommand name.
     // Remove it
@@ -404,8 +400,7 @@ fn main() {
                 .long("sbf-sdk")
                 .value_name("PATH")
                 .takes_value(true)
-                .default_value(&default_sbf_sdk)
-                .help("Path to the Solana SBF SDK"),
+                .help("UNUSED: Path to the Solana SBF SDK."),
         )
         .arg(
             Arg::new("cargo_args")
@@ -574,7 +569,12 @@ fn main() {
         )
         .get_matches_from(args);
 
-    let sbf_sdk: PathBuf = matches.value_of_t_or_exit("sbf_sdk");
+    if matches.is_present("sbf_sdk") {
+        println!(
+            "--sbf-sdk ignored, argument has been deprecated and will be removed in a future \
+             release."
+        );
+    }
     let sbf_out_dir: Option<PathBuf> = matches.value_of_t("sbf_out_dir").ok();
 
     let mut cargo_args = matches
@@ -609,14 +609,6 @@ fn main() {
     let config = Config {
         cargo_args,
         target_directory,
-        sbf_sdk: fs::canonicalize(&sbf_sdk).unwrap_or_else(|err| {
-            error!(
-                "Solana SDK path does not exist: {}: {}",
-                sbf_sdk.display(),
-                err
-            );
-            exit(1);
-        }),
         sbf_out_dir: sbf_out_dir.map(|sbf_out_dir| {
             if sbf_out_dir.is_absolute() {
                 sbf_out_dir
