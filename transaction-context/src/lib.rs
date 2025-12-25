@@ -94,10 +94,9 @@ pub struct TransactionContext<'ix_data> {
     rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
-    /// This is a vector of u8s to save memory, since many entries may be unused.
-    /// Each deduplication map contains 256 entries and is concatenated to `deduplication_maps`.
-    deduplication_maps: Vec<u16>,
-    /// Each entry in `instruction_data` represents the array of accounts for each instruction.
+    /// Each entry in `deduplication_maps` represents the deduplication map for each instruction.
+    deduplication_maps: Vec<Box<[u16]>>,
+    /// Each entry in `instruction_accounts` represents the array of accounts for each instruction.
     instruction_accounts: Vec<Box<[InstructionAccount]>>,
     /// Each entry in `instruction_data` represents the data for instruction at the corresponding
     /// index.
@@ -122,12 +121,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             rent,
-            instruction_accounts: Vec::with_capacity(
-                MAX_ACCOUNTS_PER_INSTRUCTION.saturating_mul(instruction_trace_capacity),
-            ),
-            deduplication_maps: Vec::with_capacity(
-                MAX_ACCOUNTS_PER_TRANSACTION.saturating_mul(instruction_trace_capacity),
-            ),
+            instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
+            deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
             instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
     }
@@ -211,7 +206,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .unwrap_or_default();
         let dedup_map = self
             .deduplication_maps
-            .get(InstructionFrame::deduplication_map_range(index_in_trace))
+            .get(index_in_trace)
+            .map(|item| item.as_ref())
             .unwrap_or_default();
         let instruction_data = self
             .instruction_data
@@ -305,7 +301,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_data.len() as u64,
         );
         self.deduplication_maps
-            .extend_from_slice(&deduplication_map);
+            .push(deduplication_map.into_boxed_slice());
         self.instruction_accounts
             .push(instruction_accounts.into_boxed_slice());
         self.instruction_data.push(instruction_data);
