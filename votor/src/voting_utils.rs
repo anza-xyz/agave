@@ -278,16 +278,21 @@ fn insert_vote_and_create_bls_message(
         .send(message.clone())
         .map_err(|_| SendError(()))?;
 
-    // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
-    let saved_vote_history =
-        SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
-
     // Return vote for sending
-    Ok(BLSOp::PushVote {
-        message: Arc::new(message),
-        slot: vote.slot(),
-        saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
-    })
+    if !is_refresh {
+        let saved_vote_history =
+            SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
+        Ok(BLSOp::PushVote {
+            message: Arc::new(message),
+            slot: vote.slot(),
+            saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
+        })
+    } else {
+        Ok(BLSOp::PushVoteRefresh {
+            message: Arc::new(message),
+            slot: vote.slot(),
+        })
+    }
 }
 
 pub fn generate_vote_message(
