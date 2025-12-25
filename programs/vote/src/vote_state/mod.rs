@@ -1189,8 +1189,7 @@ fn do_process_tower_sync(
     )
 }
 
-#[cfg(test)]
-pub fn create_account_with_authorized(
+pub fn create_v3_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
     authorized_withdrawer: &Pubkey,
