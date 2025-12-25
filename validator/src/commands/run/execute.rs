@@ -11,6 +11,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
+    agave_xdp::get_network_device::get_network_device,
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
@@ -462,11 +463,10 @@ pub fn execute(
     let xdp_interface = matches.value_of("retransmit_xdp_interface");
     let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
     let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
+        // this will only succeed on linux
+        let xdp_device =
+            get_network_device(xdp_interface).expect("XDP interface must be a valid net device");
+        XdpConfig::new(xdp_device, parse_cpu_ranges(cpus).unwrap(), xdp_zero_copy)
     });
 
     let account_paths: Vec<PathBuf> =
