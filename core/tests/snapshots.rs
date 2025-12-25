@@ -867,6 +867,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     exit.store(true, Ordering::Relaxed);
     let packager_exit_result = snapshot_packager_service.join();
     assert!(packager_exit_result.is_ok());
+    assert_eq!(snapshot_controller.latest_bank_snapshot_slot(), LAST_SLOT);
 
     // verify that the fastboot snapshot was written and can be restored from
     let bank_snapshot = snapshot_utils::get_highest_bank_snapshot(
