@@ -16,8 +16,8 @@ use {
     crate::{common::MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE, event::VotorEvent},
     agave_votor_messages::consensus_message::Block,
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-    solana_gossip::cluster_info::ClusterInfo,
-    std::{collections::HashMap, sync::Arc},
+    solana_pubkey::Pubkey,
+    std::collections::HashMap,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -27,8 +27,10 @@ pub(crate) enum BlockProductionParent {
     Parent(Block),
 }
 
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ParentReadyTracker {
-    cluster_info: Arc<ClusterInfo>,
+    /// Our pubkey for logging
+    my_pubkey: Pubkey,
 
     /// Parent ready status for each slot
     slot_statuses: HashMap<Slot, ParentReadyStatus>,
@@ -56,7 +58,7 @@ struct ParentReadyStatus {
 
 impl ParentReadyTracker {
     /// Creates a new tracker with the root bank as implicitely notarized fallback
-    pub(super) fn new(cluster_info: Arc<ClusterInfo>, root_block @ (root_slot, _): Block) -> Self {
+    pub(super) fn new(my_pubkey: Pubkey, root_block @ (root_slot, _): Block) -> Self {
         let mut slot_statuses = HashMap::new();
         slot_statuses.insert(
             root_slot,
@@ -75,7 +77,7 @@ impl ParentReadyTracker {
             },
         );
         Self {
-            cluster_info,
+            my_pubkey,
             slot_statuses,
             root: root_slot,
             highest_with_parent_ready: root_slot.saturating_add(1),
@@ -98,7 +100,7 @@ impl ParentReadyTracker {
         }
         trace!(
             "{}: Adding new notar fallback for {block:?}",
-            self.cluster_info.id()
+            self.my_pubkey
         );
         status.notar_fallbacks.push(block);
         assert!(status.notar_fallbacks.len() <= MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE);
@@ -107,7 +109,7 @@ impl ParentReadyTracker {
         for s in slot.saturating_add(1).. {
             trace!(
                 "{}: Adding new parent ready for {s} parent {block:?}",
-                self.cluster_info.id()
+                self.my_pubkey
             );
             let status = self.slot_statuses.entry(s).or_default();
             if !status.parents_ready.contains(&block) {
@@ -136,7 +138,7 @@ impl ParentReadyTracker {
             return;
         }
 
-        trace!("{}: Adding new skip for {slot:?}", self.cluster_info.id());
+        trace!("{}: Adding new skip for {slot:?}", self.my_pubkey);
         let status = self.slot_statuses.entry(slot).or_default();
         status.skip = true;
 
@@ -175,7 +177,7 @@ impl ParentReadyTracker {
         for s in future_slots {
             trace!(
                 "{}: Adding new parent ready for {s} parents {potential_parents:?}",
-                self.cluster_info.id(),
+                self.my_pubkey,
             );
             let status = self.slot_statuses.entry(s).or_default();
             for &block in &potential_parents {
@@ -231,30 +233,29 @@ impl ParentReadyTracker {
         self.root = root;
         self.slot_statuses.retain(|&s, _| s >= root);
     }
+
+    /// Updates the pubkey. Note that the pubkey is used for logging purposes only.
+    pub fn update_pubkey(&mut self, new_pubkey: Pubkey) {
+        self.my_pubkey = new_pubkey;
+    }
+
+    #[cfg(test)]
+    pub fn my_pubkey(&self) -> Pubkey {
+        self.my_pubkey
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*, itertools::Itertools, solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
-        solana_gossip::contact_info::ContactInfo, solana_hash::Hash, solana_keypair::Keypair,
-        solana_net_utils::SocketAddrSpace, solana_signer::Signer,
+        solana_hash::Hash, solana_pubkey::Pubkey,
     };
-
-    fn new_cluster_info() -> Arc<ClusterInfo> {
-        let keypair = Keypair::new();
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        Arc::new(ClusterInfo::new(
-            contact_info,
-            Arc::new(keypair),
-            SocketAddrSpace::Unspecified,
-        ))
-    }
 
     #[test]
     fn basic() {
         let genesis = Block::default();
-        let mut tracker = ParentReadyTracker::new(new_cluster_info(), genesis);
+        let mut tracker = ParentReadyTracker::new(Pubkey::default(), genesis);
         let mut events = vec![];
 
         for i in 1..2 * NUM_CONSECUTIVE_LEADER_SLOTS {
@@ -268,7 +269,7 @@ mod tests {
     #[test]
     fn skips() {
         let genesis = Block::default();
-        let mut tracker = ParentReadyTracker::new(new_cluster_info(), genesis);
+        let mut tracker = ParentReadyTracker::new(Pubkey::default(), genesis);
         let mut events = vec![];
         let block = (1, Hash::new_unique());
 
@@ -285,7 +286,7 @@ mod tests {
     #[test]
     fn out_of_order() {
         let genesis = Block::default();
-        let mut tracker = ParentReadyTracker::new(new_cluster_info(), genesis);
+        let mut tracker = ParentReadyTracker::new(Pubkey::default(), genesis);
         let mut events = vec![];
         let block = (1, Hash::new_unique());
 
@@ -305,7 +306,7 @@ mod tests {
     fn snapshot_wfsm() {
         let root_slot = 2147;
         let root_block = (root_slot, Hash::new_unique());
-        let mut tracker = ParentReadyTracker::new(new_cluster_info(), root_block);
+        let mut tracker = ParentReadyTracker::new(Pubkey::default(), root_block);
         let mut events = vec![];
 
         assert!(tracker.parent_ready(root_slot + 1, root_block));
@@ -332,7 +333,7 @@ mod tests {
     #[test]
     fn highest_parent_ready_out_of_order() {
         let genesis = Block::default();
-        let mut tracker = ParentReadyTracker::new(new_cluster_info(), genesis);
+        let mut tracker = ParentReadyTracker::new(Pubkey::default(), genesis);
         let mut events = vec![];
         assert_eq!(tracker.highest_parent_ready(), 1);
 
@@ -354,7 +355,7 @@ mod tests {
     #[test]
     fn missed_window() {
         let genesis = Block::default();
-        let mut tracker = ParentReadyTracker::new(new_cluster_info(), genesis);
+        let mut tracker = ParentReadyTracker::new(Pubkey::default(), genesis);
         let mut events = vec![];
         assert_eq!(tracker.highest_parent_ready(), 1);
         assert_eq!(
@@ -384,7 +385,7 @@ mod tests {
     #[test]
     fn pick_more_skips() {
         let genesis = Block::default();
-        let mut tracker = ParentReadyTracker::new(new_cluster_info(), genesis);
+        let mut tracker = ParentReadyTracker::new(Pubkey::default(), genesis);
         let mut events = vec![];
 
         for i in 1..=10 {
