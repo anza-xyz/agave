@@ -1,19 +1,7 @@
 // re-export since this is needed at validator startup
 pub use agave_xdp::set_cpu_affinity;
-#[cfg(target_os = "linux")]
 use {
-    agave_xdp::{
-        device::{NetworkDevice, QueueId},
-        load_xdp_program,
-        route::Router,
-        route_monitor::RouteMonitor,
-        tx_loop::tx_loop,
-    },
-    arc_swap::ArcSwap,
-    crossbeam_channel::TryRecvError,
-    std::{thread::Builder, time::Duration},
-};
-use {
+    agave_xdp::get_network_device::NetworkDevice,
     crossbeam_channel::{Sender, TrySendError},
     solana_ledger::shred,
     std::{
@@ -23,13 +11,23 @@ use {
         thread,
     },
 };
+#[cfg(target_os = "linux")]
+use {
+    agave_xdp::{
+        device::QueueId, load_xdp_program, route::Router, route_monitor::RouteMonitor,
+        tx_loop::tx_loop,
+    },
+    arc_swap::ArcSwap,
+    crossbeam_channel::TryRecvError,
+    std::{thread::Builder, time::Duration},
+};
 
 #[cfg(target_os = "linux")]
 const ROUTE_MONITOR_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug)]
 pub struct XdpConfig {
-    pub interface: Option<String>,
+    pub network_device: NetworkDevice,
     pub cpus: Vec<usize>,
     pub zero_copy: bool,
     // The capacity of the channel that sits between retransmit stage and each XDP thread that
@@ -42,21 +40,10 @@ impl XdpConfig {
     const DEFAULT_RTX_CHANNEL_CAP: usize = 1_000_000;
 }
 
-impl Default for XdpConfig {
-    fn default() -> Self {
-        Self {
-            interface: None,
-            cpus: vec![],
-            zero_copy: false,
-            rtx_channel_cap: Self::DEFAULT_RTX_CHANNEL_CAP,
-        }
-    }
-}
-
 impl XdpConfig {
-    pub fn new(interface: Option<impl Into<String>>, cpus: Vec<usize>, zero_copy: bool) -> Self {
+    pub fn new(network_device: NetworkDevice, cpus: Vec<usize>, zero_copy: bool) -> Self {
         Self {
-            interface: interface.map(|s| s.into()),
+            network_device,
             cpus,
             zero_copy,
             rtx_channel_cap: XdpConfig::DEFAULT_RTX_CHANNEL_CAP,
@@ -138,18 +125,14 @@ impl XdpRetransmitter {
         };
         const DROP_CHANNEL_CAP: usize = 1_000_000;
 
+        let dev = config.network_device;
+
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.
         for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_PERFMON] {
             caps::raise(None, CapSet::Effective, cap)
                 .map_err(|e| format!("failed to raise {cap:?} capability: {e}"))?;
         }
-
-        let dev = Arc::new(if let Some(interface) = config.interface {
-            NetworkDevice::new(interface).unwrap()
-        } else {
-            NetworkDevice::new_from_default_route().unwrap()
-        });
 
         let ebpf = if config.zero_copy {
             Some(load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"))?)
@@ -194,8 +177,6 @@ impl XdpRetransmitter {
                             Err(TryRecvError::Disconnected) => break,
                         }
                     }
-                    // move the ebpf program here so it stays attached until we exit
-                    drop(ebpf);
                 })
                 .unwrap(),
         );
@@ -205,7 +186,7 @@ impl XdpRetransmitter {
             .zip(config.cpus.into_iter())
             .enumerate()
         {
-            let dev = Arc::clone(&dev);
+            let dev = dev.clone();
             let drop_sender = drop_sender.clone();
             let atomic_router = Arc::clone(&atomic_router);
             threads.push(
