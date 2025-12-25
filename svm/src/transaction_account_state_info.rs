@@ -9,7 +9,7 @@ use {
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct TransactionAccountStateInfo {
-    rent_state: Option<RentState>, // None: readonly account
+    pub rent_state: Option<RentState>, // None: readonly account
 }
 
 impl TransactionAccountStateInfo {
