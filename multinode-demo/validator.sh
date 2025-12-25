@@ -319,7 +319,7 @@ setup_validator_accounts() {
     fi
 
     echo "Creating validator vote account"
-    wallet create-vote-account "$vote_account" "$identity" "$authorized_withdrawer" || return $?
+    wallet create-vote-account-with-bls "$vote_account" "$identity" "$authorized_withdrawer" || return $?
   fi
   echo "Validator vote account configured"
 
