@@ -121,6 +121,10 @@ impl From<Reward> for generated::Reward {
                 Some(RewardType::Voting) => generated::RewardType::Voting,
             } as i32,
             commission: reward.commission.map(|c| c.to_string()).unwrap_or_default(),
+            commission_bps: reward
+                .commission_bps
+                .map(|bps| bps.to_string())
+                .unwrap_or_default(),
         }
     }
 }
@@ -140,6 +144,7 @@ impl From<generated::Reward> for Reward {
                 _ => None,
             },
             commission: reward.commission.parse::<u8>().ok(),
+            commission_bps: reward.commission_bps.parse::<u16>().ok(),
         }
     }
 }
@@ -1292,6 +1297,7 @@ mod test {
             post_balance: 321,
             reward_type: None,
             commission: None,
+            commission_bps: None,
         };
         let gen_reward: generated::Reward = reward.clone().into();
         assert_eq!(reward, gen_reward.into());
