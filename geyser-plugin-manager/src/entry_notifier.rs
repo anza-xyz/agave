@@ -1,18 +1,19 @@
 /// Module responsible for notifying plugins about entries
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    crate::geyser_plugin_manager::HotGeyserPluginList,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaEntryInfoV2, ReplicaEntryInfoVersions,
     },
+    arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
     solana_entry::entry::EntrySummary,
     solana_ledger::entry_notifier_interface::EntryNotifier,
-    std::sync::{Arc, RwLock},
+    std::sync::Arc,
 };
 
 pub(crate) struct EntryNotifierImpl {
-    plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<HotGeyserPluginList>>,
 }
 
 impl EntryNotifier for EntryNotifierImpl {
@@ -23,15 +24,15 @@ impl EntryNotifier for EntryNotifierImpl {
         entry: &'a EntrySummary,
         starting_transaction_index: usize,
     ) {
-        let plugin_manager = self.plugin_manager.read().unwrap();
-        if plugin_manager.plugins.is_empty() {
+        let plugin_manager = self.plugin_manager.load();
+        if plugin_manager.is_empty() {
             return;
         }
 
         let entry_info =
             Self::build_replica_entry_info(slot, index, entry, starting_transaction_index);
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.iter() {
             if !plugin.entry_notifications_enabled() {
                 continue;
             }
@@ -52,7 +53,7 @@ impl EntryNotifier for EntryNotifierImpl {
 }
 
 impl EntryNotifierImpl {
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<HotGeyserPluginList>>) -> Self {
         Self { plugin_manager }
     }
 

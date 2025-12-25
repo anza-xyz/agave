@@ -1,14 +1,20 @@
 use {
     agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
+    arc_swap::ArcSwap,
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
     libloading::Library,
     log::*,
     std::{
+        mem::MaybeUninit,
         ops::{Deref, DerefMut},
         path::Path,
+        sync::Arc,
+        time::Duration,
     },
     tokio::sync::oneshot::Sender as OneShotSender,
 };
+
+pub const MAX_LOADED_GEYSER_PLUGINS: usize = 16;
 
 #[derive(Debug)]
 pub struct LoadedGeyserPlugin {
@@ -54,16 +60,174 @@ impl DerefMut for LoadedGeyserPlugin {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
+struct InnerPluginTables {
+    // This field is unused but must be kept to ensure the LoadedGeyserPlugin
+    // instances are kept alive as long as InnerPluginTables is alive.
+    // So is the deref_table below.
+    plugins: [MaybeUninit<Arc<LoadedGeyserPlugin>>; MAX_LOADED_GEYSER_PLUGINS],
+    deref_table: [MaybeUninit<*const dyn GeyserPlugin>; MAX_LOADED_GEYSER_PLUGINS],
+    len: usize,
+}
+
+impl Drop for InnerPluginTables {
+    fn drop(&mut self) {
+        for i in 0..self.len {
+            unsafe {
+                self.plugins[i].assume_init_drop();
+                self.deref_table[i] = MaybeUninit::zeroed();
+            }
+        }
+        self.len = 0;
+    }
+}
+
+impl Clone for InnerPluginTables {
+    fn clone(&self) -> Self {
+        let mut new_plugins = std::array::from_fn(|_| MaybeUninit::uninit());
+        for i in 0..self.len {
+            let plugin = unsafe { self.plugins[i].assume_init_ref().clone() };
+            new_plugins[i] = MaybeUninit::new(plugin);
+        }
+        Self {
+            plugins: new_plugins,
+            deref_table: self.deref_table.clone(),
+            len: self.len,
+        }
+    }
+}
+
+// unsafe impl Sync for HotGeyserPluginList {}
+// Its safe to implement since GeyserPlugin is Send + Sync by definition,
+// morever the lifetime is correct since HotGeyserPluginList owns the plugins array as long as it lives.
+unsafe impl Send for InnerPluginTables {}
+unsafe impl Sync for InnerPluginTables {}
+
+impl InnerPluginTables {
+    pub fn empty() -> Self {
+        Self {
+            plugins: std::array::from_fn(|_| MaybeUninit::uninit()),
+            deref_table: std::array::from_fn(|_| MaybeUninit::uninit()),
+            len: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct HotGeyserPluginList {
+    plugins: Option<InnerPluginTables>,
+    // This table already dereferences the Arc, so we can avoid that cost when iterating over plugins
+    drop_callback_tx: crossbeam_channel::Sender<InnerPluginTables>,
+}
+
+impl Drop for HotGeyserPluginList {
+    fn drop(&mut self) {
+        if let Some(plugins) = self.plugins.take() {
+            if let Err(e) = self.drop_callback_tx.send(plugins) {
+                error!(
+                    "Failed to send drop callback for HotGeyserPluginList: {}",
+                    e
+                );
+            }
+        }
+    }
+}
+
+pub struct HotGeyserPluginListIter<'a> {
+    list: &'a [MaybeUninit<*const dyn GeyserPlugin>],
+    index: usize,
+}
+
+impl<'a> Iterator for HotGeyserPluginListIter<'a> {
+    type Item = &'a dyn GeyserPlugin;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.list.len() {
+            return None;
+        }
+        let plugin = unsafe { self.list[self.index].assume_init().as_ref() }.expect("null ptr");
+        self.index += 1;
+        Some(plugin)
+    }
+}
+
+impl HotGeyserPluginList {
+    pub fn is_empty(&self) -> bool {
+        self.plugins.as_ref().map(|p| p.len == 0).unwrap_or(true)
+    }
+
+    pub fn iter(&self) -> HotGeyserPluginListIter<'_> {
+        HotGeyserPluginListIter {
+            list: &self
+                .plugins
+                .as_ref()
+                .map(|p| &p.deref_table[..p.len])
+                .unwrap_or(&[]),
+            index: 0,
+        }
+    }
+}
+
+///
+/// Geyser Plugin Manager
+///
+/// # Note
+///
+/// This struct is designed to be used behind a Mutex to allow safe concurrent access.
+///
+/// hot_plugin_list provides a lock-free read access to the list of loaded plugins for
+/// high-performance paths such as account updates, transactions, and entries.
+///
+/// # Total pointers dereferenced per access
+///
+/// - 1 pointer dereference to get to the ArcSwap
+/// - 1 pointer dereference to get to the HotGeyserPluginList
+/// - 1 pointer dereference to get to the InnerPluginTables::deref_table (holds fat pointers to dyn GeyserPlugin)
+/// - 1 pointer dereference to call methods on the dyn GeyserPlugin trait object
+///
+#[derive(Debug)]
 pub struct GeyserPluginManager {
-    pub plugins: Vec<LoadedGeyserPlugin>,
+    plugins: Vec<Arc<LoadedGeyserPlugin>>,
+    hot_plugin_list: Arc<ArcSwap<HotGeyserPluginList>>,
+    drop_callback_tx: crossbeam_channel::Sender<InnerPluginTables>,
+    drop_callback_rx: crossbeam_channel::Receiver<InnerPluginTables>,
+}
+
+impl Default for GeyserPluginManager {
+    fn default() -> Self {
+        let (drop_callback_tx, drop_callback_rx) = crossbeam_channel::bounded(1);
+        GeyserPluginManager {
+            plugins: Vec::new(),
+            hot_plugin_list: Arc::new(ArcSwap::from_pointee(HotGeyserPluginList {
+                plugins: Some(InnerPluginTables::empty()),
+                drop_callback_tx: drop_callback_tx.clone(),
+            })),
+            drop_callback_tx,
+            drop_callback_rx,
+        }
+    }
 }
 
 impl GeyserPluginManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn get_hot_plugin_list(&self) -> Arc<ArcSwap<HotGeyserPluginList>> {
+        Arc::clone(&self.hot_plugin_list)
+    }
+
     /// Unload all plugins and loaded plugin libraries, making sure to fire
     /// their `on_plugin_unload()` methods so they can do any necessary cleanup.
     pub fn unload(&mut self) {
-        for mut plugin in self.plugins.drain(..) {
+        let plugins = std::mem::take(&mut self.plugins);
+        {
+            let old = self.swap_plugin_list();
+            drop(old);
+        }
+
+        for arc_plugin in plugins {
+            let mut plugin = Arc::try_unwrap(arc_plugin).expect("Arc::try_unwrap");
             info!("Unloading plugin for {:?}", plugin.name());
             plugin.on_unload();
         }
@@ -126,6 +290,14 @@ impl GeyserPluginManager {
         &mut self,
         geyser_plugin_config_file: impl AsRef<Path>,
     ) -> JsonRpcResult<String> {
+        if self.plugins.len() >= MAX_LOADED_GEYSER_PLUGINS {
+            return Err(jsonrpc_core::Error {
+                code: ErrorCode::InvalidRequest,
+                message: format!("Cannot load more than {MAX_LOADED_GEYSER_PLUGINS} plugins",),
+                data: None,
+            });
+        }
+
         // First load plugin
         let (mut new_plugin, new_config_file) =
             load_plugin_from_config(geyser_plugin_config_file.as_ref()).map_err(|e| {
@@ -166,8 +338,11 @@ impl GeyserPluginManager {
                 data: None,
             })?;
         let name = new_plugin.name().to_string();
-        self.plugins.push(new_plugin);
+        self.plugins.push(Arc::new(new_plugin));
 
+        // refresh shared plugin list
+        let old = self.swap_plugin_list();
+        drop(old);
         Ok(name)
     }
 
@@ -246,7 +421,7 @@ impl GeyserPluginManager {
         match new_plugin.on_load(new_parsed_config_file, true) {
             // On success, push plugin and library
             Ok(()) => {
-                self.plugins.push(new_plugin);
+                self.plugins.push(Arc::new(new_plugin));
             }
 
             // On failure, return error
@@ -261,13 +436,69 @@ impl GeyserPluginManager {
             }
         }
 
+        // refresh shared plugin list
+        self.swap_plugin_list();
         Ok(())
     }
 
+    fn build_plugin_list(&self) -> InnerPluginTables {
+        let new_hot_plugin_inner_list =
+            std::array::from_fn(|i| match self.plugins.get(i).cloned() {
+                Some(plugin) => MaybeUninit::new(plugin),
+                None => MaybeUninit::zeroed(),
+            });
+        let deref_table = std::array::from_fn(|i| {
+            if let Some(plugin) = self.plugins.get(i) {
+                let geyser_plugin = plugin.plugin.deref();
+                MaybeUninit::new(geyser_plugin as *const dyn GeyserPlugin)
+            } else {
+                MaybeUninit::zeroed()
+            }
+        });
+        InnerPluginTables {
+            plugins: new_hot_plugin_inner_list,
+            deref_table,
+            len: self.plugins.len(),
+        }
+    }
+
+    fn swap_plugin_list(&mut self) -> InnerPluginTables {
+        let inner_tables = self.build_plugin_list();
+        let new_hot_plugin_list = Arc::new(HotGeyserPluginList {
+            plugins: Some(inner_tables),
+            drop_callback_tx: self.drop_callback_tx.clone(),
+        });
+        log::info!(
+            "Swapped hot plugin list with {} plugins",
+            self.plugins.len()
+        );
+        self.hot_plugin_list.store(new_hot_plugin_list);
+        self.drop_callback_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("Timeout waiting for old plugin list to be dropped")
+    }
+
     fn _drop_plugin(&mut self, idx: usize) {
-        let mut current_plugin = self.plugins.remove(idx);
+        let current_plugin = self.plugins.remove(idx);
+
+        // Swap and drop the shared plugin list, this should decrements the ref count
+        {
+            let old = self.swap_plugin_list();
+            info!(
+                "Dropping old inner plugin tables with {} plugin refs",
+                old.len
+            );
+            drop(old);
+        }
+        let mut current_plugin = Arc::try_unwrap(current_plugin).unwrap_or_else(|e| {
+            panic!(
+                "Failed to unwrap Arc for plugin {} at idx {}",
+                e.name(),
+                idx
+            );
+        });
         let name = current_plugin.name().to_string();
-        current_plugin.on_unload();
+        current_plugin.plugin.on_unload();
         info!("Unloaded plugin {name} at idx {idx}");
     }
 }
@@ -449,7 +680,7 @@ mod tests {
         },
         agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
         libloading::Library,
-        std::sync::{Arc, RwLock},
+        std::sync::Arc,
     };
 
     pub(super) fn dummy_plugin_and_library<P: GeyserPlugin>(
@@ -491,11 +722,10 @@ mod tests {
     #[test]
     fn test_geyser_reload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
+        let mut plugin_manager = GeyserPluginManager::default();
 
         // No plugins are loaded, this should fail
-        let mut plugin_manager_lock = plugin_manager.write().unwrap();
-        let reload_result = plugin_manager_lock.reload_plugin(DUMMY_NAME, DUMMY_CONFIG);
+        let reload_result = plugin_manager.reload_plugin(DUMMY_NAME, DUMMY_CONFIG);
         assert_eq!(
             reload_result.unwrap_err().message,
             "The plugin you requested to reload is not loaded"
@@ -504,24 +734,24 @@ mod tests {
         // Mock having loaded plugin (TestPlugin)
         let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, DUMMY_CONFIG);
         plugin.on_load(config, false).unwrap();
-        plugin_manager_lock.plugins.push(plugin);
-        assert_eq!(plugin_manager_lock.plugins[0].name(), DUMMY_NAME);
-        plugin_manager_lock.plugins[0].name();
+        plugin_manager.plugins.push(Arc::new(plugin));
+        assert_eq!(plugin_manager.plugins[0].name(), DUMMY_NAME);
+        plugin_manager.plugins[0].name();
 
         // Try wrong name (same error)
         const WRONG_NAME: &str = "wrong_name";
-        let reload_result = plugin_manager_lock.reload_plugin(WRONG_NAME, DUMMY_CONFIG);
+        let reload_result = plugin_manager.reload_plugin(WRONG_NAME, DUMMY_CONFIG);
         assert_eq!(
             reload_result.unwrap_err().message,
             "The plugin you requested to reload is not loaded"
         );
 
         // Now try a (dummy) reload, replacing TestPlugin with TestPlugin2
-        let reload_result = plugin_manager_lock.reload_plugin(DUMMY_NAME, TESTPLUGIN2_CONFIG);
+        let reload_result = plugin_manager.reload_plugin(DUMMY_NAME, TESTPLUGIN2_CONFIG);
         assert!(reload_result.is_ok());
 
         // The plugin is now replaced with ANOTHER_DUMMY_NAME
-        let plugins = plugin_manager_lock.list_plugins().unwrap();
+        let plugins = plugin_manager.list_plugins().unwrap();
         assert!(plugins.iter().any(|name| name.eq(ANOTHER_DUMMY_NAME)));
         // DUMMY_NAME should no longer be present.
         assert!(!plugins.iter().any(|name| name.eq(DUMMY_NAME)));
@@ -530,21 +760,16 @@ mod tests {
     #[test]
     fn test_plugin_list() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
-        let mut plugin_manager_lock = plugin_manager.write().unwrap();
+        let mut plugin_manager = GeyserPluginManager::default();
 
         // Load two plugins
         // First
-        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, TESTPLUGIN_CONFIG);
-        plugin.on_load(config, false).unwrap();
-        plugin_manager_lock.plugins.push(plugin);
+        plugin_manager.load_plugin(TESTPLUGIN_CONFIG).unwrap();
         // Second
-        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin2, TESTPLUGIN2_CONFIG);
-        plugin.on_load(config, false).unwrap();
-        plugin_manager_lock.plugins.push(plugin);
+        plugin_manager.load_plugin(TESTPLUGIN2_CONFIG).unwrap();
 
         // Check that both plugins are returned in the list
-        let plugins = plugin_manager_lock.list_plugins().unwrap();
+        let plugins = plugin_manager.list_plugins().unwrap();
         assert!(plugins.iter().any(|name| name.eq(DUMMY_NAME)));
         assert!(plugins.iter().any(|name| name.eq(ANOTHER_DUMMY_NAME)));
     }
@@ -552,17 +777,86 @@ mod tests {
     #[test]
     fn test_plugin_load_unload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
-        let mut plugin_manager_lock = plugin_manager.write().unwrap();
+        let mut plugin_manager = GeyserPluginManager::default();
 
         // Load rpc call
-        let load_result = plugin_manager_lock.load_plugin(TESTPLUGIN_CONFIG);
+        let load_result = plugin_manager.load_plugin(TESTPLUGIN_CONFIG);
         assert!(load_result.is_ok());
-        assert_eq!(plugin_manager_lock.plugins.len(), 1);
+        assert_eq!(plugin_manager.plugins.len(), 1);
+        assert_eq!(
+            plugin_manager
+                .hot_plugin_list
+                .load()
+                .plugins
+                .as_ref()
+                .unwrap()
+                .len,
+            1
+        );
 
         // Unload rpc call
-        let unload_result = plugin_manager_lock.unload_plugin(DUMMY_NAME);
+        let unload_result = plugin_manager.unload_plugin(DUMMY_NAME);
         assert!(unload_result.is_ok());
-        assert_eq!(plugin_manager_lock.plugins.len(), 0);
+        assert_eq!(plugin_manager.plugins.len(), 0);
+        assert_eq!(
+            plugin_manager
+                .hot_plugin_list
+                .load()
+                .plugins
+                .as_ref()
+                .unwrap()
+                .len,
+            0
+        );
+    }
+
+    #[test]
+    pub fn test_plugin_unload_all() {
+        // Initialize empty manager
+        let mut plugin_manager = GeyserPluginManager::default();
+
+        // Load two plugins
+        // First
+        plugin_manager.load_plugin(TESTPLUGIN_CONFIG).unwrap();
+        assert_eq!(plugin_manager.plugins.len(), 1);
+        assert_eq!(
+            plugin_manager
+                .hot_plugin_list
+                .load()
+                .plugins
+                .as_ref()
+                .unwrap()
+                .len,
+            1
+        );
+        // Second
+        plugin_manager.load_plugin(TESTPLUGIN2_CONFIG).unwrap();
+        assert_eq!(plugin_manager.plugins.len(), 2);
+        assert_eq!(
+            plugin_manager
+                .hot_plugin_list
+                .load()
+                .plugins
+                .as_ref()
+                .unwrap()
+                .len,
+            2
+        );
+
+        // Unload all
+        plugin_manager.unload();
+
+        // Check no plugins remain
+        assert_eq!(plugin_manager.plugins.len(), 0);
+        assert_eq!(
+            plugin_manager
+                .hot_plugin_list
+                .load()
+                .plugins
+                .as_ref()
+                .unwrap()
+                .len,
+            0
+        );
     }
 }

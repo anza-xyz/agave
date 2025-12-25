@@ -1,14 +1,15 @@
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    crate::geyser_plugin_manager::HotGeyserPluginList,
     agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
+    arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
     solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
-    std::sync::{Arc, RwLock},
+    std::sync::Arc,
 };
 
 pub struct SlotStatusNotifierImpl {
-    plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<HotGeyserPluginList>>,
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
@@ -42,17 +43,17 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
 }
 
 impl SlotStatusNotifierImpl {
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<HotGeyserPluginList>>) -> Self {
         Self { plugin_manager }
     }
 
     pub fn notify_slot_status(&self, slot: Slot, parent: Option<Slot>, slot_status: SlotStatus) {
-        let plugin_manager = self.plugin_manager.read().unwrap();
-        if plugin_manager.plugins.is_empty() {
+        let plugin_manager = self.plugin_manager.load();
+        if plugin_manager.is_empty() {
             return;
         }
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.iter() {
             match plugin.update_slot_status(slot, parent, &slot_status) {
                 Err(err) => {
                     error!(
