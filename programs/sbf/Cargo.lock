@@ -9237,7 +9237,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "bincode",
  "solana-account-info",
- "solana-define-syscall 3.0.0",
+ "solana-define-syscall 4.0.1",
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-msg",
