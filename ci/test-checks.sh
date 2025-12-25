@@ -8,52 +8,35 @@ set -e
 cd "$(dirname "$0")/.."
 
 source ci/_
-source ci/rust-version.sh stable
-source ci/rust-version.sh nightly
+source ci/rust-version.sh all
 eval "$(ci/channel-info.sh)"
-cargoNightly="$(readlink -f "./cargo") nightly"
-
-# check that cargo-hack has been installed
-if ! $cargoNightly hack --version >/dev/null 2>&1; then
-  cat >&2 <<EOF
-ERROR: cargo hack failed.
-       install 'cargo hack' with 'cargo install cargo-hack'
-EOF
-fi
-
-echo --- build environment
-(
-  set -x
-
-  rustup run "$rust_stable" rustc --version --verbose
-  rustup run "$rust_nightly" rustc --version --verbose
-
-  cargo --version --verbose
-  $cargoNightly --version --verbose
-
-  cargo clippy --version --verbose
-  $cargoNightly clippy --version --verbose
-
-  # miri is only available with nightly
-  $cargoNightly miri --version --verbose
-
-  $cargoNightly hack --version --verbose
-
-  # audit is done only with "$cargo stable"
-  cargo audit --version
-
-  grcov --version
-
-  sccache --version
-
-  wasm-pack --version
-
-  cargo nextest --version --verbose
-  $cargoNightly nextest --version --verbose
-)
 
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
+
+if ! cargo "+${rust_nightly}" sort --version > /dev/null 2>&1; then
+	if [[ -n $CI ]]; then
+		echo "cargo-sort not found"
+		exit 1
+	else
+		echo "cargo-sort not found. installing..."
+		cargo "+${rust_nightly}" install cargo-sort
+	fi
+fi
+_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
+
+_ scripts/check-dev-context-only-utils.sh tree
+
+if ! cargo "+${rust_nightly}" fmt --version > /dev/null 2>&1; then
+	if [[ -n $CI ]]; then
+		echo "rustfmt not found"
+		exit 1
+	else
+		echo "rustfmt not found. installing..."
+		rustup component add rustfmt --toolchain=$RUST_NIGHTLY_VERSION
+	fi
+fi
+_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 
 # run cargo check for all rust files in this monorepo for faster turnaround in
 # case of any compilation/build error for nightly
@@ -79,17 +62,8 @@ _ ci/order-crates-for-publishing.py
 _ scripts/cargo-clippy.sh
 
 if [[ -n $CI ]]; then
-  # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
-else
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
+  _ ci/do-audit.sh
 fi
-
-_ scripts/check-dev-context-only-utils.sh tree
-
-_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
-
-_ ci/do-audit.sh
 
 if [[ -n $CI ]] && [[ $CHANNEL = "stable" ]]; then
   _ ci/check-install-all.sh
