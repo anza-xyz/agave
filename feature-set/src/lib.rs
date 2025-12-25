@@ -177,6 +177,8 @@ impl FeatureSet {
             alt_bn128_little_endian: self.is_active(&alt_bn128_little_endian::id()),
             bls_pubkey_management_in_vote_account: self
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
+            commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
+            custom_commission_collector: self.is_active(&custom_commission_collector::id()),
         }
     }
 }
@@ -1215,6 +1217,14 @@ pub mod bls_pubkey_management_in_vote_account {
     solana_pubkey::declare_id!("EGJLweNUVskAPEwpjvNB7JT6uUi6h4mFhowNYXVSrimG");
 }
 
+pub mod commission_rate_in_basis_points {
+    solana_pubkey::declare_id!("Eg7tXEwMZzS98xaZ1YHUbdRHsaYZiCsSaR6sKgxreoaj");
+}
+
+pub mod custom_commission_collector {
+    solana_pubkey::declare_id!("GFZ5U5LUCWNecKMBJDuVR3vdepUMwSkwVUMxWKjJXkC4");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2177,6 +2187,14 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             bls_pubkey_management_in_vote_account::id(),
             "SIMD-0387: BLS Pubkey Management in Vote Account",
+        ),
+        (
+            commission_rate_in_basis_points::id(),
+            "SIMD-0291: Commission rate in basis points",
+        ),
+        (
+            custom_commission_collector::id(),
+            "SIMD-0232: Custom Commission Collector Account",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
