@@ -133,6 +133,9 @@ impl AccountsUpdateNotifierImpl {
             return;
         }
         for plugin in plugin_manager.plugins.iter() {
+            if !plugin.account_data_notifications_enabled() {
+                continue;
+            }
             match plugin.update_account(
                 ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
