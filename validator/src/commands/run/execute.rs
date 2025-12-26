@@ -63,7 +63,6 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
         xdp::{set_cpu_affinity, XdpConfig},
@@ -261,13 +260,6 @@ pub fn execute(
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
-
-    let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
-        warn!("Submission of TPU transactions via UDP is deprecated.");
-        true
-    } else {
-        DEFAULT_TPU_ENABLE_UDP
-    };
 
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
 
@@ -1012,7 +1004,6 @@ pub fn execute(
         ValidatorTpuConfig {
             vote_use_quic,
             tpu_connection_pool_size,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,

@@ -47,8 +47,7 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{
-        TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
-        DEFAULT_VOTE_USE_QUIC,
+        TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC,
     },
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
@@ -419,9 +418,8 @@ impl LocalCluster {
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
-                // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
                 // to use the same QUIC ports due to SO_REUSEPORT.
-                ValidatorTpuConfig::new_for_tests(true),
+                ValidatorTpuConfig::new_for_tests(),
                 Arc::new(RwLock::new(None)),
             )
             .expect("assume successful validator start");
@@ -632,7 +630,7 @@ impl LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -698,7 +696,7 @@ impl LocalCluster {
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
-                ValidatorTpuConfig::new_for_tests(true),
+                ValidatorTpuConfig::new_for_tests(),
                 Arc::new(RwLock::new(None)),
             )
             .unwrap_or_else(|e| panic!("Cluster leader failed to start: {e:?}"));
@@ -764,7 +762,7 @@ impl LocalCluster {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     socket_addr_space,
-                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+                    ValidatorTpuConfig::new_for_tests(),
                     Arc::new(RwLock::new(None)),
                 )
                 .unwrap_or_else(|e| panic!("Validator {i} failed to start: {e:?}"));
@@ -1317,7 +1315,7 @@ impl Cluster for LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
