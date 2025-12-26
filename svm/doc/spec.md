@@ -183,8 +183,8 @@ the transaction processor.
 - `account_overrides`: Encapsulates overridden accounts, typically used for
   transaction simulation.
 - `compute_budget`: The compute budget to use for transaction execution.
-- `check_program_modification_slot`: Whether or not to check a program's
-  modification slot when replenishing a program cache instance.
+- `check_program_deployment_slot`: Whether or not to check a program's
+  deployment slot when replenishing a program cache instance.
 - `log_messages_bytes_limit`: The maximum number of bytes that log messages can
   consume.
 - `limit_to_load_programs`: Whether to limit the number of programs loaded for

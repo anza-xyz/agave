@@ -327,7 +327,11 @@ impl SvmTestEnvironment<'_> {
                         .global_program_cache
                         .write()
                         .unwrap()
-                        .merge(&self.batch_processor.environments, programs_modified_by_tx);
+                        .merge(
+                            &self.batch_processor.environments,
+                            self.batch_processor.slot,
+                            programs_modified_by_tx,
+                        );
                 }
             }
         }

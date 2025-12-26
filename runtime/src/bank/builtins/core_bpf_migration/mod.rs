@@ -206,6 +206,7 @@ impl Bank {
             .unwrap()
             .merge(
                 &self.transaction_processor.environments,
+                self.slot,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
 
@@ -718,8 +719,10 @@ pub(crate) mod tests {
             let entries = program_cache.get_flattened_entries(true, true);
             let target_entry = entries
                 .iter()
-                .find(|(program_id, _)| program_id == &self.target_program_address)
-                .map(|(_, entry)| entry)
+                .find(|(program_id, _last_modification_slot, _entry)| {
+                    program_id == &self.target_program_address
+                })
+                .map(|(_program_id, _last_modification_slot, entry)| entry)
                 .unwrap();
 
             // The target program entry should be updated.
@@ -2148,6 +2151,7 @@ pub(crate) mod tests {
         program_cache.assign_program(
             &roundtrip_bank.transaction_processor.environments,
             bpf_loader_v2_program_address,
+            upgrade_slot,
             entry,
         );
         // Release the lock on the program cache.
