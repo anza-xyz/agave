@@ -867,18 +867,6 @@ impl TestValidator {
         Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, false)
     }
 
-    /// Create a test validator using udp for TPU (deprecated - use with_no_fees instead).
-    ///
-    /// This function panics on initialization failure.
-    #[deprecated(since = "3.0.0", note = "UDP TPU is deprecated, use with_no_fees instead")]
-    pub fn with_no_fees_udp(
-        mint_address: Pubkey,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::with_no_fees(mint_address, faucet_addr, socket_addr_space)
-    }
-
     /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
     /// Faucet optional.
     ///
