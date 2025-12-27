@@ -187,7 +187,7 @@ impl DuplicateShredHandler {
                     }
             });
         }
-        if self.buffer.len() < BUFFER_CAPACITY {
+        if self.buffer.len() <= BUFFER_CAPACITY {
             return;
         }
         // Lookup stake for each entry.
