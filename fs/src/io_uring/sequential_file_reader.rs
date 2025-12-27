@@ -36,8 +36,8 @@ pub struct SequentialFileReaderBuilder<'sp> {
     shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
     /// Register buffer as fixed with the kernel
     register_buffer: bool,
-    /// option to use O_DIRECT when opening files
-    use_o_direct: bool,
+    /// Toggle preference for opening files with the O_DIRECT flag
+    prefer_direct_io: bool,
 }
 
 impl<'sp> SequentialFileReaderBuilder<'sp> {
@@ -48,7 +48,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             ring_squeue_size: None,
             shared_sqpoll_fd: None,
             register_buffer: true,
-            use_o_direct: false,
+            prefer_direct_io: false,
         }
     }
 
@@ -111,7 +111,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         // in other words, each O_DIRECT read must be into a subbuffer of some multiple of the fs block size
         // the other requirement for O_DIRECT is that the buffer must be aligned
         // but since we are using `PageAlignedMemory`, the buffer will always be aligned
-        if self.use_o_direct {
+        if self.prefer_direct_io {
             let block_size = get_block_size(&path);
             assert!(self.read_capacity.is_multiple_of(block_size as usize));
         }
@@ -120,7 +120,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             path,
             buf_slice_mut,
             self.read_capacity,
-            self.use_o_direct,
+            self.prefer_direct_io,
         )?;
 
         let io_uring = self.create_io_uring(buf_capacity)?;
