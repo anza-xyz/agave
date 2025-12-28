@@ -3,7 +3,6 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_overrides::AccountOverrides,
-        nonce_info::NonceInfo,
         rent_calculator::{
             check_rent_state_with_account, get_account_rent_state, RENT_EXEMPT_RENT_EPOCH,
         },
@@ -67,18 +66,33 @@ pub(crate) enum TransactionLoadResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+<<<<<<< HEAD
 #[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
     pub(crate) nonce: Option<NonceInfo>,
     pub(crate) compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
+=======
+#[cfg_attr(
+    feature = "svm-internal",
+    qualifier_attr::field_qualifiers(nonce_address(pub))
+)]
+pub struct CheckedTransactionDetails {
+    pub(crate) nonce_address: Option<Pubkey>,
+    pub(crate) compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
+>>>>>>> 346847efe (svm: build NonceInfo during transaction processing (#9455))
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 impl Default for CheckedTransactionDetails {
     fn default() -> Self {
         Self {
+<<<<<<< HEAD
             nonce: None,
             compute_budget_and_limits: Ok(SVMTransactionExecutionAndFeeBudgetLimits {
+=======
+            nonce_address: None,
+            compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits {
+>>>>>>> 346847efe (svm: build NonceInfo during transaction processing (#9455))
                 budget: SVMTransactionExecutionBudget::default(),
                 loaded_accounts_data_size_limit: NonZeroU32::new(32)
                     .expect("Failed to set loaded_accounts_bytes"),
@@ -90,11 +104,16 @@ impl Default for CheckedTransactionDetails {
 
 impl CheckedTransactionDetails {
     pub fn new(
+<<<<<<< HEAD
         nonce: Option<NonceInfo>,
         compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
+=======
+        nonce_address: Option<Pubkey>,
+        compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
+>>>>>>> 346847efe (svm: build NonceInfo during transaction processing (#9455))
     ) -> Self {
         Self {
-            nonce,
+            nonce_address,
             compute_budget_and_limits,
         }
     }
