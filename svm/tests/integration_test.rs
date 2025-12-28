@@ -513,6 +513,7 @@ impl SvmTestEntry {
                         .saturating_add(message.num_secp256k1_signatures())
                         .saturating_add(message.num_secp256r1_signatures());
 
+<<<<<<< HEAD
                     let compute_budget = compute_budget_limits.map(|v| {
                         v.get_compute_budget_and_limits(
                             v.loaded_accounts_bytes,
@@ -524,6 +525,21 @@ impl SvmTestEntry {
                         )
                     });
                     CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
+=======
+                    let compute_budget = compute_budget_limits
+                        .map(|v| {
+                            v.get_compute_budget_and_limits(
+                                v.loaded_accounts_bytes,
+                                FeeDetails::new(
+                                    signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
+                                    v.get_prioritization_fee(),
+                                ),
+                                self.feature_set.raise_cpi_nesting_limit_to_8,
+                            )
+                        })
+                        .unwrap();
+                    CheckedTransactionDetails::new(tx_details.nonce_address, compute_budget)
+>>>>>>> 346847efe (svm: build NonceInfo during transaction processing (#9455))
                 });
 
                 (message, check_result)
@@ -550,11 +566,17 @@ pub struct TransactionBatchItem {
 }
 
 impl TransactionBatchItem {
+    // TODO accept Pubkey and remove all NonceInfo creation from tests
     fn with_nonce(nonce_info: NonceInfo) -> Self {
         Self {
             check_result: Ok(CheckedTransactionDetails::new(
+<<<<<<< HEAD
                 Some(nonce_info),
                 Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+=======
+                Some(*nonce_info.address()),
+                SVMTransactionExecutionAndFeeBudgetLimits::default(),
+>>>>>>> 346847efe (svm: build NonceInfo during transaction processing (#9455))
             )),
             ..Self::default()
         }
@@ -1666,7 +1688,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             Hash::default(),
         );
 
-        test_entry.push_nonce_transaction(first_transaction, initial_nonce_info.clone());
+        test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
             advanced_nonce_info.clone(),
@@ -1674,10 +1696,6 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         );
 
         test_entries.push(test_entry);
-    }
-
-    for test_entry in &mut test_entries {
-        test_entry.add_initial_program(program_name);
     }
 
     // batch 5:
@@ -1933,7 +1951,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             ],
             Some(&fee_payer),
             &[&fee_payer_keypair, &new_authority_keypair],
-            *advanced_durable.as_hash(),
+            *initial_durable.as_hash(),
         );
 
         test_entry.push_transaction(first_transaction);
@@ -3042,8 +3060,8 @@ fn svm_inspect_nonce_load_failure(
     // by signing with the dummy account we ensure it precedes a separate nonce
     let transaction = Transaction::new_signed_with_payer(
         &[
-            compute_instruction,
             advance_instruction,
+            compute_instruction,
             fee_only_noop_instruction,
         ],
         Some(&fee_payer),
