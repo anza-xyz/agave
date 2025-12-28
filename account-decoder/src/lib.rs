@@ -73,12 +73,19 @@ pub fn encode_ui_account<T: ReadableAccount>(
             encoding,
         ),
         UiAccountEncoding::Base64Zstd => {
-            let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 0).unwrap();
-            match encoder
-                .write_all(slice_data(account.data(), data_slice_config))
-                .and_then(|()| encoder.finish())
-            {
-                Ok(zstd_data) => UiAccountData::Binary(BASE64_STANDARD.encode(zstd_data), encoding),
+            match zstd::stream::write::Encoder::new(Vec::new(), 0) {
+                Ok(mut encoder) => {
+                    match encoder
+                        .write_all(slice_data(account.data(), data_slice_config))
+                        .and_then(|()| encoder.finish())
+                    {
+                        Ok(zstd_data) => UiAccountData::Binary(BASE64_STANDARD.encode(zstd_data), encoding),
+                        Err(_) => UiAccountData::Binary(
+                            BASE64_STANDARD.encode(slice_data(account.data(), data_slice_config)),
+                            UiAccountEncoding::Base64,
+                        ),
+                    }
+                }
                 Err(_) => UiAccountData::Binary(
                     BASE64_STANDARD.encode(slice_data(account.data(), data_slice_config)),
                     UiAccountEncoding::Base64,
