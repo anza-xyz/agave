@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        gre::packet::{construct_gre_packet, GreConfig, PacketError, INNER_PACKET_HEADER_SIZE},
+        gre::packet::{construct_gre_packet, GreConfig, PacketError, INNER_PACKET_HEADER_SIZE, GRE_HEADER_BASE_SIZE, GRE_KEY_SIZE},
         netlink::{GreTunnelInfo, InterfaceInfo, MacAddress},
         packet::{ETH_HEADER_SIZE, IP_HEADER_SIZE},
         route::NextHop,
@@ -11,23 +11,16 @@ use {
     thiserror::Error,
 };
 
-/// Encapsulator for L3 GRE tunnel packet transmission
-///
 /// Manages GRE encapsulation state (cached MAC addresses) and provides
 /// methods for encapsulating packets with GRE headers.
 #[derive(Default)]
 pub struct GreEncapsulator {
     /// Cache for GRE remote MAC address lookup
-    /// Assumes a single GRE tunnel per host - stores one (gre_remote_ip, mac_address) pair.
-    /// The cache invalidates automatically when:
-    /// 1. gre_remote changes (tunnel reconfigured)
-    /// 2. route lookup fails (route/ARP changes or tunnel removed)
-    /// 3. MAC address is missing (ARP entry expired)
+    /// Assumes a single GRE tunnel per host
     cached_remote: Option<(Ipv4Addr, MacAddress)>,
 }
 
 impl GreEncapsulator {
-    /// Check if a packet should be sent through a GRE tunnel
     pub fn is_gre(interface_info: &InterfaceInfo) -> bool {
         interface_info.gre_tunnel.is_some()
     }
@@ -40,10 +33,7 @@ impl GreEncapsulator {
         }
     }
 
-    /// Get the outer destination MAC for the GRE packet
-    ///
-    /// Uses caching to avoid redundant route lookups in the hot path.
-    /// Returns None if the route lookup fails or MAC address is unavailable.
+    /// Get outer destination MAC for the GRE packet (cached for performance)
     pub fn get_outer_dst_mac<R>(&mut self, gre_remote: Ipv4Addr, route_fn: &R) -> Option<MacAddress>
     where
         R: Fn(&IpAddr) -> Option<(NextHop, InterfaceInfo)>,
@@ -54,46 +44,32 @@ impl GreEncapsulator {
             }
         }
 
-        // Cache miss. Lookup route to GRE remote
+        // Cache miss - must lookup route to GRE remote
         let (nh, _iface) = route_fn(&IpAddr::V4(gre_remote))?;
         let mac = nh.mac_addr?;
 
-        // Update cache
+        // update cache
         self.cached_remote = Some((gre_remote, mac));
         Some(mac)
     }
 
-    /// Invalidate the GRE remote cache
-    ///
-    /// Called when route lookups fail or tunnel configuration changes
+    /// Invalidate GRE remote cache. //greg: todo not sure this is a good idea anymore
     pub fn invalidate_cache(&mut self) {
         self.cached_remote = None;
     }
 
-    /// Calculate the size of a GRE-encapsulated packet
-    /// Takes into account optional GRE key field
+    /// Calculate size of a GRE-encapsulated packet
     pub fn calculate_packet_size(payload_len: usize, config: &GreConfig) -> usize {
-        use crate::gre::packet::{GRE_HEADER_BASE_SIZE, GRE_KEY_SIZE};
         let gre_header_size = if config.okey.is_some() {
             GRE_HEADER_BASE_SIZE + GRE_KEY_SIZE
         } else {
             GRE_HEADER_BASE_SIZE
         };
-        ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size + INNER_PACKET_HEADER_SIZE + payload_len
+        (ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size + INNER_PACKET_HEADER_SIZE).saturating_add(payload_len)
     }
 
-    /// Encapsulate a packet with GRE and write it to the packet buffer
-    ///
-    /// This method handles the complete GRE encapsulation flow:
-    /// 1. Extracts GRE endpoints from tunnel info
-    /// 2. Resolves outer destination MAC (with caching)
-    /// 3. Constructs the GRE-encapsulated packet in the provided buffer
-    ///
+    /// Encapsulate a packet with GRE
     /// Returns the constructed packet length on success, or an error if encapsulation fails.
-    /// The caller is responsible for:
-    /// - Setting the frame length before calling this method
-    /// - Frame management (release on error)
-    /// - Ring submission
     #[allow(clippy::too_many_arguments)]
     pub fn encapsulate_packet<R>(
         &mut self,
@@ -121,7 +97,6 @@ impl GreEncapsulator {
             IpAddr::V6(_) => return Err(EncapsulationError::Ipv6NotSupported),
         };
 
-        // Construct the GRE packet
         let gre_packet_len = construct_gre_packet(
             packet,
             &inner_src_ip,

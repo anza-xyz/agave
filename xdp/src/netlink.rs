@@ -349,9 +349,9 @@ impl std::fmt::Display for MacAddress {
 pub struct GreTunnelInfo {
     pub local: Option<IpAddr>,
     pub remote: Option<IpAddr>,
-    pub iflags: Option<u16>,
+    pub iflags: Option<u16>, // ingress flags
     pub oflags: Option<u16>,
-    pub ikey: Option<u32>,
+    pub ikey: Option<u32>, // ingress key
     pub okey: Option<u32>,
     pub ttl: Option<u8>,
     pub tos: Option<u8>,

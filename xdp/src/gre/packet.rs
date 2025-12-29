@@ -54,16 +54,13 @@ pub struct GreHeader {
     /// Flags (4 bits) + Version (3 bits) + Reserved (9 bits)
     /// Common flags: C (0x8000), R (0x4000), K (0x2000), S (0x1000)
     pub flags_version: u16,
-    /// Protocol
     pub protocol: u16,
     /// Optional key (present when K flag is set in flags_version)
     pub key: Option<u32>,
 }
 
 impl GreHeader {
-    /// Create a new GRE header with specified flags
-    /// `oflags` should contain the GRE flags (e.g., TUNNEL_KEY, TUNNEL_CSUM, etc.)
-    /// `okey` is the optional key value (if present, K flag will be set automatically)
+    /// Create a new GRE header
     pub fn new(protocol_type: u16, oflags: Option<u16>, okey: Option<u32>) -> Self {
         let mut flags_version = oflags.unwrap_or(0);
 
@@ -142,28 +139,21 @@ impl TryFrom<&crate::netlink::GreTunnelInfo> for GreConfig {
     }
 }
 
-/// Wrap a packet with L3 GRE encapsulation
+/// Wrap a UDP packet with L3 GRE encapsulation
 ///
 /// Takes the original packet (IP + UDP + payload) and wraps it
 /// with Ethernet + IP + GRE headers, creating:
 /// [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
-///
-/// This is L3 GRE (encapsulates IP packets), not L2 GRE/GREtap (which encapsulates Ethernet frames).
 fn wrap_packet_with_gre(
     packet: &mut [u8],
     gre_src_mac: &[u8; 6],
     gre_dst_mac: &[u8; 6],
     inner_packet_len: usize, // Length of IP + UDP + payload (no Ethernet)
+    gre_header: &GreHeader,
     config: &GreConfig,
-) -> usize {
-    // Create GRE header to determine its size
-    let gre_header = GreHeader::new(ETH_P_IP as u16, config.oflags, config.okey);
+) {
     let gre_header_size = gre_header.size();
 
-    // Calculate new packet size
-    let gre_packet_size = ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size + inner_packet_len;
-
-    // Write Ethernet header
     write_eth_header(packet, gre_src_mac, gre_dst_mac);
 
     // Determine DF bit: if PMTUDISC is disabled (1), clear DF bit
@@ -184,27 +174,12 @@ fn wrap_packet_with_gre(
 
     // Write GRE header
     gre_header.write_to_packet(&mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..]);
-
-    gre_packet_size
 }
 
 /// Construct an L3 GRE packet from a UDP payload
 ///
 /// This function takes a UDP payload and constructs a complete L3 GRE packet
 /// with the structure: [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
-///
-/// This is L3 GRE (encapsulates IP packets), not L2 GRE/GREtap (which encapsulates Ethernet frames).
-///
-/// # Arguments
-/// * `packet` - Buffer to write the GRE packet into
-/// * `src_ip` - Source IP for the inner packet
-/// * `dst_ip` - Destination IP for the inner packet
-/// * `src_port` - Source port for the inner UDP packet
-/// * `dst_port` - Destination port for the inner UDP packet
-/// * `payload` - The UDP payload data
-/// * `src_mac` - Source MAC address
-/// * `dst_mac` - Destination MAC address
-/// * `config` - GRE tunnel configuration (local/remote IPs and tunnel parameters)
 ///
 /// # Returns
 /// The total length of the constructed GRE packet, or an error if the buffer is too small
@@ -222,13 +197,10 @@ pub fn construct_gre_packet(
 ) -> Result<usize, PacketError> {
     let payload_len = payload.len();
 
-    // Determine GRE header size (may include optional key)
     let gre_header = GreHeader::new(ETH_P_IP as u16, config.oflags, config.okey);
     let gre_header_size = gre_header.size();
-
-    // Calculate sizes
-    let inner_packet_len = INNER_PACKET_HEADER_SIZE + payload_len;
-    let gre_packet_size = ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size + inner_packet_len;
+    let inner_packet_len = INNER_PACKET_HEADER_SIZE.saturating_add(payload_len);
+    let gre_packet_size = (ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size).saturating_add(inner_packet_len);
 
     // Ensure packet buffer is large enough
     if packet.len() < gre_packet_size {
@@ -241,7 +213,6 @@ pub fn construct_gre_packet(
     // Write the inner packet (IP + UDP + payload) at the GRE payload position
     let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size;
 
-    // Write inner IP header
     write_ip_header_for_udp(
         &mut packet[inner_start..inner_start + IP_HEADER_SIZE],
         src_ip,
@@ -249,7 +220,6 @@ pub fn construct_gre_packet(
         (UDP_HEADER_SIZE + payload_len) as u16,
     );
 
-    // Write UDP header
     write_udp_header(
         &mut packet[inner_start + IP_HEADER_SIZE..inner_start + INNER_PACKET_HEADER_SIZE],
         src_ip,
@@ -266,11 +236,13 @@ pub fn construct_gre_packet(
         .copy_from_slice(payload);
 
     // Wrap with GRE headers
-    Ok(wrap_packet_with_gre(
+    wrap_packet_with_gre(
         packet,
         src_mac,
         dst_mac,
         inner_packet_len,
+        &gre_header,
         config,
-    ))
+    );
+    Ok(gre_packet_size)
 }
