@@ -1083,13 +1083,15 @@ mod tests {
         let root_bank = bank_forks.read().unwrap().root_bank();
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
 
-        let unknown_slot = ((root_bank.slot() + 1)..(root_bank.slot() + 1_000))
-            .find(|&slot| {
-                leader_schedule_cache
-                    .slot_leader_at(slot, Some(&root_bank))
-                    .is_none()
-            })
-            .expect("expected at least one slot with unknown leader");
+        let epoch_schedule = root_bank.epoch_schedule();
+        let root_epoch = epoch_schedule.get_epoch(root_bank.slot());
+        let unknown_slot = epoch_schedule.get_first_slot_in_epoch(root_epoch + 2);
+        assert!(
+            leader_schedule_cache
+                .slot_leader_at(unknown_slot, Some(&root_bank))
+                .is_none(),
+            "expected slot with unknown leader",
+        );
 
         let leader_keypair = Arc::new(Keypair::new());
         let entries = create_ticks(1, 1, Hash::new_unique());
