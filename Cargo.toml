@@ -223,7 +223,7 @@ ahash = "0.8.12"
 anyhow = "1.0.100"
 aquamarine = "0.6.0"
 arbitrary = "1.4.2"
-arc-swap = "1.7.1"
+arc-swap = "1.8.0"
 ark-bn254 = "0.5.0"
 ark-bn254-0-4 = { package = "ark-bn254", version = "0.4.0" }
 array-bytes = "=1.4.1"
@@ -375,7 +375,7 @@ rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.12.2"
-reqwest = { version = "0.12.26", default-features = false }
+reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
@@ -387,7 +387,7 @@ seqlock = "0.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.19"
-serde_json = "1.0.145"
+serde_json = "1.0.147"
 serde_with = { version = "3.16.1", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "3.2.0"
@@ -528,7 +528,7 @@ solana-runtime = { path = "runtime", version = "=4.0.0-alpha.0", features = ["ag
 solana-runtime-transaction = { path = "runtime-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
 solana-sbpf = { version = "=0.13.1", default-features = false }
-solana-sdk-ids = "3.0.0"
+solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.0"
 solana-secp256k1-recover = "3.1.0"
 solana-secp256r1-program = "3.0.0"
@@ -614,7 +614,7 @@ sysctl = "0.7.1"
 systemstat = "0.2.5"
 tar = "0.4.44"
 tarpc = "0.29.0"
-tempfile = "3.23.0"
+tempfile = "3.24.0"
 test-case = "3.3.1"
 thiserror = "2.0.17"
 thread-priority = "3.0.0"
@@ -639,7 +639,7 @@ url = "2.5.7"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"
-wincode = { version = "0.2.4", features = ["derive", "solana-short-vec"] }
+wincode = { version = "0.2.5", features = ["derive", "solana-short-vec"] }
 winreg = "0.55"
 x509-parser = "0.17.0"
 zeroize = { version = "1.8", default-features = false }

@@ -50,7 +50,7 @@ use {
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        append_vec::{self, aligned_stored_size, STORE_META_OVERHEAD},
+        append_vec::{self, AppendVec, STORE_META_OVERHEAD},
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         obsolete_accounts::ObsoleteAccounts,
@@ -101,7 +101,6 @@ const SCAN_SLOT_PAR_ITER_THRESHOLD: usize = 4000;
 
 const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 
-const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 const DEFAULT_NUM_DIRS: u32 = 4;
 
 // This value reflects recommended memory lock limit documented in the validator's
@@ -317,7 +316,7 @@ impl AccountFromStorage {
         &self.pubkey
     }
     pub fn stored_size(&self) -> usize {
-        aligned_stored_size(self.data_len as usize)
+        AppendVec::calculate_stored_size(self.data_len as usize)
     }
     pub fn data_len(&self) -> usize {
         self.data_len as usize
@@ -1116,20 +1115,14 @@ pub struct AccountsDb {
     /// Set of storage paths to pick from
     pub paths: Vec<PathBuf>,
 
-    /// Base directory for various necessary files
-    base_working_path: PathBuf,
-    // used by tests - held until we are dropped
-    #[allow(dead_code)]
-    base_working_temp_dir: Option<TempDir>,
+    /// directory for bank hash details files
+    bank_hash_details_dir: PathBuf,
 
     shrink_paths: Vec<PathBuf>,
 
     /// Directory of paths this accounts_db needs to hold/remove
     #[allow(dead_code)]
     pub temp_paths: Option<Vec<TempDir>>,
-
-    /// Starting file size of appendvecs
-    file_size: u64,
 
     /// Thread pool for foreground tasks, e.g. transaction processing
     pub thread_pool_foreground: ThreadPool,
@@ -1268,15 +1261,10 @@ impl AccountsDb {
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
-        let base_working_path = accounts_db_config.base_working_path.clone();
-        let (base_working_path, base_working_temp_dir) =
-            if let Some(base_working_path) = base_working_path {
-                (base_working_path, None)
-            } else {
-                let base_working_temp_dir = TempDir::new().unwrap();
-                let base_working_path = base_working_temp_dir.path().to_path_buf();
-                (base_working_path, Some(base_working_temp_dir))
-            };
+        let bank_hash_details_dir = accounts_db_config.bank_hash_details_dir.unwrap_or_else(|| {
+            warn!("bank hash details dir is unset");
+            PathBuf::new()
+        });
 
         let (paths, temp_paths) = if paths.is_empty() {
             // Create a temporary set of accounts directories, used primarily
@@ -1327,8 +1315,7 @@ impl AccountsDb {
         let new = Self {
             accounts_index,
             paths,
-            base_working_path,
-            base_working_temp_dir,
+            bank_hash_details_dir,
             temp_paths,
             shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
@@ -1363,7 +1350,6 @@ impl AccountsDb {
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
-            file_size: DEFAULT_FILE_SIZE,
             external_purge_slots_stats: PurgeStats::default(),
             clean_accounts_stats: CleanAccountsStats::default(),
             shrink_stats: ShrinkStats::default(),
@@ -1392,13 +1378,8 @@ impl AccountsDb {
         new
     }
 
-    pub fn file_size(&self) -> u64 {
-        self.file_size
-    }
-
-    /// Get the base working directory
-    pub fn get_base_working_path(&self) -> PathBuf {
-        self.base_working_path.clone()
+    pub fn bank_hash_details_dir(&self) -> &Path {
+        &self.bank_hash_details_dir
     }
 
     /// Returns true if there is an accounts update notifier.
@@ -5024,7 +5005,7 @@ impl AccountsDb {
                     .unwrap_or(true);
                 if should_flush {
                     flush_stats.num_bytes_flushed +=
-                        aligned_stored_size(account.data().len()) as u64;
+                        AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_flushed += 1;
                     Some((key, account))
                 } else {
@@ -5032,7 +5013,7 @@ impl AccountsDb {
                     // index, since it's equivalent to purging
                     pubkeys.push(*key);
                     flush_stats.num_bytes_purged +=
-                        aligned_stored_size(account.data().len()) as u64;
+                        AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_purged += 1;
                     None
                 }
@@ -6033,8 +6014,7 @@ impl AccountsDb {
                         infos.len(),
                         accounts_and_meta_to_store.len()
                     );
-                    let special_store_size = std::cmp::max(data_len * 2, self.file_size);
-                    self.create_and_insert_store(slot, special_store_size, "large create");
+                    self.create_and_insert_store(slot, data_len * 2, "large create");
                 }
                 continue;
             };

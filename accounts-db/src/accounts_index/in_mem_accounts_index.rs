@@ -904,14 +904,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// Collect candidates to flush/evict from `iter` by checking age
     /// Skip entries with ref_count != 1 since they will be rejected later anyway
-    fn gather_possible_evictions<'a>(
+    fn gather_possible_flush_evict_candidates<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
         current_age: Age,
         ages_flushing_now: Age,
         max_evictions: NonZeroUsize,
     ) -> (CandidatesToFlush, CandidatesToEvict) {
         let mut candidates_to_flush = Vec::new();
-        let mut candidates_to_evict = Vec::new();
         let mut rng = rng();
         // use reservoir sampling to select a bounded, roughly uniform subset
         let mut sampling_state = ReservoirState {
@@ -931,25 +930,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if v.ref_count() != 1 {
                 continue;
             }
-            sampling_state.select(
-                CandidateSelection {
-                    key: *k,
-                    dirty: v.dirty(),
-                },
-                &mut rng,
-            );
-        }
 
-        for candidate in sampling_state.samples {
-            if candidate.dirty {
-                candidates_to_flush.push(candidate.key);
+            if v.dirty() {
+                candidates_to_flush.push(*k);
             } else {
-                candidates_to_evict.push(candidate.key);
+                sampling_state.select(*k, &mut rng);
             }
         }
         (
             CandidatesToFlush(candidates_to_flush),
-            CandidatesToEvict(candidates_to_evict),
+            CandidatesToEvict(mem::take(&mut sampling_state.samples)),
         )
     }
 
@@ -967,7 +957,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             let map = self.map_internal.read().unwrap();
             let m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
             let max_evictions = self.storage.max_evictions_for_threshold(map.len());
-            let possible_evictions = Self::gather_possible_evictions(
+            let possible_evictions = Self::gather_possible_flush_evict_candidates(
                 map.iter(),
                 current_age,
                 ages_flushing_now,
@@ -1294,24 +1284,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 }
 
-/// Candidate tracked during reservoir sampling to flush or evict.
-#[derive(Debug, Clone)]
-struct CandidateSelection {
-    key: Pubkey,
-    dirty: bool,
-}
-
 /// State of reservoir sampling algorithm for flush/eviction candidates.
 #[derive(Debug)]
 struct ReservoirState {
-    samples: Vec<CandidateSelection>,
+    samples: Vec<Pubkey>,
     seen: usize,
     max_samples: NonZeroUsize,
 }
 
 impl ReservoirState {
     /// Select a candidate, keeping a bounded roughly uniform sample set.
-    fn select(&mut self, candidate: CandidateSelection, rng: &mut impl Rng) {
+    fn select(&mut self, candidate: Pubkey, rng: &mut impl Rng) {
         self.seen += 1;
         if self.samples.len() < self.max_samples.get() {
             self.samples.push(candidate);
@@ -1889,7 +1872,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gather_possible_evictions() {
+    fn test_gather_possible_flush_evict_candidates() {
         const AGE_MAX: Age = 255;
         let ref_count = 1;
         // The values in the slot list elements do not matter.
@@ -1924,7 +1907,7 @@ mod tests {
         for current_age in 0..=AGE_MAX {
             for ages_flushing_now in 0..=AGE_MAX {
                 let (candidates_to_flush, candidates_to_evict) =
-                    InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
+                    InMemAccountsIndex::<u64, u64>::gather_possible_flush_evict_candidates(
                         map_dirty.iter().chain(&map_clean),
                         current_age,
                         ages_flushing_now,
@@ -1934,7 +1917,7 @@ mod tests {
                 // Test setup: map contains 256 dirty entries and 256 clean entries.
                 // Each with ages 0-255 (one entry per age value).
                 //
-                // gather_possible_evictions includes entries where:
+                // gather_possible_flush_evict_candidates includes entries where:
                 //   current_age.wrapping_sub(entry.age) <= ages_flushing_now
                 // which is equivalent to:
                 //   entry.age >= current_age - ages_flushing_now (with wrapping)
@@ -1982,7 +1965,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gather_possible_evictions_with_max_evictions() {
+    fn test_gather_possible_flush_and_evict_candidates_with_max_evictions() {
         let ref_count = 1;
         let current_age = 100;
         let ages_flushing_now = 0;
@@ -2007,15 +1990,16 @@ mod tests {
             })
             .collect();
 
-        let (to_flush, to_evict) = InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
-            map.iter(),
-            current_age,
-            ages_flushing_now,
-            max_evictions,
-        );
+        let (to_flush, to_evict) =
+            InMemAccountsIndex::<u64, u64>::gather_possible_flush_evict_candidates(
+                map.iter(),
+                current_age,
+                ages_flushing_now,
+                max_evictions,
+            );
 
-        let total_selected = to_flush.0.len() + to_evict.0.len();
-        assert_eq!(total_selected, max_evictions.get());
+        assert_eq!(to_flush.0.len(), 128);
+        assert_eq!(to_evict.0.len(), max_evictions.get());
 
         for key in to_flush.0.iter().chain(&to_evict.0) {
             let entry = map.get(key).unwrap();

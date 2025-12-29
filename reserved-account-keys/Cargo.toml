@@ -31,6 +31,7 @@ solana-sdk-ids = { workspace = true }
 
 [dev-dependencies]
 solana-message = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
 solana-sysvar = { workspace = true }
 
 [lints]
