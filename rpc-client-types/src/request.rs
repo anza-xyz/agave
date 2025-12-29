@@ -71,10 +71,10 @@ pub enum RpcRequest {
     SignVote,
 }
 
-#[allow(deprecated)]
-impl fmt::Display for RpcRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let method = match self {
+impl RpcRequest {
+    #[allow(deprecated)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
             RpcRequest::Custom { method } => method,
             RpcRequest::DeregisterNode => "deregisterNode",
             RpcRequest::GetAccountInfo => "getAccountInfo",
@@ -134,9 +134,13 @@ impl fmt::Display for RpcRequest {
             RpcRequest::SendTransaction => "sendTransaction",
             RpcRequest::SimulateTransaction => "simulateTransaction",
             RpcRequest::SignVote => "signVote",
-        };
+        }
+    }
+}
 
-        write!(f, "{method}")
+impl fmt::Display for RpcRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
