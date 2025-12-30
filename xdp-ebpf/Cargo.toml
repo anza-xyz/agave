@@ -18,8 +18,12 @@ required-features = ["ebpf"]
 ebpf = []
 agave-unstable-api = []
 
+[dependencies]
+
 [target.'cfg(target_arch = "bpf")'.dependencies]
 aya-ebpf = { workspace = true }
+aya-log-ebpf = "0.1.0"
+network-types = "0.1.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true }
