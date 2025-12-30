@@ -2922,30 +2922,19 @@ pub mod rpc_minimal {
                 verify_pubkey(identity)?;
             }
 
+            let allowed_vote_accounts: Option<HashSet<Pubkey>> =
+                if let Some(ref vote_accounts) = config.vote_accounts {
+                    let mut set = HashSet::new();
+                    for vote_str in vote_accounts {
+                        let vote_pubkey = verify_pubkey(vote_str)?;
+                        set.insert(vote_pubkey);
+                    }
+                    Some(set)
+                } else {
+                    None
+                };
+
             let bank = meta.bank(config.commitment);
-            let mut allowed_identities = HashSet::new();
-
-            if let Some(ref vote_accounts) = config.vote_accounts {
-                for vote_str in vote_accounts {
-                    let vote_pubkey = verify_pubkey(vote_str)?;
-
-                    let account = bank.get_account(&vote_pubkey).ok_or_else(|| {
-                        Error::invalid_params(format!(
-                            "{vote_pubkey} does not exist or is not a vote account"
-                        ))
-                    })?;
-
-                    let vote_account = solana_vote::vote_account::VoteAccount::try_from(account)
-                        .map_err(|_| {
-                            Error::invalid_params(format!(
-                                "{vote_pubkey} is not a valid vote account"
-                            ))
-                        })?;
-
-                    allowed_identities.insert(vote_account.node_pubkey().to_string());
-                }
-            }
-
             let slot = slot.unwrap_or_else(|| bank.slot());
             let epoch = bank.epoch_schedule().get_epoch(slot);
 
@@ -2960,9 +2949,24 @@ pub mod rpc_minimal {
                             leader_schedule.get_slot_leaders().iter().enumerate(),
                         );
 
+                    // Filter by identity or by vote accounts
                     if let Some(identity) = config.identity {
                         schedule.retain(|k, _| *k == identity);
-                    } else if !allowed_identities.is_empty() {
+                    } else if let Some(ref vote_accounts_filter) = allowed_vote_accounts {
+                        // Build vote account -> identity mapping from cached schedule
+                        let vote_to_identity =
+                            solana_ledger::leader_schedule_utils::vote_account_to_identity_map(
+                                leader_schedule.as_ref(),
+                            );
+
+                        // Convert vote accounts to identities using cached mapping
+                        let allowed_identities: HashSet<String> = vote_accounts_filter
+                            .iter()
+                            .filter_map(|vote_pubkey| {
+                                vote_to_identity.get(vote_pubkey).map(|id| id.to_string())
+                            })
+                            .collect();
+
                         schedule.retain(|k, _| allowed_identities.contains(k));
                     }
 
@@ -5539,77 +5543,33 @@ pub mod tests {
 
     #[test]
     fn test_rpc_get_leader_schedule_by_vote_accounts() {
-        use solana_vote_interface::state::{VoteInitV2, VoteStateV4};
-
         let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
 
-        let vote_keypair1 = Keypair::new();
-        let vote_keypair2 = Keypair::new();
-        let node_keypair1 = Keypair::new();
-        let node_keypair2 = Keypair::new();
-
-        let vote_state1 = VoteStateV4::new(
-            &VoteInitV2 {
-                node_pubkey: node_keypair1.pubkey(),
-                authorized_voter: vote_keypair1.pubkey(),
-                authorized_withdrawer: vote_keypair1.pubkey(),
-                ..Default::default()
-            },
-            &bank.get_sysvar_cache_for_tests().get_clock().unwrap(),
-        );
-        rpc.store_vote_account(&vote_keypair1.pubkey(), vote_state1);
-
-        let vote_state2 = VoteStateV4::new(
-            &VoteInitV2 {
-                node_pubkey: node_keypair2.pubkey(),
-                authorized_voter: vote_keypair2.pubkey(),
-                authorized_withdrawer: vote_keypair2.pubkey(),
-                ..Default::default()
-            },
-            &bank.get_sysvar_cache_for_tests().get_clock().unwrap(),
-        );
-        rpc.store_vote_account(&vote_keypair2.pubkey(), vote_state2);
+        let leader_vote_pubkey = rpc.leader_vote_keypair.pubkey();
+        let leader_identity = rpc.leader_pubkey();
 
         let request = create_test_request(
             "getLeaderSchedule",
             Some(json!([{
-                "voteAccounts": [vote_keypair1.pubkey().to_string()]
+                "voteAccounts": [leader_vote_pubkey.to_string()]
             }])),
         );
         let result: Option<RpcLeaderSchedule> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(result.is_some());
         let schedule = result.unwrap();
-        // Should only contain the node pubkey associated with vote_keypair1
-        assert!(schedule.contains_key(&node_keypair1.pubkey().to_string()) || schedule.is_empty());
-
-        // Test filtering by multiple vote accounts
-        let request = create_test_request(
-            "getLeaderSchedule",
-            Some(json!([{
-                "voteAccounts": [
-                    vote_keypair1.pubkey().to_string(),
-                    vote_keypair2.pubkey().to_string()
-                ]
-            }])),
+        assert!(schedule.contains_key(&leader_identity.to_string()));
+        assert_eq!(schedule.len(), 1);
+        assert_eq!(
+            schedule[&leader_identity.to_string()],
+            Vec::from_iter(0..=128)
         );
-        let result: Option<RpcLeaderSchedule> =
-            parse_success_result(rpc.handle_request_sync(request));
-        assert!(result.is_some());
-        let schedule = result.unwrap();
-        for node_pubkey in schedule.keys() {
-            assert!(
-                *node_pubkey == node_keypair1.pubkey().to_string()
-                    || *node_pubkey == node_keypair2.pubkey().to_string()
-            );
-        }
 
         let request = create_test_request(
             "getLeaderSchedule",
             Some(json!([{
-                "identity": rpc.leader_pubkey().to_string(),
-                "voteAccounts": [vote_keypair1.pubkey().to_string()]
+                "identity": leader_identity.to_string(),
+                "voteAccounts": [leader_vote_pubkey.to_string()]
             }])),
         );
         let response = parse_failure_response(rpc.handle_request_sync(request));
@@ -5626,23 +5586,20 @@ pub mod tests {
                 "voteAccounts": [fake_vote_keypair.pubkey().to_string()]
             }])),
         );
-        let response = parse_failure_response(rpc.handle_request_sync(request));
-        assert_eq!(response.0, ErrorCode::InvalidParams.code());
-        assert!(response.1.contains("does not exist"));
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(result.is_some());
+        let schedule = result.unwrap();
+        assert!(schedule.is_empty());
 
-        // Test with invalid vote account (not owned by vote program)
-        let regular_account = Keypair::new();
-        bank.transfer(1_000_000, &rpc.mint_keypair, &regular_account.pubkey())
-            .unwrap();
         let request = create_test_request(
             "getLeaderSchedule",
             Some(json!([{
-                "voteAccounts": [regular_account.pubkey().to_string()]
+                "voteAccounts": ["invalid_pubkey"]
             }])),
         );
         let response = parse_failure_response(rpc.handle_request_sync(request));
         assert_eq!(response.0, ErrorCode::InvalidParams.code());
-        assert!(response.1.contains("not a valid vote account"));
     }
 
     #[test]
