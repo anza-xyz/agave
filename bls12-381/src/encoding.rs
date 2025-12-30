@@ -64,9 +64,7 @@ pub(crate) fn serialize_gt(gt: Gt, endianness: Endianness) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use blstrs::Gt;
-    use group::Group;
+    use {super::*, blstrs::Gt, group::Group};
 
     #[test]
     fn test_reverse_48_byte_chunks() {
