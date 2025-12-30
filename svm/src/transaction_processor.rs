@@ -1107,7 +1107,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .zip(ix_data_trace.into_iter())
                 .zip(accounts)
             {
-                let stack_height = ix_in_trace.nesting_level.saturating_add(1);
+                let stack_height = ix_in_trace.nesting_level.saturating_add(1) as usize;
                 if stack_height == TRANSACTION_LEVEL_STACK_HEIGHT {
                     outer_instructions.push(Vec::new());
                 } else if let Some(inner_instructions) = outer_instructions.last_mut() {
