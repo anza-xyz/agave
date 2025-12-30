@@ -1,5 +1,8 @@
 use {
-    crate::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness, Version},
+    crate::{
+        encoding::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness},
+        Version,
+    },
     blstrs::{G1Affine, G2Affine},
     std::convert::TryInto,
 };
@@ -80,10 +83,9 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_be,
                 Some(expected.to_vec()),
-                "G1 {} BE Test Failed",
-                op_name
+                "G1 {op_name} BE Test Failed",
             ),
-            None => assert!(result_be.is_none(), "G1 {} BE expected failure", op_name),
+            None => assert!(result_be.is_none(), "G1 {op_name} BE expected failure"),
         }
 
         // Test Little Endian
@@ -92,10 +94,9 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_le,
                 Some(expected.to_vec()),
-                "G1 {} LE Test Failed",
-                op_name
+                "G1 {op_name} LE Test Failed",
             ),
-            None => assert!(result_le.is_none(), "G1 {} LE expected failure", op_name),
+            None => assert!(result_le.is_none(), "G1 {op_name} LE expected failure"),
         }
     }
 
@@ -112,10 +113,9 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_be,
                 Some(expected.to_vec()),
-                "G2 {} BE Test Failed",
-                op_name
+                "G2 {op_name} BE Test Failed",
             ),
-            None => assert!(result_be.is_none(), "G2 {} BE expected failure", op_name),
+            None => assert!(result_be.is_none(), "G2 {op_name} BE expected failure"),
         }
 
         // Test Little Endian
@@ -124,10 +124,9 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_le,
                 Some(expected.to_vec()),
-                "G2 {} LE Test Failed",
-                op_name
+                "G2 {op_name} LE Test Failed",
             ),
-            None => assert!(result_le.is_none(), "G2 {} LE expected failure", op_name),
+            None => assert!(result_le.is_none(), "G2 {op_name} LE expected failure"),
         }
     }
 

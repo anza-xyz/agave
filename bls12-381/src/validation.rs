@@ -1,5 +1,8 @@
 use {
-    crate::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness, Version},
+    crate::{
+        encoding::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness},
+        Version,
+    },
     blstrs::{G1Affine, G2Affine},
     std::convert::TryInto,
 };
@@ -66,16 +69,14 @@ mod tests {
         let result_be = bls12_381_g1_point_validation(Version::V0, input_be, Endianness::BE);
         assert_eq!(
             result_be, expected_valid,
-            "G1 {} BE Validation Failed. Expected {}, got {}",
-            op_name, expected_valid, result_be
+            "G1 {op_name} BE Validation Failed. Expected {expected_valid}, got {result_be}",
         );
 
         // Test Little Endian
         let result_le = bls12_381_g1_point_validation(Version::V0, input_le, Endianness::LE);
         assert_eq!(
             result_le, expected_valid,
-            "G1 {} LE Validation Failed. Expected {}, got {}",
-            op_name, expected_valid, result_le
+            "G1 {op_name} LE Validation Failed. Expected {expected_valid}, got {result_le}",
         );
     }
 
@@ -84,16 +85,14 @@ mod tests {
         let result_be = bls12_381_g2_point_validation(Version::V0, input_be, Endianness::BE);
         assert_eq!(
             result_be, expected_valid,
-            "G2 {} BE Validation Failed. Expected {}, got {}",
-            op_name, expected_valid, result_be
+            "G2 {op_name} BE Validation Failed. Expected {expected_valid}, got {result_be}",
         );
 
         // Test Little Endian
         let result_le = bls12_381_g2_point_validation(Version::V0, input_le, Endianness::LE);
         assert_eq!(
             result_le, expected_valid,
-            "G2 {} LE Validation Failed. Expected {}, got {}",
-            op_name, expected_valid, result_le
+            "G2 {op_name} LE Validation Failed. Expected {expected_valid}, got {result_le}",
         );
     }
 

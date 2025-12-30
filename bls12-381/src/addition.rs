@@ -1,5 +1,8 @@
 use {
-    crate::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness, Version},
+    crate::{
+        encoding::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness},
+        Version,
+    },
     blstrs::{G1Affine, G1Projective, G2Affine, G2Projective},
 };
 
@@ -113,8 +116,7 @@ mod tests {
         assert_eq!(
             result_be,
             Some(output_be.to_vec()),
-            "G1 {} BE Test Failed",
-            op_name
+            "G1 {op_name} BE Test Failed",
         );
 
         // Test Little Endian
@@ -122,8 +124,7 @@ mod tests {
         assert_eq!(
             result_le,
             Some(output_le.to_vec()),
-            "G1 {} LE Test Failed",
-            op_name
+            "G1 {op_name} LE Test Failed",
         );
     }
 
@@ -140,8 +141,7 @@ mod tests {
         assert_eq!(
             result_be,
             Some(output_be.to_vec()),
-            "G2 {} BE Test Failed",
-            op_name
+            "G2 {op_name} BE Test Failed",
         );
 
         // Test Little Endian
@@ -149,8 +149,7 @@ mod tests {
         assert_eq!(
             result_le,
             Some(output_le.to_vec()),
-            "G2 {} LE Test Failed",
-            op_name
+            "G2 {op_name} LE Test Failed",
         );
     }
 

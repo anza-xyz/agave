@@ -1,53 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::{Endianness, Version},
-    blst::*,
+    crate::{
+        encoding::{reverse_48_byte_chunks, serialize_gt, swap_g2_c0_c1, Endianness},
+        Version,
+    },
     blstrs::{Bls12, G1Affine, G2Affine, G2Prepared, Gt},
     group::Group,
     pairing::{MillerLoopResult, MultiMillerLoop},
     std::convert::TryInto,
 };
-
-/// Helper to serialize Fp12 (Gt) according to SIMD Endianness rules.
-/// Fp12 = c0(Fp6) + c1(Fp6)w.
-/// Fp6 = c0(Fp2) + c1(Fp2)v + c2(Fp2)v^2.
-/// Fp2 = c0(Fp) + c1(Fp)u.
-/// SIMD/Zcash BE Rule for Fp2: c1 (imaginary) then c0 (real).
-/// SIMD LE Rule for Fp2: c0 then c1.
-fn serialize_gt(gt: Gt, endianness: Endianness) -> Vec<u8> {
-    // blstrs::Gt is repr(transparent) over blst_fp12.
-    // We transmute to access the internal coefficients directly because
-    // blstrs does not expose the Fp12/Fp6/Fp2/Fp types publicly.
-    let val: blst_fp12 = unsafe { std::mem::transmute(gt) };
-
-    let mut out = Vec::with_capacity(576); // 12 * 48
-    let mut ptr = out.as_mut_ptr();
-
-    unsafe {
-        for fp6 in val.fp6.iter() {
-            for fp2 in fp6.fp2.iter() {
-                let c0 = &fp2.fp[0];
-                let c1 = &fp2.fp[1];
-
-                let fps = match endianness {
-                    Endianness::BE => [c1, c0],
-                    Endianness::LE => [c0, c1],
-                };
-
-                for fp in fps {
-                    match endianness {
-                        Endianness::BE => blst_bendian_from_fp(ptr, fp),
-                        Endianness::LE => blst_lendian_from_fp(ptr, fp),
-                    }
-                    ptr = ptr.add(48);
-                }
-            }
-        }
-        out.set_len(576);
-    }
-    out
-}
 
 pub fn bls12_381_pairing_map(
     _version: Version,
@@ -87,7 +49,7 @@ pub fn bls12_381_pairing_map(
             }
             Endianness::LE => {
                 let mut b: [u8; 96] = chunk.try_into().unwrap();
-                crate::reverse_48_byte_chunks(&mut b);
+                reverse_48_byte_chunks(&mut b);
                 G1Affine::from_uncompressed(&b).into_option()?
             }
         };
@@ -103,8 +65,8 @@ pub fn bls12_381_pairing_map(
             }
             Endianness::LE => {
                 let mut b: [u8; 192] = chunk.try_into().unwrap();
-                crate::reverse_48_byte_chunks(&mut b);
-                crate::swap_g2_c0_c1(&mut b);
+                reverse_48_byte_chunks(&mut b);
+                swap_g2_c0_c1(&mut b);
                 G2Affine::from_uncompressed(&b).into_option()?
             }
         };
@@ -143,8 +105,7 @@ mod tests {
         assert_eq!(
             result_be,
             Some(output_be.to_vec()),
-            "Pairing {} BE Test Failed",
-            op_name
+            "Pairing {op_name} BE Test Failed",
         );
 
         let (g1_le, g2_le) = input_le.split_at(g1_len);
@@ -152,8 +113,7 @@ mod tests {
         assert_eq!(
             result_le,
             Some(output_le.to_vec()),
-            "Pairing {} LE Test Failed",
-            op_name
+            "Pairing {op_name} LE Test Failed",
         );
     }
 
