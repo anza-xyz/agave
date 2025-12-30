@@ -179,17 +179,13 @@ impl Tpu {
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
-            vec![],
-            vec![],
             tpu_vote_sockets,
             exit.clone(),
             &packet_sender,
             &vote_packet_sender,
-            &forwarded_packet_sender,
             forwarded_packet_receiver,
             poh_recorder,
             None, // coalesce
-            Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
         );
 
         let staked_nodes_updater_service = StakedNodesUpdaterService::new(
