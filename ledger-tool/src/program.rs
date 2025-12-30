@@ -8,12 +8,13 @@ use {
     solana_account::{
         create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
     },
-    solana_bpf_loader_program::{create_vm, load_program_from_bytes},
+    solana_bpf_loader_program::create_vm,
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        deploy::load_program_from_bytes,
         invoke_context::InvokeContext,
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET,
