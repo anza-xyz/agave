@@ -22,35 +22,29 @@ fn serialize_gt(gt: Gt, endianness: Endianness) -> Vec<u8> {
     let val: blst_fp12 = unsafe { std::mem::transmute(gt) };
 
     let mut out = Vec::with_capacity(576); // 12 * 48
-    let mut buf = [0u8; 48];
+    let mut ptr = out.as_mut_ptr();
 
-    // Fp12 has two Fp6 coefficients (c0, c1)
-    for fp6 in val.fp6.iter() {
-        // Fp6 has three Fp2 coefficients (c0, c1, c2)
-        for fp2 in fp6.fp2.iter() {
-            // Fp2 has two Fp coefficients (c0, c1)
-            // c0 is real, c1 is imaginary.
-            let c0 = &fp2.fp[0];
-            let c1 = &fp2.fp[1];
+    unsafe {
+        for fp6 in val.fp6.iter() {
+            for fp2 in fp6.fp2.iter() {
+                let c0 = &fp2.fp[0];
+                let c1 = &fp2.fp[1];
 
-            // Apply Fp2 Ordering Rule
-            // BE (Zcash): Imaginary (c1) first, then Real (c0)
-            // LE: Real (c0) first, then Imaginary (c1)
-            let fps = match endianness {
-                Endianness::BE => [c1, c0],
-                Endianness::LE => [c0, c1],
-            };
+                let fps = match endianness {
+                    Endianness::BE => [c1, c0],
+                    Endianness::LE => [c0, c1],
+                };
 
-            for fp in fps {
-                unsafe {
+                for fp in fps {
                     match endianness {
-                        Endianness::BE => blst_bendian_from_fp(buf.as_mut_ptr(), fp),
-                        Endianness::LE => blst_lendian_from_fp(buf.as_mut_ptr(), fp),
+                        Endianness::BE => blst_bendian_from_fp(ptr, fp),
+                        Endianness::LE => blst_lendian_from_fp(ptr, fp),
                     }
+                    ptr = ptr.add(48);
                 }
-                out.extend_from_slice(&buf);
             }
         }
+        out.set_len(576);
     }
     out
 }
@@ -126,4 +120,111 @@ pub fn bls12_381_pairing_map(
 
     // 4. Serialize Result
     Some(serialize_gt(gt, endianness))
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::test_vectors::*};
+
+    fn run_pairing_test(
+        op_name: &str,
+        num_pairs: u64,
+        input_be: &[u8],
+        output_be: &[u8],
+        input_le: &[u8],
+        output_le: &[u8],
+    ) {
+        // Calculate split point for G1/G2 arrays
+        // Input is [G1_1, ... G1_N, G2_1, ... G2_N]
+        let g1_len = (num_pairs as usize) * 96;
+
+        let (g1_be, g2_be) = input_be.split_at(g1_len);
+        let result_be = bls12_381_pairing_map(Version::V0, num_pairs, g1_be, g2_be, Endianness::BE);
+        assert_eq!(
+            result_be,
+            Some(output_be.to_vec()),
+            "Pairing {} BE Test Failed",
+            op_name
+        );
+
+        let (g1_le, g2_le) = input_le.split_at(g1_len);
+        let result_le = bls12_381_pairing_map(Version::V0, num_pairs, g1_le, g2_le, Endianness::LE);
+        assert_eq!(
+            result_le,
+            Some(output_le.to_vec()),
+            "Pairing {} LE Test Failed",
+            op_name
+        );
+    }
+
+    #[test]
+    fn test_pairing_identity() {
+        run_pairing_test(
+            "IDENTITY",
+            0,
+            INPUT_BE_PAIRING_IDENTITY,
+            OUTPUT_BE_PAIRING_IDENTITY,
+            INPUT_LE_PAIRING_IDENTITY,
+            OUTPUT_LE_PAIRING_IDENTITY,
+        );
+    }
+
+    #[test]
+    fn test_pairing_one_pair() {
+        run_pairing_test(
+            "ONE_PAIR",
+            1,
+            INPUT_BE_PAIRING_ONE_PAIR,
+            OUTPUT_BE_PAIRING_ONE_PAIR,
+            INPUT_LE_PAIRING_ONE_PAIR,
+            OUTPUT_LE_PAIRING_ONE_PAIR,
+        );
+    }
+
+    #[test]
+    fn test_pairing_two_pairs() {
+        run_pairing_test(
+            "TWO_PAIRS",
+            2,
+            INPUT_BE_PAIRING_TWO_PAIRS,
+            OUTPUT_BE_PAIRING_TWO_PAIRS,
+            INPUT_LE_PAIRING_TWO_PAIRS,
+            OUTPUT_LE_PAIRING_TWO_PAIRS,
+        );
+    }
+
+    #[test]
+    fn test_pairing_three_pairs() {
+        run_pairing_test(
+            "THREE_PAIRS",
+            3,
+            INPUT_BE_PAIRING_THREE_PAIRS,
+            OUTPUT_BE_PAIRING_THREE_PAIRS,
+            INPUT_LE_PAIRING_THREE_PAIRS,
+            OUTPUT_LE_PAIRING_THREE_PAIRS,
+        );
+    }
+
+    #[test]
+    fn test_pairing_bilinearity() {
+        // e(aP, Q) * e(P, -aQ) == 1
+        run_pairing_test(
+            "BILINEARITY_IDENTITY",
+            2,
+            INPUT_BE_PAIRING_BILINEARITY_IDENTITY,
+            OUTPUT_BE_PAIRING_BILINEARITY_IDENTITY,
+            INPUT_LE_PAIRING_BILINEARITY_IDENTITY,
+            OUTPUT_LE_PAIRING_BILINEARITY_IDENTITY,
+        );
+    }
+
+    #[test]
+    fn test_pairing_invalid_length() {
+        // Mismatched lengths
+        let g1_bytes = [0u8; 96];
+        let g2_bytes = [0u8; 191]; // Too short
+        assert!(
+            bls12_381_pairing_map(Version::V0, 1, &g1_bytes, &g2_bytes, Endianness::BE).is_none()
+        );
+    }
 }
