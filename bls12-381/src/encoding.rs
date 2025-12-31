@@ -2,7 +2,7 @@ use {
     blst::{blst_bendian_from_fp, blst_fp12, blst_lendian_from_fp},
     blstrs::{G1Affine, G2Affine, Gt, Scalar},
     bytemuck::Zeroable,
-    bytemuck_derive::{Pod, Zeroable},
+    bytemuck_derive::{Pod, Zeroable as DeriveZeroable},
 };
 
 /// Size of a base field element (`Fq`) in bytes.
@@ -32,13 +32,13 @@ pub const G2_COMPRESSED_SIZE: usize = FQ2_SIZE;
 pub const SCALAR_SIZE: usize = 32;
 
 /// G1 compressed point (48 bytes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, DeriveZeroable)]
 #[repr(transparent)]
 pub struct PodG1Compressed(pub [u8; G1_COMPRESSED_SIZE]);
 
 /// G1 affine point (96 bytes).
 /// Represents `x` (48 bytes) and `y` (48 bytes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, DeriveZeroable)]
 #[repr(transparent)]
 pub struct PodG1Point(pub [u8; G1_UNCOMPRESSED_SIZE]);
 
@@ -56,13 +56,13 @@ impl PodG1Point {
 }
 
 /// G2 compressed point (96 bytes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, DeriveZeroable)]
 #[repr(transparent)]
 pub struct PodG2Compressed(pub [u8; G2_COMPRESSED_SIZE]);
 
 /// G2 affine point (192 bytes).
 /// Represents `x` (96 bytes) and `y` (96 bytes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, DeriveZeroable)]
 #[repr(transparent)]
 pub struct PodG2Point(pub [u8; G2_UNCOMPRESSED_SIZE]);
 
@@ -81,7 +81,7 @@ impl PodG2Point {
 }
 
 /// Scalar value (32 bytes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, DeriveZeroable)]
 #[repr(transparent)]
 pub struct PodScalar(pub [u8; SCALAR_SIZE]);
 
@@ -96,7 +96,7 @@ impl PodScalar {
 
 /// Target group element (Gt).
 /// Represents an element in the extension field Fq12 (576 bytes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, DeriveZeroable)]
 #[repr(transparent)]
 pub struct PodGtElement(pub [u8; GT_SIZE]);
 
