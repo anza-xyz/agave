@@ -202,7 +202,6 @@ mod tests {
         }
 
         let mut expected = input.clone();
-        // Manually reverse the expected chunks
         expected[0..48].reverse();
         expected[48..96].reverse();
 

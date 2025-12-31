@@ -34,7 +34,10 @@
 pub use crate::{
     addition::{bls12_381_g1_addition, bls12_381_g2_addition},
     decompression::{bls12_381_g1_decompress, bls12_381_g2_decompress},
-    encoding::Endianness,
+    encoding::{
+        Endianness, PodG1Compressed, PodG1Point, PodG2Compressed, PodG2Point, PodGtElement,
+        PodScalar,
+    },
     multiplication::{bls12_381_g1_multiplication, bls12_381_g2_multiplication},
     pairing::bls12_381_pairing_map,
     subtraction::{bls12_381_g1_subtraction, bls12_381_g2_subtraction},

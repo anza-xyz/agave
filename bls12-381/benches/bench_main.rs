@@ -4,25 +4,28 @@ mod test_vectors;
 
 use {
     agave_bls12_381::*,
+    bytemuck::pod_read_unaligned,
     criterion::{criterion_group, criterion_main, BenchmarkId, Criterion},
     test_vectors::*,
 };
 
 // Helper to construct pairing batches by repeating the single-pair test vector
-fn build_pairing_input(count: usize, one_pair_vec: &[u8]) -> (Vec<u8>, Vec<u8>) {
+fn build_pairing_input(count: usize, one_pair_vec: &[u8]) -> (Vec<PodG1Point>, Vec<PodG2Point>) {
     // ONE_PAIR vector is structured as [G1 (96) | G2 (192)]
-    let g1_chunk = &one_pair_vec[0..96];
-    let g2_chunk = &one_pair_vec[96..288];
+    let g1_bytes = &one_pair_vec[0..96];
+    let g2_bytes = &one_pair_vec[96..288];
 
-    let g1_vec = g1_chunk.repeat(count);
-    let g2_vec = g2_chunk.repeat(count);
+    let p1: PodG1Point = pod_read_unaligned(g1_bytes);
+    let p2: PodG2Point = pod_read_unaligned(g2_bytes);
+
+    let g1_vec = vec![p1; count];
+    let g2_vec = vec![p2; count];
 
     (g1_vec, g2_vec)
 }
 
 fn bench_g1_ops(c: &mut Criterion) {
     let mut group = c.benchmark_group("G1 Operations");
-
     for endianness in [Endianness::BE, Endianness::LE] {
         let label = match endianness {
             Endianness::BE => "BE",
@@ -48,23 +51,36 @@ fn bench_g1_ops(c: &mut Criterion) {
         };
 
         group.bench_function(BenchmarkId::new("Addition", label), |b| {
-            b.iter(|| bls12_381_g1_addition(Version::V0, add_input, endianness).unwrap())
+            let (p1_bytes, p2_bytes) = add_input.split_at(96);
+            let p1: PodG1Point = pod_read_unaligned(p1_bytes);
+            let p2: PodG1Point = pod_read_unaligned(p2_bytes);
+            b.iter(|| bls12_381_g1_addition(Version::V0, &p1, &p2, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Subtraction", label), |b| {
-            b.iter(|| bls12_381_g1_subtraction(Version::V0, sub_input, endianness).unwrap())
+            let (p1_bytes, p2_bytes) = sub_input.split_at(96);
+            let p1: PodG1Point = pod_read_unaligned(p1_bytes);
+            let p2: PodG1Point = pod_read_unaligned(p2_bytes);
+            b.iter(|| bls12_381_g1_subtraction(Version::V0, &p1, &p2, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Multiplication", label), |b| {
-            b.iter(|| bls12_381_g1_multiplication(Version::V0, mul_input, endianness).unwrap())
+            let (point_bytes, scalar_bytes) = mul_input.split_at(96);
+            let point: PodG1Point = pod_read_unaligned(point_bytes);
+            let scalar: PodScalar = pod_read_unaligned(scalar_bytes);
+            b.iter(|| {
+                bls12_381_g1_multiplication(Version::V0, &point, &scalar, endianness).unwrap()
+            })
         });
 
         group.bench_function(BenchmarkId::new("Decompression", label), |b| {
-            b.iter(|| bls12_381_g1_decompress(Version::V0, decompress_input, endianness).unwrap())
+            let input: PodG1Compressed = pod_read_unaligned(decompress_input);
+            b.iter(|| bls12_381_g1_decompress(Version::V0, &input, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Validation", label), |b| {
-            b.iter(|| bls12_381_g1_point_validation(Version::V0, validate_input, endianness))
+            let input: PodG1Point = pod_read_unaligned(validate_input);
+            b.iter(|| bls12_381_g1_point_validation(Version::V0, &input, endianness))
         });
     }
     group.finish();
@@ -97,23 +113,36 @@ fn bench_g2_ops(c: &mut Criterion) {
         };
 
         group.bench_function(BenchmarkId::new("Addition", label), |b| {
-            b.iter(|| bls12_381_g2_addition(Version::V0, add_input, endianness).unwrap())
+            let (p1_bytes, p2_bytes) = add_input.split_at(192);
+            let p1: PodG2Point = pod_read_unaligned(p1_bytes);
+            let p2: PodG2Point = pod_read_unaligned(p2_bytes);
+            b.iter(|| bls12_381_g2_addition(Version::V0, &p1, &p2, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Subtraction", label), |b| {
-            b.iter(|| bls12_381_g2_subtraction(Version::V0, sub_input, endianness).unwrap())
+            let (p1_bytes, p2_bytes) = sub_input.split_at(192);
+            let p1: PodG2Point = pod_read_unaligned(p1_bytes);
+            let p2: PodG2Point = pod_read_unaligned(p2_bytes);
+            b.iter(|| bls12_381_g2_subtraction(Version::V0, &p1, &p2, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Multiplication", label), |b| {
-            b.iter(|| bls12_381_g2_multiplication(Version::V0, mul_input, endianness).unwrap())
+            let (point_bytes, scalar_bytes) = mul_input.split_at(192);
+            let point: PodG2Point = pod_read_unaligned(point_bytes);
+            let scalar: PodScalar = pod_read_unaligned(scalar_bytes);
+            b.iter(|| {
+                bls12_381_g2_multiplication(Version::V0, &point, &scalar, endianness).unwrap()
+            })
         });
 
         group.bench_function(BenchmarkId::new("Decompression", label), |b| {
-            b.iter(|| bls12_381_g2_decompress(Version::V0, decompress_input, endianness).unwrap())
+            let input: PodG2Compressed = pod_read_unaligned(decompress_input);
+            b.iter(|| bls12_381_g2_decompress(Version::V0, &input, endianness).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("Validation", label), |b| {
-            b.iter(|| bls12_381_g2_point_validation(Version::V0, validate_input, endianness))
+            let input: PodG2Point = pod_read_unaligned(validate_input);
+            b.iter(|| bls12_381_g2_point_validation(Version::V0, &input, endianness))
         });
     }
     group.finish();
@@ -129,19 +158,12 @@ fn bench_pairing(c: &mut Criterion) {
         let (g1_le, g2_le) = build_pairing_input(count, INPUT_LE_PAIRING_WORST_CASE);
 
         // Bench BE
-        group.bench_with_input(BenchmarkId::new("BE", count), &count, |b, &count| {
-            b.iter(|| {
-                bls12_381_pairing_map(Version::V0, count as u64, &g1_be, &g2_be, Endianness::BE)
-                    .unwrap()
-            })
+        group.bench_with_input(BenchmarkId::new("BE", count), &count, |b, &_count| {
+            b.iter(|| bls12_381_pairing_map(Version::V0, &g1_be, &g2_be, Endianness::BE).unwrap())
         });
-
         // Bench LE
-        group.bench_with_input(BenchmarkId::new("LE", count), &count, |b, &count| {
-            b.iter(|| {
-                bls12_381_pairing_map(Version::V0, count as u64, &g1_le, &g2_le, Endianness::LE)
-                    .unwrap()
-            })
+        group.bench_with_input(BenchmarkId::new("LE", count), &count, |b, &_count| {
+            b.iter(|| bls12_381_pairing_map(Version::V0, &g1_le, &g2_le, Endianness::LE).unwrap())
         });
     }
     group.finish();
