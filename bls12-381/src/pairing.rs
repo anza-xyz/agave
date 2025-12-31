@@ -2,91 +2,55 @@
 
 use {
     crate::{
-        encoding::{reverse_48_byte_chunks, serialize_gt, swap_g2_c0_c1, Endianness},
+        encoding::{serialize_gt, Endianness, PodG1Point, PodG2Point, PodGtElement},
         Version,
     },
-    blstrs::{Bls12, G1Affine, G2Affine, G2Prepared, Gt},
+    blstrs::{Bls12, G1Affine, G2Prepared, Gt},
     group::Group,
     pairing::{MillerLoopResult, MultiMillerLoop},
-    std::convert::TryInto,
 };
 
+/// Computes the product of pairings for a batch of G1 and G2 points.
+///
+/// Mathematically, this computes:
+/// `e(P_1, Q_1) * e(P_2, Q_2) * ... * e(P_n, Q_n)`
 pub fn bls12_381_pairing_map(
     _version: Version,
-    num_pairs: u64,
-    g1_bytes: &[u8],
-    g2_bytes: &[u8],
+    g1_points: &[PodG1Point],
+    g2_points: &[PodG2Point],
     endianness: Endianness,
-) -> Option<Vec<u8>> {
-    let num_pairs = num_pairs as usize;
+) -> Option<PodGtElement> {
+    if g1_points.len() != g2_points.len() {
+        return None;
+    }
 
-    // 1. Validation
-    if num_pairs == 0 {
+    if g1_points.is_empty() {
         return Some(serialize_gt(Gt::identity(), endianness));
     }
 
-    // Strict buffer size check
-    if g1_bytes.len() != num_pairs.checked_mul(96)? {
-        return None;
-    }
-    if g2_bytes.len() != num_pairs.checked_mul(192)? {
-        return None;
-    }
+    let count = g1_points.len();
+    let mut g1_affines = Vec::with_capacity(count);
+    let mut g2_prepareds = Vec::with_capacity(count);
 
-    // 2. Parse Points
-    // We collect them into vectors because multi_miller_loop requires a slice of references.
-    let mut g1_points = Vec::with_capacity(num_pairs);
-    let mut g2_points = Vec::with_capacity(num_pairs);
+    for (p1_pod, p2_pod) in g1_points.iter().zip(g2_points.iter()) {
+        let p1 = p1_pod.to_affine(endianness)?;
+        let p2 = p2_pod.to_affine(endianness)?;
 
-    for i in 0..num_pairs {
-        // --- Parse G1 ---
-        let start = i * 96;
-        let chunk = &g1_bytes[start..start + 96];
-        let p1 = match endianness {
-            Endianness::BE => {
-                let b: &[u8; 96] = chunk.try_into().unwrap();
-                G1Affine::from_uncompressed(b).into_option()?
-            }
-            Endianness::LE => {
-                let mut b: [u8; 96] = chunk.try_into().unwrap();
-                reverse_48_byte_chunks(&mut b);
-                G1Affine::from_uncompressed(&b).into_option()?
-            }
-        };
-        g1_points.push(p1);
-
-        // --- Parse G2 ---
-        let start = i * 192;
-        let chunk = &g2_bytes[start..start + 192];
-        let p2 = match endianness {
-            Endianness::BE => {
-                let b: &[u8; 192] = chunk.try_into().unwrap();
-                G2Affine::from_uncompressed(b).into_option()?
-            }
-            Endianness::LE => {
-                let mut b: [u8; 192] = chunk.try_into().unwrap();
-                reverse_48_byte_chunks(&mut b);
-                swap_g2_c0_c1(&mut b);
-                G2Affine::from_uncompressed(&b).into_option()?
-            }
-        };
-        g2_points.push(G2Prepared::from(p2));
+        g1_affines.push(p1);
+        g2_prepareds.push(G2Prepared::from(p2));
     }
 
-    // 3. Batch Pairing (Multi Miller Loop)
-    // Create vector of references [(&G1, &G2Prepared)]
-    let refs: Vec<(&G1Affine, &G2Prepared)> = g1_points.iter().zip(g2_points.iter()).collect();
+    let refs: Vec<(&G1Affine, &G2Prepared)> = g1_affines.iter().zip(g2_prepareds.iter()).collect();
 
     let miller_out = Bls12::multi_miller_loop(&refs);
     let gt = miller_out.final_exponentiation();
 
-    // 4. Serialize Result
     Some(serialize_gt(gt, endianness))
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::test_vectors::*};
+    use {super::*, crate::test_vectors::*, bytemuck::cast_slice};
 
     fn run_pairing_test(
         op_name: &str,
@@ -96,23 +60,38 @@ mod tests {
         input_le: &[u8],
         output_le: &[u8],
     ) {
-        // Calculate split point for G1/G2 arrays
-        // Input is [G1_1, ... G1_N, G2_1, ... G2_N]
-        let g1_len = (num_pairs as usize) * 96;
+        let num_pairs = num_pairs as usize;
+        let g1_len_bytes = num_pairs * 96;
 
-        let (g1_be, g2_be) = input_be.split_at(g1_len);
-        let result_be = bls12_381_pairing_map(Version::V0, num_pairs, g1_be, g2_be, Endianness::BE);
+        // --- Test Big Endian ---
+        let (g1_bytes_be, g2_bytes_be) = input_be.split_at(g1_len_bytes);
+
+        let g1_pods_be: &[PodG1Point] = cast_slice(g1_bytes_be);
+        let g2_pods_be: &[PodG2Point] = cast_slice(g2_bytes_be);
+
+        assert_eq!(g1_pods_be.len(), num_pairs);
+        assert_eq!(g2_pods_be.len(), num_pairs);
+
+        let result_be = bls12_381_pairing_map(Version::V0, g1_pods_be, g2_pods_be, Endianness::BE);
+        let expected_be = PodGtElement(output_be.try_into().expect("valid output length"));
+
         assert_eq!(
             result_be,
-            Some(output_be.to_vec()),
+            Some(expected_be),
             "Pairing {op_name} BE Test Failed",
         );
 
-        let (g1_le, g2_le) = input_le.split_at(g1_len);
-        let result_le = bls12_381_pairing_map(Version::V0, num_pairs, g1_le, g2_le, Endianness::LE);
+        // --- Test Little Endian ---
+        let (g1_bytes_le, g2_bytes_le) = input_le.split_at(g1_len_bytes);
+        let g1_pods_le: &[PodG1Point] = cast_slice(g1_bytes_le);
+        let g2_pods_le: &[PodG2Point] = cast_slice(g2_bytes_le);
+
+        let result_le = bls12_381_pairing_map(Version::V0, g1_pods_le, g2_pods_le, Endianness::LE);
+        let expected_le = PodGtElement(output_le.try_into().expect("valid output length"));
+
         assert_eq!(
             result_le,
-            Some(output_le.to_vec()),
+            Some(expected_le),
             "Pairing {op_name} LE Test Failed",
         );
     }
@@ -175,16 +154,6 @@ mod tests {
             OUTPUT_BE_PAIRING_BILINEARITY_IDENTITY,
             INPUT_LE_PAIRING_BILINEARITY_IDENTITY,
             OUTPUT_LE_PAIRING_BILINEARITY_IDENTITY,
-        );
-    }
-
-    #[test]
-    fn test_pairing_invalid_length() {
-        // Mismatched lengths
-        let g1_bytes = [0u8; 96];
-        let g2_bytes = [0u8; 191]; // Too short
-        assert!(
-            bls12_381_pairing_map(Version::V0, 1, &g1_bytes, &g2_bytes, Endianness::BE).is_none()
         );
     }
 }

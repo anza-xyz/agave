@@ -17,6 +17,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 agave-unstable-api = []
 
 [dependencies]
+bytemuck = { workspace = true, features = ["min_const_generics"] }
+bytemuck_derive = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 blst = { workspace = true }

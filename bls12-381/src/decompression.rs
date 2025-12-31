@@ -1,74 +1,82 @@
 use {
     crate::{
-        encoding::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness},
+        encoding::{
+            swap_fq_endianness, swap_g2_c0_c1, Endianness, PodG1Compressed, PodG1Point,
+            PodG2Compressed, PodG2Point,
+        },
         Version,
     },
     blstrs::{G1Affine, G2Affine},
-    std::convert::TryInto,
 };
 
+/// Decompresses a compressed G1 point.
 pub fn bls12_381_g1_decompress(
     _version: Version,
-    input: &[u8],
+    input: &PodG1Compressed,
     endianness: Endianness,
-) -> Option<Vec<u8>> {
-    if input.len() != 48 {
-        return None;
-    }
-
+) -> Option<PodG1Point> {
     let p1 = match endianness {
-        Endianness::BE => {
-            let bytes: &[u8; 48] = input.try_into().ok()?;
-            G1Affine::from_compressed(bytes).into_option()?
-        }
+        Endianness::BE => G1Affine::from_compressed(&input.0).into_option()?,
         Endianness::LE => {
-            let mut bytes: [u8; 48] = input.try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes);
-            // Flags are now in the first byte (BE standard) after reversal
+            let mut bytes = input.0;
+            swap_fq_endianness(&mut bytes);
+            // After reversal, the flag byte (originally at end) is now at index 0.
+            // This matches the Zcash BE format expected by G1Affine::from_compressed.
             G1Affine::from_compressed(&bytes).into_option()?
         }
     };
 
-    let mut result_affine = p1.to_uncompressed();
+    let mut result = PodG1Point(p1.to_uncompressed());
     if matches!(endianness, Endianness::LE) {
-        reverse_48_byte_chunks(&mut result_affine);
+        swap_fq_endianness(&mut result.0);
     }
-    Some(result_affine.to_vec())
+    Some(result)
 }
 
+/// Decompresses a compressed G2 point.
 pub fn bls12_381_g2_decompress(
     _version: Version,
-    input: &[u8],
+    input: &PodG2Compressed,
     endianness: Endianness,
-) -> Option<Vec<u8>> {
-    if input.len() != 96 {
-        return None;
-    }
-
+) -> Option<PodG2Point> {
     let p2 = match endianness {
-        Endianness::BE => {
-            let bytes: &[u8; 96] = input.try_into().ok()?;
-            G2Affine::from_compressed(bytes).into_option()?
-        }
+        Endianness::BE => G2Affine::from_compressed(&input.0).into_option()?,
         Endianness::LE => {
-            let mut bytes: [u8; 96] = input.try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes);
+            let mut bytes = input.0;
+            swap_fq_endianness(&mut bytes);
             swap_g2_c0_c1(&mut bytes); // Swap c0/c1 for G2
             G2Affine::from_compressed(&bytes).into_option()?
         }
     };
 
-    let mut result_affine = p2.to_uncompressed();
+    let mut result = PodG2Point(p2.to_uncompressed());
     if matches!(endianness, Endianness::LE) {
-        swap_g2_c0_c1(&mut result_affine);
-        reverse_48_byte_chunks(&mut result_affine);
+        swap_g2_c0_c1(&mut result.0);
+        swap_fq_endianness(&mut result.0);
     }
-    Some(result_affine.to_vec())
+    Some(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::test_vectors::*};
+    use {super::*, crate::test_vectors::*, bytemuck::pod_read_unaligned};
+
+    fn to_pod_g1(bytes: &[u8]) -> PodG1Point {
+        pod_read_unaligned(bytes)
+    }
+
+    fn to_pod_g2(bytes: &[u8]) -> PodG2Point {
+        pod_read_unaligned(bytes)
+    }
+
+    // New helpers for compressed pods
+    fn to_pod_g1_compressed(bytes: &[u8]) -> PodG1Compressed {
+        pod_read_unaligned(bytes)
+    }
+
+    fn to_pod_g2_compressed(bytes: &[u8]) -> PodG2Compressed {
+        pod_read_unaligned(bytes)
+    }
 
     fn run_g1_test(
         op_name: &str,
@@ -78,22 +86,24 @@ mod tests {
         output_le: Option<&[u8]>,
     ) {
         // Test Big Endian
-        let result_be = bls12_381_g1_decompress(Version::V0, input_be, Endianness::BE);
+        let input_be_pod = to_pod_g1_compressed(input_be);
+        let result_be = bls12_381_g1_decompress(Version::V0, &input_be_pod, Endianness::BE);
         match output_be {
             Some(expected) => assert_eq!(
                 result_be,
-                Some(expected.to_vec()),
+                Some(to_pod_g1(expected)),
                 "G1 {op_name} BE Test Failed",
             ),
             None => assert!(result_be.is_none(), "G1 {op_name} BE expected failure"),
         }
 
         // Test Little Endian
-        let result_le = bls12_381_g1_decompress(Version::V0, input_le, Endianness::LE);
+        let input_le_pod = to_pod_g1_compressed(input_le);
+        let result_le = bls12_381_g1_decompress(Version::V0, &input_le_pod, Endianness::LE);
         match output_le {
             Some(expected) => assert_eq!(
                 result_le,
-                Some(expected.to_vec()),
+                Some(to_pod_g1(expected)),
                 "G1 {op_name} LE Test Failed",
             ),
             None => assert!(result_le.is_none(), "G1 {op_name} LE expected failure"),
@@ -108,22 +118,24 @@ mod tests {
         output_le: Option<&[u8]>,
     ) {
         // Test Big Endian
-        let result_be = bls12_381_g2_decompress(Version::V0, input_be, Endianness::BE);
+        let input_be_pod = to_pod_g2_compressed(input_be);
+        let result_be = bls12_381_g2_decompress(Version::V0, &input_be_pod, Endianness::BE);
         match output_be {
             Some(expected) => assert_eq!(
                 result_be,
-                Some(expected.to_vec()),
+                Some(to_pod_g2(expected)),
                 "G2 {op_name} BE Test Failed",
             ),
             None => assert!(result_be.is_none(), "G2 {op_name} BE expected failure"),
         }
 
         // Test Little Endian
-        let result_le = bls12_381_g2_decompress(Version::V0, input_le, Endianness::LE);
+        let input_le_pod = to_pod_g2_compressed(input_le);
+        let result_le = bls12_381_g2_decompress(Version::V0, &input_le_pod, Endianness::LE);
         match output_le {
             Some(expected) => assert_eq!(
                 result_le,
-                Some(expected.to_vec()),
+                Some(to_pod_g2(expected)),
                 "G2 {op_name} LE Test Failed",
             ),
             None => assert!(result_le.is_none(), "G2 {op_name} LE expected failure"),
@@ -230,11 +242,5 @@ mod tests {
             INPUT_LE_G2_DECOMPRESS_FIELD_TOO_LARGE_INVALID,
             None,
         );
-    }
-
-    #[test]
-    fn test_invalid_length() {
-        assert!(bls12_381_g1_decompress(Version::V0, &[0u8; 47], Endianness::BE).is_none());
-        assert!(bls12_381_g2_decompress(Version::V0, &[0u8; 95], Endianness::BE).is_none());
     }
 }

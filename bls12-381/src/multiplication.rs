@@ -1,143 +1,123 @@
 use {
     crate::{
-        encoding::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness},
+        encoding::{
+            swap_fq_endianness, swap_g2_c0_c1, Endianness, PodG1Point, PodG2Point, PodScalar,
+        },
         Version,
     },
-    blstrs::{G1Affine, G2Affine, Scalar},
-    std::convert::TryInto,
+    blstrs::{G1Projective, G2Projective},
 };
 
+/// Performs scalar multiplication on G1: `P * s`.
 pub fn bls12_381_g1_multiplication(
     _version: Version,
-    input: &[u8],
+    point: &PodG1Point,
+    scalar: &PodScalar,
     endianness: Endianness,
-) -> Option<Vec<u8>> {
-    if input.len() != 128 {
-        return None;
-    }
-
-    let p1 = match endianness {
-        Endianness::BE => {
-            // make zero-copy when possible
-            let bytes: &[u8; 96] = input[0..96].try_into().ok()?;
-            G1Affine::from_uncompressed(bytes).into_option()?
-        }
-        Endianness::LE => {
-            // to reverse the bytes, we need an owned copy
-            let mut bytes: [u8; 96] = input[0..96].try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes);
-            G1Affine::from_uncompressed(&bytes).into_option()?
-        }
-    };
-
-    // blstrs provides specific BE/LE parsers, so we don't need manual reversal.
-    let scalar_bytes: &[u8; 32] = input[96..128].try_into().ok()?;
-    let scalar = match endianness {
-        Endianness::BE => Scalar::from_bytes_be(scalar_bytes).into_option()?,
-        Endianness::LE => Scalar::from_bytes_le(scalar_bytes).into_option()?,
-    };
+) -> Option<PodG1Point> {
+    let p1_affine = point.to_affine(endianness)?;
+    let scalar_val = scalar.to_scalar(endianness)?;
 
     #[allow(clippy::arithmetic_side_effects)]
-    let result_proj = p1 * scalar;
-    let mut result_affine = result_proj.to_uncompressed();
+    let result_proj = G1Projective::from(p1_affine) * scalar_val;
+    let result_affine = result_proj.to_uncompressed();
 
+    let mut result = PodG1Point(result_affine);
     if matches!(endianness, Endianness::LE) {
-        reverse_48_byte_chunks(&mut result_affine);
+        swap_fq_endianness(&mut result.0);
     }
-    Some(result_affine.to_vec())
+    Some(result)
 }
 
+/// Performs scalar multiplication on G2: `P * s`.
 pub fn bls12_381_g2_multiplication(
     _version: Version,
-    input: &[u8],
+    point: &PodG2Point,
+    scalar: &PodScalar,
     endianness: Endianness,
-) -> Option<Vec<u8>> {
-    if input.len() != 224 {
-        return None;
-    }
-
-    let p1 = match endianness {
-        Endianness::BE => {
-            let bytes: &[u8; 192] = input[0..192].try_into().ok()?;
-            G2Affine::from_uncompressed(bytes).into_option()?
-        }
-        Endianness::LE => {
-            let mut bytes: [u8; 192] = input[0..192].try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes);
-            swap_g2_c0_c1(&mut bytes);
-            G2Affine::from_uncompressed(&bytes).into_option()?
-        }
-    };
-
-    let scalar_bytes: &[u8; 32] = input[192..224].try_into().ok()?;
-    let scalar = match endianness {
-        Endianness::BE => Scalar::from_bytes_be(scalar_bytes).into_option()?,
-        Endianness::LE => Scalar::from_bytes_le(scalar_bytes).into_option()?,
-    };
+) -> Option<PodG2Point> {
+    let p1_affine = point.to_affine(endianness)?;
+    let scalar_val = scalar.to_scalar(endianness)?;
 
     #[allow(clippy::arithmetic_side_effects)]
-    let result_proj = p1 * scalar;
-    let mut result_affine = result_proj.to_uncompressed();
+    let result_proj = G2Projective::from(p1_affine) * scalar_val;
+    let result_affine = result_proj.to_uncompressed();
 
+    let mut result = PodG2Point(result_affine);
     if matches!(endianness, Endianness::LE) {
-        swap_g2_c0_c1(&mut result_affine);
-        reverse_48_byte_chunks(&mut result_affine);
+        swap_g2_c0_c1(&mut result.0);
+        swap_fq_endianness(&mut result.0);
     }
-    Some(result_affine.to_vec())
+    Some(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::test_vectors::*};
+    use {super::*, crate::test_vectors::*, bytemuck::pod_read_unaligned};
+
+    fn to_pod_g1(bytes: &[u8]) -> PodG1Point {
+        pod_read_unaligned(bytes)
+    }
+
+    fn to_pod_g2(bytes: &[u8]) -> PodG2Point {
+        pod_read_unaligned(bytes)
+    }
+
+    fn to_pod_scalar(bytes: &[u8]) -> PodScalar {
+        pod_read_unaligned(bytes)
+    }
 
     fn run_g1_test(
         op_name: &str,
-        func: fn(Version, &[u8], Endianness) -> Option<Vec<u8>>,
+        func: fn(Version, &PodG1Point, &PodScalar, Endianness) -> Option<PodG1Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
         output_le: &[u8],
     ) {
-        // Test Big Endian
-        let result_be = func(Version::V0, input_be, Endianness::BE);
-        assert_eq!(
-            result_be,
-            Some(output_be.to_vec()),
-            "G1 {op_name} BE Test Failed",
-        );
+        // G1 Input is [Point (96) | Scalar (32)]
+        let (point_be, scalar_be) = input_be.split_at(96);
+        let point_be = to_pod_g1(point_be);
+        let scalar_be = to_pod_scalar(scalar_be);
+        let expected_be = to_pod_g1(output_be);
 
-        // Test Little Endian
-        let result_le = func(Version::V0, input_le, Endianness::LE);
-        assert_eq!(
-            result_le,
-            Some(output_le.to_vec()),
-            "G1 {op_name} LE Test Failed",
-        );
+        let result_be = func(Version::V0, &point_be, &scalar_be, Endianness::BE);
+        assert_eq!(result_be, Some(expected_be), "G1 {op_name} BE Test Failed",);
+
+        // G1 Input is [Point (96) | Scalar (32)]
+        let (point_le, scalar_le) = input_le.split_at(96);
+        let point_le = to_pod_g1(point_le);
+        let scalar_le = to_pod_scalar(scalar_le);
+        let expected_le = to_pod_g1(output_le);
+
+        let result_le = func(Version::V0, &point_le, &scalar_le, Endianness::LE);
+        assert_eq!(result_le, Some(expected_le), "G1 {op_name} LE Test Failed",);
     }
 
     fn run_g2_test(
         op_name: &str,
-        func: fn(Version, &[u8], Endianness) -> Option<Vec<u8>>,
+        func: fn(Version, &PodG2Point, &PodScalar, Endianness) -> Option<PodG2Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
         output_le: &[u8],
     ) {
-        // Test Big Endian
-        let result_be = func(Version::V0, input_be, Endianness::BE);
-        assert_eq!(
-            result_be,
-            Some(output_be.to_vec()),
-            "G2 {op_name} BE Test Failed",
-        );
+        // G2 Input is [Point (192) | Scalar (32)]
+        let (point_be, scalar_be) = input_be.split_at(192);
+        let point_be = to_pod_g2(point_be);
+        let scalar_be = to_pod_scalar(scalar_be);
+        let expected_be = to_pod_g2(output_be);
 
-        // Test Little Endian
-        let result_le = func(Version::V0, input_le, Endianness::LE);
-        assert_eq!(
-            result_le,
-            Some(output_le.to_vec()),
-            "G2 {op_name} LE Test Failed",
-        );
+        let result_be = func(Version::V0, &point_be, &scalar_be, Endianness::BE);
+        assert_eq!(result_be, Some(expected_be), "G2 {op_name} BE Test Failed",);
+
+        let (point_le, scalar_le) = input_le.split_at(192);
+        let point_le = to_pod_g2(point_le);
+        let scalar_le = to_pod_scalar(scalar_le);
+        let expected_le = to_pod_g2(output_le);
+
+        let result_le = func(Version::V0, &point_le, &scalar_le, Endianness::LE);
+        assert_eq!(result_le, Some(expected_le), "G2 {op_name} LE Test Failed",);
     }
 
     #[test]
@@ -258,13 +238,5 @@ mod tests {
             INPUT_LE_G2_MUL_POINT_INFINITY,
             OUTPUT_LE_G2_MUL_POINT_INFINITY,
         );
-    }
-
-    #[test]
-    fn test_invalid_length() {
-        // G1 (96) + Scalar (32) = 128 bytes
-        assert!(bls12_381_g1_multiplication(Version::V0, &[0u8; 127], Endianness::BE).is_none());
-        // G2 (192) + Scalar (32) = 224 bytes
-        assert!(bls12_381_g2_multiplication(Version::V0, &[0u8; 223], Endianness::BE).is_none());
     }
 }

@@ -1,156 +1,126 @@
 use {
     crate::{
-        encoding::{reverse_48_byte_chunks, swap_g2_c0_c1, Endianness},
+        encoding::{swap_fq_endianness, swap_g2_c0_c1, Endianness, PodG1Point, PodG2Point},
         Version,
     },
-    blstrs::{G1Affine, G1Projective, G2Affine, G2Projective},
+    blstrs::{G1Projective, G2Projective},
 };
 
+/// Performs point addition on G1: `P1 + P2`.
 pub fn bls12_381_g1_addition(
     _version: Version,
-    input: &[u8],
+    p1: &PodG1Point,
+    p2: &PodG1Point,
     endianness: Endianness,
-) -> Option<Vec<u8>> {
-    if input.len() != 192 {
-        return None;
-    }
+) -> Option<PodG1Point> {
+    let p1_affine = p1.to_affine(endianness)?;
+    let p2_affine = p2.to_affine(endianness)?;
 
-    let p1 = match endianness {
-        Endianness::BE => {
-            // make zero-copy when possible
-            let bytes: &[u8; 96] = input[0..96].try_into().ok()?;
-            G1Affine::from_uncompressed(bytes).into_option()?
-        }
-        Endianness::LE => {
-            // to reverse the bytes, we need an owned copy
-            let mut bytes: [u8; 96] = input[0..96].try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes);
-            G1Affine::from_uncompressed(&bytes).into_option()?
-        }
-    };
-
-    let p2 = match endianness {
-        Endianness::BE => {
-            let bytes: &[u8; 96] = input[96..192].try_into().ok()?;
-            G1Affine::from_uncompressed(bytes).into_option()?
-        }
-        Endianness::LE => {
-            let mut bytes: [u8; 96] = input[96..192].try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes);
-            G1Affine::from_uncompressed(&bytes).into_option()?
-        }
-    };
-
-    let p1_proj: G1Projective = p1.into();
     #[allow(clippy::arithmetic_side_effects)]
-    let sum_proj = p1_proj + p2;
-    let mut sum_affine = sum_proj.to_uncompressed();
+    let sum_proj = G1Projective::from(p1_affine) + p2_affine;
+
+    let sum_affine = sum_proj.to_uncompressed();
+
+    let mut result = PodG1Point(sum_affine);
 
     if matches!(endianness, Endianness::LE) {
-        reverse_48_byte_chunks(&mut sum_affine);
+        swap_fq_endianness(&mut result.0);
     }
-    Some(sum_affine.to_vec())
+
+    Some(result)
 }
 
+/// Performs point addition on G2: `P1 + P2`.
 pub fn bls12_381_g2_addition(
     _version: Version,
-    input: &[u8],
+    p1: &PodG2Point,
+    p2: &PodG2Point,
     endianness: Endianness,
-) -> Option<Vec<u8>> {
-    if input.len() != 384 {
-        return None;
-    }
+) -> Option<PodG2Point> {
+    let p1_affine = p1.to_affine(endianness)?;
+    let p2_affine = p2.to_affine(endianness)?;
 
-    let p1 = match endianness {
-        Endianness::BE => {
-            let bytes: &[u8; 192] = input[0..192].try_into().ok()?;
-            G2Affine::from_uncompressed(bytes).into_option()?
-        }
-        Endianness::LE => {
-            let mut bytes: [u8; 192] = input[0..192].try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes); // Fix Fq endianness
-            swap_g2_c0_c1(&mut bytes); // Fix Fq2 ordering
-            G2Affine::from_uncompressed(&bytes).into_option()?
-        }
-    };
-
-    let p2 = match endianness {
-        Endianness::BE => {
-            let bytes: &[u8; 192] = input[192..384].try_into().ok()?;
-            G2Affine::from_uncompressed(bytes).into_option()?
-        }
-        Endianness::LE => {
-            let mut bytes: [u8; 192] = input[192..384].try_into().ok()?;
-            reverse_48_byte_chunks(&mut bytes);
-            swap_g2_c0_c1(&mut bytes);
-            G2Affine::from_uncompressed(&bytes).into_option()?
-        }
-    };
-
-    let p1_proj: G2Projective = p1.into();
     #[allow(clippy::arithmetic_side_effects)]
-    let sum_proj = p1_proj + p2;
-    let mut sum_affine = sum_proj.to_uncompressed();
+    let sum_proj = G2Projective::from(p1_affine) + p2_affine;
+
+    let sum_affine = sum_proj.to_uncompressed();
+
+    let mut result = PodG2Point(sum_affine);
 
     if matches!(endianness, Endianness::LE) {
-        swap_g2_c0_c1(&mut sum_affine);
-        reverse_48_byte_chunks(&mut sum_affine);
+        swap_g2_c0_c1(&mut result.0);
+        swap_fq_endianness(&mut result.0);
     }
-    Some(sum_affine.to_vec())
+
+    Some(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::test_vectors::*};
+    use {super::*, crate::test_vectors::*, bytemuck::pod_read_unaligned};
+
+    fn to_pod_g1(bytes: &[u8]) -> PodG1Point {
+        pod_read_unaligned(bytes)
+    }
+
+    fn to_pod_g2(bytes: &[u8]) -> PodG2Point {
+        pod_read_unaligned(bytes)
+    }
 
     fn run_g1_test(
         op_name: &str,
-        func: fn(Version, &[u8], Endianness) -> Option<Vec<u8>>,
+        func: fn(Version, &PodG1Point, &PodG1Point, Endianness) -> Option<PodG1Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
         output_le: &[u8],
     ) {
+        // G1 Input is [P1 (96) | P2 (96)]
+        let (p1_be, p2_be) = input_be.split_at(96);
+        let p1_be = to_pod_g1(p1_be);
+        let p2_be = to_pod_g1(p2_be);
+        let expected_be = to_pod_g1(output_be);
+
         // Test Big Endian
-        let result_be = func(Version::V0, input_be, Endianness::BE);
-        assert_eq!(
-            result_be,
-            Some(output_be.to_vec()),
-            "G1 {op_name} BE Test Failed",
-        );
+        let result_be = func(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        assert_eq!(result_be, Some(expected_be), "G1 {op_name} BE Test Failed",);
 
         // Test Little Endian
-        let result_le = func(Version::V0, input_le, Endianness::LE);
-        assert_eq!(
-            result_le,
-            Some(output_le.to_vec()),
-            "G1 {op_name} LE Test Failed",
-        );
+        let (p1_le, p2_le) = input_le.split_at(96);
+        let p1_le = to_pod_g1(p1_le);
+        let p2_le = to_pod_g1(p2_le);
+        let expected_le = to_pod_g1(output_le);
+
+        let result_le = func(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        assert_eq!(result_le, Some(expected_le), "G1 {op_name} LE Test Failed",);
     }
 
     fn run_g2_test(
         op_name: &str,
-        func: fn(Version, &[u8], Endianness) -> Option<Vec<u8>>,
+        func: fn(Version, &PodG2Point, &PodG2Point, Endianness) -> Option<PodG2Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
         output_le: &[u8],
     ) {
+        // G2 Input is [P1 (192) | P2 (192)]
+        let (p1_be, p2_be) = input_be.split_at(192);
+        let p1_be = to_pod_g2(p1_be);
+        let p2_be = to_pod_g2(p2_be);
+        let expected_be = to_pod_g2(output_be);
+
         // Test Big Endian
-        let result_be = func(Version::V0, input_be, Endianness::BE);
-        assert_eq!(
-            result_be,
-            Some(output_be.to_vec()),
-            "G2 {op_name} BE Test Failed",
-        );
+        let result_be = func(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        assert_eq!(result_be, Some(expected_be), "G2 {op_name} BE Test Failed",);
 
         // Test Little Endian
-        let result_le = func(Version::V0, input_le, Endianness::LE);
-        assert_eq!(
-            result_le,
-            Some(output_le.to_vec()),
-            "G2 {op_name} LE Test Failed",
-        );
+        let (p1_le, p2_le) = input_le.split_at(192);
+        let p1_le = to_pod_g2(p1_le);
+        let p2_le = to_pod_g2(p2_le);
+        let expected_le = to_pod_g2(output_le);
+
+        let result_le = func(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        assert_eq!(result_le, Some(expected_le), "G2 {op_name} LE Test Failed",);
     }
 
     #[test]
@@ -243,13 +213,5 @@ mod tests {
             INPUT_LE_G2_ADD_INF_PLUS_INF,
             OUTPUT_LE_G2_ADD_INF_PLUS_INF,
         );
-    }
-
-    #[test]
-    fn test_invalid_length() {
-        // G1 expects 192 bytes
-        assert!(bls12_381_g1_addition(Version::V0, &[0u8; 191], Endianness::BE).is_none());
-        // G2 expects 384 bytes
-        assert!(bls12_381_g2_addition(Version::V0, &[0u8; 383], Endianness::BE).is_none());
     }
 }
