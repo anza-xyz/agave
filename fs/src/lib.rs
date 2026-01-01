@@ -20,6 +20,7 @@ pub mod buffered_writer;
 pub mod dirs;
 mod file_info;
 pub mod file_io;
+mod fs_info;
 pub mod io_setup;
 mod io_uring;
 

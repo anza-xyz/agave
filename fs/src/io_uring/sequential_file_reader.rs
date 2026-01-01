@@ -5,7 +5,7 @@ use {
         memory::{FixedIoBuffer, PageAlignedMemory},
         IO_PRIO_BE_HIGHEST,
     },
-    crate::io_uring::sqpoll,
+    crate::{fs_info::get_block_size, io_uring::sqpoll},
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -36,6 +36,8 @@ pub struct SequentialFileReaderBuilder<'sp> {
     shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
     /// Register buffer as fixed with the kernel
     register_buffer: bool,
+    /// Toggle preference for opening files with the O_DIRECT flag
+    prefer_direct_io: bool,
 }
 
 impl<'sp> SequentialFileReaderBuilder<'sp> {
@@ -46,6 +48,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             ring_squeue_size: None,
             shared_sqpoll_fd: None,
             register_buffer: true,
+            prefer_direct_io: false,
         }
     }
 
@@ -76,7 +79,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         buf_capacity: usize,
     ) -> io::Result<SequentialFileReader> {
         let buf_capacity = buf_capacity.max(self.read_capacity);
-        let buffer = PageAlignedMemory::new(buf_capacity)?;
+        let buffer = PageAlignedMemory::new(buf_capacity).unwrap();
         self.build_with_buffer(path, buffer)
     }
 
@@ -96,7 +99,29 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         assert_ne!(buf_capacity, 0, "read size aligned buffer is too small");
         let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
 
-        let state = SequentialFileReaderState::new(path, buf_slice_mut, self.read_capacity)?;
+        // check that read_capacity is a multiple of 4096 when using O_DIRECT
+        // from https://man7.org/linux/man-pages/man2/open.2.html
+        //    In Linux
+        //    2.4, most filesystems based on block devices require that the file
+        //    offset and the length and memory address of all I/O segments be
+        //    multiples of the filesystem block size (typically 4096 bytes).  In
+        //    Linux 2.6.0, this was relaxed to the logical block size of the
+        //    block device (typically 512 bytes)
+
+        // in other words, each O_DIRECT read must be into a subbuffer of some multiple of the fs block size
+        // the other requirement for O_DIRECT is that the buffer must be aligned
+        // but since we are using `PageAlignedMemory`, the buffer will always be aligned
+        if self.prefer_direct_io {
+            let block_size = get_block_size(&path);
+            assert!(self.read_capacity.is_multiple_of(block_size as usize));
+        }
+
+        let state = SequentialFileReaderState::new(
+            path,
+            buf_slice_mut,
+            self.read_capacity,
+            self.prefer_direct_io,
+        )?;
 
         let io_uring = self.create_io_uring(buf_capacity)?;
         let ring = Ring::new(io_uring, state);
@@ -308,11 +333,29 @@ struct SequentialFileReaderState {
 }
 
 impl SequentialFileReaderState {
-    fn new(path: impl AsRef<Path>, buffer: &mut [u8], read_capacity: usize) -> io::Result<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOATIME)
-            .open(path)?;
+    fn new(
+        path: impl AsRef<Path>,
+        buffer: &mut [u8],
+        read_capacity: usize,
+        use_o_direct: bool,
+    ) -> io::Result<Self> {
+        let flags = libc::O_NOATIME;
+        let mut open_options = OpenOptions::new();
+        open_options.read(true);
+        let file = if use_o_direct {
+            match open_options
+                .custom_flags(flags | libc::O_DIRECT)
+                .open(&path)
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    log::warn!("O_DIRECT open failed ({e}), falling back to normal read");
+                    open_options.custom_flags(flags).open(path)?
+                }
+            }
+        } else {
+            open_options.custom_flags(flags).open(path)?
+        };
         // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
         // dropped before `backing_buffer` in `SequentialFileReader` is dropped.
         let buffers = unsafe { FixedIoBuffer::split_buffer_chunks(buffer, read_capacity) }
