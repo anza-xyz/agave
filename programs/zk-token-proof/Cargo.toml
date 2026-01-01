@@ -12,20 +12,4 @@ edition = { workspace = true }
 agave-unstable-api = []
 
 [dependencies]
-agave-feature-set = { workspace = true }
-bytemuck = { workspace = true }
-num-derive = { workspace = true }
-num-traits = { workspace = true }
-solana-instruction = { workspace = true }
 solana-program-runtime = { workspace = true }
-solana-sdk-ids = { workspace = true }
-solana-svm-log-collector = { workspace = true }
-solana-zk-token-sdk = { workspace = true }
-
-[dev-dependencies]
-criterion = { workspace = true }
-curve25519-dalek = { workspace = true }
-
-[[bench]]
-name = "verify_proofs"
-harness = false

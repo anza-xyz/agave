@@ -12110,17 +12110,7 @@ dependencies = [
 name = "solana-zk-token-proof-program"
 version = "4.0.0-alpha.0"
 dependencies = [
- "agave-feature-set",
- "bytemuck",
- "criterion",
- "curve25519-dalek 4.1.3",
- "num-derive",
- "num-traits",
- "solana-instruction",
  "solana-program-runtime",
- "solana-sdk-ids",
- "solana-svm-log-collector",
- "solana-zk-token-sdk",
 ]
 
 [[package]]
