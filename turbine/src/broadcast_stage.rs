@@ -15,13 +15,13 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvError, RecvTimeoutError, Sender},
     itertools::{Either, Itertools},
-    solana_clock::Slot,
+    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::Protocol,
     },
     solana_keypair::Keypair,
-    solana_ledger::{blockstore::Blockstore, shred::Shred},
+    solana_ledger::{blockstore::Blockstore, leader_schedule_utils, shred::Shred},
     solana_measure::measure::Measure,
     solana_metrics::{inc_new_counter_error, inc_new_counter_info},
     solana_net_utils::SocketAddrSpace,
@@ -502,6 +502,14 @@ pub fn broadcast_shreds(
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
     };
+    let my_pubkey = cluster_info.id();
+    // Helper to find the next leader slot if it is not us.
+    let find_next_leader = |slot: Slot| -> Option<Pubkey> {
+        let next_leader_slot = slot + NUM_CONSECUTIVE_LEADER_SLOTS;
+        leader_schedule_utils::slot_leader_at(next_leader_slot, &working_bank)
+            .filter(|next_leader| *next_leader != my_pubkey)
+    };
+
     let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
         .iter()
         .chunk_by(|shred| shred.slot())
@@ -510,18 +518,39 @@ pub fn broadcast_shreds(
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
-            shreds.filter_map(move |shred| {
+            let (maybe_next_leader_udp, maybe_next_leader_quic) = find_next_leader(slot)
+                .and_then(|leader| {
+                    cluster_info.lookup_contact_info(&leader, |node| {
+                        (
+                            node.tvu(Protocol::UDP)
+                                .filter(|addr| socket_addr_space.check(addr)),
+                            node.tvu(Protocol::QUIC)
+                                .filter(|addr| socket_addr_space.check(addr)),
+                        )
+                    })
+                })
+                .unwrap_or((None, None));
+            shreds.flat_map(move |shred| {
                 let key = shred.id();
                 let protocol = cluster_nodes::get_broadcast_protocol(&key);
-                cluster_nodes
-                    .get_broadcast_peer(&key)?
-                    .tvu(protocol)
-                    .filter(|addr| socket_addr_space.check(addr))
-                    .map(|addr| {
-                        (match protocol {
-                            Protocol::QUIC => Either::Right,
-                            Protocol::UDP => Either::Left,
-                        })((shred.payload(), addr))
+                let maybe_standard_broadcast_peer = cluster_nodes
+                    .get_broadcast_peer(&key)
+                    .and_then(|ci| ci.tvu(protocol))
+                    .filter(|addr| socket_addr_space.check(addr));
+                let maybe_next_leader = match protocol {
+                    Protocol::UDP => maybe_next_leader_udp,
+                    Protocol::QUIC => maybe_next_leader_quic,
+                }
+                .filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
+                [maybe_next_leader, maybe_standard_broadcast_peer]
+                    .into_iter()
+                    .filter_map(move |tvu_addr: Option<SocketAddr>| {
+                        tvu_addr.map(|addr| {
+                            (match protocol {
+                                Protocol::QUIC => Either::Right,
+                                Protocol::UDP => Either::Left,
+                            })((shred.payload(), addr))
+                        })
                     })
             })
         })
