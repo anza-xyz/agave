@@ -217,16 +217,6 @@ pull_request_rules:
           If this PR represents a change to a native program implementation (not
           tests), please include a reviewer from the Firedancer team. And please
           keep refactors to a minimum.
-  - name: Notify about the deprecation of zk-token-sdk
-    conditions:
-      - or:
-        - files~=^zk-token-sdk/
-    actions:
-      comment:
-        message: |
-          For your information, the `solana-zk-token-sdk` is deprecated, and this
-          directory will be removed in a future version. Please take this in mind
-          when making modifications.
 
 commands_restrictions:
   # The author of copied PRs is the Mergify user.
