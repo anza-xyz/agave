@@ -812,12 +812,12 @@ impl Validator {
         let genesis_config = load_genesis(config, ledger_path)?;
         metrics_config_sanity_check(genesis_config.cluster_type)?;
 
-        info!("Cleaning accounts paths..");
-        *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
-        let mut timer = Measure::start("clean_accounts_paths");
-        cleanup_accounts_paths(config);
-        timer.stop();
-        info!("Cleaning accounts paths done. {timer}");
+        // info!("Cleaning accounts paths..");
+        // *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
+        // let mut timer = Measure::start("clean_accounts_paths");
+        // cleanup_accounts_paths(config);
+        // timer.stop();
+        // info!("Cleaning accounts paths done. {timer}");
 
         snapshot_utils::purge_incomplete_bank_snapshots(&config.snapshot_config.bank_snapshots_dir);
         snapshot_utils::purge_old_bank_snapshots_at_startup(
