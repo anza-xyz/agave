@@ -140,7 +140,6 @@ members = [
     "wen-restart",
     "xdp",
     "xdp-ebpf",
-    "zk-token-sdk",
 ]
 
 exclude = [
@@ -592,7 +591,6 @@ solana-wen-restart = { path = "wen-restart", version = "=4.0.0-alpha.0", feature
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-zk-sdk = "4.0.0"
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-zk-token-sdk = { path = "zk-token-sdk", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 spl-associated-token-account-interface = "2.0.0"
 spl-generic-token = "2.0.0"
 spl-memo-interface = "2.0.0"
@@ -695,15 +693,13 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 # Unfortunately, Cargo will try to resolve the `spl-token` `solana-program`
 # dependency only using what is available on crates.io.  Crates.io normally
 # contains a previous version of these crates, and we end up with two versions
-# of `solana-program` and `solana-zk-token-sdk` and all of their dependencies in
-# our build tree.
+# of `solana-program` and all of their dependencies in our build tree.
 #
 # If you are developing downstream using non-crates-io solana-program (local or
 # forked repo, or from github rev, eg), duplicate the following patch statements
 # in your Cargo.toml. If you still hit duplicate-type errors with the patch
-# statements in place, run `cargo update -p solana-program` and/or `cargo update
-# -p solana-zk-token-sdk` to remove extraneous versions from your Cargo.lock
-# file.
+# statements in place, run `cargo update -p solana-program` to remove extraneous
+# versions from your Cargo.lock file.
 #
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
