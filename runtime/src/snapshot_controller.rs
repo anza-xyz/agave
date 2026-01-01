@@ -28,6 +28,7 @@ pub struct SnapshotController {
     snapshot_config: SnapshotConfig,
     latest_abs_request_slot: AtomicU64,
     request_fastboot_snapshot: AtomicBool,
+    latest_bank_snapshot_slot: AtomicU64,
 }
 
 impl SnapshotController {
@@ -41,6 +42,7 @@ impl SnapshotController {
             snapshot_config,
             latest_abs_request_slot: AtomicU64::new(root_slot),
             request_fastboot_snapshot: AtomicBool::new(false),
+            latest_bank_snapshot_slot: AtomicU64::new(root_slot),
         }
     }
 
@@ -65,6 +67,15 @@ impl SnapshotController {
     pub fn request_fastboot_snapshot(&self) {
         self.request_fastboot_snapshot
             .store(true, Ordering::Relaxed);
+    }
+
+    pub fn latest_bank_snapshot_slot(&self) -> Slot {
+        self.latest_bank_snapshot_slot.load(Ordering::Relaxed)
+    }
+
+    pub fn set_latest_bank_snapshot_slot(&self, slot: Slot) {
+        self.latest_bank_snapshot_slot
+            .store(slot, Ordering::Relaxed);
     }
 
     pub fn handle_new_roots(&self, root: Slot, banks: &[&Arc<Bank>]) -> (bool, SquashTiming, u64) {
