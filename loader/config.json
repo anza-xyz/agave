@@ -1,0 +1,18 @@
+{
+    "deny_ingress_ports": [8003, 8004, 8005, 8015, 8012, 8008, 8014, 8017],
+    "tpu_vote": 8006,
+    "tpu_quic": 8010,
+    "tpu_forwards_quic": 8011,
+    "tpu_vote_quic": 8007,
+    "turbine": 8002,
+    "repair": 8009,
+    "serve_repair": 8013,
+    "ancestor_repair": 8016,
+    "gossip": 8001,
+    "solana_min_port": 8000,
+    "solana_max_port": 8050,
+    "my_ip": "72.46.85.181",
+    "strip_gre": true,
+    "drop_frags": false,
+    "enforce": true
+}
