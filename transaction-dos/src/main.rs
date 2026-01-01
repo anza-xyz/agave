@@ -41,7 +41,7 @@ pub fn airdrop_lamports(
     faucet_addr: &SocketAddr,
     id: &Keypair,
     desired_balance: u64,
-) -> bool {
+) {
     let starting_balance = client.get_balance(&id.pubkey()).unwrap_or(0);
     info!("starting balance {starting_balance}");
 
@@ -96,7 +96,6 @@ pub fn airdrop_lamports(
             );
         }
     }
-    true
 }
 
 fn make_create_message(
@@ -300,15 +299,7 @@ async fn run_transactions_dos(
                 last_balance = Instant::now();
                 if *balance < lamports * 2 {
                     info!("Balance {balance} is less than needed: {lamports}, doing aidrop...");
-                    if !airdrop_lamports(
-                        &client,
-                        &faucet_addr,
-                        payer_keypairs[i],
-                        lamports * 100_000,
-                    ) {
-                        warn!("failed airdrop, exiting");
-                        return;
-                    }
+                    airdrop_lamports(&client, &faucet_addr, payer_keypairs[i], lamports * 100_000);
                 }
             }
         }
