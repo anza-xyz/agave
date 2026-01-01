@@ -39,6 +39,21 @@ pub fn leader_schedule_by_identity<'a>(
         .collect()
 }
 
+pub fn vote_account_to_identity_map(leader_schedule: &LeaderSchedule) -> HashMap<Pubkey, Pubkey> {
+    let mut vote_to_identity = HashMap::new();
+    let num_slots = leader_schedule.num_slots();
+    let slot_leaders = leader_schedule.get_slot_leaders();
+
+    for slot_index in 0..num_slots {
+        if let Some(vote_account_pubkey) = leader_schedule.get_vote_key_at_slot_index(slot_index) {
+            let identity_pubkey = slot_leaders[slot_index % slot_leaders.len()];
+            vote_to_identity.insert(*vote_account_pubkey, identity_pubkey);
+        }
+    }
+
+    vote_to_identity
+}
+
 /// Return the leader for the given slot.
 pub fn slot_leader_at(slot: Slot, bank: &Bank) -> Option<Pubkey> {
     let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
