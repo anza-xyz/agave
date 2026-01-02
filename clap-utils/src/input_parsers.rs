@@ -5,7 +5,10 @@ use {
     },
     chrono::DateTime,
     clap::ArgMatches,
-    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
+    solana_bls_signatures::{
+        ProofOfPossessionCompressed as BLSProofOfPossessionCompressed, Pubkey as BLSPubkey,
+        PubkeyCompressed as BLSPubkeyCompressed,
+    },
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -121,6 +124,17 @@ pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPub
             })
             .collect()
     })
+}
+
+pub fn bls_pubkey_of(matches: &ArgMatches<'_>, name: &str) -> Option<BLSPubkeyCompressed> {
+    value_of(matches, name)
+}
+
+pub fn bls_proof_of_possession_of(
+    matches: &ArgMatches<'_>,
+    name: &str,
+) -> Option<BLSProofOfPossessionCompressed> {
+    value_of(matches, name)
 }
 
 // Return pubkey/signature pairs for a string of the form pubkey=signature
@@ -465,6 +479,31 @@ mod tests {
         assert_eq!(
             bls_pubkeys_of(&matches, "multiple"),
             Some(vec![bls_pubkey1_compressed, bls_pubkey2_compressed])
+        );
+    }
+
+    #[test]
+    fn test_bls_pubkey_of() {
+        let bls_pubkey_compressed = BLSPubkeyCompressed([1u8; 48]);
+        let matches =
+            app().get_matches_from(vec!["test", "--single", &bls_pubkey_compressed.to_string()]);
+        assert_eq!(
+            bls_pubkey_of(&matches, "single"),
+            Some(bls_pubkey_compressed)
+        );
+    }
+
+    #[test]
+    fn test_bls_proof_of_possession_of() {
+        let bls_proof_of_possession = BLSProofOfPossessionCompressed([1u8; 96]);
+        let matches = app().get_matches_from(vec![
+            "test",
+            "--single",
+            &bls_proof_of_possession.to_string(),
+        ]);
+        assert_eq!(
+            bls_proof_of_possession_of(&matches, "single"),
+            Some(bls_proof_of_possession)
         );
     }
 
