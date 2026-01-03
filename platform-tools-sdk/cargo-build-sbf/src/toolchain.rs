@@ -128,17 +128,16 @@ pub(crate) fn validate_platform_tools_version(
     }
 }
 
-fn make_platform_tools_path_for_version(package: &str, version: &str) -> PathBuf {
+pub(crate) fn make_platform_tools_path_for_version(version: &str) -> PathBuf {
     home_dir()
         .join(".cache")
         .join("solana")
         .join(version)
-        .join(package)
+        .join("platform-tools")
 }
 
 pub(crate) fn get_base_rust_version(platform_tools_version: &str) -> String {
-    let target_path =
-        make_platform_tools_path_for_version("platform-tools", platform_tools_version);
+    let target_path = make_platform_tools_path_for_version(platform_tools_version);
     let rustc = target_path.join("rust").join("bin").join("rustc");
     if !rustc.exists() {
         return String::from("");
@@ -242,26 +241,14 @@ fn download_platform_tools(
 // Check whether a package is installed and install it if missing.
 pub(crate) fn install_if_missing(
     config: &Config,
-    package: &str,
     platform_tools_version: &str,
     target_path: &Path,
     use_rest_api: bool,
 ) -> Result<(), String> {
-    if config.force_tools_install {
-        if target_path.is_dir() {
-            debug!("Remove directory {target_path:?}");
-            fs::remove_dir_all(target_path)
-                .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
-        }
-        let source_base = config.sbf_sdk.join("dependencies");
-        if source_base.exists() {
-            let source_path = source_base.join(package);
-            if source_path.exists() {
-                debug!("Remove file {source_path:?}");
-                fs::remove_file(&source_path)
-                    .map_err(|err| format!("could not remove {source_path:?}: {err}"))?;
-            }
-        }
+    if config.force_tools_install && target_path.is_dir() {
+        debug!("Remove directory {target_path:?}");
+        fs::remove_dir_all(target_path)
+            .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
     }
     // Check whether the target path is an empty directory. This can
     // happen if package download failed on previous run of
@@ -337,49 +324,13 @@ pub(crate) fn install_if_missing(
             }
         }
     }
-
-    // Make a symbolic link source_path -> target_path in the
-    // platform-tools-sdk/sbf/dependencies directory if no valid link found.
-    let source_base = config.sbf_sdk.join("dependencies");
-    if !source_base.exists() {
-        fs::create_dir_all(&source_base)
-            .map_err(|err| format!("could not create {source_base:?}: {err}"))?;
-    }
-    let source_path = source_base.join(package);
-    // Check whether the correct symbolic link exists.
-    let invalid_link = if let Ok(link_target) = source_path.read_link() {
-        if link_target.ne(target_path) {
-            fs::remove_file(&source_path)
-                .map_err(|err| format!("could not remove {source_path:?}: {err}"))?;
-            true
-        } else {
-            false
-        }
-    } else {
-        true
-    };
-    if invalid_link {
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(target_path, &source_path).map_err(|err| {
-            format!("could not symlink {source_path:?} -> {target_path:?}: {err}")
-        })?;
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(target_path, &source_path).map_err(|err| {
-            format!("could not symlink {source_path:?} -> {target_path:?}: {err}")
-        })?;
-    }
     Ok(())
 }
 
 // Check if we have all binaries in place to execute the build command.
 // If the download failed or the binaries were somehow deleted, inform the user how to fix it.
-pub(crate) fn corrupted_toolchain(config: &Config) -> bool {
-    let toolchain_path = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
-        .join("rust");
-
+pub(crate) fn corrupted_toolchain(platform_tools_dir: &Path) -> bool {
+    let toolchain_path = platform_tools_dir.join("rust");
     let binaries = toolchain_path.join("bin");
 
     let rustc = binaries.join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
@@ -409,12 +360,12 @@ pub(crate) fn generate_toolchain_name(requested_toolchain_version: &str) -> Stri
 }
 
 // check whether custom solana toolchain is linked, and link it if it is not.
-fn link_solana_toolchain(config: &Config, requested_toolchain_version: &str) {
-    let toolchain_path = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
-        .join("rust");
+fn link_solana_toolchain(
+    config: &Config,
+    platform_tools_dir: &Path,
+    requested_toolchain_version: &str,
+) {
+    let toolchain_path = platform_tools_dir.join("rust");
     let rustup = PathBuf::from("rustup");
     let rustup_args = vec!["toolchain", "list", "-v"];
     let rustup_output = spawn(
@@ -472,32 +423,26 @@ fn link_solana_toolchain(config: &Config, requested_toolchain_version: &str) {
 }
 
 pub(crate) fn install_tools(config: &Config, platform_tools_version: &str, use_rest_api: bool) {
-    let package = "platform-tools";
-    let target_path = make_platform_tools_path_for_version(package, platform_tools_version);
-    install_if_missing(
-        config,
-        package,
-        platform_tools_version,
-        &target_path,
-        use_rest_api,
-    )
-    .unwrap_or_else(|err| {
-        // The package version directory doesn't contain a valid
-        // installation, and it should be removed.
-        let target_path_parent = target_path.parent().expect("Invalid package path");
-        if target_path_parent.exists() {
-            fs::remove_dir_all(target_path_parent).unwrap_or_else(|err| {
-                error!(
-                    "Failed to remove {} while recovering from installation failure: {}",
-                    target_path_parent.to_string_lossy(),
-                    err,
-                );
-                exit(1);
-            });
-        }
-        error!("Failed to install platform-tools: {err}");
-        exit(1);
-    });
+    let target_path = make_platform_tools_path_for_version(platform_tools_version);
+    install_if_missing(config, platform_tools_version, &target_path, use_rest_api).unwrap_or_else(
+        |err| {
+            // The package version directory doesn't contain a valid
+            // installation, and it should be removed.
+            let target_path_parent = target_path.parent().expect("Invalid package path");
+            if target_path_parent.exists() {
+                fs::remove_dir_all(target_path_parent).unwrap_or_else(|err| {
+                    error!(
+                        "Failed to remove {} while recovering from installation failure: {}",
+                        target_path_parent.to_string_lossy(),
+                        err,
+                    );
+                    exit(1);
+                });
+            }
+            error!("Failed to install platform-tools: {err}");
+            exit(1);
+        },
+    );
 }
 
 pub(crate) fn install_and_link_tools(
@@ -546,7 +491,8 @@ pub(crate) fn install_and_link_tools(
         let target_triple = rust_target_triple(config);
         check_solana_target_installed(&target_triple);
     } else {
-        link_solana_toolchain(config, &platform_tools_version);
+        let platform_tools_dir = make_platform_tools_path_for_version(&platform_tools_version);
+        link_solana_toolchain(config, &platform_tools_dir, &platform_tools_version);
         // RUSTC variable overrides cargo +<toolchain> mechanism of
         // selecting the rust compiler and makes cargo run a rust compiler
         // other than the one linked in Solana toolchain. We have to prevent
