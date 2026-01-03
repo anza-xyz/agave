@@ -13,9 +13,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 agave-unstable-api = []
-default = ["log"]
 dev-context-only-utils = []
-log = ["dep:log"]
 metrics = ["dep:solana-metrics"]
 tracing = ["dep:tracing"]
 websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"]
@@ -24,7 +22,7 @@ websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"
 async-trait = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
-log = { workspace = true, optional = true }
+log = { workspace = true }
 lru = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
