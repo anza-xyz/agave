@@ -1,4 +1,5 @@
 use {
+    crate::IoSize,
     agave_io_uring::{Ring, RingOp},
     std::{
         alloc::{alloc, Layout, LayoutError},
@@ -13,7 +14,7 @@ use {
 //
 // Instead of doing many large allocations and registering those, we do a single large one
 // and chunk it in slices of up to 1G each.
-const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
+const FIXED_BUFFER_LEN: IoSize = 1024 * 1024 * 1024;
 
 #[derive(thiserror::Error, Debug)]
 pub enum AllocError {
@@ -174,7 +175,7 @@ impl DerefMut for PageAlignedMemory {
 #[derive(Debug)]
 pub(super) struct IoBufferChunk {
     ptr: *mut u8,
-    size: usize,
+    size: IoSize,
     /// IO buffer index identifying part of the underlying buffer if it was registered in `io_uring`.
     ///
     /// It is used in `ReadFixed` and `WriteFixed` opcodes. The index doesn't identify the chunk
@@ -196,26 +197,28 @@ impl IoBufferChunk {
     #[allow(clippy::arithmetic_side_effects)]
     pub unsafe fn split_buffer_chunks(
         buffer: &mut [u8],
-        chunk_size: usize,
+        chunk_size: IoSize,
         registered_buffer: bool,
     ) -> impl Iterator<Item = Self> + use<'_> {
         assert!(
-            buffer.len() / FIXED_BUFFER_LEN <= u16::MAX as usize,
+            (buffer.len() / FIXED_BUFFER_LEN as usize) <= u16::MAX as usize,
             "buffer too large to register in io_uring"
         );
-        let buf_start = buffer.as_ptr() as usize;
+        let buf_start = buffer.as_ptr().addr();
 
-        buffer.chunks_exact_mut(chunk_size).map(move |buf| {
-            let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
-            Self {
-                ptr: buf.as_mut_ptr(),
-                size: buf.len(),
-                registered_io_buf_index: registered_buffer.then_some(io_buf_index as u16),
-            }
-        })
+        buffer
+            .chunks_exact_mut(chunk_size as usize)
+            .map(move |buf| {
+                let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN as usize;
+                Self {
+                    ptr: buf.as_mut_ptr(),
+                    size: buf.len() as IoSize,
+                    registered_io_buf_index: registered_buffer.then_some(io_buf_index as u16),
+                }
+            })
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> IoSize {
         self.size
     }
 
@@ -231,7 +234,7 @@ impl IoBufferChunk {
     }
 
     /// Return a clone of `self` reduced to specified `size`
-    pub fn into_shrinked(self, size: usize) -> Self {
+    pub fn into_shrinked(self, size: IoSize) -> Self {
         assert!(size <= self.size);
         Self {
             ptr: self.ptr,
@@ -246,7 +249,7 @@ impl IoBufferChunk {
         ring: &Ring<S, E>,
     ) -> io::Result<()> {
         let iovecs = buffer
-            .chunks(FIXED_BUFFER_LEN)
+            .chunks(FIXED_BUFFER_LEN as usize)
             .map(|buf| libc::iovec {
                 iov_base: buf.as_ptr() as _,
                 iov_len: buf.len(),
@@ -258,6 +261,6 @@ impl IoBufferChunk {
 
 impl AsRef<[u8]> for IoBufferChunk {
     fn as_ref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr, self.size) }
+        unsafe { slice::from_raw_parts(self.ptr, self.size as usize) }
     }
 }

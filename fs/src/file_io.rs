@@ -2,7 +2,7 @@
 
 //! File i/o helper functions.
 use {
-    crate::{io_setup::IoSetupState, FileInfo},
+    crate::{io_setup::IoSetupState, FileInfo, FileSize},
     std::{
         fs::{self, File, OpenOptions},
         io::{self, BufWriter, Seek, Write},
@@ -18,8 +18,8 @@ use {
 /// `valid_file_len` is # of valid bytes in the file. This may be <= file length.
 pub fn read_more_buffer(
     file: &File,
-    valid_file_len: usize,
-    offset: &mut usize,
+    valid_file_len: FileSize,
+    offset: &mut FileSize,
     buffer: &mut [u8],
     valid_bytes: &mut Range<usize>,
 ) -> std::io::Result<()> {
@@ -34,7 +34,7 @@ pub fn read_more_buffer(
         *offset,
         &mut buffer[valid_bytes.len()..],
     )?;
-    *offset += bytes_read;
+    *offset += bytes_read as FileSize;
     *valid_bytes = 0..(valid_bytes.len() + bytes_read);
 
     Ok(())
@@ -88,8 +88,8 @@ pub fn write_buffer_to_file(file: &File, mut buffer: &[u8], mut offset: u64) -> 
 /// return # bytes read
 pub fn read_into_buffer(
     file: &File,
-    valid_file_len: usize,
-    start_offset: usize,
+    valid_file_len: FileSize,
+    start_offset: FileSize,
     buffer: &mut [u8],
 ) -> std::io::Result<usize> {
     let mut offset = start_offset;
@@ -100,7 +100,7 @@ pub fn read_into_buffer(
     }
 
     while buffer_offset < buffer.len() {
-        match arch_read_at(file, &mut buffer[buffer_offset..], offset as u64) {
+        match arch_read_at(file, &mut buffer[buffer_offset..], offset as FileSize) {
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::Interrupted {
                     continue;
@@ -109,14 +109,15 @@ pub fn read_into_buffer(
             }
             Ok(bytes_read_this_time) => {
                 total_bytes_read += bytes_read_this_time;
-                if total_bytes_read + start_offset >= valid_file_len {
-                    total_bytes_read -= (total_bytes_read + start_offset) - valid_file_len;
+                if total_bytes_read as FileSize + start_offset >= valid_file_len {
+                    total_bytes_read -=
+                        ((total_bytes_read as FileSize + start_offset) - valid_file_len) as usize;
                     // we've read all there is in the file
                     break;
                 }
                 // There is possibly more to read. `read_at` may have returned partial results, so prepare to loop and read again.
                 buffer_offset += bytes_read_this_time;
-                offset += bytes_read_this_time;
+                offset += bytes_read_this_time as FileSize;
             }
         }
     }
@@ -153,7 +154,7 @@ pub fn file_creator<'a>(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::{IoUringFileCreatorBuilder, DEFAULT_WRITE_SIZE};
 
-        if buf_size >= DEFAULT_WRITE_SIZE {
+        if buf_size >= DEFAULT_WRITE_SIZE as usize {
             let io_uring_creator = IoUringFileCreatorBuilder::new()
                 .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
                 .shared_sqpoll(io_setup.shared_sqpoll_fd())
@@ -273,9 +274,9 @@ mod tests {
         buffer_len = buffer.len();
         let num_bytes_read =
             read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
-        assert_eq!(num_bytes_read, valid_len);
-        assert_eq!(bytes, buffer[0..valid_len]);
-        assert_eq!(buffer[valid_len..buffer_len], [0; 32]);
+        assert_eq!(num_bytes_read, valid_len as usize);
+        assert_eq!(bytes, buffer[0..valid_len as usize]);
+        assert_eq!(buffer[valid_len as usize..buffer_len], [0; 32]);
 
         // Given the `valid_file_len` is 16, it should only read 16 bytes into the buffer
         let mut buffer = [0; 32];
@@ -283,12 +284,15 @@ mod tests {
         valid_len = 16;
         let num_bytes_read =
             read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
-        assert_eq!(num_bytes_read, valid_len);
-        assert_eq!(bytes[0..valid_len], buffer[0..valid_len]);
+        assert_eq!(num_bytes_read, valid_len as usize);
+        assert_eq!(bytes[0..valid_len as usize], buffer[0..valid_len as usize]);
         // As a side effect of the `read_into_buffer` the data passed `valid_file_len` was
         // read and put into the buffer, though these data should not be
         // consumed.
-        assert_eq!(buffer[valid_len..buffer_len], bytes[valid_len..buffer_len]);
+        assert_eq!(
+            buffer[valid_len as usize..buffer_len],
+            bytes[valid_len as usize..buffer_len]
+        );
 
         // Given the start offset 8, it should only read 24 bytes into buffer
         let mut buffer = [0; 32];
@@ -297,8 +301,11 @@ mod tests {
         start_offset = 8;
         let num_bytes_read =
             read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
-        assert_eq!(num_bytes_read, valid_len - start_offset);
-        assert_eq!(buffer[0..num_bytes_read], bytes[start_offset..buffer_len]);
+        assert_eq!(num_bytes_read as FileSize, valid_len - start_offset);
+        assert_eq!(
+            buffer[0..num_bytes_read],
+            bytes[start_offset as usize..buffer_len]
+        );
         assert_eq!(buffer[num_bytes_read..buffer_len], [0; 8])
     }
 
@@ -325,7 +332,7 @@ mod tests {
             &mut valid_bytes,
         )
         .unwrap();
-        assert_eq!(offset, buffer_len - valid_bytes_len);
+        assert_eq!(offset as usize, buffer_len - valid_bytes_len);
         assert_eq!(valid_bytes, 0..buffer_len);
         assert_eq!(buffer[0..valid_bytes_len], [0xFFu8; 8]);
         assert_eq!(
@@ -352,7 +359,7 @@ mod tests {
         assert_eq!(buffer[0..valid_bytes_len], [0xFFu8; 8]);
         assert_eq!(
             buffer[valid_bytes_len..valid_bytes.end],
-            bytes[start_offset..file_size]
+            bytes[start_offset as usize..file_size as usize]
         );
     }
 
