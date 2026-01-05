@@ -1502,31 +1502,35 @@ impl Blockstore {
         if !erasure_meta.check_coding_shred(&shred) {
             metrics.num_coding_shreds_invalid_erasure_config += 1;
             if !self.has_duplicate_shreds_in_slot(slot) {
-                if let Some(conflicting_shred) = self
+                match self
                     .find_conflicting_coding_shred(&shred, slot, erasure_meta, just_inserted_shreds)
                     .map(Cow::into_owned)
                 {
-                    if let Err(e) = self.store_duplicate_slot(
-                        slot,
-                        conflicting_shred.clone(),
-                        shred.payload().clone(),
-                    ) {
-                        warn!(
-                            "Unable to store conflicting erasure meta duplicate proof for {slot} \
-                             {erasure_set:?} {e}"
+                    Some(conflicting_shred) => {
+                        if let Err(e) = self.store_duplicate_slot(
+                            slot,
+                            conflicting_shred.clone(),
+                            shred.payload().clone(),
+                        ) {
+                            warn!(
+                                "Unable to store conflicting erasure meta duplicate proof for \
+                                 {slot} {erasure_set:?} {e}"
+                            );
+                        }
+
+                        duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
+                            shred.as_ref().clone(),
+                            conflicting_shred,
+                        ));
+                    }
+                    _ => {
+                        error!(
+                            "Unable to find the conflicting coding shred that set \
+                             {erasure_meta:?}. This should only happen in extreme cases where \
+                             blockstore cleanup has caught up to the root. Skipping the erasure \
+                             meta duplicate shred check"
                         );
                     }
-
-                    duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
-                        shred.as_ref().clone(),
-                        conflicting_shred,
-                    ));
-                } else {
-                    error!(
-                        "Unable to find the conflicting coding shred that set {erasure_meta:?}. \
-                         This should only happen in extreme cases where blockstore cleanup has \
-                         caught up to the root. Skipping the erasure meta duplicate shred check"
-                    );
                 }
             }
 

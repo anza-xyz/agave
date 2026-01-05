@@ -846,12 +846,11 @@ where
             BlockVerification => {
                 // pop is intentional for filo, expecting relatively warmed-up scheduler due to
                 // having been returned recently
-                if let Some((inner, _pooled_at)) =
-                    self.scheduler_inners.lock().expect("not poisoned").pop()
-                {
-                    Some(S::from_inner(inner, context, result_with_timings))
-                } else {
-                    Some(S::spawn(self.self_arc(), context, result_with_timings))
+                match self.scheduler_inners.lock().expect("not poisoned").pop() {
+                    Some((inner, _pooled_at)) => {
+                        Some(S::from_inner(inner, context, result_with_timings))
+                    }
+                    _ => Some(S::spawn(self.self_arc(), context, result_with_timings)),
                 }
             }
             BlockProduction => {
@@ -2577,20 +2576,23 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             })
         }
 
-        if let Some(scheduler_thread) = self.scheduler_thread.take() {
-            for thread in self.handler_threads.drain(..) {
-                debug!("joining...: {thread:?}");
-                () = join_with_panic_message(thread).unwrap();
-            }
-            () = join_with_panic_message(scheduler_thread).unwrap();
+        match self.scheduler_thread.take() {
+            Some(scheduler_thread) => {
+                for thread in self.handler_threads.drain(..) {
+                    debug!("joining...: {thread:?}");
+                    () = join_with_panic_message(thread).unwrap();
+                }
+                () = join_with_panic_message(scheduler_thread).unwrap();
 
-            if should_receive_session_result {
-                let result_with_timings = self.session_result_receiver.recv().unwrap();
-                debug!("ensure_join_threads(): err: {:?}", result_with_timings.0);
-                self.put_session_result_with_timings(result_with_timings);
+                if should_receive_session_result {
+                    let result_with_timings = self.session_result_receiver.recv().unwrap();
+                    debug!("ensure_join_threads(): err: {:?}", result_with_timings.0);
+                    self.put_session_result_with_timings(result_with_timings);
+                }
             }
-        } else {
-            warn!("ensure_join_threads(): skipping; already joined...");
+            _ => {
+                warn!("ensure_join_threads(): skipping; already joined...");
+            }
         };
     }
 

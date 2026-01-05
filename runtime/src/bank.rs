@@ -4710,18 +4710,22 @@ impl Bank {
         let slot = self.slot();
 
         if config.require_rooted_bank && !accounts_db.accounts_index.is_alive_root(slot) {
-            if let Some(parent) = self.parent() {
-                info!(
-                    "slot {slot} is not a root, so verify accounts hash on parent bank at slot {}",
-                    parent.slot(),
-                );
-                // The calculated_accounts_lt_hash parameter is only valid for the current slot, so
-                // we must fall back to calculating the accounts lt hash with the index.
-                return parent.verify_accounts(config, None);
-            } else {
-                // this will result in mismatch errors
-                // accounts hash calc doesn't include unrooted slots
-                panic!("cannot verify accounts hash because slot {slot} is not a root");
+            match self.parent() {
+                Some(parent) => {
+                    info!(
+                        "slot {slot} is not a root, so verify accounts hash on parent bank at \
+                         slot {}",
+                        parent.slot(),
+                    );
+                    // The calculated_accounts_lt_hash parameter is only valid for the current slot, so
+                    // we must fall back to calculating the accounts lt hash with the index.
+                    return parent.verify_accounts(config, None);
+                }
+                _ => {
+                    // this will result in mismatch errors
+                    // accounts hash calc doesn't include unrooted slots
+                    panic!("cannot verify accounts hash because slot {slot} is not a root");
+                }
             }
         }
 
@@ -6132,14 +6136,17 @@ fn calculate_data_size_delta(old_data_size: usize, new_data_size: usize) -> i64 
 
 impl Drop for Bank {
     fn drop(&mut self) {
-        if let Some(drop_callback) = self.drop_callback.read().unwrap().0.as_ref() {
-            drop_callback.callback(self);
-        } else {
-            // Default case for tests
-            self.rc
-                .accounts
-                .accounts_db
-                .purge_slot(self.slot(), self.bank_id(), false);
+        match self.drop_callback.read().unwrap().0.as_ref() {
+            Some(drop_callback) => {
+                drop_callback.callback(self);
+            }
+            _ => {
+                // Default case for tests
+                self.rc
+                    .accounts
+                    .accounts_db
+                    .purge_slot(self.slot(), self.bank_id(), false);
+            }
         }
     }
 }

@@ -1292,36 +1292,39 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
             self.heaviest_slot_on_same_voted_fork(tower)
                 .and_then(|slot_hash| {
                     #[allow(clippy::manual_filter)]
-                    if let Some(bank) = r_bank_forks.get(slot_hash.0) {
-                        if bank.hash() != slot_hash.1 {
-                            // It is possible that our last vote was for an invalid fork
-                            // and we have repaired and replayed the correct version of the fork.
-                            // In this case the hash for the heaviest bank on our voted fork
-                            // will no longer be matching what we have replayed.
-                            //
-                            // Because we have dumped and repaired a new version, it is impossible
-                            // for our last voted fork to become duplicate confirmed as the state
-                            // machine will never dump and repair a block that has not been observed
-                            // as duplicate confirmed. Therefore it is safe to never build on this
-                            // invalid fork.
-                            None
-                        } else {
-                            Some(bank)
+                    match r_bank_forks.get(slot_hash.0) {
+                        Some(bank) => {
+                            if bank.hash() != slot_hash.1 {
+                                // It is possible that our last vote was for an invalid fork
+                                // and we have repaired and replayed the correct version of the fork.
+                                // In this case the hash for the heaviest bank on our voted fork
+                                // will no longer be matching what we have replayed.
+                                //
+                                // Because we have dumped and repaired a new version, it is impossible
+                                // for our last voted fork to become duplicate confirmed as the state
+                                // machine will never dump and repair a block that has not been observed
+                                // as duplicate confirmed. Therefore it is safe to never build on this
+                                // invalid fork.
+                                None
+                            } else {
+                                Some(bank)
+                            }
                         }
-                    } else {
-                        // It is possible that our last vote was for an invalid fork
-                        // and we are in the middle of dumping and repairing such fork.
-                        // In that case, the `heaviest_slot_on_same_voted_fork` has a chance to
-                        // be for a slot that we currently do not have in our bank forks, so we
-                        // return None.
-                        //
-                        // We are guaranteed that we will eventually repair a duplicate confirmed version
-                        // of this slot because the state machine will never dump a slot unless it has
-                        // observed a duplicate confirmed version of the slot.
-                        //
-                        // Therefore there is no chance that our last voted fork will ever become
-                        // duplicate confirmed, so it is safe to never build on it.
-                        None
+                        _ => {
+                            // It is possible that our last vote was for an invalid fork
+                            // and we are in the middle of dumping and repairing such fork.
+                            // In that case, the `heaviest_slot_on_same_voted_fork` has a chance to
+                            // be for a slot that we currently do not have in our bank forks, so we
+                            // return None.
+                            //
+                            // We are guaranteed that we will eventually repair a duplicate confirmed version
+                            // of this slot because the state machine will never dump a slot unless it has
+                            // observed a duplicate confirmed version of the slot.
+                            //
+                            // Therefore there is no chance that our last voted fork will ever become
+                            // duplicate confirmed, so it is safe to never build on it.
+                            None
+                        }
                     }
                 }),
         )

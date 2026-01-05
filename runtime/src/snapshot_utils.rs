@@ -1144,34 +1144,37 @@ fn get_version_and_snapshot_files(
     let mut snapshot_bank = None;
 
     loop {
-        if let Ok(file_info) = file_receiver.recv() {
-            let filename = file_info.path.file_name().unwrap().to_str().unwrap();
-            match get_snapshot_file_kind(filename) {
-                Some(SnapshotFileKind::Version) => {
-                    snapshot_version = Some(file_info);
+        match file_receiver.recv() {
+            Ok(file_info) => {
+                let filename = file_info.path.file_name().unwrap().to_str().unwrap();
+                match get_snapshot_file_kind(filename) {
+                    Some(SnapshotFileKind::Version) => {
+                        snapshot_version = Some(file_info);
 
-                    // break if we have both the snapshot file and the version file
-                    if snapshot_bank.is_some() {
-                        break;
+                        // break if we have both the snapshot file and the version file
+                        if snapshot_bank.is_some() {
+                            break;
+                        }
                     }
-                }
-                Some(SnapshotFileKind::BankFields) => {
-                    snapshot_bank = Some(file_info);
+                    Some(SnapshotFileKind::BankFields) => {
+                        snapshot_bank = Some(file_info);
 
-                    // break if we have both the snapshot file and the version file
-                    if snapshot_version.is_some() {
-                        break;
+                        // break if we have both the snapshot file and the version file
+                        if snapshot_version.is_some() {
+                            break;
+                        }
                     }
+                    Some(SnapshotFileKind::Storage) => {
+                        append_vec_files.push(file_info);
+                    }
+                    None => {} // do nothing for other kinds of files
                 }
-                Some(SnapshotFileKind::Storage) => {
-                    append_vec_files.push(file_info);
-                }
-                None => {} // do nothing for other kinds of files
             }
-        } else {
-            return Err(SnapshotError::RebuildStorages(
-                "did not receive snapshot file from unpacking threads".to_string(),
-            ));
+            _ => {
+                return Err(SnapshotError::RebuildStorages(
+                    "did not receive snapshot file from unpacking threads".to_string(),
+                ));
+            }
         }
     }
     let snapshot_version = snapshot_version.unwrap();

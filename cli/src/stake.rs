@@ -2069,12 +2069,10 @@ pub async fn process_split_stake(
                 ))),
             }
         };
-        let current_balance =
-            if let Ok(stake_account) = rpc_client.get_account(&split_stake_account_address).await {
-                check_stake_account(stake_account)?
-            } else {
-                0
-            };
+        let current_balance = match rpc_client.get_account(&split_stake_account_address).await {
+            Ok(stake_account) => check_stake_account(stake_account)?,
+            _ => 0,
+        };
 
         let rent_exempt_reserve = rpc_client
             .get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())
@@ -2647,22 +2645,25 @@ pub(crate) async fn fetch_epoch_rewards(
     };
 
     while num_epochs > 0 {
-        if let Ok(rewards) = rpc_client
+        match rpc_client
             .get_inflation_reward(&[*address], Some(rewards_epoch))
             .await
         {
-            if let Some(reward) = &rewards[0] {
-                let (epoch_start_time, epoch_end_time) =
-                    get_epoch_boundary_timestamps(rpc_client, reward, &epoch_schedule).await?;
-                let block_time = rpc_client.get_block_time(reward.effective_slot).await?;
-                if let Some(cli_reward) =
-                    make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
-                {
-                    all_epoch_rewards.push(cli_reward);
+            Ok(rewards) => {
+                if let Some(reward) = &rewards[0] {
+                    let (epoch_start_time, epoch_end_time) =
+                        get_epoch_boundary_timestamps(rpc_client, reward, &epoch_schedule).await?;
+                    let block_time = rpc_client.get_block_time(reward.effective_slot).await?;
+                    if let Some(cli_reward) =
+                        make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
+                    {
+                        all_epoch_rewards.push(cli_reward);
+                    }
                 }
             }
-        } else {
-            eprintln!("Rewards not available for epoch {rewards_epoch}");
+            _ => {
+                eprintln!("Rewards not available for epoch {rewards_epoch}");
+            }
         }
         num_epochs = num_epochs.saturating_sub(1);
         rewards_epoch = rewards_epoch.saturating_add(1);

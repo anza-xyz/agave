@@ -848,12 +848,15 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             // swap out the bucket that was resized previously with a read lock
             let mut items = std::mem::take(&mut *self.reallocated.items.lock().unwrap());
 
-            if let Some(bucket) = items.index.take() {
-                self.apply_grow_index(bucket);
-            } else {
-                // data bucket
-                let (i, new_bucket) = items.data.take().unwrap();
-                self.apply_grow_data(i as usize, new_bucket);
+            match items.index.take() {
+                Some(bucket) => {
+                    self.apply_grow_index(bucket);
+                }
+                _ => {
+                    // data bucket
+                    let (i, new_bucket) = items.data.take().unwrap();
+                    self.apply_grow_data(i as usize, new_bucket);
+                }
             }
         }
     }

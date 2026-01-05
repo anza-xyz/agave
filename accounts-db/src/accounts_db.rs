@@ -3264,9 +3264,11 @@ impl AccountsDb {
             // shrink is in progress, so 1 new append vec to keep, 1 old one to throw away
             not_retaining_store(shrink_in_progress.old_storage());
             // dropping 'shrink_in_progress' removes the old append vec that was being shrunk from db's storage
-        } else if let Some(store) = self.storage.remove(&slot, shrink_can_be_active) {
-            // no shrink in progress, so all append vecs in this slot are dead
-            not_retaining_store(&store);
+        } else {
+            if let Some(store) = self.storage.remove(&slot, shrink_can_be_active) {
+                // no shrink in progress, so all append vecs in this slot are dead
+                not_retaining_store(&store);
+            }
         }
 
         dead_storages
@@ -3759,54 +3761,57 @@ impl AccountsDb {
         R: Send,
         B: Send + Default + Sync,
     {
-        if let Some(slot_cache) = self.accounts_cache.slot_cache(slot) {
-            // If we see the slot in the cache, then all the account information
-            // is in this cached slot
-            if slot_cache.len() > SCAN_SLOT_PAR_ITER_THRESHOLD {
-                ScanStorageResult::Cached(self.thread_pool_foreground.install(|| {
-                    slot_cache
-                        .par_iter()
-                        .filter_map(|cached_account| {
-                            cache_map_func(&LoadedAccount::Cached(Cow::Borrowed(
-                                cached_account.value(),
-                            )))
-                        })
-                        .collect()
-                }))
-            } else {
-                ScanStorageResult::Cached(
-                    slot_cache
-                        .iter()
-                        .filter_map(|cached_account| {
-                            cache_map_func(&LoadedAccount::Cached(Cow::Borrowed(
-                                cached_account.value(),
-                            )))
-                        })
-                        .collect(),
-                )
+        match self.accounts_cache.slot_cache(slot) {
+            Some(slot_cache) => {
+                // If we see the slot in the cache, then all the account information
+                // is in this cached slot
+                if slot_cache.len() > SCAN_SLOT_PAR_ITER_THRESHOLD {
+                    ScanStorageResult::Cached(self.thread_pool_foreground.install(|| {
+                        slot_cache
+                            .par_iter()
+                            .filter_map(|cached_account| {
+                                cache_map_func(&LoadedAccount::Cached(Cow::Borrowed(
+                                    cached_account.value(),
+                                )))
+                            })
+                            .collect()
+                    }))
+                } else {
+                    ScanStorageResult::Cached(
+                        slot_cache
+                            .iter()
+                            .filter_map(|cached_account| {
+                                cache_map_func(&LoadedAccount::Cached(Cow::Borrowed(
+                                    cached_account.value(),
+                                )))
+                            })
+                            .collect(),
+                    )
+                }
             }
-        } else {
-            let mut retval = B::default();
-            // If the slot is not in the cache, then all the account information must have
-            // been flushed. This is guaranteed because we only remove the rooted slot from
-            // the cache *after* we've finished flushing in `flush_slot_cache`.
-            // Regarding `shrinking_in_progress_ok`:
-            // This fn could be running in the foreground, so shrinking could be running in the background, independently.
-            // Even if shrinking is running, there will be 0-1 active storages to scan here at any point.
-            // When a concurrent shrink completes, the active storage at this slot will
-            // be replaced with an equivalent storage with only alive accounts in it.
-            // A shrink on this slot could have completed anytime before the call here, a shrink could currently be in progress,
-            // or the shrink could complete immediately or anytime after this call. This has always been true.
-            // So, whether we get a never-shrunk, an about-to-be shrunk, or a will-be-shrunk-in-future storage here to scan,
-            // all are correct and possible in a normally running system.
-            if let Some(storage) = self
-                .storage
-                .get_slot_storage_entry_shrinking_in_progress_ok(slot)
-            {
-                storage_fallback_func(&mut retval, &storage.accounts);
-            }
+            _ => {
+                let mut retval = B::default();
+                // If the slot is not in the cache, then all the account information must have
+                // been flushed. This is guaranteed because we only remove the rooted slot from
+                // the cache *after* we've finished flushing in `flush_slot_cache`.
+                // Regarding `shrinking_in_progress_ok`:
+                // This fn could be running in the foreground, so shrinking could be running in the background, independently.
+                // Even if shrinking is running, there will be 0-1 active storages to scan here at any point.
+                // When a concurrent shrink completes, the active storage at this slot will
+                // be replaced with an equivalent storage with only alive accounts in it.
+                // A shrink on this slot could have completed anytime before the call here, a shrink could currently be in progress,
+                // or the shrink could complete immediately or anytime after this call. This has always been true.
+                // So, whether we get a never-shrunk, an about-to-be shrunk, or a will-be-shrunk-in-future storage here to scan,
+                // all are correct and possible in a normally running system.
+                if let Some(storage) = self
+                    .storage
+                    .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+                {
+                    storage_fallback_func(&mut retval, &storage.accounts);
+                }
 
-            ScanStorageResult::Stored(retval)
+                ScanStorageResult::Stored(retval)
+            }
         }
     }
 
@@ -4433,18 +4438,21 @@ impl AccountsDb {
             // entries from the accounts index first. This is because `scan_accounts()` relies on
             // holding the index lock, finding the index entry, and then looking up the entry
             // in the cache. If it fails to find that entry, it will panic in `get_loaded_account()`
-            if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
-                // If the slot is still in the cache, remove the backing storages for
-                // the slot and from the Accounts Index
-                num_cached_slots_removed += 1;
-                total_removed_cached_bytes += slot_cache.total_bytes();
-                self.purge_slot_cache(*remove_slot, &slot_cache);
-                remove_cache_elapsed.stop();
-                remove_cache_elapsed_across_slots += remove_cache_elapsed.as_us();
-                // Nobody else should have removed the slot cache entry yet
-                assert!(self.accounts_cache.remove_slot(*remove_slot).is_some());
-            } else {
-                self.purge_slot_storage(*remove_slot, purge_stats);
+            match self.accounts_cache.slot_cache(*remove_slot) {
+                Some(slot_cache) => {
+                    // If the slot is still in the cache, remove the backing storages for
+                    // the slot and from the Accounts Index
+                    num_cached_slots_removed += 1;
+                    total_removed_cached_bytes += slot_cache.total_bytes();
+                    self.purge_slot_cache(*remove_slot, &slot_cache);
+                    remove_cache_elapsed.stop();
+                    remove_cache_elapsed_across_slots += remove_cache_elapsed.as_us();
+                    // Nobody else should have removed the slot cache entry yet
+                    assert!(self.accounts_cache.remove_slot(*remove_slot).is_some());
+                }
+                _ => {
+                    self.purge_slot_storage(*remove_slot, purge_stats);
+                }
             }
             // It should not be possible that a slot is neither in the cache or storage. Even in
             // a slot with all ticks, `Bank::new_from_parent()` immediately stores some sysvars
@@ -7063,23 +7071,26 @@ impl AccountsDb {
             let id = store.id();
             // Should be default at this point
             assert_eq!(store.alive_bytes(), 0);
-            if let Some(entry) = stored_sizes_and_counts.get(&id) {
-                trace!(
-                    "id: {} setting count: {} cur: {}",
-                    id,
-                    entry.count,
-                    store.count(),
-                );
-                {
-                    let prev_count = store.count.swap(entry.count, Ordering::Release);
-                    assert_eq!(prev_count, 0);
+            match stored_sizes_and_counts.get(&id) {
+                Some(entry) => {
+                    trace!(
+                        "id: {} setting count: {} cur: {}",
+                        id,
+                        entry.count,
+                        store.count(),
+                    );
+                    {
+                        let prev_count = store.count.swap(entry.count, Ordering::Release);
+                        assert_eq!(prev_count, 0);
+                    }
+                    store
+                        .alive_bytes
+                        .store(entry.stored_size, Ordering::Release);
                 }
-                store
-                    .alive_bytes
-                    .store(entry.stored_size, Ordering::Release);
-            } else {
-                trace!("id: {id} clearing count");
-                store.count.store(0, Ordering::Release);
+                _ => {
+                    trace!("id: {id} clearing count");
+                    store.count.store(0, Ordering::Release);
+                }
             }
         }
         storage_size_storages_time.stop();

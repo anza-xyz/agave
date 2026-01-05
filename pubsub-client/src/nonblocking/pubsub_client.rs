@@ -616,7 +616,7 @@ impl PubsubClient {
                             }
                         });
 
-                        if let Some(response_sender) = other_requests.remove(&id) {
+                        match other_requests.remove(&id) { Some(response_sender) => {
                             match err {
                                 Some(reason) => {
                                     let _ = response_sender.send(Err(PubsubClientError::RequestFailed { reason, message: text.to_string()}));
@@ -630,9 +630,9 @@ impl PubsubClient {
                                     }
                                 }
                             }
-                        } else if let Some(response_sender) = requests_unsubscribe.remove(&id) {
+                        } _ => { match requests_unsubscribe.remove(&id) { Some(response_sender) => {
                             let _ = response_sender.send(()); // do not care if receiver is closed
-                        } else if let Some((operation, response_sender)) = requests_subscribe.remove(&id) {
+                        } _ => { match requests_subscribe.remove(&id) { Some((operation, response_sender)) => {
                             match err {
                                 Some(reason) => {
                                     let _ = response_sender.send(Err(PubsubClientError::SubscribeFailed { reason, message: text.to_string()}));
@@ -660,10 +660,10 @@ impl PubsubClient {
                                     subscriptions.insert(sid, notifications_sender);
                                 }
                             }
-                        } else {
+                        } _ => {
                             error!("Unknown request id: {id}");
                             break;
-                        }
+                        }}}}}}
                         continue;
                     }
 

@@ -42,20 +42,20 @@ fn find_installed_platform_tools() -> Vec<String> {
     let solana = home_dir().join(".cache").join("solana");
     let package = "platform-tools";
 
-    if let Ok(dir) = std::fs::read_dir(solana) {
-        dir.filter_map(|e| match e {
-            Err(_) => None,
-            Ok(e) => {
-                if e.path().join(package).is_dir() {
-                    Some(e.path().file_name().unwrap().to_string_lossy().to_string())
-                } else {
-                    None
+    match std::fs::read_dir(solana) {
+        Ok(dir) => dir
+            .filter_map(|e| match e {
+                Err(_) => None,
+                Ok(e) => {
+                    if e.path().join(package).is_dir() {
+                        Some(e.path().file_name().unwrap().to_string_lossy().to_string())
+                    } else {
+                        None
+                    }
                 }
-            }
-        })
-        .collect::<Vec<_>>()
-    } else {
-        Vec::new()
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
     }
 }
 

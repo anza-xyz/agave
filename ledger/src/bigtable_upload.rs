@@ -233,9 +233,11 @@ pub async fn upload_confirmed_blocks(
             if let Err(err) = result {
                 error!("upload_confirmed_block() join failed: {err:?}");
                 failures += 1;
-            } else if let Err(err) = result.unwrap() {
-                error!("upload_confirmed_block() upload failed: {err:?}");
-                failures += 1;
+            } else {
+                if let Err(err) = result.unwrap() {
+                    error!("upload_confirmed_block() upload failed: {err:?}");
+                    failures += 1;
+                }
             }
         }
 

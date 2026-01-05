@@ -1612,17 +1612,20 @@ impl ReplayStage {
                     if Some(*my_pubkey)
                         == leader_schedule_cache.slot_leader_at(*duplicate_slot, None)
                     {
-                        if let Some(bank) = bank_forks.read().unwrap().get(*duplicate_slot) {
-                            bank_hash_details::write_bank_hash_details_file(&bank)
-                                .map_err(|err| {
-                                    warn!("Unable to write bank hash details file: {err}");
-                                })
-                                .ok();
-                        } else {
-                            warn!(
-                                "Unable to get bank for slot {duplicate_slot} from bank forks \
-                                 while attempting to write bank hash details file"
-                            );
+                        match bank_forks.read().unwrap().get(*duplicate_slot) {
+                            Some(bank) => {
+                                bank_hash_details::write_bank_hash_details_file(&bank)
+                                    .map_err(|err| {
+                                        warn!("Unable to write bank hash details file: {err}");
+                                    })
+                                    .ok();
+                            }
+                            _ => {
+                                warn!(
+                                    "Unable to get bank for slot {duplicate_slot} from bank forks \
+                                     while attempting to write bank hash details file"
+                                );
+                            }
                         }
                         panic!(
                             "We are attempting to dump a block that we produced. This indicates \

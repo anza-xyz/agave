@@ -183,22 +183,25 @@ impl TowerStorage for FileTowerStorage {
         // Ensure to create parent dir here, because restore() precedes save() always
         fs::create_dir_all(filename.parent().unwrap())?;
 
-        if let Ok(file) = File::open(&filename) {
-            // New format
-            let mut stream = BufReader::new(file);
+        match File::open(&filename) {
+            Ok(file) => {
+                // New format
+                let mut stream = BufReader::new(file);
 
-            bincode::deserialize_from(&mut stream)
-                .map_err(|e| e.into())
-                .and_then(|t: SavedTowerVersions| t.try_into_tower(node_pubkey))
-        } else {
-            // Old format
-            let file = File::open(self.old_filename(node_pubkey))?;
-            let mut stream = BufReader::new(file);
-            bincode::deserialize_from(&mut stream)
-                .map_err(|e| e.into())
-                .and_then(|t: SavedTower1_7_14| {
-                    SavedTowerVersions::from(t).try_into_tower(node_pubkey)
-                })
+                bincode::deserialize_from(&mut stream)
+                    .map_err(|e| e.into())
+                    .and_then(|t: SavedTowerVersions| t.try_into_tower(node_pubkey))
+            }
+            _ => {
+                // Old format
+                let file = File::open(self.old_filename(node_pubkey))?;
+                let mut stream = BufReader::new(file);
+                bincode::deserialize_from(&mut stream)
+                    .map_err(|e| e.into())
+                    .and_then(|t: SavedTower1_7_14| {
+                        SavedTowerVersions::from(t).try_into_tower(node_pubkey)
+                    })
+            }
         }
     }
 

@@ -712,22 +712,20 @@ pub fn parse_program_subcommand(
                 .value_of("program_location")
                 .map(|location| location.to_string());
 
-            let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
-                signer_of(matches, "buffer", wallet_manager)
-            {
-                bulk_signers.push(buffer_signer);
-                Some(buffer_pubkey)
-            } else {
-                pubkey_of_signer(matches, "buffer", wallet_manager)?
+            let buffer_pubkey = match signer_of(matches, "buffer", wallet_manager) {
+                Ok((buffer_signer, Some(buffer_pubkey))) => {
+                    bulk_signers.push(buffer_signer);
+                    Some(buffer_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "buffer", wallet_manager)?,
             };
 
-            let program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
-                signer_of(matches, "program_id", wallet_manager)
-            {
-                bulk_signers.push(program_signer);
-                Some(program_pubkey)
-            } else {
-                pubkey_of_signer(matches, "program_id", wallet_manager)?
+            let program_pubkey = match signer_of(matches, "program_id", wallet_manager) {
+                Ok((program_signer, Some(program_pubkey))) => {
+                    bulk_signers.push(program_signer);
+                    Some(program_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "program_id", wallet_manager)?,
             };
 
             let (upgrade_authority, upgrade_authority_pubkey) =
@@ -821,13 +819,12 @@ pub fn parse_program_subcommand(
                 fee_payer, // if None, default signer will be supplied
             ];
 
-            let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
-                signer_of(matches, "buffer", wallet_manager)
-            {
-                bulk_signers.push(buffer_signer);
-                Some(buffer_pubkey)
-            } else {
-                pubkey_of_signer(matches, "buffer", wallet_manager)?
+            let buffer_pubkey = match signer_of(matches, "buffer", wallet_manager) {
+                Ok((buffer_signer, Some(buffer_pubkey))) => {
+                    bulk_signers.push(buffer_signer);
+                    Some(buffer_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "buffer", wallet_manager)?,
             };
 
             let (buffer_authority, buffer_authority_pubkey) =
@@ -1307,10 +1304,9 @@ fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
             filename.push("-keypair");
             keypair_file.set_file_name(filename);
             keypair_file.set_extension("json");
-            if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
-                keypair
-            } else {
-                Keypair::new()
+            match read_keypair_file(keypair_file.to_str().unwrap()) {
+                Ok(keypair) => keypair,
+                _ => Keypair::new(),
             }
         } else {
             Keypair::new()
@@ -1368,68 +1364,76 @@ async fn process_program_deploy(
         )
     };
 
-    let do_initial_deploy = if let Some(account) = rpc_client
+    let do_initial_deploy = match rpc_client
         .get_account_with_commitment(&program_pubkey, config.commitment)
         .await?
         .value
     {
-        if account.owner != bpf_loader_upgradeable::id() {
-            return Err(format!(
-                "Account {program_pubkey} is not an upgradeable program or already in use"
-            )
-            .into());
-        }
-
-        if !account.executable {
-            // Continue an initial deploy
-            true
-        } else if let Ok(UpgradeableLoaderState::Program {
-            programdata_address,
-        }) = account.state()
-        {
-            if let Some(account) = rpc_client
-                .get_account_with_commitment(&programdata_address, config.commitment)
-                .await?
-                .value
-            {
-                if let Ok(UpgradeableLoaderState::ProgramData {
-                    slot: _,
-                    upgrade_authority_address: program_authority_pubkey,
-                }) = account.state()
-                {
-                    if program_authority_pubkey.is_none() {
-                        return Err(
-                            format!("Program {program_pubkey} is no longer upgradeable").into()
-                        );
-                    }
-                    if program_authority_pubkey != Some(upgrade_authority_signer.pubkey()) {
-                        return Err(format!(
-                            "Program's authority {:?} does not match authority provided {:?}",
-                            program_authority_pubkey,
-                            upgrade_authority_signer.pubkey(),
-                        )
-                        .into());
-                    }
-                    // Do upgrade
-                    false
-                } else {
-                    return Err(format!(
-                        "Program {program_pubkey} has been closed, use a new Program Id"
-                    )
-                    .into());
-                }
-            } else {
+        Some(account) => {
+            if account.owner != bpf_loader_upgradeable::id() {
                 return Err(format!(
-                    "Program {program_pubkey} has been closed, use a new Program Id"
+                    "Account {program_pubkey} is not an upgradeable program or already in use"
                 )
                 .into());
             }
-        } else {
-            return Err(format!("{program_pubkey} is not an upgradeable program").into());
+
+            if !account.executable {
+                // Continue an initial deploy
+                true
+            } else if let Ok(UpgradeableLoaderState::Program {
+                programdata_address,
+            }) = account.state()
+            {
+                match rpc_client
+                    .get_account_with_commitment(&programdata_address, config.commitment)
+                    .await?
+                    .value
+                {
+                    Some(account) => {
+                        if let Ok(UpgradeableLoaderState::ProgramData {
+                            slot: _,
+                            upgrade_authority_address: program_authority_pubkey,
+                        }) = account.state()
+                        {
+                            if program_authority_pubkey.is_none() {
+                                return Err(format!(
+                                    "Program {program_pubkey} is no longer upgradeable"
+                                )
+                                .into());
+                            }
+                            if program_authority_pubkey != Some(upgrade_authority_signer.pubkey()) {
+                                return Err(format!(
+                                    "Program's authority {:?} does not match authority provided \
+                                     {:?}",
+                                    program_authority_pubkey,
+                                    upgrade_authority_signer.pubkey(),
+                                )
+                                .into());
+                            }
+                            // Do upgrade
+                            false
+                        } else {
+                            return Err(format!(
+                                "Program {program_pubkey} has been closed, use a new Program Id"
+                            )
+                            .into());
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Program {program_pubkey} has been closed, use a new Program Id"
+                        )
+                        .into());
+                    }
+                }
+            } else {
+                return Err(format!("{program_pubkey} is not an upgradeable program").into());
+            }
         }
-    } else {
-        // do new deploy
-        true
+        _ => {
+            // do new deploy
+            true
+        }
     };
 
     let feature_set = if skip_feature_verification {
@@ -2119,82 +2123,85 @@ async fn process_show(
     use_lamports_unit: bool,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        match rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)
             .await?
             .value
         {
-            if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id() {
-                Ok(config.output_format.formatted_string(&CliProgram {
-                    program_id: account_pubkey.to_string(),
-                    owner: account.owner.to_string(),
-                    data_len: account.data.len(),
-                }))
-            } else if account.owner == bpf_loader_upgradeable::id() {
-                if let Ok(UpgradeableLoaderState::Program {
-                    programdata_address,
-                }) = account.state()
+            Some(account) => {
+                if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id()
                 {
-                    if let Some(programdata_account) = rpc_client
-                        .get_account_with_commitment(&programdata_address, config.commitment)
-                        .await?
-                        .value
+                    Ok(config.output_format.formatted_string(&CliProgram {
+                        program_id: account_pubkey.to_string(),
+                        owner: account.owner.to_string(),
+                        data_len: account.data.len(),
+                    }))
+                } else if account.owner == bpf_loader_upgradeable::id() {
+                    if let Ok(UpgradeableLoaderState::Program {
+                        programdata_address,
+                    }) = account.state()
                     {
-                        if let Ok(UpgradeableLoaderState::ProgramData {
-                            upgrade_authority_address,
-                            slot,
-                        }) = programdata_account.state()
+                        match rpc_client
+                            .get_account_with_commitment(&programdata_address, config.commitment)
+                            .await?
+                            .value
                         {
-                            Ok(config
-                                .output_format
-                                .formatted_string(&CliUpgradeableProgram {
-                                    program_id: account_pubkey.to_string(),
-                                    owner: account.owner.to_string(),
-                                    programdata_address: programdata_address.to_string(),
-                                    authority: upgrade_authority_address
-                                        .map(|pubkey| pubkey.to_string())
-                                        .unwrap_or_else(|| "none".to_string()),
-                                    last_deploy_slot: slot,
-                                    data_len: programdata_account.data.len().saturating_sub(
-                                        UpgradeableLoaderState::size_of_programdata_metadata(),
-                                    ),
-                                    lamports: programdata_account.lamports,
-                                    use_lamports_unit,
-                                }))
-                        } else {
-                            Err(format!("Program {account_pubkey} has been closed").into())
+                            Some(programdata_account) => {
+                                if let Ok(UpgradeableLoaderState::ProgramData {
+                                    upgrade_authority_address,
+                                    slot,
+                                }) = programdata_account.state()
+                                {
+                                    Ok(config
+                                        .output_format
+                                        .formatted_string(&CliUpgradeableProgram {
+                                        program_id: account_pubkey.to_string(),
+                                        owner: account.owner.to_string(),
+                                        programdata_address: programdata_address.to_string(),
+                                        authority: upgrade_authority_address
+                                            .map(|pubkey| pubkey.to_string())
+                                            .unwrap_or_else(|| "none".to_string()),
+                                        last_deploy_slot: slot,
+                                        data_len: programdata_account.data.len().saturating_sub(
+                                            UpgradeableLoaderState::size_of_programdata_metadata(),
+                                        ),
+                                        lamports: programdata_account.lamports,
+                                        use_lamports_unit,
+                                    }))
+                                } else {
+                                    Err(format!("Program {account_pubkey} has been closed").into())
+                                }
+                            }
+                            _ => Err(format!("Program {account_pubkey} has been closed").into()),
                         }
+                    } else if let Ok(UpgradeableLoaderState::Buffer { authority_address }) =
+                        account.state()
+                    {
+                        Ok(config
+                            .output_format
+                            .formatted_string(&CliUpgradeableBuffer {
+                                address: account_pubkey.to_string(),
+                                authority: authority_address
+                                    .map(|pubkey| pubkey.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                data_len: account.data.len().saturating_sub(
+                                    UpgradeableLoaderState::size_of_buffer_metadata(),
+                                ),
+                                lamports: account.lamports,
+                                use_lamports_unit,
+                            }))
                     } else {
-                        Err(format!("Program {account_pubkey} has been closed").into())
+                        Err(format!(
+                            "{account_pubkey} is not an upgradeable loader Buffer or Program \
+                             account"
+                        )
+                        .into())
                     }
-                } else if let Ok(UpgradeableLoaderState::Buffer { authority_address }) =
-                    account.state()
-                {
-                    Ok(config
-                        .output_format
-                        .formatted_string(&CliUpgradeableBuffer {
-                            address: account_pubkey.to_string(),
-                            authority: authority_address
-                                .map(|pubkey| pubkey.to_string())
-                                .unwrap_or_else(|| "none".to_string()),
-                            data_len: account
-                                .data
-                                .len()
-                                .saturating_sub(UpgradeableLoaderState::size_of_buffer_metadata()),
-                            lamports: account.lamports,
-                            use_lamports_unit,
-                        }))
                 } else {
-                    Err(format!(
-                        "{account_pubkey} is not an upgradeable loader Buffer or Program account"
-                    )
-                    .into())
+                    Err(format!("{account_pubkey} is not an SBF program").into())
                 }
-            } else {
-                Err(format!("{account_pubkey} is not an SBF program").into())
             }
-        } else {
-            Err(format!("Unable to find the account {account_pubkey}").into())
+            _ => Err(format!("Unable to find the account {account_pubkey}").into()),
         }
     } else if programs {
         let authority_pubkey = if all { None } else { Some(authority_pubkey) };
@@ -2216,56 +2223,61 @@ async fn process_dump(
     output_location: &str,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        match rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)
             .await?
             .value
         {
-            if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id() {
-                let mut f = File::create(output_location)?;
-                f.write_all(&account.data)?;
-                Ok(format!("Wrote program to {output_location}"))
-            } else if account.owner == bpf_loader_upgradeable::id() {
-                if let Ok(UpgradeableLoaderState::Program {
-                    programdata_address,
-                }) = account.state()
+            Some(account) => {
+                if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id()
                 {
-                    if let Some(programdata_account) = rpc_client
-                        .get_account_with_commitment(&programdata_address, config.commitment)
-                        .await?
-                        .value
-                    {
-                        if let Ok(UpgradeableLoaderState::ProgramData { .. }) =
-                            programdata_account.state()
-                        {
-                            let offset = UpgradeableLoaderState::size_of_programdata_metadata();
-                            let program_data = &programdata_account.data[offset..];
-                            let mut f = File::create(output_location)?;
-                            f.write_all(program_data)?;
-                            Ok(format!("Wrote program to {output_location}"))
-                        } else {
-                            Err(format!("Program {account_pubkey} has been closed").into())
-                        }
-                    } else {
-                        Err(format!("Program {account_pubkey} has been closed").into())
-                    }
-                } else if let Ok(UpgradeableLoaderState::Buffer { .. }) = account.state() {
-                    let offset = UpgradeableLoaderState::size_of_buffer_metadata();
-                    let program_data = &account.data[offset..];
                     let mut f = File::create(output_location)?;
-                    f.write_all(program_data)?;
+                    f.write_all(&account.data)?;
                     Ok(format!("Wrote program to {output_location}"))
+                } else if account.owner == bpf_loader_upgradeable::id() {
+                    if let Ok(UpgradeableLoaderState::Program {
+                        programdata_address,
+                    }) = account.state()
+                    {
+                        match rpc_client
+                            .get_account_with_commitment(&programdata_address, config.commitment)
+                            .await?
+                            .value
+                        {
+                            Some(programdata_account) => {
+                                if let Ok(UpgradeableLoaderState::ProgramData { .. }) =
+                                    programdata_account.state()
+                                {
+                                    let offset =
+                                        UpgradeableLoaderState::size_of_programdata_metadata();
+                                    let program_data = &programdata_account.data[offset..];
+                                    let mut f = File::create(output_location)?;
+                                    f.write_all(program_data)?;
+                                    Ok(format!("Wrote program to {output_location}"))
+                                } else {
+                                    Err(format!("Program {account_pubkey} has been closed").into())
+                                }
+                            }
+                            _ => Err(format!("Program {account_pubkey} has been closed").into()),
+                        }
+                    } else if let Ok(UpgradeableLoaderState::Buffer { .. }) = account.state() {
+                        let offset = UpgradeableLoaderState::size_of_buffer_metadata();
+                        let program_data = &account.data[offset..];
+                        let mut f = File::create(output_location)?;
+                        f.write_all(program_data)?;
+                        Ok(format!("Wrote program to {output_location}"))
+                    } else {
+                        Err(format!(
+                            "{account_pubkey} is not an upgradeable loader buffer or program \
+                             account"
+                        )
+                        .into())
+                    }
                 } else {
-                    Err(format!(
-                        "{account_pubkey} is not an upgradeable loader buffer or program account"
-                    )
-                    .into())
+                    Err(format!("{account_pubkey} is not an SBF program").into())
                 }
-            } else {
-                Err(format!("{account_pubkey} is not an SBF program").into())
             }
-        } else {
-            Err(format!("Unable to find the account {account_pubkey}").into())
+            _ => Err(format!("Unable to find the account {account_pubkey}").into()),
         }
     } else {
         Err("No account specified".into())
@@ -2332,12 +2344,12 @@ async fn process_close(
     let authority_signer = config.signers[authority_index];
 
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        match rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)
             .await?
             .value
         {
-            match account.state() {
+            Some(account) => match account.state() {
                 Ok(UpgradeableLoaderState::Buffer { authority_address }) => {
                     if authority_address != Some(authority_signer.pubkey()) {
                         return Err(format!(
@@ -2375,55 +2387,55 @@ async fn process_close(
                 Ok(UpgradeableLoaderState::Program {
                     programdata_address: programdata_pubkey,
                 }) => {
-                    if let Some(account) = rpc_client
+                    match rpc_client
                         .get_account_with_commitment(&programdata_pubkey, config.commitment)
                         .await?
                         .value
                     {
-                        if let Ok(UpgradeableLoaderState::ProgramData {
-                            slot: _,
-                            upgrade_authority_address: authority_pubkey,
-                        }) = account.state()
-                        {
-                            if authority_pubkey != Some(authority_signer.pubkey()) {
-                                Err(format!(
-                                    "Program authority {:?} does not match {:?}",
-                                    authority_pubkey,
-                                    Some(authority_signer.pubkey())
-                                )
-                                .into())
-                            } else {
-                                if !bypass_warning {
-                                    return Err(String::from(CLOSE_PROGRAM_WARNING).into());
+                        Some(account) => {
+                            if let Ok(UpgradeableLoaderState::ProgramData {
+                                slot: _,
+                                upgrade_authority_address: authority_pubkey,
+                            }) = account.state()
+                            {
+                                if authority_pubkey != Some(authority_signer.pubkey()) {
+                                    Err(format!(
+                                        "Program authority {:?} does not match {:?}",
+                                        authority_pubkey,
+                                        Some(authority_signer.pubkey())
+                                    )
+                                    .into())
+                                } else {
+                                    if !bypass_warning {
+                                        return Err(String::from(CLOSE_PROGRAM_WARNING).into());
+                                    }
+                                    close(
+                                        rpc_client,
+                                        config,
+                                        &programdata_pubkey,
+                                        &recipient_pubkey,
+                                        authority_signer,
+                                        Some(&account_pubkey),
+                                    )
+                                    .await?;
+                                    Ok(config.output_format.formatted_string(
+                                        &CliUpgradeableProgramClosed {
+                                            program_id: account_pubkey.to_string(),
+                                            lamports: account.lamports,
+                                            use_lamports_unit,
+                                        },
+                                    ))
                                 }
-                                close(
-                                    rpc_client,
-                                    config,
-                                    &programdata_pubkey,
-                                    &recipient_pubkey,
-                                    authority_signer,
-                                    Some(&account_pubkey),
-                                )
-                                .await?;
-                                Ok(config.output_format.formatted_string(
-                                    &CliUpgradeableProgramClosed {
-                                        program_id: account_pubkey.to_string(),
-                                        lamports: account.lamports,
-                                        use_lamports_unit,
-                                    },
-                                ))
+                            } else {
+                                Err(format!("Program {account_pubkey} has been closed").into())
                             }
-                        } else {
-                            Err(format!("Program {account_pubkey} has been closed").into())
                         }
-                    } else {
-                        Err(format!("Program {account_pubkey} has been closed").into())
+                        _ => Err(format!("Program {account_pubkey} has been closed").into()),
                     }
                 }
                 _ => Err(format!("{account_pubkey} is not a Program or Buffer account").into()),
-            }
-        } else {
-            Err(format!("Unable to find the account {account_pubkey}").into())
+            },
+            _ => Err(format!("Unable to find the account {account_pubkey}").into()),
         }
     } else {
         let buffers = get_buffers(
