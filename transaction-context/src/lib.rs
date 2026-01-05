@@ -493,6 +493,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
         data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         self.transaction_frame.return_data_pubkey = program_id;
+        // SAFETY: We are synchronizing the new data with the mapped scratchpad area
+        unsafe {
+            self.transaction_frame
+                .return_data_scratchpad
+                .set_len(data.len() as u64);
+        }
         self.return_data_bytes = data;
         Ok(())
     }
