@@ -493,35 +493,28 @@ impl SvmTestEntry {
     }
 
     // convenience function that adds a nonce transaction that is expected to succeed
-    // we accept the prior nonce state and advance it for the check status, since this happens before svm
-    pub fn push_nonce_transaction(&mut self, transaction: Transaction, nonce_info: NonceInfo) {
-        self.push_nonce_transaction_with_status(transaction, nonce_info, ExecutionStatus::Succeeded)
+    pub fn push_nonce_transaction(&mut self, transaction: Transaction, nonce_address: Pubkey) {
+        self.push_nonce_transaction_with_status(
+            transaction,
+            nonce_address,
+            ExecutionStatus::Succeeded,
+        )
     }
 
     // convenience function that adds a nonce transaction with an expected execution status
-    // we accept the prior nonce state and advance it for the check status, since this happens before svm
     pub fn push_nonce_transaction_with_status(
         &mut self,
         transaction: Transaction,
-        mut nonce_info: NonceInfo,
+        nonce_address: Pubkey,
         status: ExecutionStatus,
     ) {
-        if status != ExecutionStatus::Discarded {
-            nonce_info
-                .try_advance_nonce(
-                    DurableNonce::from_blockhash(&LAST_BLOCKHASH),
-                    LAMPORTS_PER_SIGNATURE,
-                )
-                .unwrap();
-        }
-
         self.transaction_batch.push(TransactionBatchItem {
             transaction,
             asserts: TransactionBatchItemAsserts {
                 status,
                 ..TransactionBatchItemAsserts::default()
             },
-            ..TransactionBatchItem::with_nonce(nonce_info)
+            ..TransactionBatchItem::with_nonce(nonce_address)
         });
     }
 
@@ -581,11 +574,10 @@ pub struct TransactionBatchItem {
 }
 
 impl TransactionBatchItem {
-    // TODO accept Pubkey and remove all NonceInfo creation from tests
-    fn with_nonce(nonce_info: NonceInfo) -> Self {
+    fn with_nonce(nonce_address: Pubkey) -> Self {
         Self {
             check_result: Ok(CheckedTransactionDetails::new(
-                Some(*nonce_info.address()),
+                Some(nonce_address),
                 SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             ..Self::default()
@@ -1143,7 +1135,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let (transaction, fee_payer, mut nonce_info) =
             mk_nonce_transaction(&mut test_entry, real_program_id, false, false);
 
-        test_entry.push_nonce_transaction(transaction, nonce_info.clone());
+        test_entry.push_nonce_transaction(transaction, *nonce_info.address());
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
@@ -1169,7 +1161,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
-            nonce_info,
+            *nonce_info.address(),
             ExecutionStatus::Discarded,
         );
     }
@@ -1181,7 +1173,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
-            nonce_info.clone(),
+            *nonce_info.address(),
             ExecutionStatus::ExecutedFailed,
         );
 
@@ -1209,7 +1201,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
-            nonce_info.clone(),
+            *nonce_info.address(),
             ExecutionStatus::ProcessedFailed,
         );
 
@@ -1240,7 +1232,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
-            nonce_info.clone(),
+            *nonce_info.address(),
             ExecutionStatus::Discarded,
         );
     }
@@ -1252,7 +1244,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
-            nonce_info.clone(),
+            *nonce_info.address(),
             ExecutionStatus::Discarded,
         );
     }
@@ -1596,7 +1588,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
-            initial_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::ExecutedFailed,
         );
 
@@ -1619,10 +1611,10 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             *initial_durable.as_hash(),
         );
 
-        test_entry.push_nonce_transaction(first_transaction, initial_nonce_info.clone());
+        test_entry.push_nonce_transaction(first_transaction, nonce_pubkey);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1644,13 +1636,13 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             first_transaction,
-            initial_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::ExecutedFailed,
         );
 
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1672,13 +1664,13 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_nonce_transaction_with_status(
             first_transaction,
-            initial_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::ProcessedFailed,
         );
 
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1704,7 +1696,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1727,7 +1719,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1763,7 +1755,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.push_transaction(middle_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1804,7 +1796,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.push_transaction(middle_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1855,7 +1847,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.push_transaction(middle_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1890,7 +1882,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1919,7 +1911,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
             second_transaction.clone(),
-            advanced_nonce_info.clone(),
+            nonce_pubkey,
             ExecutionStatus::Discarded,
         );
 
@@ -1968,7 +1960,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         );
 
         test_entry.push_transaction(first_transaction);
-        test_entry.push_nonce_transaction(second_transaction.clone(), advanced_nonce_info.clone());
+        test_entry.push_nonce_transaction(second_transaction.clone(), nonce_pubkey);
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
@@ -2215,7 +2207,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
         let initial_nonce_data =
             nonce::state::Data::new(dealloc_fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
-        let initial_nonce_account = AccountSharedData::new_data(
+        let mut initial_nonce_account = AccountSharedData::new_data(
             LAMPORTS_PER_SOL,
             &nonce::versions::Versions::new(nonce::state::State::Initialized(
                 initial_nonce_data.clone(),
@@ -2223,6 +2215,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
             &system_program::id(),
         )
         .unwrap();
+        initial_nonce_account.set_rent_epoch(u64::MAX);
         let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
         let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
@@ -2230,6 +2223,8 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         advanced_nonce_info
             .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
             .unwrap();
+
+        test_entry.add_initial_account(nonce_pubkey, &initial_nonce_account);
 
         let advance_instruction =
             system_instruction::advance_nonce_account(&nonce_pubkey, &dealloc_fee_payer);
@@ -2241,9 +2236,20 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
             &[advance_instruction, fee_only_noop_instruction],
             Some(&dealloc_fee_payer),
             &[&dealloc_fee_payer_keypair],
-            Hash::default(),
+            *initial_durable.as_hash(),
         );
-        test_entry.push_transaction_with_status(transaction, ExecutionStatus::ProcessedFailed);
+        test_entry.push_nonce_transaction_with_status(
+            transaction,
+            nonce_pubkey,
+            ExecutionStatus::ProcessedFailed,
+        );
+
+        test_entry
+            .final_accounts
+            .get_mut(&nonce_pubkey)
+            .unwrap()
+            .data_as_mut_slice()
+            .copy_from_slice(advanced_nonce_info.account().data());
 
         test_entry.decrease_expected_lamports(&dealloc_fee_payer, LAMPORTS_PER_SIGNATURE);
 
@@ -3220,7 +3226,7 @@ fn svm_inspect_nonce_load_failure(fee_paying_nonce: bool) {
 
     test_entry.push_nonce_transaction_with_status(
         transaction,
-        initial_nonce_info.clone(),
+        nonce_pubkey,
         ExecutionStatus::ProcessedFailed,
     );
 
