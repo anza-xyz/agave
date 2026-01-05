@@ -16,6 +16,8 @@ use {
 #[derive(Debug, Default)]
 pub struct SendTransactionStats {
     pub successfully_sent: AtomicU64,
+    pub connection_succeeded_0rtt: AtomicU64,
+    pub connection_succeeded_1rtt: AtomicU64,
     pub connect_error_cids_exhausted: AtomicU64,
     pub connect_error_invalid_remote_address: AtomicU64,
     pub connect_error_other: AtomicU64,
@@ -146,6 +148,8 @@ impl fmt::Display for SendTransactionStats {
             self,
             f,
             successfully_sent,
+            connection_succeeded_0rtt,
+            connection_succeeded_1rtt,
             connect_error_cids_exhausted,
             connect_error_invalid_remote_address,
             connect_error_other,
@@ -198,6 +202,8 @@ define_non_atomic_struct_for!(
     SendTransactionStats,
     {
         successfully_sent,
+        connection_succeeded_0rtt,
+        connection_succeeded_1rtt,
         connect_error_cids_exhausted,
         connect_error_invalid_remote_address,
         connect_error_other,
