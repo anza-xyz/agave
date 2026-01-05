@@ -95,13 +95,13 @@ struct TransactionFrame {
     /// Scratchpad for programs to write CPI instruction data
     cpi_scratchpad: VmSlice<u8>,
     /// Index of current executing instruction
-    current_executing_instruction: u32,
+    current_executing_instruction: u16,
     /// Number of instructions in transaction
-    number_of_instructions: u32,
+    number_of_instructions: u16,
     /// Number of executed CPIs
-    number_of_executed_cpis: u32,
+    number_of_executed_cpis: u16,
     /// Number of transaction accounts
-    number_of_transaction_accounts: u32,
+    number_of_transaction_accounts: u16,
 }
 
 /// Loaded transaction shared between runtime and programs.
@@ -150,9 +150,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 0,
             ),
             current_executing_instruction: 0,
-            number_of_instructions: number_of_instructions as u32,
+            number_of_instructions: number_of_instructions as u16,
             number_of_executed_cpis: 0,
-            number_of_transaction_accounts: transaction_accounts.len() as u32,
+            number_of_transaction_accounts: transaction_accounts.len() as u16,
         };
 
         Self {
@@ -435,7 +435,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
-        self.transaction_frame.current_executing_instruction = index_in_trace as u32;
+        self.transaction_frame.current_executing_instruction = index_in_trace as u16;
         self.instruction_stack.push(index_in_trace);
         if let Some(index_in_transaction) = self.find_index_of_account(&instructions::id()) {
             let mut mut_account_ref = self.accounts.try_borrow_mut(index_in_transaction)?;
@@ -481,7 +481,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .transaction_frame
                 .number_of_executed_cpis
                 .saturating_add(1);
-            self.transaction_frame.current_executing_instruction = *instr_idx as u32;
+            self.transaction_frame.current_executing_instruction = *instr_idx as u16;
         } else {
             self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
         }
