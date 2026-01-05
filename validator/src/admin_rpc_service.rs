@@ -318,7 +318,7 @@ impl AdminRpc for AdminRpcImpl {
                             warn!("Timeout waiting for snapshot to complete");
                             datapoint_warn!(
                                 "admin-rpc-snapshot-timeout",
-                                ("timeout_msecs", start_time.elapsed().as_millis(), i64)
+                                ("timeout_us", start_time.elapsed().as_micros(), i64)
                             );
                             break;
                         }
