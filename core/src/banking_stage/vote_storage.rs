@@ -5,7 +5,7 @@ use {
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_account::from_account,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -297,7 +297,7 @@ impl VoteStorage {
                 if stake == 0 {
                     None // Ignore votes from unstaked validators
                 } else {
-                    Some((thread_rng().gen::<f64>().powf(1.0 / (stake as f64)), pubkey))
+                    Some((rng().random::<f64>().powf(1.0 / (stake as f64)), pubkey))
                 }
             })
             .collect::<Vec<_>>();

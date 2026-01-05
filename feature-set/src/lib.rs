@@ -175,6 +175,9 @@ impl FeatureSet {
             fix_alt_bn128_pairing_length_check: self
                 .is_active(&fix_alt_bn128_pairing_length_check::id()),
             alt_bn128_little_endian: self.is_active(&alt_bn128_little_endian::id()),
+            create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
+            bls_pubkey_management_in_vote_account: self
+                .is_active(&bls_pubkey_management_in_vote_account::id()),
         }
     }
 }
@@ -1082,7 +1085,7 @@ pub mod drop_unchained_merkle_shreds {
 }
 
 pub mod relax_intrabatch_account_locks {
-    solana_pubkey::declare_id!("ENTRYnPAoT5Swwx73YDGzMp3XnNH1kxacyvLosRHza1i");
+    solana_pubkey::declare_id!("4WeHX6QoXCCwqbSFgi6dxnB6QsPo6YApaNTH7P4MLQ99");
 }
 
 pub mod create_slashing_program {
@@ -1157,6 +1160,10 @@ pub mod provide_instruction_data_offset_in_vm_r2 {
     solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
 }
 
+pub mod create_account_allow_prefund {
+    solana_pubkey::declare_id!("8nZKHnryahsWXSvECnrm3rYsWbirpSQgjZAJCr7LzWsb");
+}
+
 pub mod static_instruction_limit {
     solana_pubkey::declare_id!("64ixypL1HPu8WtJhNSMb9mSgfFaJvsANuRkTbHyuLfnx");
 }
@@ -1207,6 +1214,10 @@ pub mod replace_spl_token_with_p_token {
 
 pub mod alt_bn128_little_endian {
     solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+}
+
+pub mod bls_pubkey_management_in_vote_account {
+    solana_pubkey::declare_id!("EGJLweNUVskAPEwpjvNB7JT6uUi6h4mFhowNYXVSrimG");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2127,6 +2138,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0321: Provide instruction data offset in VM r2",
         ),
         (
+            create_account_allow_prefund::id(),
+            "SIMD-0312: Enable CreateAccountAllowPrefund system program instruction",
+        ),
+        (
             static_instruction_limit::id(),
             "SIMD-0160: static instruction limit",
         ),
@@ -2167,6 +2182,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alt_bn128_little_endian::id(),
             "SIMD-0284: Add little-endian compatibility for alt_bn128",
+        ),
+        (
+            bls_pubkey_management_in_vote_account::id(),
+            "SIMD-0387: BLS Pubkey Management in Vote Account",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

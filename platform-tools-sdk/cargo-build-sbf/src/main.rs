@@ -1,4 +1,5 @@
 mod post_processing;
+mod syscalls;
 mod toolchain;
 mod utils;
 
@@ -50,6 +51,7 @@ pub struct Config<'a> {
     optimize_size: bool,
     lto: bool,
     install_only: bool,
+    patch_binaries_for_nix: Option<bool>,
 }
 
 impl Default for Config<'_> {
@@ -84,6 +86,7 @@ impl Default for Config<'_> {
             optimize_size: false,
             lto: false,
             install_only: false,
+            patch_binaries_for_nix: None,
         }
     }
 }
@@ -170,11 +173,14 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         .join("platform-tools")
         .join("llvm")
         .join("bin");
-    env::set_var("CC", llvm_bin.join("clang"));
-    env::set_var("AR", llvm_bin.join("llvm-ar"));
-    env::set_var("OBJDUMP", llvm_bin.join("llvm-objdump"));
-    env::set_var("OBJCOPY", llvm_bin.join("llvm-objcopy"));
-
+    // Override the behavior of cargo to use the Solana toolchain.
+    // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
+    unsafe {
+        env::set_var("CC", llvm_bin.join("clang"));
+        env::set_var("AR", llvm_bin.join("llvm-ar"));
+        env::set_var("OBJDUMP", llvm_bin.join("llvm-objdump"));
+        env::set_var("OBJCOPY", llvm_bin.join("llvm-objcopy"));
+    }
     let cargo_target = format!(
         "CARGO_TARGET_{}_RUSTFLAGS",
         target_triple.to_uppercase().replace("-", "_")
@@ -182,7 +188,9 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
     let rustflags = env::var("RUSTFLAGS").ok().unwrap_or_default();
     if env::var("RUSTFLAGS").is_ok() {
         warn!("Removed RUSTFLAGS from cargo environment, because it overrides {cargo_target}.");
-        env::remove_var("RUSTFLAGS")
+        // User provided rust flags should apply to the solana target only, but not the host target.
+        // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
+        unsafe { env::remove_var("RUSTFLAGS") }
     }
     let target_rustflags = env::var(&cargo_target).ok();
     let mut target_rustflags = Cow::Borrowed(target_rustflags.as_deref().unwrap_or_default());
@@ -201,7 +209,8 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
     }
 
     if let Cow::Owned(flags) = target_rustflags {
-        env::set_var(&cargo_target, flags);
+        // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
+        unsafe { env::set_var(&cargo_target, flags) }
     }
     if config.verbose {
         debug!(
@@ -417,12 +426,10 @@ fn main() {
              information available.\n`target/deploy/debug/program.so` is a stripped version for \
              execution in the VM.\nThese objects are not optimized for mainnet-beta deployment.",
         ))
-        .arg(
-            Arg::new("dump")
-                .long("dump")
-                .takes_value(false)
-                .help("Dump ELF information to a text file on success"),
-        )
+        .arg(Arg::new("dump").long("dump").takes_value(false).help(
+            "Dump ELF information to a text file on success. Requires `rustfilt` to demangle Rust \
+             symbols.",
+        ))
         .arg(
             Arg::new("features")
                 .long("features")
@@ -557,6 +564,14 @@ fn main() {
              decrease program size and CU consumption. The default option is LTO disabled, as one \
              may get mixed results with it.",
         ))
+        .arg(
+            Arg::new("patch_binaries_for_nix")
+                .long("patch-binaries-for-nix")
+                .takes_value(true)
+                .default_missing_value("true")
+                .possible_values(["true", "false"])
+                .help("Patch the downloaded toolchain binaries to work on nix systems"),
+        )
         .get_matches_from(args);
 
     let sbf_sdk: PathBuf = matches.value_of_t_or_exit("sbf_sdk");
@@ -630,6 +645,9 @@ fn main() {
         optimize_size: matches.is_present("optimize_size"),
         lto: matches.is_present("lto"),
         install_only: matches.is_present("install_only"),
+        patch_binaries_for_nix: matches
+            .is_present("patch_binaries_for_nix")
+            .then(|| matches.value_of_t("patch_binaries_for_nix").unwrap()),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {

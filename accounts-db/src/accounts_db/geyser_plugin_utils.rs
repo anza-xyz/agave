@@ -242,4 +242,40 @@ pub mod tests {
         );
         assert_eq!(notifier.accounts_notified.get(&key3).unwrap()[0].0, slot1);
     }
+
+    /// This test ensures that notifications for closed accounts includes the original
+    /// account's information.  The most important is the account's original owner.
+    #[test]
+    fn test_notify_closed_account() {
+        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let notifier = GeyserTestPlugin::default();
+        let notifier = Arc::new(notifier);
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+
+        let address = solana_pubkey::new_rand();
+        let owner = solana_pubkey::new_rand();
+        let account_open = AccountSharedData::new(/*lamports*/ 123, 0, &owner);
+        let account_close = AccountSharedData::new(/*lamports*/ 0, 0, &owner);
+
+        let slot_open = 6;
+        let slot_close = slot_open + 1;
+        accounts_db.store_for_tests((slot_open, [(&address, &account_open)].as_slice()));
+        accounts_db.store_for_tests((slot_close, [(&address, &account_close)].as_slice()));
+
+        let notifications = notifier.accounts_notified.get(&address).unwrap().clone();
+        assert_eq!(notifications.len(), 2);
+        let notif_open = notifications[0].clone();
+        let notif_close = notifications[1].clone();
+
+        let (notif_slot, _notif_write_version, notif_account) = notif_open;
+        assert_eq!(notif_slot, slot_open);
+        assert_eq!(notif_account, account_open);
+
+        // These asserts are the important ones for closed accounts.
+        // We ensure the account in the notification is the same as the account itself.
+        // Explicitly, when the account is closed, we must ensure the owner is unchanged.
+        let (notif_slot, _notif_write_version, notif_account) = notif_close;
+        assert_eq!(notif_slot, slot_close);
+        assert_eq!(notif_account, account_close);
+    }
 }

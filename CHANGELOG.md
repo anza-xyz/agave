@@ -28,6 +28,8 @@ Release channels have their own copy of this changelog:
   * `--accounts-hash-cache-path`
   * `--disable-accounts-disk-index`
   * `--dev-halt-at-slot`
+  * `--monitor` (`exit` subcommand)
+  * `--wait-for-exit` (`exit` subcommand)
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 ### CLI
@@ -37,6 +39,9 @@ Release channels have their own copy of this changelog:
 #### Breaking
 * `cargo-build-sbf --debug` now generates a file `program.so.debug` instead of `program.debug`.
 * `cargo-build-sbf --debug` places all debug related objects inside `target/deploy/debug`.
+### Geyser
+#### Changes
+* Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program *does* zero out any fields itself, those will remain zeroed out in the notification.
 
 
 ## 3.1.0

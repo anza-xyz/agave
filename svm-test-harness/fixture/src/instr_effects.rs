@@ -6,16 +6,16 @@ use {solana_account::Account, solana_instruction_error::InstructionError, solana
 pub struct InstrEffects {
     pub result: Option<InstructionError>,
     pub custom_err: Option<u32>,
-    pub modified_accounts: Vec<(Pubkey, Account)>,
+    pub resulting_accounts: Vec<(Pubkey, Account)>,
     pub cu_avail: u64,
     pub return_data: Vec<u8>,
     pub logs: Vec<String>,
 }
 
 impl InstrEffects {
-    /// Returns the modified account for the given pubkey, if it exists.
+    /// Returns the resulting account for the given pubkey, if it exists.
     pub fn get_account(&self, pubkey: &Pubkey) -> Option<&Account> {
-        self.modified_accounts
+        self.resulting_accounts
             .iter()
             .find(|(pk, _)| pk == pubkey)
             .map(|(_, acc)| acc)
@@ -31,7 +31,7 @@ impl From<InstrEffects> for ProtoInstrEffects {
         let InstrEffects {
             result,
             custom_err,
-            modified_accounts,
+            resulting_accounts,
             cu_avail,
             return_data,
             ..
@@ -47,7 +47,7 @@ impl From<InstrEffects> for ProtoInstrEffects {
                 })
                 .unwrap_or_default(),
             custom_err: custom_err.unwrap_or_default(),
-            modified_accounts: modified_accounts.into_iter().map(Into::into).collect(),
+            modified_accounts: resulting_accounts.into_iter().map(Into::into).collect(),
             cu_avail,
             return_data,
         }

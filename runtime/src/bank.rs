@@ -569,7 +569,7 @@ impl PartialEq for Bank {
             accounts_data_size_delta_off_chain: _,
             epoch_reward_status: _,
             transaction_processor: _,
-            check_program_modification_slot: _,
+            check_program_deployment_slot: _,
             collector_fee_details: _,
             compute_budget: _,
             transaction_account_lock_limit: _,
@@ -878,7 +878,7 @@ pub struct Bank {
 
     transaction_processor: TransactionBatchProcessor<BankForks>,
 
-    check_program_modification_slot: bool,
+    check_program_deployment_slot: bool,
 
     /// Collected fee details
     collector_fee_details: RwLock<CollectorFeeDetails>,
@@ -1117,7 +1117,7 @@ impl Bank {
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
-            check_program_modification_slot: false,
+            check_program_deployment_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: None,
             transaction_account_lock_limit: None,
@@ -1364,7 +1364,7 @@ impl Bank {
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor,
-            check_program_modification_slot: false,
+            check_program_deployment_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: parent.compute_budget,
             transaction_account_lock_limit: parent.transaction_account_lock_limit,
@@ -1528,7 +1528,7 @@ impl Bank {
             {
                 drop(epoch_boundary_preparation);
                 drop(program_cache);
-                if let Some(recompiled) = load_program_with_pubkey(
+                if let Some((recompiled, last_modification_slot)) = load_program_with_pubkey(
                     self,
                     &upcoming_environments,
                     &key,
@@ -1547,7 +1547,12 @@ impl Bank {
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(&upcoming_environments, key, recompiled);
+                    program_cache.assign_program(
+                        &upcoming_environments,
+                        key,
+                        last_modification_slot,
+                        recompiled,
+                    );
                 }
             }
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
@@ -1568,7 +1573,10 @@ impl Bank {
             epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
             epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
             epoch_boundary_preparation.programs_to_recompile = program_cache
-                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
+                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2)
+                .into_iter()
+                .map(|(id, _last_modification_slot, entry)| (id, entry))
+                .collect();
             epoch_boundary_preparation
                 .programs_to_recompile
                 .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
@@ -1885,7 +1893,7 @@ impl Bank {
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
-            check_program_modification_slot: false,
+            check_program_deployment_slot: false,
             // collector_fee_details is not serialized to snapshot
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: runtime_config.compute_budget,
@@ -2769,11 +2777,8 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            self.load_message_nonce_account(message).map(
-                |(_nonce_address, _nonce_account, nonce_data)| {
-                    nonce_data.get_lamports_per_signature()
-                },
-            )
+            self.load_message_nonce_data(message)
+                .map(|(_nonce_address, nonce_data)| nonce_data.get_lamports_per_signature())
         })?;
         Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
     }
@@ -3181,7 +3186,7 @@ impl Bank {
             &mut TransactionErrorMetrics::default(),
             TransactionProcessingConfig {
                 account_overrides: Some(&account_overrides),
-                check_program_modification_slot: self.check_program_modification_slot,
+                check_program_deployment_slot: self.check_program_deployment_slot,
                 log_messages_bytes_limit: None,
                 limit_to_load_programs: true,
                 recording_config: ExecutionRecordingConfig {
@@ -3726,6 +3731,7 @@ impl Bank {
                             })
                             .merge(
                                 &self.transaction_processor.environments,
+                                self.slot,
                                 programs_modified_by_tx,
                             );
                     }
@@ -3922,7 +3928,7 @@ impl Bank {
             &mut TransactionErrorMetrics::default(),
             TransactionProcessingConfig {
                 account_overrides: None,
-                check_program_modification_slot: self.check_program_modification_slot,
+                check_program_deployment_slot: self.check_program_deployment_slot,
                 log_messages_bytes_limit,
                 limit_to_load_programs: false,
                 recording_config,
@@ -5012,45 +5018,6 @@ impl Bank {
         self.epoch_schedule().get_leader_schedule_epoch(slot)
     }
 
-    /// Returns whether the specified epoch should use the new vote account
-    /// keyed leader schedule
-    pub fn should_use_vote_keyed_leader_schedule(&self, epoch: Epoch) -> Option<bool> {
-        let effective_epoch = self
-            .feature_set
-            .activated_slot(&agave_feature_set::enable_vote_address_leader_schedule::id())
-            .map(|activation_slot| {
-                // If the feature was activated at genesis, then the new leader
-                // schedule should be effective immediately in the first epoch
-                if activation_slot == 0 {
-                    return 0;
-                }
-
-                // Calculate the epoch that the feature became activated in
-                let activation_epoch = self.epoch_schedule.get_epoch(activation_slot);
-
-                // The effective epoch is the epoch immediately after the
-                // activation epoch
-                activation_epoch.wrapping_add(1)
-            });
-
-        // Starting from the effective epoch, always use the new leader schedule
-        if let Some(effective_epoch) = effective_epoch {
-            return Some(epoch >= effective_epoch);
-        }
-
-        // Calculate the max epoch we can cache a leader schedule for
-        let max_cached_leader_schedule = self.get_leader_schedule_epoch(self.slot());
-        if epoch <= max_cached_leader_schedule {
-            // The feature cannot be effective by the specified epoch
-            Some(false)
-        } else {
-            // Cannot determine if an epoch should use the new leader schedule if the
-            // the epoch is too far in the future because we won't know if the feature
-            // will have been activated by then or not.
-            None
-        }
-    }
-
     /// a bank-level cache of vote accounts and stake delegation info
     fn update_stakes_cache(
         &self,
@@ -5363,6 +5330,15 @@ impl Bank {
         let feature_set = self.compute_active_feature_set(false).0;
         self.feature_set = Arc::new(feature_set);
 
+        // Apply rent deprecation feature if it's active at genesis
+        // After feature cleanup, assert that rent exemption threshold is 1.0
+        if self
+            .feature_set
+            .is_active(&feature_set::deprecate_rent_exemption_threshold::id())
+        {
+            self.rent_collector.deprecate_rent_exemption_threshold();
+        }
+
         // Add built-in program accounts to the bank if they don't already exist
         self.add_builtin_program_accounts();
 
@@ -5408,10 +5384,7 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::deprecate_rent_exemption_threshold::id())
         {
-            self.rent_collector.rent.lamports_per_byte_year =
-                (self.rent_collector.rent.lamports_per_byte_year as f64
-                    * self.rent_collector.rent.exemption_threshold) as u64;
-            self.rent_collector.rent.exemption_threshold = 1.0;
+            self.rent_collector.deprecate_rent_exemption_threshold();
             self.update_rent();
         }
 
@@ -5730,12 +5703,12 @@ impl Bank {
         false
     }
 
-    pub fn check_program_modification_slot(&self) -> bool {
-        self.check_program_modification_slot
+    pub fn check_program_deployment_slot(&self) -> bool {
+        self.check_program_deployment_slot
     }
 
-    pub fn set_check_program_modification_slot(&mut self, check: bool) {
-        self.check_program_modification_slot = check;
+    pub fn set_check_program_deployment_slot(&mut self, check: bool) {
+        self.check_program_deployment_slot = check;
     }
 
     pub fn fee_structure(&self) -> &FeeStructure {
@@ -6093,6 +6066,7 @@ impl Bank {
             &mut ExecuteTimings::default(), // Called by ledger-tool, metrics not accumulated.
             reload,
         )
+        .map(|(loaded_program, _last_modification_slot)| loaded_program)
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {

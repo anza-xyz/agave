@@ -1,6 +1,6 @@
 use {
     bencher::{benchmark_group, benchmark_main, Bencher},
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_entry::entry::Entry,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
     solana_hash::Hash,
@@ -71,7 +71,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
         let id = pubkey::new_rand();
         let contact_info = ContactInfo::new_localhost(&id, timestamp());
         cluster_info.insert_info(contact_info);
-        stakes.insert(id, thread_rng().gen_range(1..NUM_PEERS) as u64);
+        stakes.insert(id, rng().random_range(1..NUM_PEERS) as u64);
     }
     let cluster_info = Arc::new(cluster_info);
     let cluster_nodes_cache = ClusterNodesCache::<BroadcastStage>::new(

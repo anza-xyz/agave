@@ -8,7 +8,7 @@ on:
 jobs:
   trigger-buildkite-pipeline:
     if: github.repository == 'anza-xyz/agave'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Trigger a Buildkite Build
         uses: "buildkite/trigger-pipeline-action@v2.4.1"
@@ -22,7 +22,7 @@ jobs:
 
   draft-release:
     if: github.repository == 'anza-xyz/agave'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Create Release
         uses: actions/github-script@v8
@@ -41,7 +41,7 @@ jobs:
 
   version-bump:
     if: github.repository == 'anza-xyz/agave'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

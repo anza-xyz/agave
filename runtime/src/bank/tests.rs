@@ -311,8 +311,8 @@ fn test_bank_new() {
     let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
 
     assert_eq!(rent.burn_percent, 5);
-    assert_eq!(rent.exemption_threshold, 1.2);
-    assert_eq!(rent.lamports_per_byte_year, 5);
+    assert_eq!(rent.exemption_threshold, 1.0);
+    assert_eq!(rent.lamports_per_byte_year, 6);
 }
 
 pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {
@@ -4726,12 +4726,10 @@ fn test_check_ro_durable_nonce_fails() {
         bank.process_transaction(&tx),
         Err(TransactionError::BlockhashNotFound)
     );
-    let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
     assert_eq!(
-        bank.check_load_and_advance_message_nonce_account(
+        bank.check_nonce_transaction_validity(
             &new_sanitized_message(tx.message().clone()),
             &bank.next_durable_nonce(),
-            lamports_per_signature,
         ),
         None
     );
@@ -5337,8 +5335,9 @@ fn test_fuzz_instructions() {
 // new feature that affects the bank hash, you should update this test to use a
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
-#[test]
-fn test_bank_hash_consistency() {
+#[test_case(false ; "legacy")]
+#[test_case(true ; "deprecate rent exemption threshold")]
+fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
     let genesis_config = GenesisConfig {
         // Override the creation time to ensure bank hash consistency
         creation_time: 0,
@@ -5352,7 +5351,11 @@ fn test_bank_hash_consistency() {
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
-    let feature_set = FeatureSet::all_enabled();
+    let mut feature_set = FeatureSet::all_enabled();
+
+    if !deprecate_rent_exemption_threshold {
+        feature_set.deactivate(&feature_set::deprecate_rent_exemption_threshold::id());
+    }
 
     let mut bank = Arc::new(Bank::new_from_genesis(
         &genesis_config,
@@ -5372,7 +5375,11 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                "EzyLJJki4ALhQAq5wbmiNctDhytQckGJRXnk9APKXv7r",
+                if deprecate_rent_exemption_threshold {
+                    "3KVpZkLPRXLUakJJkf9vqSapmy4a7rHVwgWa4y82mtjA"
+                } else {
+                    "EzyLJJki4ALhQAq5wbmiNctDhytQckGJRXnk9APKXv7r"
+                },
             );
         }
 
@@ -5380,14 +5387,22 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "6h1KzSuTW6MwkgjtEbrv6AyUZ2NHtSxCQi8epjHDFYh8"
+                if deprecate_rent_exemption_threshold {
+                    "HvCfM9MQCvCDH4zW39G7UqKDB4PLR5GaqVSf9Jfe5XnS"
+                } else {
+                    "6h1KzSuTW6MwkgjtEbrv6AyUZ2NHtSxCQi8epjHDFYh8"
+                }
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "4GX3883TVK7SQfbPUHem4HXcqdHU2DZVAB6yEXspn2qe"
+                if deprecate_rent_exemption_threshold {
+                    "GS2G4uVus4U97woniYLW1f2BWqoZFGFrpSQXto7PnjTT"
+                } else {
+                    "4GX3883TVK7SQfbPUHem4HXcqdHU2DZVAB6yEXspn2qe"
+                }
             );
             break;
         }
@@ -12301,70 +12316,6 @@ fn test_rehash_accounts_unmodified() {
 }
 
 #[test]
-fn test_should_use_vote_keyed_leader_schedule() {
-    let genesis_config = genesis_utils::create_genesis_config(10_000).genesis_config;
-    let epoch_schedule = &genesis_config.epoch_schedule;
-    let create_test_bank = |bank_epoch: Epoch, feature_activation_slot: Option<Slot>| -> Bank {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.epoch = bank_epoch;
-        let mut feature_set = FeatureSet::default();
-        if let Some(feature_activation_slot) = feature_activation_slot {
-            let feature_activation_epoch = bank.epoch_schedule().get_epoch(feature_activation_slot);
-            assert!(feature_activation_epoch <= bank_epoch);
-            feature_set.activate(
-                &agave_feature_set::enable_vote_address_leader_schedule::id(),
-                feature_activation_slot,
-            );
-        }
-        bank.feature_set = Arc::new(feature_set);
-        bank
-    };
-
-    // Test feature activation at genesis
-    let test_bank = create_test_bank(0, Some(0));
-    for epoch in 0..10 {
-        assert_eq!(
-            test_bank.should_use_vote_keyed_leader_schedule(epoch),
-            Some(true),
-        );
-    }
-
-    // Test feature activated in previous epoch
-    let slot_in_prev_epoch = epoch_schedule.get_first_slot_in_epoch(1);
-    let test_bank = create_test_bank(2, Some(slot_in_prev_epoch));
-    for epoch in 0..=(test_bank.epoch + 1) {
-        assert_eq!(
-            test_bank.should_use_vote_keyed_leader_schedule(epoch),
-            Some(epoch >= test_bank.epoch),
-        );
-    }
-
-    // Test feature activated in current epoch
-    let current_epoch_slot = epoch_schedule.get_last_slot_in_epoch(1);
-    let test_bank = create_test_bank(1, Some(current_epoch_slot));
-    for epoch in 0..=(test_bank.epoch + 1) {
-        assert_eq!(
-            test_bank.should_use_vote_keyed_leader_schedule(epoch),
-            Some(epoch > test_bank.epoch),
-        );
-    }
-
-    // Test feature not activated yet
-    let test_bank = create_test_bank(1, None);
-    let max_cached_leader_schedule = epoch_schedule.get_leader_schedule_epoch(test_bank.slot());
-    for epoch in 0..=(max_cached_leader_schedule + 1) {
-        if epoch <= max_cached_leader_schedule {
-            assert_eq!(
-                test_bank.should_use_vote_keyed_leader_schedule(epoch),
-                Some(false),
-            );
-        } else {
-            assert_eq!(test_bank.should_use_vote_keyed_leader_schedule(epoch), None);
-        }
-    }
-}
-
-#[test]
 fn test_apply_builtin_program_feature_transitions_for_new_epoch() {
     let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
 
@@ -12413,6 +12364,48 @@ fn test_startup_from_snapshot_after_precompile_transition() {
 
     // Simulate starting up from snapshot finishing the initialization for a frozen bank
     bank.compute_and_apply_features_after_snapshot_restore();
+}
+
+#[test]
+fn test_genesis_deprecate_rent_exemption_enabled() {
+    let GenesisConfigInfo { genesis_config, .. } = genesis_utils::create_genesis_config(100_000);
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    let rent_account = bank.get_account(&Rent::id()).unwrap();
+    let accounts_db_rent = bincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let rent_collector_rent = bank.rent_collector.rent.clone();
+    let tx_processor_rent = bank
+        .transaction_processor
+        .sysvar_cache()
+        .get_rent()
+        .unwrap()
+        .as_ref()
+        .clone();
+
+    assert_eq!(accounts_db_rent, tx_processor_rent);
+    assert_eq!(accounts_db_rent, rent_collector_rent);
+    assert!(accounts_db_rent.exemption_threshold == 1.0);
+}
+
+#[test]
+fn test_genesis_deprecate_rent_exemption_disabled() {
+    let (genesis_config, ..) = create_genesis_config(100_000);
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    let rent_account = bank.get_account(&Rent::id()).unwrap();
+    let accounts_db_rent = bincode::deserialize::<Rent>(rent_account.data()).unwrap();
+    let rent_collector_rent = bank.rent_collector.rent.clone();
+    let tx_processor_rent = bank
+        .transaction_processor
+        .sysvar_cache()
+        .get_rent()
+        .unwrap()
+        .as_ref()
+        .clone();
+
+    assert_eq!(accounts_db_rent, tx_processor_rent);
+    assert_eq!(accounts_db_rent, rent_collector_rent);
+    assert!(accounts_db_rent.exemption_threshold == 2.0);
 }
 
 #[test]

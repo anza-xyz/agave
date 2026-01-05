@@ -1,4 +1,8 @@
-use std::{fs::File, io, path::PathBuf};
+use std::{
+    fs::{File, OpenOptions},
+    io,
+    path::PathBuf,
+};
 
 /// Open `File` coupled with its filesystem location and most useful information
 ///
@@ -18,6 +22,20 @@ impl FileInfo {
     pub fn new_from_path(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
         let file = File::open(&path)?;
+        Self::new_from_path_and_file(path, file)
+    }
+
+    /// Create new instance by opening file with R/RW mode from a given `path` and reading its metadata
+    ///
+    /// `is_writable` indicates whether the file should be opened in write mode. Note that file needs
+    /// to exist, so even if `is_writable` is true, the file will not be created when missing.
+    pub fn new_from_path_writable(path: impl Into<PathBuf>, is_writable: bool) -> io::Result<Self> {
+        let path = path.into();
+        let file = OpenOptions::new()
+            .read(true)
+            .create(false)
+            .write(is_writable)
+            .open(&path)?;
         Self::new_from_path_and_file(path, file)
     }
 

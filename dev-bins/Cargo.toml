@@ -67,7 +67,7 @@ csv = "1.4.0"
 dashmap = "5.5.3"
 futures = "0.3.31"
 histogram = "0.6.9"
-itertools = "0.13.0"
+itertools = "0.14.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
@@ -81,9 +81,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_bytes = "0.11.19"
 serde_json = "1.0.145"
 serde_yaml = "0.9.34"
-serial_test = "2.0.0"
+serial_test = "3.2.0"
 signal-hook = "0.3.18"
-solana-account = "3.2.0"
+solana-account = "3.3.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bench-tps = { path = "../bench-tps", version = "=4.0.0-alpha.0" }
@@ -111,7 +111,7 @@ solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=
 solana-gossip = { path = "../gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hash = "3.1.0"
 solana-inflation = "3.0.0"
-solana-instruction = "3.0.0"
+solana-instruction = "3.1.0"
 solana-keypair = "3.0.1"
 solana-ledger = { path = "../ledger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "6.1.0"
@@ -135,7 +135,7 @@ solana-rpc-client-nonce-utils = { path = "../rpc-client-nonce-utils", version = 
 solana-runtime = { path = "../runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sbpf = { version = "=0.13.1", default-features = false }
-solana-sdk-ids = "3.0.0"
+solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.0"
 solana-signature = { version = "3.1.0", default-features = false }
 solana-signer = "3.0.0"
