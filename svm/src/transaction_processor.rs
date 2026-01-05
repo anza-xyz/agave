@@ -1558,7 +1558,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic = "called account_loader.get_account_shared_data() with nonexistent account"]
+    #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
         let account_loader = (&mock_bank).into();
