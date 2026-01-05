@@ -33,7 +33,7 @@ Release channels have their own copy of this changelog:
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 #### Changes
-* `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when other snapshots are disabled.
+* `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation disabled.
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`
 ### Platform tools
