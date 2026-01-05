@@ -45,7 +45,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             max_iowq_workers: DEFAULT_MAX_IOWQ_WORKERS,
             ring_squeue_size: None,
             shared_sqpoll_fd: None,
-            register_buffer: true,
+            register_buffer: false,
         }
     }
 
@@ -61,7 +61,6 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     /// Set whether to register buffer with `io_uring` for improved performance.
     ///
     /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
-    #[cfg(test)]
     pub fn use_registered_buffers(mut self, register_buffers: bool) -> Self {
         self.register_buffer = register_buffers;
         self

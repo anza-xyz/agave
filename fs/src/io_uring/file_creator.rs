@@ -84,7 +84,6 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
     /// Set whether to register buffer with `io_uring` for improved performance.
     ///
     /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
-    #[cfg(test)]
     pub fn use_registered_buffers(mut self, register_buffers: bool) -> Self {
         self.register_buffer = register_buffers;
         self

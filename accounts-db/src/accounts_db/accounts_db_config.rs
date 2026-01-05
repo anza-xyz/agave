@@ -1,7 +1,6 @@
 use {
     super::{
         AccountShrinkThreshold, MarkObsoleteAccounts, DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
-        MEMLOCK_BUDGET_SIZE_FOR_TESTS,
     },
     crate::{
         accounts_file::StorageAccess,
@@ -49,10 +48,10 @@ pub struct AccountsDbConfig {
     pub num_background_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool_foreground`)
     pub num_foreground_threads: Option<NonZeroUsize>,
-    /// Amount of memory (in bytes) that is allowed to be locked during db operations.
-    /// On linux it's verified on start-up with the kernel limits, such that during runtime
-    /// parts of it can be utilized without panicking.
-    pub memlock_budget_size: usize,
+    /// Whether to register buffers as *fixed* in io_uring
+    ///
+    /// Requires memlock ulimit higher than sum of buffer sizes registered at the same time.
+    pub use_registered_io_uring_buffers: bool,
 }
 
 pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
@@ -75,7 +74,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
+    use_registered_io_uring_buffers: true,
 };
 
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
@@ -98,5 +97,5 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
+    use_registered_io_uring_buffers: true,
 };

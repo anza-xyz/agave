@@ -13,7 +13,7 @@ use {
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
-    agave_fs::{buffered_writer::large_file_buf_writer, FileInfo},
+    agave_fs::{buffered_writer::large_file_buf_writer, io_setup::IoSetupState, FileInfo},
     agave_snapshots::{
         archive_snapshot,
         error::{
@@ -1267,6 +1267,10 @@ fn unarchive_snapshot(
         .tempdir_in(bank_snapshots_dir)?;
     let unpacked_snapshots_dir = unpack_dir.path().join(snapshot_paths::BANK_SNAPSHOTS_DIR);
 
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()?
+        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
+
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
     let unarchive_handle = streaming_unarchive_snapshot(
         file_sender,
@@ -1274,7 +1278,7 @@ fn unarchive_snapshot(
         unpack_dir.path().to_path_buf(),
         snapshot_archive_path.as_ref().to_path_buf(),
         archive_format,
-        accounts_db_config.memlock_budget_size,
+        io_setup,
     );
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
