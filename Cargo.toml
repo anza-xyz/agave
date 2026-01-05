@@ -335,7 +335,7 @@ log = "0.4.29"
 lru = "0.7.7"
 lz4 = "1.28.1"
 memmap2 = "0.9.9"
-memoffset = "0.9"
+memoffset = "0.9.1"
 merlin = { version = "3", default-features = false }
 min-max-heap = "1.3.0"
 mockall = "0.14.0"
