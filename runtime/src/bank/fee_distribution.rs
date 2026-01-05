@@ -16,7 +16,6 @@ use {
 
 #[derive(Error, Debug, PartialEq)]
 enum DepositFeeError {
-    #[allow(dead_code)]
     #[error("fee account became rent paying")]
     InvalidRentPayingAccount,
     #[error("lamport overflow")]
