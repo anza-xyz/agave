@@ -35,7 +35,7 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-hash = "=3.1.0"
-solana-instruction = { workspace = true }
+solana-instruction = "=3.1.0"
 solana-keypair = "=3.1.0"
 solana-message = "=3.0.1"
 solana-metrics = { workspace = true }
