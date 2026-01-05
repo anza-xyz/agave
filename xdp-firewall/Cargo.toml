@@ -1,0 +1,19 @@
+[package]
+name = "agave-xdp-firewall"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+agave-xdp = { workspace = true }
+aya.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = { workspace = true }
+
+[lints]
+workspace = true

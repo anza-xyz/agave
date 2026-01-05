@@ -36,6 +36,9 @@ pub mod umem;
 
 #[cfg(target_os = "linux")]
 pub use program::load_xdp_program;
+
+pub mod get_network_device;
+
 use std::io;
 
 #[cfg(target_os = "linux")]

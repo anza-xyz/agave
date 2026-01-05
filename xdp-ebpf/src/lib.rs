@@ -29,3 +29,17 @@ pub static AGAVE_XDP_EBPF_PROGRAM: [u8; aya::include_bytes_aligned!(concat!(
             .cast(),
     )
 };
+
+#[derive(Clone, Copy)]
+#[repr(u64)]
+pub enum Flags {
+    Default = 0,
+    OnlyGre = 1,
+    StripGre = 2,
+}
+
+impl Default for Flags {
+    fn default() -> Self {
+        Self::Default
+    }
+}
