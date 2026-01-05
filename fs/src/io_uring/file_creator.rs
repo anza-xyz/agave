@@ -47,9 +47,109 @@ const MAX_OPEN_FILES: usize = 512;
 // to run concurrently.
 // We shouldn't use too many threads, as they will contend a lot to lock the directory inode
 // (on open, since in accounts-db most files land in a single dir).
-const MAX_IOWQ_WORKERS: u32 = 4;
+const DEFAULT_MAX_IOWQ_WORKERS: u32 = 4;
 
 const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::from_millis(10));
+
+/// Utility for building [`IoUringFileCreator`] with specified tuning options.
+pub struct IoUringFileCreatorBuilder<'sp> {
+    write_capacity: usize,
+    max_iowq_workers: u32,
+    ring_squeue_size: Option<u32>,
+    shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
+    /// Register buffer as fixed with the kernel
+    register_buffer: bool,
+}
+
+impl<'sp> IoUringFileCreatorBuilder<'sp> {
+    pub fn new() -> Self {
+        Self {
+            write_capacity: DEFAULT_WRITE_SIZE,
+            max_iowq_workers: DEFAULT_MAX_IOWQ_WORKERS,
+            ring_squeue_size: None,
+            shared_sqpoll_fd: None,
+            register_buffer: true,
+        }
+    }
+
+    /// Use (or remove) a shared kernel thread to drain submission queue for IO operations
+    pub fn shared_sqpoll(mut self, shared_sqpoll_fd: Option<BorrowedFd<'sp>>) -> Self {
+        self.shared_sqpoll_fd = shared_sqpoll_fd;
+        self
+    }
+
+    /// Build a new [`IoUringFileCreator`] with internally allocated buffer and `file_complete`
+    /// to notify caller with already written file.
+    ///
+    /// Buffer will hold at least `buf_capacity` bytes (increased to `write_capacity` if it's lower).
+    ///
+    /// The creator will execute multiple `write_capacity` sized writes in parallel to empty
+    /// the work queue of files to create.
+    ///
+    /// `file_complete` callback receives [`FileInfo`] with open file and its context, its return
+    /// `Option<File>` allows passing file ownership back such that it's closed as no longer used.
+    pub fn build<'a, F>(
+        self,
+        buf_capacity: usize,
+        file_complete: F,
+    ) -> io::Result<IoUringFileCreator<'a>>
+    where
+        F: FnMut(FileInfo) -> Option<File> + 'a,
+    {
+        let buf_capacity = buf_capacity.max(self.write_capacity);
+        let buffer = PageAlignedMemory::new(buf_capacity)?;
+        self.build_with_buffer(buffer, file_complete)
+    }
+
+    /// Build a new [`IoUringFileCreator`] using provided `buffer` and `file_complete`
+    /// to notify caller with already written file.
+    fn build_with_buffer<'a, F: FnMut(FileInfo) -> Option<File> + 'a>(
+        self,
+        mut buffer: PageAlignedMemory,
+        file_complete: F,
+    ) -> io::Result<IoUringFileCreator<'a>> {
+        // Align buffer capacity to write capacity, so we always write equally sized chunks
+        let buf_capacity = buffer.as_mut().len() / self.write_capacity * self.write_capacity;
+        assert_ne!(buf_capacity, 0, "write size aligned buffer is too small");
+        let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
+
+        // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
+        // dropped before `backing_buffer` is dropped.
+        let buffers =
+            unsafe { FixedIoBuffer::split_buffer_chunks(buf_slice_mut, self.write_capacity) };
+        let state = FileCreatorState::new(buffers.collect(), file_complete);
+
+        let io_uring = self.create_io_uring(buf_capacity)?;
+        let ring = Ring::new(io_uring, state);
+
+        if self.register_buffer {
+            // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
+            // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
+            unsafe { FixedIoBuffer::register(buf_slice_mut, &ring)? };
+        }
+
+        Ok(IoUringFileCreator {
+            ring,
+            _backing_buffer: buffer,
+        })
+    }
+
+    fn create_io_uring(&self, buf_capacity: usize) -> io::Result<IoUring> {
+        // Let submission queue hold half of buffers before we explicitly syscall
+        // to submit them for writing (lets kernel start processing before we run out of buffers,
+        // but also amortizes number of `submit` syscalls made).
+        let ring_qsize = self
+            .ring_squeue_size
+            .unwrap_or((buf_capacity / self.write_capacity / 2).max(1) as u32);
+
+        let ring = sqpoll::io_uring_builder_with(self.shared_sqpoll_fd).build(ring_qsize)?;
+        // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
+        // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
+        ring.submitter()
+            .register_iowq_max_workers(&mut [self.max_iowq_workers, 1])?;
+        Ok(ring)
+    }
+}
 
 /// Multiple files creator with `io_uring` queue for open -> write -> close
 /// operations.
@@ -58,81 +158,6 @@ pub struct IoUringFileCreator<'a> {
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `ring`
     /// (should get dropped last)
     _backing_buffer: PageAlignedMemory,
-}
-
-impl<'a> IoUringFileCreator<'a> {
-    /// Create a new `IoUringFileCreator` using internally allocated buffer of specified
-    /// `buf_size` and default write size.
-    pub fn with_buffer_capacity<F: FnMut(FileInfo) -> Option<File> + 'a>(
-        buf_size: usize,
-        shared_sqpoll_fd: Option<BorrowedFd>,
-        file_complete: F,
-    ) -> io::Result<Self> {
-        Self::with_buffer(
-            PageAlignedMemory::new(buf_size)?,
-            DEFAULT_WRITE_SIZE,
-            shared_sqpoll_fd,
-            file_complete,
-        )
-    }
-}
-
-impl<'a> IoUringFileCreator<'a> {
-    /// Create a new `IoUringFileCreator` using provided `buffer` and `file_complete`
-    /// to notify caller with already written file.
-    ///
-    /// `buffer` is the internal buffer used for writing scheduled file contents.
-    /// It must be at least `write_capacity` long. The creator will execute multiple
-    /// `write_capacity` sized writes in parallel to empty the work queue of files to create.
-    ///
-    /// `file_complete` callback receives `FileInfo` with open file and its context, its return
-    /// `Option<File>` allows passing file ownership back such that it's closed as no longer used.
-    pub fn with_buffer<F: FnMut(FileInfo) -> Option<File> + 'a>(
-        mut buffer: PageAlignedMemory,
-        write_capacity: usize,
-        shared_sqpoll_fd: Option<BorrowedFd>,
-        file_complete: F,
-    ) -> io::Result<Self> {
-        // Let submission queue hold half of buffers before we explicitly syscall
-        // to submit them for writing (lets kernel start processing before we run out of buffers,
-        // but also amortizes number of `submit` syscalls made).
-        let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
-
-        let ring = sqpoll::io_uring_builder_with(shared_sqpoll_fd).build(ring_qsize)?;
-        // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
-        // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
-        ring.submitter()
-            .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 1])?;
-        Self::with_buffer_and_ring(ring, buffer, write_capacity, file_complete)
-    }
-
-    fn with_buffer_and_ring<F: FnMut(FileInfo) -> Option<File> + 'a>(
-        ring: IoUring,
-        mut backing_buffer: PageAlignedMemory,
-        write_capacity: usize,
-        file_complete: F,
-    ) -> io::Result<Self> {
-        let buffer = backing_buffer.as_mut();
-        // Take prefix of buffer that is aligned to write_capacity
-        assert!(buffer.len() >= write_capacity);
-        let write_aligned_buf_len = buffer.len() / write_capacity * write_capacity;
-        let buffer = &mut buffer[..write_aligned_buf_len];
-
-        // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
-        // dropped before `backing_buffer` is dropped.
-        let buffers = unsafe { FixedIoBuffer::split_buffer_chunks(buffer, write_capacity) };
-        let state = FileCreatorState::new(buffers.collect(), file_complete);
-        let ring = Ring::new(ring, state);
-
-        // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
-        // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
-        unsafe { FixedIoBuffer::register(buffer, &ring)? };
-
-        Ok(Self {
-            ring,
-            _backing_buffer: backing_buffer,
-        })
-    }
 }
 
 impl FileCreator for IoUringFileCreator<'_> {
