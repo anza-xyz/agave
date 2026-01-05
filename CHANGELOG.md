@@ -41,7 +41,7 @@ Release channels have their own copy of this changelog:
 * `cargo-build-sbf --debug` places all debug related objects inside `target/deploy/debug`.
 ### Geyser
 #### Changes
-* Account update notifications have their fields populated from the original account. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc zeroed out.
+* Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program *does* zero out any fields itself, those will remain zeroed out in the notification.
 
 
 ## 3.1.0
