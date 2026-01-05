@@ -16,7 +16,9 @@ use {
         instruction::{InstructionContext, InstructionFrame},
         instruction_accounts::InstructionAccount,
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
-        vm_addresses::RETURN_DATA_SCRATCHPAD,
+        vm_addresses::{
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+        },
         vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount},
@@ -141,7 +143,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
             return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
-            cpi_scratchpad: VmSlice::new(0, 0),
+            cpi_scratchpad: VmSlice::new(
+                GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                    GUEST_REGION_SIZE.saturating_mul(number_of_instructions as u64),
+                ),
+                0,
+            ),
             current_executing_instruction: 0,
             number_of_instructions: number_of_instructions as u32,
             number_of_executed_cpis: 0,
@@ -335,6 +342,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .transaction_frame
             .number_of_instructions
             .saturating_add(1);
+        self.transaction_frame.cpi_scratchpad = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                GUEST_REGION_SIZE
+                    .saturating_mul(self.transaction_frame.number_of_instructions as u64),
+            ),
+            0,
+        );
         Ok(())
     }
 
@@ -888,6 +902,14 @@ mod tests {
                 .current_executing_instruction,
             1
         );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
+        );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.len(),
+            0,
+        );
 
         transaction_context
             .configure_cpi_instruction(
@@ -913,6 +935,14 @@ mod tests {
                 .transaction_frame
                 .current_executing_instruction,
             2
+        );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(4))
+        );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.len(),
+            0,
         );
 
         transaction_context.pop().unwrap();
