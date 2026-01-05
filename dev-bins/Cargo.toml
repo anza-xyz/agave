@@ -161,7 +161,7 @@ solana-vote = { path = "../vote", version = "=4.0.0-alpha.0", features = ["agave
 solana-vote-program = { path = "../programs/vote", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"
-tokio = "1.48.0"
+tokio = "1.49.0"
 
 [profile.release-with-debug]
 inherits = "release"
