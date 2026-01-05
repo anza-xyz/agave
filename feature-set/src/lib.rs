@@ -1222,9 +1222,8 @@ pub mod bls_pubkey_management_in_vote_account {
     solana_pubkey::declare_id!("EGJLweNUVskAPEwpjvNB7JT6uUi6h4mFhowNYXVSrimG");
 }
 
-// SIMD-0392: Minimum balance check (feature gate only)
 pub mod relax_post_exec_min_balance_check {
-    solana_pubkey::declare_id!("todotodoQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    solana_pubkey::declare_id!("DEJmsCntuYqbXtL5z5TxbaxJXFUJAFjf7TqWSF7YWjQg");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
