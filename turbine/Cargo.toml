@@ -25,7 +25,6 @@ itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
-quinn = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }

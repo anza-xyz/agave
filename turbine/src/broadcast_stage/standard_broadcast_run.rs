@@ -15,7 +15,6 @@ use {
     },
     solana_time_utils::AtomicInterval,
     std::{borrow::Cow, sync::RwLock},
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 #[derive(Clone)]
@@ -159,7 +158,6 @@ impl StandardBroadcastRun {
         blockstore: &Blockstore,
         receive_results: ReceiveResults,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (bsend, brecv) = unbounded();
         let (ssend, srecv) = unbounded();
@@ -172,13 +170,7 @@ impl StandardBroadcastRun {
             &mut ProcessShredsStats::default(),
         )?;
         // Data and coding shreds are sent in a single batch.
-        let _ = self.transmit(
-            &srecv,
-            cluster_info,
-            BroadcastSocket::Udp(sock),
-            bank_forks,
-            quic_endpoint_sender,
-        );
+        let _ = self.transmit(&srecv, cluster_info, BroadcastSocket::Udp(sock), bank_forks);
         let _ = self.record(&brecv, blockstore);
         Ok(())
     }
@@ -380,7 +372,6 @@ impl StandardBroadcastRun {
         shreds: Arc<Vec<Shred>>,
         broadcast_shred_batch_info: Option<BroadcastShredBatchInfo>,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         trace!("Broadcasting {:?} shreds", shreds.len());
         let mut transmit_stats = TransmitShredsStats {
@@ -401,7 +392,6 @@ impl StandardBroadcastRun {
             cluster_info,
             bank_forks,
             cluster_info.socket_addr_space(),
-            quic_endpoint_sender,
         )?;
         transmit_time.stop();
 
@@ -468,17 +458,9 @@ impl BroadcastRun for StandardBroadcastRun {
         cluster_info: &ClusterInfo,
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (shreds, batch_info) = receiver.recv()?;
-        self.broadcast(
-            sock,
-            cluster_info,
-            shreds,
-            batch_info,
-            bank_forks,
-            quic_endpoint_sender,
-        )
+        self.broadcast(sock, cluster_info, shreds, batch_info, bank_forks)
     }
     fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {
         let (shreds, slot_start_ts) = receiver.recv()?;
@@ -592,8 +574,6 @@ mod test {
         let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
-        let (quic_endpoint_sender, _quic_endpoint_receiver) =
-            tokio::sync::mpsc::channel(/*capacity:*/ 128);
 
         // Insert 1 less than the number of ticks needed to finish the slot
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
@@ -613,7 +593,6 @@ mod test {
                 &blockstore,
                 receive_results,
                 &bank_forks,
-                &quic_endpoint_sender,
             )
             .unwrap();
         assert_eq!(
@@ -680,7 +659,6 @@ mod test {
                 &blockstore,
                 receive_results,
                 &bank_forks,
-                &quic_endpoint_sender,
             )
             .unwrap();
 
@@ -779,8 +757,6 @@ mod test {
         let num_shreds_per_slot = 2;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
-        let (quic_endpoint_sender, _quic_endpoint_receiver) =
-            tokio::sync::mpsc::channel(/*capacity:*/ 128);
 
         // Insert complete slot of ticks needed to finish the slot
         let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
@@ -799,7 +775,6 @@ mod test {
                 &blockstore,
                 receive_results,
                 &bank_forks,
-                &quic_endpoint_sender,
             )
             .unwrap();
         assert!(standard_broadcast_run.completed)

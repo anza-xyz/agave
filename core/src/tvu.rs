@@ -162,8 +162,6 @@ impl Tvu {
         log_messages_bytes_limit: Option<usize>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         banking_tracer: Arc<BankingTracer>,
-        turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
-        turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -191,7 +189,6 @@ impl Tvu {
         let fetch_sockets: Vec<Arc<UdpSocket>> = fetch_sockets.into_iter().map(Arc::new).collect();
         let fetch_stage = ShredFetchStage::new(
             fetch_sockets,
-            turbine_quic_endpoint_receiver,
             repair_response_quic_receiver,
             repair_socket.clone(),
             fetch_sender,
@@ -223,7 +220,6 @@ impl Tvu {
             leader_schedule_cache.clone(),
             cluster_info.clone(),
             Arc::new(retransmit_sockets),
-            turbine_quic_endpoint_sender,
             retransmit_receiver,
             max_slots.clone(),
             rpc_subscriptions.clone(),
@@ -494,9 +490,6 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
 
-        let (turbine_quic_endpoint_sender, _turbine_quic_endpoint_receiver) =
-            tokio::sync::mpsc::channel(/*capacity:*/ 128);
-        let (_turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
         let (_, repair_response_quic_receiver) = unbounded();
         let repair_quic_async_senders = RepairQuicAsyncSenders::new_dummy();
         let (_, ancestor_hashes_response_quic_receiver) = unbounded();
@@ -603,8 +596,6 @@ pub mod tests {
             None,
             None,
             BankingTracer::new_disabled(),
-            turbine_quic_endpoint_sender,
-            turbine_quic_endpoint_receiver,
             repair_response_quic_receiver,
             repair_quic_async_senders.repair_request_quic_sender,
             repair_quic_async_senders.ancestor_hashes_request_quic_sender,

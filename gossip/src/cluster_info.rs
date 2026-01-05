@@ -2370,7 +2370,6 @@ pub struct Sockets {
     pub gossip: Arc<[UdpSocket]>,
     pub ip_echo: Option<TcpListener>,
     pub tvu: Vec<UdpSocket>,
-    pub tvu_quic: UdpSocket,
     pub tpu: Vec<UdpSocket>,
     pub tpu_forwards: Vec<UdpSocket>,
     pub tpu_vote: Vec<UdpSocket>,
@@ -2866,7 +2865,6 @@ mod tests {
 
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
         check_socket(&node.sockets.repair, ip, range);
-        check_socket(&node.sockets.tvu_quic, ip, range);
         if let Some(alpenglow_port) = &node.sockets.alpenglow {
             check_socket(alpenglow_port, ip, range);
         }

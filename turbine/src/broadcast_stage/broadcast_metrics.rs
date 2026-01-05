@@ -19,8 +19,6 @@ pub struct TransmitShredsStats {
     pub transmit_elapsed: u64,
     /// microseconds spent sending UDP packets via mmsg
     pub send_mmsg_elapsed: u64,
-    /// microseconds spent sending packets to quic endpoint
-    pub send_quic_elapsed: u64,
     /// microseconds spent sending packets to xdp endpoint
     pub send_xdp_elapsed: u64,
     /// Time spent figuring out which shreds to send where
@@ -28,7 +26,6 @@ pub struct TransmitShredsStats {
     pub num_shreds: usize,
     pub total_packets: usize,
     pub(crate) dropped_packets_udp: usize,
-    pub(crate) dropped_packets_quic: usize,
     pub(crate) dropped_packets_xdp: usize,
     pub(crate) is_xdp: bool,
 }
@@ -38,13 +35,11 @@ impl BroadcastStats for TransmitShredsStats {
         self.is_xdp = new_stats.is_xdp;
         self.transmit_elapsed += new_stats.transmit_elapsed;
         self.send_mmsg_elapsed += new_stats.send_mmsg_elapsed;
-        self.send_quic_elapsed += new_stats.send_quic_elapsed;
         self.send_xdp_elapsed += new_stats.send_xdp_elapsed;
         self.num_shreds += new_stats.num_shreds;
         self.shred_select += new_stats.shred_select;
         self.total_packets += new_stats.total_packets;
         self.dropped_packets_udp += new_stats.dropped_packets_udp;
-        self.dropped_packets_quic += new_stats.dropped_packets_quic;
         self.dropped_packets_xdp += new_stats.dropped_packets_xdp;
     }
     fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool) {
@@ -55,17 +50,11 @@ impl BroadcastStats for TransmitShredsStats {
                 ("slot", slot as i64, i64),
                 ("transmit_elapsed", self.transmit_elapsed as i64, i64),
                 ("send_mmsg_elapsed", self.send_mmsg_elapsed as i64, i64),
-                ("send_quic_elapsed", self.send_quic_elapsed as i64, i64),
                 ("send_xdp_elapsed", self.send_xdp_elapsed as i64, i64),
                 ("num_shreds", self.num_shreds as i64, i64),
                 ("shred_select", self.shred_select as i64, i64),
                 ("total_packets", self.total_packets as i64, i64),
                 ("dropped_packets_udp", self.dropped_packets_udp as i64, i64),
-                (
-                    "dropped_packets_quic",
-                    self.dropped_packets_quic as i64,
-                    i64
-                ),
                 ("dropped_packets_xdp", self.dropped_packets_xdp as i64, i64),
             );
         } else {
@@ -82,17 +71,11 @@ impl BroadcastStats for TransmitShredsStats {
                 ),
                 ("transmit_elapsed", self.transmit_elapsed as i64, i64),
                 ("send_mmsg_elapsed", self.send_mmsg_elapsed as i64, i64),
-                ("send_quic_elapsed", self.send_quic_elapsed as i64, i64),
                 ("send_xdp_elapsed", self.send_xdp_elapsed as i64, i64),
                 ("num_shreds", self.num_shreds as i64, i64),
                 ("shred_select", self.shred_select as i64, i64),
                 ("total_packets", self.total_packets as i64, i64),
                 ("dropped_packets_udp", self.dropped_packets_udp as i64, i64),
-                (
-                    "dropped_packets_quic",
-                    self.dropped_packets_quic as i64,
-                    i64
-                ),
                 ("dropped_packets_xdp", self.dropped_packets_xdp as i64, i64),
             );
         }
@@ -234,14 +217,12 @@ mod test {
         slot_broadcast_stats.update(
             &TransmitShredsStats {
                 transmit_elapsed: 1,
-                send_quic_elapsed: 2,
                 send_mmsg_elapsed: 3,
                 send_xdp_elapsed: 4,
                 shred_select: 5,
                 num_shreds: 6,
                 total_packets: 7,
                 dropped_packets_udp: 8,
-                dropped_packets_quic: 9,
                 dropped_packets_xdp: 10,
                 is_xdp: false,
             },
@@ -258,27 +239,23 @@ mod test {
         assert_eq!(slot_0_stats.num_batches, 1);
         assert_eq!(slot_0_stats.num_expected_batches.unwrap(), 2);
         assert_eq!(slot_0_stats.broadcast_shred_stats.transmit_elapsed, 1);
-        assert_eq!(slot_0_stats.broadcast_shred_stats.send_quic_elapsed, 2);
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_mmsg_elapsed, 3);
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_xdp_elapsed, 4);
         assert_eq!(slot_0_stats.broadcast_shred_stats.shred_select, 5);
         assert_eq!(slot_0_stats.broadcast_shred_stats.num_shreds, 6);
         assert_eq!(slot_0_stats.broadcast_shred_stats.total_packets, 7);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_udp, 8);
-        assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_quic, 9);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_xdp, 10);
 
         slot_broadcast_stats.update(
             &TransmitShredsStats {
                 transmit_elapsed: 11,
-                send_quic_elapsed: 12,
                 send_mmsg_elapsed: 13,
                 send_xdp_elapsed: 14,
                 shred_select: 15,
                 num_shreds: 16,
                 total_packets: 17,
                 dropped_packets_udp: 18,
-                dropped_packets_quic: 19,
                 dropped_packets_xdp: 20,
                 is_xdp: false,
             },
@@ -290,14 +267,12 @@ mod test {
         assert_eq!(slot_0_stats.num_batches, 1);
         assert_eq!(slot_0_stats.num_expected_batches.unwrap(), 2);
         assert_eq!(slot_0_stats.broadcast_shred_stats.transmit_elapsed, 1);
-        assert_eq!(slot_0_stats.broadcast_shred_stats.send_quic_elapsed, 2);
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_mmsg_elapsed, 3);
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_xdp_elapsed, 4);
         assert_eq!(slot_0_stats.broadcast_shred_stats.shred_select, 5);
         assert_eq!(slot_0_stats.broadcast_shred_stats.num_shreds, 6);
         assert_eq!(slot_0_stats.broadcast_shred_stats.total_packets, 7);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_udp, 8);
-        assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_quic, 9);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_xdp, 10);
 
         // If another batch is given, then total number of batches == num_expected_batches == 2,
@@ -305,14 +280,12 @@ mod test {
         slot_broadcast_stats.update(
             &TransmitShredsStats {
                 transmit_elapsed: 1,
-                send_quic_elapsed: 1,
                 send_mmsg_elapsed: 1,
                 send_xdp_elapsed: 1,
                 shred_select: 1,
                 num_shreds: 1,
                 total_packets: 1,
                 dropped_packets_udp: 1,
-                dropped_packets_quic: 1,
                 dropped_packets_xdp: 1,
                 is_xdp: false,
             },

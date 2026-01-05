@@ -25,7 +25,6 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
         vortexor_receiver_adapter::VortexorReceiverAdapter,
     },
-    bytes::Bytes,
     crossbeam_channel::{bounded, unbounded, Receiver},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -62,14 +61,14 @@ use {
     },
     std::{
         collections::HashMap,
-        net::{SocketAddr, UdpSocket},
+        net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
     },
-    tokio::sync::{mpsc, mpsc::Sender as AsyncSender},
+    tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
 };
 
@@ -144,7 +143,6 @@ impl Tpu {
         bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
         client: ForwardingClientOption,
-        turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
@@ -381,7 +379,6 @@ impl Tpu {
             blockstore,
             bank_forks,
             shred_version,
-            turbine_quic_endpoint_sender,
             xdp_sender,
         );
 

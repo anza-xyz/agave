@@ -93,7 +93,6 @@ pub struct AdminRpcContactInfo {
     pub id: String,
     pub gossip: SocketAddr,
     pub tvu: SocketAddr,
-    pub tvu_quic: SocketAddr,
     pub serve_repair_quic: SocketAddr,
     pub tpu: SocketAddr,
     pub tpu_forwards: SocketAddr,
@@ -125,7 +124,6 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             last_updated_timestamp: node.wallclock(),
             gossip: unwrap_socket!(gossip),
             tvu: unwrap_socket!(tvu, Protocol::UDP),
-            tvu_quic: unwrap_socket!(tvu, Protocol::QUIC),
             serve_repair_quic: unwrap_socket!(serve_repair, Protocol::QUIC),
             tpu: unwrap_socket!(tpu, Protocol::UDP),
             tpu_forwards: unwrap_socket!(tpu_forwards, Protocol::UDP),
@@ -143,7 +141,6 @@ impl Display for AdminRpcContactInfo {
         writeln!(f, "Identity: {}", self.id)?;
         writeln!(f, "Gossip: {}", self.gossip)?;
         writeln!(f, "TVU: {}", self.tvu)?;
-        writeln!(f, "TVU QUIC: {}", self.tvu_quic)?;
         writeln!(f, "TPU: {}", self.tpu)?;
         writeln!(f, "TPU Forwards: {}", self.tpu_forwards)?;
         writeln!(f, "TPU Votes: {}", self.tpu_vote)?;

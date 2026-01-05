@@ -679,9 +679,6 @@ pub struct Validator {
     geyser_plugin_service: Option<GeyserPluginService>,
     blockstore_metric_report_service: BlockstoreMetricReportService,
     accounts_background_service: AccountsBackgroundService,
-    turbine_quic_endpoint: Option<Endpoint>,
-    turbine_quic_endpoint_runtime: Option<TokioRuntime>,
-    turbine_quic_endpoint_join_handle: Option<solana_turbine::quic_endpoint::AsyncTryJoinHandle>,
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
@@ -1197,7 +1194,7 @@ impl Validator {
         // context which forces us to use the same runtime because a nested
         // runtime will cause panic at drop. Outside test-validator crate, we
         // always need a tokio runtime (and the respective handle) to initialize
-        // the turbine QUIC endpoint.
+        // the QUIC endpoints.
         let current_runtime_handle = tokio::runtime::Handle::try_current();
         let tpu_client_next_runtime = current_runtime_handle.is_err().then(|| {
             tokio::runtime::Builder::new_multi_thread()
@@ -1471,38 +1468,6 @@ impl Validator {
             .as_ref()
             .map(|service| service.sender_cloned());
 
-        let turbine_quic_endpoint_runtime = (current_runtime_handle.is_err()
-            && genesis_config.cluster_type != ClusterType::MainnetBeta)
-            .then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .thread_name("solTurbineQuic")
-                    .build()
-                    .unwrap()
-            });
-        let (turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
-        let (
-            turbine_quic_endpoint,
-            turbine_quic_endpoint_sender,
-            turbine_quic_endpoint_join_handle,
-        ) = if genesis_config.cluster_type == ClusterType::MainnetBeta {
-            let (sender, _receiver) = tokio::sync::mpsc::channel(1);
-            (None, sender, None)
-        } else {
-            solana_turbine::quic_endpoint::new_quic_endpoint(
-                turbine_quic_endpoint_runtime
-                    .as_ref()
-                    .map(TokioRuntime::handle)
-                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap()),
-                &identity_keypair,
-                node.sockets.tvu_quic,
-                turbine_quic_endpoint_sender,
-                bank_forks.clone(),
-            )
-            .map(|(endpoint, sender, join_handle)| (Some(endpoint), sender, Some(join_handle)))
-            .unwrap()
-        };
-
         // Repair quic endpoint.
         let repair_quic_endpoints_runtime = (current_runtime_handle.is_err()
             && genesis_config.cluster_type != ClusterType::MainnetBeta)
@@ -1666,8 +1631,6 @@ impl Validator {
             config.runtime_config.log_messages_bytes_limit,
             prioritization_fee_cache.clone(),
             banking_tracer.clone(),
-            turbine_quic_endpoint_sender.clone(),
-            turbine_quic_endpoint_receiver,
             repair_response_quic_receiver,
             repair_quic_async_senders.repair_request_quic_sender,
             repair_quic_async_senders.ancestor_hashes_request_quic_sender,
@@ -1747,7 +1710,6 @@ impl Validator {
             bank_notification_sender,
             duplicate_confirmed_slot_sender,
             forwarding_tpu_client,
-            turbine_quic_endpoint_sender,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,
@@ -1835,9 +1797,6 @@ impl Validator {
             geyser_plugin_service,
             blockstore_metric_report_service,
             accounts_background_service,
-            turbine_quic_endpoint,
-            turbine_quic_endpoint_runtime,
-            turbine_quic_endpoint_join_handle,
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
@@ -2014,20 +1973,11 @@ impl Validator {
         self.accounts_background_service
             .join()
             .expect("accounts_background_service");
-        if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
-            solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
-        }
         if let Some(xdp_retransmitter) = self.xdp_retransmitter {
             xdp_retransmitter.join().expect("xdp_retransmitter");
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
-        if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
-            self.turbine_quic_endpoint_runtime
-                .map(|runtime| runtime.block_on(turbine_quic_endpoint_join_handle))
-                .transpose()
-                .unwrap();
-        }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
             completed_data_sets_service
                 .join()
