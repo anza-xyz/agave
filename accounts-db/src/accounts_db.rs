@@ -5816,7 +5816,7 @@ impl AccountsDb {
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
         self.stats
-            .store_num_accounts
+            .num_store_accounts_to_cache
             .fetch_add(accounts.len() as u64, Ordering::Relaxed);
         self.report_store_timings();
     }
@@ -5891,7 +5891,7 @@ impl AccountsDb {
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
         self.stats
-            .store_num_accounts
+            .num_store_accounts_to_storage
             .fetch_add(accounts.len() as u64, Ordering::Relaxed);
 
         // If there are any reclaims then they should be handled. Reclaims affect
@@ -6125,8 +6125,17 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "num_accounts",
-                    self.stats.store_num_accounts.swap(0, Ordering::Relaxed),
+                    "num_store_accounts_to_cache",
+                    self.stats
+                        .num_store_accounts_to_cache
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_store_accounts_to_storage",
+                    self.stats
+                        .num_store_accounts_to_storage
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
