@@ -8,13 +8,13 @@ updates:
       - "/programs/sbf"
     schedule:
       interval: daily
-      time: "01:00"
-      timezone: America/Los_Angeles
+      time: "08:00"
+      timezone: Etc/UTC
     open-pull-requests-limit: 6
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: daily
-      time: "01:00"
-      timezone: America/Los_Angeles
+      time: "08:00"
+      timezone: Etc/UTC
     open-pull-requests-limit: 3
