@@ -74,6 +74,7 @@ impl BlockstoreInsertionMetrics {
                 self.write_batch_elapsed_us as i64,
                 i64
             ),
+            ("index_meta_time_us", self.index_meta_time_us as i64, i64),
             ("num_inserted", self.num_inserted as i64, i64),
             ("num_repair", self.num_repair as i64, i64),
             ("num_recovered", self.num_recovered as i64, i64),
