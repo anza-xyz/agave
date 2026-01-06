@@ -1785,7 +1785,7 @@ async fn process_write_buffer(
         program_data.len()
     };
     let min_rent_exempt_program_data_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(
             buffer_data_max_len,
         ))
         .await?;
