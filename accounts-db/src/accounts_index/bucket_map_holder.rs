@@ -31,14 +31,14 @@ const _: () = assert!(std::mem::size_of::<Age>() == std::mem::size_of::<AtomicAg
 // - 2 seconds is much faster, and does also reduce disk iops quite a lot.
 const AGE_MS: u64 = 2_000;
 // Trigger eviction when a bin exceeds this percent of the target entries.
-// 85% strikes a balance: high enough to avoid frequent oscillations yet low enough
-// to catch growth before bins overshoot far past the target.
-const HIGH_WATER_MARK_PERCENTAGE: usize = 85;
+// Goal is to be as use a much of the available HashMap capacity as possible
+// while being able to catch growth before bins overshoot and trigger reallocations.
+const HIGH_WATER_MARK_PERCENTAGE: usize = 95;
 // Evict down to this percent of the target entries when flushing.
-// 70% is intentionally not too low; it reduces unnecessary evictions while
-// still providing headroom so bins don't immediately re-trigger flushing scan
+// Goal is to evict the least number of entries as possible while still providing
+// sufficient headroom that bins don't immediately re-trigger flushing scan
 // after eviction.
-const LOW_WATER_MARK_PERCENTAGE: usize = 70;
+const LOW_WATER_MARK_PERCENTAGE: usize = 85;
 
 pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub disk: Option<BucketMap<(Slot, U)>>,
