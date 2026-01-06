@@ -6,12 +6,12 @@ use std::{
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
-        epoch_stakes::VersionedEpochStakes,
+        epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         snapshot_utils::StorageAndNextAccountsFileId,
         stake_account::StakeAccount,
-        stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
+        stakes::{serialize_stake_accounts_to_delegation_format, DeserializableStakes, Stakes},
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
@@ -181,7 +181,7 @@ struct DeserializableVersionedBank {
     rent_collector: RentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: Stakes<Delegation>,
+    stakes: DeserializableStakes<Delegation>,
     #[allow(dead_code)]
     unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
@@ -416,7 +416,6 @@ where
 /// added to this struct a minor release before they are added to the serialize
 /// struct.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 #[derive(Clone, Debug, Deserialize)]
 struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
@@ -426,7 +425,7 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     _obsolete_epoch_accounts_hash: Option<Hash>,
     #[serde(deserialize_with = "default_on_eof")]
-    versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
+    versioned_epoch_stakes: HashMap<u64, DeserializableVersionedEpochStakes>,
     #[serde(deserialize_with = "default_on_eof")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
 }
