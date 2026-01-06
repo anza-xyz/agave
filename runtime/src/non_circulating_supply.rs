@@ -217,7 +217,7 @@ pub fn withdraw_authority() -> Vec<Pubkey> {
 mod tests {
     use {
         super::*,
-        crate::genesis_utils::genesis_sysvar_and_builtin_program_lamports,
+        crate::{bank::BankLeader, genesis_utils::genesis_sysvar_and_builtin_program_lamports},
         solana_account::{Account, AccountSharedData},
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
@@ -228,8 +228,7 @@ mod tests {
 
     fn new_from_parent(parent: Arc<Bank>) -> Bank {
         let slot = parent.slot() + 1;
-        let leader_id = Pubkey::default();
-        Bank::new_from_parent(parent, &leader_id, slot)
+        Bank::new_from_parent(parent, BankLeader::default(), slot)
     }
 
     #[test]

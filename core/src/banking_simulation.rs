@@ -482,8 +482,8 @@ impl SimulatorLoop {
                     .leader_schedule_cache
                     .slot_leader_at(new_slot, None)
                     .unwrap();
-                if new_leader != self.simulated_leader {
-                    logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader);
+                if new_leader.id != self.simulated_leader {
+                    logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader.id);
                     break;
                 } else if sender_thread.is_finished() {
                     warn!("sender thread existed maybe due to completion of sending traced events");
@@ -493,7 +493,7 @@ impl SimulatorLoop {
                 }
                 let new_bank = Bank::new_from_parent(
                     bank.clone_without_scheduler(),
-                    &self.simulated_leader,
+                    new_leader.into(),
                     new_slot,
                 );
                 // make sure parent is frozen for finalized hashes via the above
@@ -720,7 +720,7 @@ impl BankingSimulator {
             .unwrap();
         info!(
             "Simulated leader and slot: {}, {}",
-            simulated_leader, self.first_simulated_slot,
+            simulated_leader.id, self.first_simulated_slot,
         );
 
         let exit = Arc::new(AtomicBool::default());
@@ -915,7 +915,7 @@ impl BankingSimulator {
             base_event_time,
             poh_recorder,
             poh_controller,
-            simulated_leader,
+            simulated_leader: simulated_leader.id,
             bank_forks,
             blockstore,
             leader_schedule_cache,

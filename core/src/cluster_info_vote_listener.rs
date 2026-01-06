@@ -750,7 +750,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, BankLeader},
             commitment::BlockCommitmentCache,
             genesis_utils::{
                 self, create_genesis_config, GenesisConfigInfo, ValidatorVoteKeypairs,
@@ -808,7 +808,7 @@ mod tests {
             .read()
             .unwrap()
             .contains_key(&bank.slot()));
-        let bank1 = Bank::new_from_parent(bank.clone(), &Pubkey::default(), bank.slot() + 1);
+        let bank1 = Bank::new_from_parent(bank.clone(), BankLeader::default(), bank.slot() + 1);
         vote_tracker.progress_with_new_root_bank(&bank1);
         assert!(!vote_tracker
             .slot_vote_trackers
@@ -822,7 +822,7 @@ mod tests {
         let new_epoch_slot = bank
             .epoch_schedule()
             .get_first_slot_in_epoch(current_epoch + 1);
-        let new_epoch_bank = Bank::new_from_parent(bank, &Pubkey::default(), new_epoch_slot);
+        let new_epoch_bank = Bank::new_from_parent(bank, BankLeader::default(), new_epoch_slot);
         vote_tracker.progress_with_new_root_bank(&new_epoch_bank);
     }
 
@@ -877,7 +877,7 @@ mod tests {
         // Votes for slots less than the provided root bank's slot should not be processed
         let bank3 = Arc::new(Bank::new_from_parent(
             Arc::new(bank0),
-            &Pubkey::default(),
+            BankLeader::default(),
             3,
         ));
         let vote_slots = vec![1, 2];
@@ -1437,7 +1437,7 @@ mod tests {
             .collect();
 
         let new_root_bank =
-            Bank::new_from_parent(bank, &Pubkey::default(), first_slot_in_new_epoch - 2);
+            Bank::new_from_parent(bank, BankLeader::default(), first_slot_in_new_epoch - 2);
         ClusterInfoVoteListener::filter_and_confirm_with_new_votes(
             &vote_tracker,
             vote_txs,

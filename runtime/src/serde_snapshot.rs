@@ -5,7 +5,9 @@ use std::{
 };
 use {
     crate::{
-        bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
+        bank::{
+            Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankLeader, BankRc,
+        },
         epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
@@ -579,6 +581,7 @@ where
         account_paths,
         storage_and_next_append_vec_id,
         debug_keys,
+        None, // leader_for_tests
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -801,6 +804,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
+    leader_for_tests: Option<BankLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
@@ -842,6 +846,7 @@ where
         genesis_config,
         runtime_config,
         bank_fields,
+        leader_for_tests,
         debug_keys,
         reconstructed_accounts_db_info.accounts_data_len,
         epoch_stakes,

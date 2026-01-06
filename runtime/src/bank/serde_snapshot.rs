@@ -2,7 +2,7 @@
 mod tests {
     use {
         crate::{
-            bank::{test_utils as bank_test_utils, Bank},
+            bank::{test_utils as bank_test_utils, Bank, BankLeader},
             epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
@@ -84,14 +84,14 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::custom(400, 400, false);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
-        let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0.clone(), BankLeader::default(), 1);
 
         // Create an account on a non-root fork
         let key1 = Pubkey::new_unique();
         bank_test_utils::deposit(&bank1, &key1, deposit_amount).unwrap();
 
         let bank2_slot = 2;
-        let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
+        let bank2 = Bank::new_from_parent(bank0, BankLeader::default(), bank2_slot);
 
         // Test new account
         let key2 = Pubkey::new_unique();
@@ -185,7 +185,7 @@ mod tests {
 
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         bank0.squash();
-        let mut bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let mut bank = Bank::new_from_parent(bank0.clone(), BankLeader::default(), 1);
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
 
@@ -263,7 +263,7 @@ mod tests {
         activate_all_features(&mut genesis_config);
 
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-        let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let mut bank = Bank::new_from_parent(bank0, BankLeader::default(), 1);
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }
@@ -296,6 +296,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,

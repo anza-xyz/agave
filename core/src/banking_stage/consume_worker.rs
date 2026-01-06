@@ -2168,7 +2168,9 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver,
+            bank::{Bank, BankLeader},
+            bank_forks::BankForks,
+            vote_sender_types::ReplayVoteReceiver,
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
@@ -2217,7 +2219,7 @@ mod tests {
         // Warp to next epoch for MaxAge tests.
         let mut bank = Bank::new_from_parent(
             bank.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             bank.get_epoch_info().slots_in_epoch,
         );
         if !relax_intrabatch_account_locks {

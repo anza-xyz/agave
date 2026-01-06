@@ -48,7 +48,7 @@ impl TpuInfo for ClusterTpuInfo {
         drop(recorder);
         let mut unique_leaders = vec![];
         for leader in leaders.iter() {
-            if let Some(addr) = self.recent_peers.get(leader) {
+            if let Some(addr) = self.recent_peers.get(&leader.id) {
                 if !unique_leaders.contains(&addr) {
                     unique_leaders.push(addr);
                 }
@@ -59,13 +59,13 @@ impl TpuInfo for ClusterTpuInfo {
 
     fn get_not_unique_leader_tpus(&self, max_count: u64) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
-        let leader_pubkeys: Vec<_> = (0..max_count)
+        let leaders: Vec<_> = (0..max_count)
             .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
             .collect();
         drop(recorder);
-        leader_pubkeys
+        leaders
             .iter()
-            .filter_map(|leader_pubkey| self.recent_peers.get(leader_pubkey))
+            .filter_map(|leader| self.recent_peers.get(&leader.id))
             .collect()
     }
 }

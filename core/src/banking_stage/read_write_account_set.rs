@@ -93,7 +93,11 @@ mod tests {
             MessageHeader, VersionedMessage,
         },
         solana_pubkey::Pubkey,
-        solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
+        solana_runtime::{
+            bank::{Bank, BankLeader},
+            bank_forks::BankForks,
+            genesis_utils::create_genesis_config,
+        },
         solana_signer::Signer,
         solana_transaction::{
             sanitized::{MessageHash, SanitizedTransaction},
@@ -167,7 +171,7 @@ mod tests {
 
         let slot = bank.slot() + 1;
         (
-            Arc::new(Bank::new_from_parent(bank, &Pubkey::new_unique(), slot)),
+            Arc::new(Bank::new_from_parent(bank, BankLeader::new_unique(), slot)),
             address_table_key,
         )
     }

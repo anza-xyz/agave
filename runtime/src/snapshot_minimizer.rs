@@ -596,14 +596,19 @@ mod tests {
     #[test_case(false)]
     #[test_case(true)]
     fn test_minimize_and_recalculate_accounts_lt_hash(should_recalculate_accounts_lt_hash: bool) {
-        let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
+        let genesis_config_info = genesis_utils::create_genesis_config_with_leader(
+            123_456_789_000_000_000,
+            &Pubkey::new_unique(),
+            1_000_000_000,
+        );
         let (bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
 
         // write to multiple accounts and keep track of one, for minimization later
         let pubkey_to_keep = Pubkey::new_unique();
         let slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let leader = *bank.leader();
+        let bank = Bank::new_from_parent(bank, leader, slot);
         let bank = bank_forks
             .write()
             .unwrap()
@@ -661,6 +666,7 @@ mod tests {
             &genesis_config_info.genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,

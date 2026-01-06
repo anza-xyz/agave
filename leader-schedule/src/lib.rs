@@ -97,7 +97,7 @@ mod tests {
             .collect();
         let schedule = LeaderSchedule::new_from_schedule(schedule);
         let leaders = (0..NUM_SLOTS)
-            .map(|i| (schedule[i as u64], i))
+            .map(|i| (schedule[i as u64].id, i))
             .into_group_map();
         for leader in &unique_leaders {
             let index = leaders.get(&leader.id).cloned().unwrap_or_default();

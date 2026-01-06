@@ -54,7 +54,7 @@ fn bench_accounts_squash(bencher: &mut Bencher) {
     bencher.iter(|| {
         let next_bank = Arc::new(Bank::new_from_parent(
             prev_bank.clone(),
-            &Pubkey::default(),
+            BankLeader::default(),
             slot,
         ));
         test_utils::deposit(&next_bank, &pubkeys[0], 1).unwrap();

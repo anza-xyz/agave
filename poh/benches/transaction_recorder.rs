@@ -17,7 +17,10 @@ use {
     },
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    solana_runtime::{
+        bank::{Bank, BankLeader},
+        installed_scheduler_pool::BankWithScheduler,
+    },
     solana_transaction::versioned::VersionedTransaction,
     std::{
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -111,7 +114,7 @@ fn bench_record_transactions(c: &mut Criterion) {
                     .unwrap();
                 bank = Arc::new(Bank::new_from_parent(
                     bank.clone(),
-                    &Pubkey::default(),
+                    BankLeader::new_unique(),
                     next_slot,
                 ));
                 poh_controller

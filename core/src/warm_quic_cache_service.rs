@@ -74,7 +74,8 @@ impl WarmQuicCacheService {
                     let leader_pubkey = poh_recorder
                         .read()
                         .unwrap()
-                        .leader_after_n_slots((CACHE_OFFSET_SLOT + slot_jitter) as u64);
+                        .leader_after_n_slots((CACHE_OFFSET_SLOT + slot_jitter) as u64)
+                        .map(|leader| leader.id);
                     if let Some(leader_pubkey) = leader_pubkey {
                         if maybe_last_leader != Some(leader_pubkey) {
                             maybe_last_leader = Some(leader_pubkey);

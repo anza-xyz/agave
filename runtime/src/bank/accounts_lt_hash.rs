@@ -389,7 +389,9 @@ pub enum CacheValue {
 mod tests {
     use {
         super::*,
-        crate::{runtime_config::RuntimeConfig, snapshot_bank_utils, snapshot_utils},
+        crate::{
+            bank::BankLeader, runtime_config::RuntimeConfig, snapshot_bank_utils, snapshot_utils,
+        },
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::{
@@ -501,7 +503,7 @@ mod tests {
 
         let bank = {
             let slot = bank.slot() + 1;
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot)
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, BankLeader::default(), slot)
         };
 
         // send from account 2 to account 1; account 1 stays alive, account 2 ends up dead
@@ -747,8 +749,12 @@ mod tests {
         // (note: the number of banks and transfers are arbitrary)
         for _ in 0..7 {
             let slot = bank.slot() + 1;
-            bank =
-                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                BankLeader::default(),
+                slot,
+            );
             for _ in 0..13 {
                 bank.register_unique_recent_blockhash_for_test();
                 // note: use a random pubkey here to ensure accounts
@@ -801,8 +807,12 @@ mod tests {
         // (note: the number of banks and transfers are arbitrary)
         for _ in 0..9 {
             let slot = bank.slot() + 1;
-            bank =
-                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                BankLeader::default(),
+                slot,
+            );
             for _ in 0..3 {
                 bank.register_unique_recent_blockhash_for_test();
                 bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
@@ -827,8 +837,12 @@ mod tests {
         let accounts: Vec<_> = iter::repeat_with(Keypair::new).take(num_accounts).collect();
         for i in 0..num_accounts {
             let slot = bank.slot() + 1;
-            bank =
-                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                BankLeader::default(),
+                slot,
+            );
             bank.register_unique_recent_blockhash_for_test();
 
             // transfer into the accounts so they start with a non-zero balance
@@ -884,6 +898,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,
@@ -910,7 +925,8 @@ mod tests {
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let slot = bank.slot() + 1;
-        bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+        bank =
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, BankLeader::default(), slot);
 
         // These are the two accounts *currently* added to the bank during Bank::new().
         // More accounts could be added later, so if the test fails, inspect the actual cache
@@ -950,8 +966,12 @@ mod tests {
         // (note: the number of banks is arbitrary)
         for _ in 0..3 {
             let slot = bank.slot() + 1;
-            bank =
-                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank = Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                bank,
+                BankLeader::default(),
+                slot,
+            );
             bank.register_unique_recent_blockhash_for_test();
             bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
                 .unwrap();
@@ -981,6 +1001,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,

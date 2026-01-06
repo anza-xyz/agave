@@ -13,7 +13,7 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_runtime::bank::Bank,
+    solana_runtime::bank::{Bank, BankLeader},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::{bpf_loader_upgradeable, secp256k1_program},
     solana_signer::Signer,
@@ -66,7 +66,7 @@ impl TestSetup {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            &Pubkey::default(),
+            BankLeader::default(),
             self.genesis_config
                 .epoch_schedule
                 .get_first_slot_in_epoch(1),

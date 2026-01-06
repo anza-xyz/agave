@@ -275,6 +275,7 @@ mod tests {
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_pubkey::Pubkey,
         solana_runtime::{
+            bank::BankLeader,
             genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
             stake_utils,
         },
@@ -596,7 +597,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                BankLeader::default(),
                 x + 1,
             );
             let tower_sync = TowerSync::new_from_slot(x, previous_bank.hash());
@@ -625,7 +626,7 @@ mod tests {
         let bank34 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33.clone(),
-            &Pubkey::default(),
+            BankLeader::default(),
             34,
         );
         let tower_sync = TowerSync::new_from_slot(33, bank33.hash());
@@ -671,7 +672,7 @@ mod tests {
         let _bank35 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33,
-            &Pubkey::default(),
+            BankLeader::default(),
             35,
         );
 
@@ -702,7 +703,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                BankLeader::default(),
                 x + 1,
             );
             // Skip 34 as it is not part of this fork.

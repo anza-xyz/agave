@@ -118,7 +118,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::Bank,
+        bank::{Bank, BankLeader},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         dependency_tracker::DependencyTracker,
@@ -2461,7 +2461,7 @@ fn maybe_warp_slot(
 
         bank_forks.insert(Bank::warp_from_parent(
             root_bank,
-            &Pubkey::default(),
+            BankLeader::default(),
             warp_slot,
         ));
         bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
@@ -2923,6 +2923,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
         },
         solana_poh_config::PohConfig,
+        solana_runtime::bank::BankLeader,
         solana_sha256_hasher::hash,
         std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
@@ -3251,7 +3252,7 @@ mod tests {
         // bank=1, wait=0, should pass, bank is past the wait slot
         let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
             bank_forks.read().unwrap().root_bank(),
-            &Pubkey::default(),
+            BankLeader::default(),
             1,
         ));
         config.wait_for_supermajority = Some(0);
