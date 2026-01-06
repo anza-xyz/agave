@@ -28,6 +28,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
+    solana_runtime::snapshot_controller::SnapshotController,
     solana_signer::Signer,
     solana_validator_exit::Exit,
     std::{
@@ -75,6 +76,15 @@ impl AdminRpcRequestMetadata {
                 "Retry once validator start up is complete",
             ))
         }
+    }
+
+    fn snapshot_controller(&self) -> Option<Arc<SnapshotController>> {
+        self.with_post_init(|post_init| Ok(post_init.snapshot_controller.clone()))
+            .map_err(|_| {
+                // The error from with_post_init is not relevant, as it is meant for RPC callers
+                warn!("snapshot_controller unavailable, shutting down without taking snapshot");
+            })
+            .ok()
     }
 }
 
@@ -298,13 +308,8 @@ impl AdminRpc for AdminRpcImpl {
             .spawn(move || {
                 let start_time = Instant::now();
 
-                // Extract the snapshot controller if it exists
-                let binding = meta.post_init.read().unwrap();
-                let snapshot_controller = binding
-                    .as_ref()
-                    .map(|post_init| post_init.snapshot_controller.as_ref());
-
-                if let Some(snapshot_controller) = snapshot_controller {
+                // Trigger a fastboot snapshot before exiting
+                if let Some(snapshot_controller) = meta.snapshot_controller() {
                     let latest_snapshot_slot = snapshot_controller.latest_bank_snapshot_slot();
 
                     info!("Requesting fastboot snapshot before exit");
@@ -1097,7 +1102,6 @@ mod tests {
         solana_runtime::{
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
-            snapshot_controller::SnapshotController,
         },
         solana_system_interface::program as system_program,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
@@ -1659,6 +1663,31 @@ mod tests {
         fn drop(&mut self) {
             remove_dir_all(self.validator_ledger_path.clone()).unwrap();
         }
+    }
+
+    #[test]
+    fn test_no_post_init_no_snapshot_controller() {
+        let validator_exit = create_validator_exit(Arc::new(AtomicBool::new(false)));
+        let voting_keypair = Arc::new(Keypair::new());
+        let authorized_voter_keypairs = Arc::new(RwLock::new(vec![voting_keypair]));
+        let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
+
+        let post_init = Arc::new(RwLock::new(None));
+        let meta = AdminRpcRequestMetadata {
+            rpc_addr: None,
+            start_time: SystemTime::now(),
+            start_progress: start_progress.clone(),
+            validator_exit,
+            validator_exit_backpressure: HashMap::default(),
+            authorized_voter_keypairs: authorized_voter_keypairs.clone(),
+            tower_storage: Arc::new(NullTowerStorage {}),
+            post_init: post_init.clone(),
+            staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+            rpc_to_plugin_manager_sender: None,
+        };
+
+        let snapshot_controller = meta.snapshot_controller();
+        assert!(snapshot_controller.is_none());
     }
 
     // This test checks that `set_identity` call works with working validator and client.
