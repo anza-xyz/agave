@@ -563,7 +563,7 @@ mod tests {
         solana_nonce_account::verify_nonce_account,
         solana_poh::record_channels::{record_channels, RecordReceiver},
         solana_pubkey::Pubkey,
-        solana_runtime::bank_forks::BankForks,
+        solana_runtime::{bank::BankLeader, bank_forks::BankForks},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
@@ -1408,7 +1408,7 @@ mod tests {
         let address_table_state = generate_new_address_lookup_table(None, 2);
         store_address_lookup_table(&bank, address_table_key, address_table_state);
 
-        let new_bank = Bank::new_from_parent(bank, &Pubkey::new_unique(), 2);
+        let new_bank = Bank::new_from_parent(bank, BankLeader::new_unique(), 2);
         let bank = bank_forks
             .write()
             .unwrap()

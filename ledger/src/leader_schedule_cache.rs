@@ -1,7 +1,7 @@
 use {
     crate::{
         blockstore::Blockstore,
-        leader_schedule::{FixedSchedule, LeaderSchedule},
+        leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         leader_schedule_utils,
     },
     itertools::Itertools,
@@ -90,7 +90,7 @@ impl LeaderScheduleCache {
         }
     }
 
-    pub fn slot_leader_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<Pubkey> {
+    pub fn slot_leader_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<SlotLeader> {
         if let Some(bank) = bank {
             self.slot_leader_at_else_compute(slot, bank)
         } else if self.epoch_schedule.slots_per_epoch == 0 {
@@ -161,7 +161,7 @@ impl LeaderScheduleCache {
         self.fixed_schedule = fixed_schedule.map(Arc::new);
     }
 
-    fn slot_leader_at_no_compute(&self, slot: Slot) -> Option<Pubkey> {
+    fn slot_leader_at_no_compute(&self, slot: Slot) -> Option<SlotLeader> {
         let (epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(slot);
         if let Some(ref fixed_schedule) = self.fixed_schedule {
             return Some(fixed_schedule.leader_schedule[slot_index]);
@@ -174,7 +174,7 @@ impl LeaderScheduleCache {
             .map(|schedule| schedule[slot_index])
     }
 
-    fn slot_leader_at_else_compute(&self, slot: Slot, bank: &Bank) -> Option<Pubkey> {
+    fn slot_leader_at_else_compute(&self, slot: Slot, bank: &Bank) -> Option<SlotLeader> {
         let cache_result = self.slot_leader_at_no_compute(slot);
         // Forbid asking for slots in an unconfirmed epoch
         let bank_epoch = self.epoch_schedule.get_epoch_and_slot_index(slot).0;
@@ -187,7 +187,7 @@ impl LeaderScheduleCache {
         } else {
             let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
             self.compute_leader_schedule(epoch, bank)
-                .map(|epoch_schedule| epoch_schedule[slot_index])
+                .map(|leader_schedule| leader_schedule[slot_index])
         }
     }
 
@@ -259,7 +259,7 @@ mod tests {
             EpochSchedule, DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
-        solana_runtime::stake_utils,
+        solana_runtime::{bank::BankLeader, stake_utils},
         solana_signer::Signer,
         std::{sync::Arc, thread::Builder},
     };
@@ -370,9 +370,15 @@ mod tests {
     #[test]
     fn test_next_leader_slot() {
         let pubkey = solana_pubkey::new_rand();
-        let mut genesis_config =
-            create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
-                .genesis_config;
+        let GenesisConfigInfo {
+            mut genesis_config,
+            voting_keypair,
+            ..
+        } = create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports());
+        let slot_leader = SlotLeader {
+            id: pubkey,
+            vote_address: voting_keypair.pubkey(),
+        };
         genesis_config.epoch_schedule = EpochSchedule::custom(
             DEFAULT_SLOTS_PER_EPOCH,
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET,
@@ -384,7 +390,7 @@ mod tests {
 
         assert_eq!(
             cache.slot_leader_at(bank.slot(), Some(&bank)).unwrap(),
-            pubkey
+            slot_leader
         );
         assert_eq!(
             cache.next_leader_slot(&pubkey, 0, &bank, None, u64::MAX),
@@ -420,9 +426,15 @@ mod tests {
     #[test]
     fn test_next_leader_slot_blockstore() {
         let pubkey = solana_pubkey::new_rand();
-        let mut genesis_config =
-            create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
-                .genesis_config;
+        let GenesisConfigInfo {
+            mut genesis_config,
+            voting_keypair,
+            ..
+        } = create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports());
+        let slot_leader = SlotLeader {
+            id: pubkey,
+            vote_address: voting_keypair.pubkey(),
+        };
         genesis_config.epoch_schedule.warmup = false;
 
         let bank = Bank::new_for_tests(&genesis_config);
@@ -434,7 +446,7 @@ mod tests {
 
         assert_eq!(
             cache.slot_leader_at(bank.slot(), Some(&bank)).unwrap(),
-            pubkey
+            slot_leader,
         );
         // Check that the next leader slot after 0 is slot 1
         assert_eq!(
@@ -534,7 +546,11 @@ mod tests {
         let bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(bank, &Pubkey::default(), target_slot))
+            .insert(Bank::new_from_parent(
+                bank,
+                BankLeader::default(),
+                target_slot,
+            ))
             .clone_without_scheduler();
         let mut expected_slot = 0;
         let epoch = bank.get_leader_schedule_epoch(target_slot);
@@ -544,7 +560,7 @@ mod tests {
 
         let schedule = cache.compute_leader_schedule(epoch, &bank).unwrap();
         let mut index = 0;
-        while schedule[index] != node_pubkey {
+        while schedule[index].id != node_pubkey {
             index += 1;
             assert_ne!(index, genesis_config.epoch_schedule.slots_per_epoch);
         }
@@ -595,7 +611,7 @@ mod tests {
         assert_eq!(bank.get_epoch_and_slot_index(96).0, 2);
         assert!(cache.slot_leader_at(96, Some(&bank)).is_none());
 
-        let bank2 = Bank::new_from_parent(bank, &solana_pubkey::new_rand(), 95);
+        let bank2 = Bank::new_from_parent(bank, BankLeader::new_unique(), 95);
         assert!(bank2.epoch_vote_accounts(2).is_some());
 
         // Set root for a slot in epoch 1, so that epoch 2 is now confirmed

@@ -5,7 +5,9 @@ use std::{
 };
 use {
     crate::{
-        bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
+        bank::{
+            Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankLeader, BankRc,
+        },
         epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
@@ -837,11 +839,19 @@ where
     let runtime_config = Arc::new(runtime_config.clone());
     let epoch_stakes = epoch_stakes_handle.join().expect("calculate epoch stakes");
 
+    // todo: set correct leader vote address by first building the leader
+    // schedule from epoch stakes
+    let leader = BankLeader {
+        id: bank_fields.leader_id,
+        ..BankLeader::default()
+    };
+
     let bank = Bank::new_from_snapshot(
         bank_rc,
         genesis_config,
         runtime_config,
         bank_fields,
+        leader,
         debug_keys,
         reconstructed_accounts_db_info.accounts_data_len,
         epoch_stakes,

@@ -1,6 +1,10 @@
 #![cfg(feature = "dev-context-only-utils")]
 use {
-    crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
+    crate::{
+        bank::{Bank, BankLeader},
+        bank_client::BankClient,
+        bank_forks::BankForks,
+    },
     serde::Serialize,
     solana_account::{AccountSharedData, WritableAccount},
     solana_client_traits::{Client, SyncClient},
@@ -202,11 +206,11 @@ pub fn load_upgradeable_program_and_advance_slot(
     // load_upgradeable_program sets clock sysvar to 1, which causes the program to be effective
     // after 2 slots. They need to be called individually to create the correct fork graph in between.
     bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
+        .advance_slot(1, bank_forks, BankLeader::default())
         .expect("Failed to advance the slot");
 
     let bank = bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
+        .advance_slot(1, bank_forks, BankLeader::default())
         .expect("Failed to advance the slot");
 
     (bank, program_id)
@@ -362,7 +366,7 @@ pub fn load_program_of_loader_v4(
             .unwrap();
     }
     let bank = bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
+        .advance_slot(1, bank_forks, BankLeader::default())
         .expect("Failed to advance the slot");
     (bank, program_keypair.pubkey())
 }

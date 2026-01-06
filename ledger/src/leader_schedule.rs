@@ -3,6 +3,7 @@ use {
     rand_chacha::{rand_core::SeedableRng, ChaChaRng},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
+    solana_runtime::bank::BankLeader,
     std::sync::Arc,
 };
 
@@ -21,6 +22,15 @@ impl SlotLeader {
         SlotLeader {
             id: Pubkey::new_unique(),
             vote_address: Pubkey::new_unique(),
+        }
+    }
+}
+
+impl From<SlotLeader> for BankLeader {
+    fn from(slot_leader: SlotLeader) -> Self {
+        Self {
+            id: slot_leader.id,
+            vote_address: slot_leader.vote_address,
         }
     }
 }
@@ -92,7 +102,7 @@ mod tests {
             .collect();
         let schedule = LeaderSchedule::new_from_schedule(schedule);
         let leaders = (0..NUM_SLOTS)
-            .map(|i| (schedule[i as u64], i))
+            .map(|i| (schedule[i as u64].id, i))
             .into_group_map();
         for leader in &unique_leaders {
             let index = leaders.get(&leader.id).cloned().unwrap_or_default();

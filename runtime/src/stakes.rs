@@ -3,7 +3,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_stake_interface::state::Stake;
 use {
-    crate::{stake_account, stake_history::StakeHistory},
+    crate::{bank::BankLeader, stake_account, stake_history::StakeHistory},
     im::HashMap as ImHashMap,
     log::error,
     num_derive::ToPrimitive,
@@ -462,9 +462,12 @@ impl Stakes<StakeAccount> {
         self.stake_delegations.iter().collect()
     }
 
-    pub(crate) fn highest_staked_node(&self) -> Option<&Pubkey> {
-        let vote_account = self.vote_accounts.find_max_by_delegated_stake()?;
-        Some(vote_account.node_pubkey())
+    pub(crate) fn highest_staked_node(&self) -> Option<BankLeader> {
+        let (vote_address, vote_account) = self.vote_accounts.find_max_by_delegated_stake()?;
+        Some(BankLeader {
+            id: *vote_account.node_pubkey(),
+            vote_address: *vote_address,
+        })
     }
 }
 
@@ -731,8 +734,14 @@ pub(crate) mod tests {
             .unwrap()
             .node_pubkey;
 
-        let highest_staked_node = stakes_cache.stakes().highest_staked_node().copied();
-        assert_eq!(highest_staked_node, Some(vote11_node_pubkey));
+        let highest_staked_node = stakes_cache.stakes().highest_staked_node();
+        assert_eq!(
+            highest_staked_node,
+            Some(BankLeader {
+                id: vote11_node_pubkey,
+                vote_address: vote11_pubkey,
+            })
+        );
     }
 
     #[test]

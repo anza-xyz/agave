@@ -163,9 +163,12 @@ impl SnapshotController {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::accounts_background_service::SnapshotRequestKind,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
-        solana_genesis_config::create_genesis_config, solana_pubkey::Pubkey, std::sync::Arc,
+        super::*,
+        crate::{accounts_background_service::SnapshotRequestKind, bank::BankLeader},
+        agave_snapshots::snapshot_config::SnapshotConfig,
+        crossbeam_channel::unbounded,
+        solana_genesis_config::create_genesis_config,
+        std::sync::Arc,
         test_case::test_case,
     };
 
@@ -178,7 +181,7 @@ mod tests {
         for _ in 1..=num_banks {
             let new_bank = Arc::new(Bank::new_from_parent(
                 parent_bank.clone(),
-                &Pubkey::default(),
+                BankLeader::default(),
                 parent_bank.slot() + 1,
             ));
             parent_bank = new_bank;
