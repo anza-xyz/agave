@@ -18,7 +18,9 @@ use {
 #[repr(C)]
 #[derive(Debug)]
 pub struct InstructionFrame {
-    pub program_account_index_in_tx: u32,
+    /// Reserved field for alignment and potential future usage.
+    pub reserved: u16,
+    pub program_account_index_in_tx: u16,
     pub nesting_level: u16,
     /// This is the index of the parent instruction if this is a CPI and u16::MAX if this is a
     /// top-level instruction
@@ -36,6 +38,7 @@ impl Default for InstructionFrame {
             // Using u64::MAX as the default pointer value, since it shall never be accessible.
             instruction_accounts: VmSlice::new(0, 0),
             instruction_data: VmSlice::new(0, 0),
+            reserved: 0,
         }
     }
 }

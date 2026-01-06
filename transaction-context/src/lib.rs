@@ -299,7 +299,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .last_mut()
             .ok_or(InstructionError::CallDepth)?;
 
-        instruction.program_account_index_in_tx = program_index as u32;
+        instruction.program_account_index_in_tx = program_index;
         instruction.configure_vm_slices(
             instruction_index as u64,
             instruction_accounts.len(),
