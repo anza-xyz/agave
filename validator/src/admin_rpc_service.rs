@@ -296,6 +296,8 @@ impl AdminRpc for AdminRpcImpl {
         thread::Builder::new()
             .name("solProcessExit".into())
             .spawn(move || {
+                let start_time = Instant::now();
+
                 // Extract the snapshot controller if it exists
                 let binding = meta.post_init.read().unwrap();
                 let snapshot_controller = binding
@@ -312,7 +314,6 @@ impl AdminRpc for AdminRpcImpl {
                     // fastboot snapshot to complete without stalling exit indefinitely.
                     // The timeout will be hit in the event new roots are not being created.
                     let timeout = Duration::from_secs(5);
-                    let start_time = Instant::now();
                     while snapshot_controller.latest_bank_snapshot_slot() == latest_snapshot_slot {
                         if start_time.elapsed() > timeout {
                             warn!("Timeout waiting for snapshot to complete");
@@ -328,6 +329,13 @@ impl AdminRpc for AdminRpcImpl {
                         "Requesting fastboot snapshot before exit... Done in {:?}",
                         start_time.elapsed()
                     );
+                }
+
+                // Delay exit signal until this RPC request completes, otherwise the caller of `exit` might
+                // receive a confusing error as the validator shuts down before a response is sent back.
+                // If elapsed time has already taken 100ms, there is no need for further delay
+                if start_time.elapsed().as_millis() < 100 {
+                    thread::sleep(Duration::from_millis(100));
                 }
 
                 info!("validator exit requested");
