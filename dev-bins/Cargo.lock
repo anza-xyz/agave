@@ -2874,7 +2874,7 @@ dependencies = [
  "indexmap 2.12.1",
  "slab",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
  "tracing",
 ]
 
@@ -5251,7 +5251,7 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.24.1",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
  "tower-service",
  "url 2.5.7",
  "wasm-bindgen",
@@ -6349,7 +6349,7 @@ dependencies = [
  "tarpc",
  "tokio",
  "tokio-serde",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -6715,7 +6715,7 @@ dependencies = [
  "solana-udp-client",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -6998,7 +6998,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
  "trees",
 ]
 
@@ -8520,7 +8520,7 @@ dependencies = [
  "stream-cancel",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -8901,7 +8901,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tpu-client-next",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -9160,7 +9160,7 @@ dependencies = [
  "solana-transaction-metrics-tracker",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
  "x509-parser",
 ]
 
@@ -9525,7 +9525,7 @@ dependencies = [
  "solana-tls-utils",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -10789,9 +10789,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.17"
+version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2efa149fe76073d6e8fd97ef4f4eca7b67f599660115591483572e406e165594"
+checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
 dependencies = [
  "bytes",
  "futures-core",
@@ -10899,7 +10899,7 @@ dependencies = [
  "rand 0.8.5",
  "slab",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -10937,7 +10937,7 @@ dependencies = [
  "iri-string",
  "pin-project-lite",
  "tokio",
- "tokio-util 0.7.17",
+ "tokio-util 0.7.18",
  "tower 0.5.2",
  "tower-layer",
  "tower-service",
