@@ -165,32 +165,39 @@ impl DerefMut for PageAlignedMemory {
     }
 }
 
-/// Fixed mutable view into externally allocated IO bytes buffer
-/// registered in `io_uring` for access in scheduled IO operations.
+/// Mutable view into externally allocated bytes buffer for use in io-uring operations.
 ///
-/// It is used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
+/// The underlying buffer might be registered in `io_uring` for access through "fixed"
+/// IO operations, in which case the `registered_io_buf_index` field will be set.
+///
+/// Stored `ptr` and `size` are used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
 #[derive(Debug)]
-pub(super) struct FixedIoBuffer {
+pub(super) struct IoBufferChunk {
     ptr: *mut u8,
     size: usize,
-    io_buf_index: Option<u16>,
+    /// IO buffer index identifying part of the underlying buffer if it was registered in `io_uring`.
+    ///
+    /// It is used in `ReadFixed` and `WriteFixed` opcodes. The index doesn't identify the chunk
+    /// uniquely, since usually chunks are smaller than `FIXED_BUFFER_LEN`.
+    registered_io_buf_index: Option<u16>,
 }
 
-impl FixedIoBuffer {
+impl IoBufferChunk {
     pub const fn empty() -> Self {
         Self {
             ptr: std::ptr::null_mut(),
             size: 0,
-            io_buf_index: None,
+            registered_io_buf_index: None,
         }
     }
 
-    /// Split buffer into `chunk_size` sized `IoFixedBuffer` buffers for use as registered
-    /// buffer in io_uring operations.
+    /// Split buffer into `chunk_size` sized [`IoBufferChunk`] buffers for use as registered
+    /// buffer in `io_uring` operations.
     #[allow(clippy::arithmetic_side_effects)]
     pub unsafe fn split_buffer_chunks(
         buffer: &mut [u8],
         chunk_size: usize,
+        registered_buffer: bool,
     ) -> impl Iterator<Item = Self> + use<'_> {
         assert!(
             buffer.len() / FIXED_BUFFER_LEN <= u16::MAX as usize,
@@ -203,7 +210,7 @@ impl FixedIoBuffer {
             Self {
                 ptr: buf.as_mut_ptr(),
                 size: buf.len(),
-                io_buf_index: Some(io_buf_index as u16),
+                registered_io_buf_index: registered_buffer.then_some(io_buf_index as u16),
             }
         })
     }
@@ -220,7 +227,7 @@ impl FixedIoBuffer {
 
     /// The index of the fixed buffer in the ring. See register_buffers().
     pub fn io_buf_index(&self) -> Option<u16> {
-        self.io_buf_index
+        self.registered_io_buf_index
     }
 
     /// Return a clone of `self` reduced to specified `size`
@@ -229,7 +236,7 @@ impl FixedIoBuffer {
         Self {
             ptr: self.ptr,
             size,
-            io_buf_index: self.io_buf_index,
+            registered_io_buf_index: self.registered_io_buf_index,
         }
     }
 
@@ -249,7 +256,7 @@ impl FixedIoBuffer {
     }
 }
 
-impl AsRef<[u8]> for FixedIoBuffer {
+impl AsRef<[u8]> for IoBufferChunk {
     fn as_ref(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.ptr, self.size) }
     }

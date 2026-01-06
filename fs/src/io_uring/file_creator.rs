@@ -4,7 +4,7 @@ use {
     crate::{
         file_io::FileCreator,
         io_uring::{
-            memory::{FixedIoBuffer, PageAlignedMemory},
+            memory::{IoBufferChunk, PageAlignedMemory},
             sqpoll, IO_PRIO_BE_HIGHEST,
         },
         FileInfo,
@@ -72,6 +72,24 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         }
     }
 
+    /// Override the default size of a single IO write operation
+    ///
+    /// This influences the concurrency, since buffer is divided into chunks of this size.
+    #[cfg(test)]
+    pub fn write_capacity(mut self, write_capacity: usize) -> Self {
+        self.write_capacity = write_capacity;
+        self
+    }
+
+    /// Set whether to register buffer with `io_uring` for improved performance.
+    ///
+    /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
+    #[cfg(test)]
+    pub fn use_registered_buffers(mut self, register_buffers: bool) -> Self {
+        self.register_buffer = register_buffers;
+        self
+    }
+
     /// Use (or remove) a shared kernel thread to drain submission queue for IO operations
     pub fn shared_sqpoll(mut self, shared_sqpoll_fd: Option<BorrowedFd<'sp>>) -> Self {
         self.shared_sqpoll_fd = shared_sqpoll_fd;
@@ -115,8 +133,13 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
 
         // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
         // dropped before `backing_buffer` is dropped.
-        let buffers =
-            unsafe { FixedIoBuffer::split_buffer_chunks(buf_slice_mut, self.write_capacity) };
+        let buffers = unsafe {
+            IoBufferChunk::split_buffer_chunks(
+                buf_slice_mut,
+                self.write_capacity,
+                self.register_buffer,
+            )
+        };
         let state = FileCreatorState::new(buffers.collect(), file_complete);
 
         let io_uring = self.create_io_uring(buf_capacity)?;
@@ -125,7 +148,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         if self.register_buffer {
             // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
             // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
-            unsafe { FixedIoBuffer::register(buf_slice_mut, &ring)? };
+            unsafe { IoBufferChunk::register(buf_slice_mut, &ring)? };
         }
 
         Ok(IoUringFileCreator {
@@ -155,7 +178,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
 /// operations.
 pub struct IoUringFileCreator<'a> {
     ring: Ring<FileCreatorState<'a>, FileCreatorOp>,
-    /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `ring`
+    /// Owned buffer used (chunked into [`IoBufferChunk`] items) across lifespan of `ring`
     /// (should get dropped last)
     _backing_buffer: PageAlignedMemory,
 }
@@ -269,7 +292,7 @@ impl IoUringFileCreator<'_> {
         Ok(())
     }
 
-    fn wait_free_buf(&mut self) -> io::Result<FixedIoBuffer> {
+    fn wait_free_buf(&mut self) -> io::Result<IoBufferChunk> {
         loop {
             self.ring.process_completions()?;
             let state = self.ring.context_mut();
@@ -287,7 +310,7 @@ impl IoUringFileCreator<'_> {
 
 struct FileCreatorState<'a> {
     files: FixedSlab<PendingFile>,
-    buffers: VecDeque<FixedIoBuffer>,
+    buffers: VecDeque<IoBufferChunk>,
     /// Externally provided callback to be called on files that were written
     file_complete: Box<dyn FnMut(FileInfo) -> Option<File> + 'a>,
     num_owned_files: usize,
@@ -298,7 +321,7 @@ struct FileCreatorState<'a> {
 
 impl<'a> FileCreatorState<'a> {
     fn new(
-        buffers: VecDeque<FixedIoBuffer>,
+        buffers: VecDeque<IoBufferChunk>,
         file_complete: impl FnMut(FileInfo) -> Option<File> + 'a,
     ) -> Self {
         Self {
@@ -328,7 +351,7 @@ impl<'a> FileCreatorState<'a> {
         &mut self,
         file_key: usize,
         write_len: usize,
-        buf: FixedIoBuffer,
+        buf: IoBufferChunk,
     ) -> Option<File> {
         self.submitted_writes_size -= write_len;
         self.buffers.push_front(buf);
@@ -464,7 +487,7 @@ struct WriteOp {
     file_key: usize,
     fd: types::Fd,
     offset: usize,
-    buf: FixedIoBuffer,
+    buf: IoBufferChunk,
     buf_offset: usize,
     write_len: usize,
 }
@@ -482,17 +505,20 @@ impl<'a> WriteOp {
 
         // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
         // reclaimed after completion passed in a call to `mark_write_completed`.
-        opcode::WriteFixed::new(
-            *fd,
-            unsafe { buf.as_mut_ptr().byte_add(*buf_offset) },
-            *write_len as u32,
-            buf.io_buf_index()
-                .expect("should have a valid fixed buffer"),
-        )
-        .offset(*offset as u64)
-        .ioprio(IO_PRIO_BE_HIGHEST)
-        .build()
-        .flags(squeue::Flags::ASYNC)
+        let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset) };
+        let write_len = *write_len as u32;
+
+        let entry = match buf.io_buf_index() {
+            Some(io_buf_index) => opcode::WriteFixed::new(*fd, buf_ptr, write_len, io_buf_index)
+                .offset(*offset as u64)
+                .ioprio(IO_PRIO_BE_HIGHEST)
+                .build(),
+            None => opcode::Write::new(*fd, buf_ptr, write_len)
+                .offset(*offset as u64)
+                .ioprio(IO_PRIO_BE_HIGHEST)
+                .build(),
+        };
+        entry.flags(squeue::Flags::ASYNC)
     }
 
     fn complete(
@@ -520,7 +546,7 @@ impl<'a> WriteOp {
             write_len,
         } = self;
 
-        let buf = mem::replace(buf, FixedIoBuffer::empty());
+        let buf = mem::replace(buf, IoBufferChunk::empty());
         let total_written = *buf_offset + written;
 
         if written < *write_len {
@@ -582,7 +608,7 @@ impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
     }
 }
 
-type PendingWrite = (FixedIoBuffer, usize, usize);
+type PendingWrite = (IoBufferChunk, usize, usize);
 
 #[derive(Debug)]
 struct PendingFile {
@@ -619,5 +645,39 @@ impl PendingFile {
         let file = self.open_file.take()?;
         let path = mem::take(&mut self.path);
         Some(FileInfo { file, size, path })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, std::io::Cursor};
+
+    #[test]
+    fn test_non_registered_buffer_create() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut read_data = vec![];
+        let callback = |mut fi: FileInfo| {
+            fi.file.read_to_end(&mut read_data).unwrap();
+            Some(fi.file)
+        };
+
+        let mut creator = IoUringFileCreatorBuilder::new()
+            .write_capacity(4 * 1024)
+            .use_registered_buffers(false)
+            .build(16 * 1024, callback)
+            .unwrap();
+
+        let dir = Arc::new(File::open(temp_dir.path()).unwrap());
+        let file_path = temp_dir.path().join("file.txt");
+        let file_size = 64 * 1024;
+        let data = (0..).take(file_size).map(|v| v as u8).collect::<Vec<_>>();
+        creator
+            .schedule_create_at_dir(file_path, 0o600, dir, &mut Cursor::new(&data))
+            .unwrap();
+        creator.drain().unwrap();
+
+        drop(creator);
+        assert_eq!(file_size, read_data.len());
+        assert_eq!(data, read_data);
     }
 }
