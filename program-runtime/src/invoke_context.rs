@@ -431,7 +431,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             instruction_accounts,
             transaction_callee_map,
             Cow::Owned(instruction.data),
-            Some(parent_index as u32),
+            Some(parent_index as u16),
         )?;
         Ok(())
     }

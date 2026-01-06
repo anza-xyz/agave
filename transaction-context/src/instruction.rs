@@ -18,11 +18,11 @@ use {
 #[repr(C)]
 #[derive(Debug)]
 pub struct InstructionFrame {
-    pub program_account_index_in_tx: u64,
-    pub nesting_level: u32,
-    /// This is the index of the parent instruction if this is a CPI and u32::MAX if this is a
+    pub program_account_index_in_tx: u32,
+    pub nesting_level: u16,
+    /// This is the index of the parent instruction if this is a CPI and u16::MAX if this is a
     /// top-level instruction
-    pub index_of_parent_instruction: u32,
+    pub index_of_parent_instruction: u16,
     pub instruction_accounts: VmSlice<InstructionAccount>,
     pub instruction_data: VmSlice<u8>,
 }
@@ -32,7 +32,7 @@ impl Default for InstructionFrame {
         InstructionFrame {
             nesting_level: 0,
             program_account_index_in_tx: 0,
-            index_of_parent_instruction: u32::MAX,
+            index_of_parent_instruction: u16::MAX,
             // Using u64::MAX as the default pointer value, since it shall never be accessible.
             instruction_accounts: VmSlice::new(0, 0),
             instruction_data: VmSlice::new(0, 0),
