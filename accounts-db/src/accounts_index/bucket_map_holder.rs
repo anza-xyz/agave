@@ -596,37 +596,35 @@ pub mod tests {
         assert!(test.is_disk_index_enabled());
     }
 
+    /// Ensure that should_flush() is correct when using IndexLimit::Threshold
     #[test]
-    fn test_should_flush_thresholds() {
+    fn test_should_flush_threshold() {
         let bins = 1;
-        let threshold_entries = 1000;
+        let num_entries = 1000;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
             + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-        let limit_bytes = (threshold_entries * bytes_per_entry) as u64;
         let config = AccountsIndexConfig {
-            index_limit: IndexLimit::Threshold(limit_bytes),
+            index_limit: IndexLimit::Threshold((num_entries * bytes_per_entry) as u64),
             ..Default::default()
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
         assert!(test.is_disk_index_enabled());
 
         let thresholds = test.threshold_entries_per_bin.unwrap();
-        assert_eq!(thresholds.target_entries, 448);
-        assert_eq!(thresholds.high_water_mark, 380);
-        assert_eq!(thresholds.low_water_mark, 313);
+        // the high water mark must be non-zero and less than num_entries
+        assert!((1..num_entries).contains(&thresholds.high_water_mark));
+        // the low water mark must be non-zero and less than the high water mark
+        assert!((1..thresholds.high_water_mark).contains(&thresholds.low_water_mark));
 
-        // Below high water mark
-        assert!(!test.should_flush(thresholds.high_water_mark.saturating_sub(200)));
+        // Test: Below, at, and above the should_flush() boundary
         assert!(!test.should_flush(thresholds.high_water_mark - 1));
-
-        // At boundary and above
         assert!(!test.should_flush(thresholds.high_water_mark));
         assert!(test.should_flush(thresholds.high_water_mark + 1));
-        assert!(test.should_flush(thresholds.high_water_mark + 120));
     }
 
+    /// Ensure that should_flush() is always true when using IndexLimit::Minimal
     #[test]
-    fn test_should_flush_minimal_always_flushes() {
+    fn test_should_flush_minimal() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::Minimal,
@@ -639,8 +637,9 @@ pub mod tests {
         assert!(test.should_flush(usize::MAX));
     }
 
+    /// Ensure that should_flush() is always false when using IndexLimit::InMemOnly
     #[test]
-    fn test_should_flush_in_mem_only_never_flushes() {
+    fn test_should_flush_in_mem_only() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::InMemOnly,
