@@ -843,24 +843,6 @@ impl ProgramTest {
             std::mem::take(&mut self.genesis_accounts),
         );
 
-        // Remove features tagged to deactivate
-        for deactivate_feature_pk in &self.deactivate_feature_set {
-            if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
-                match genesis_config.accounts.remove(deactivate_feature_pk) {
-                    Some(_) => debug!("Feature for {deactivate_feature_pk:?} deactivated"),
-                    None => warn!(
-                        "Feature {deactivate_feature_pk:?} set for deactivation not found in \
-                         genesis_config account list, ignored."
-                    ),
-                }
-            } else {
-                warn!(
-                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
-                     Feature public key"
-                );
-            }
-        }
-
         let target_tick_duration = Duration::from_micros(100);
         genesis_config.poh_config = PohConfig::new_sleep(target_tick_duration);
         debug!("Payer address: {}", mint_keypair.pubkey());

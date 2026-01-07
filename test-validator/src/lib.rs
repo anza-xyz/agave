@@ -56,8 +56,7 @@ use {
         client_error::Error as RpcClientError, request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_runtime::{
-        bank_forks::BankForks,
-        genesis_utils::{self, create_genesis_config_with_leader_ex},
+        bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig,
     },
     solana_sdk_ids::address_lookup_table,
@@ -1024,10 +1023,6 @@ impl TestValidator {
 
         if let Some(inflation) = config.inflation {
             genesis_config.inflation = inflation;
-        }
-
-        for feature in feature_set.active().keys() {
-            genesis_utils::activate_feature(&mut genesis_config, *feature);
         }
 
         let ledger_path = match &config.ledger_path {
