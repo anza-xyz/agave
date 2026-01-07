@@ -201,13 +201,15 @@ impl VoteSubCommands for App<'_, '_> {
                         .long("inflation_rewards_commission_bps")
                         .value_name("INFLATION_REWARDS_COMMISSION_BPS")
                         .takes_value(true)
-                        .help("The commission taken on inflation rewards"),
+                        .validator(|s| is_within_range(s, 0..=10000))
+                        .help("The commission taken on inflation rewards (0~10000)"),
                 )
                 .arg(
                     Arg::with_name("inflation_rewards_collector")
                         .long("inflation_rewards_collector")
                         .value_name("INFLATION_REWARDS_COLLECTOR")
                         .takes_value(true)
+                        .validator(is_pubkey)
                         .help("The account to collect inflation rewards"),
                 )
                 .arg(
@@ -215,13 +217,15 @@ impl VoteSubCommands for App<'_, '_> {
                         .long("block_revenue_commission_bps")
                         .value_name("BLOCK_REVENUE_COMMISSION_BPS")
                         .takes_value(true)
-                        .help("The commission taken on block revenue"),
+                        .validator(|s| is_within_range(s, 0..=10000))
+                        .help("The commission taken on block revenue (0~10000)"),
                 )
                 .arg(
                     Arg::with_name("block_revenue_collector")
                         .long("block_revenue_collector")
                         .value_name("BLOCK_REVENUE_COLLECTOR")
                         .takes_value(true)
+                        .validator(is_pubkey)
                         .help("The account to collect block revenue"),
                 )
                 .offline_args()
