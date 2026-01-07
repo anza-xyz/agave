@@ -300,6 +300,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("BLS_PUBKEY_COMPRESSED")
                         .takes_value(true)
                         .required(false)
+                        .validator(is_bls_pubkey_compressed)
                         .help("New BLS public key in compressed form"),
                 )
                 .arg(
@@ -308,6 +309,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("BLS_PROOF_OF_POSSESSION_COMPRESSED")
                         .takes_value(true)
                         .required(false)
+                        .validator(is_bls_proof_of_possession_compressed)
                         .help("New BLS proof of possession in compressed form"),
                 )
                 .offline_args()
