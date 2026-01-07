@@ -41,6 +41,7 @@ use {
         fs::{remove_file, File, OpenOptions},
         io::{self, BufRead, Seek, SeekFrom, Write},
         mem::{self, MaybeUninit},
+        os::fd::{AsFd, AsRawFd},
         path::{Path, PathBuf},
         ptr, slice,
         sync::{
@@ -261,6 +262,12 @@ impl AppendVec {
                 );
             })
             .unwrap();
+
+        // tell the kernel that we expect to randomly access the file and not to bother using
+        // page cache and reading ahead
+        unsafe {
+            libc::posix_fadvise(data.as_fd().as_raw_fd(), 0, 0, libc::POSIX_FADV_RANDOM);
+        }
 
         // Theoretical performance optimization: write a zero to the end of
         // the file so that we won't have to resize it later, which may be
