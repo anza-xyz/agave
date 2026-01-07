@@ -329,14 +329,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
         instruction_data: Cow<'ix_data, [u8]>,
-        parent_index: Option<u16>,
+        parent_index: u16,
     ) -> Result<(), InstructionError> {
         self.configure_next_instruction(
             program_index,
             instruction_accounts,
             deduplication_map,
             instruction_data,
-            parent_index,
         )?;
         self.transaction_frame.number_of_instructions = self
             .transaction_frame
@@ -349,6 +348,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
             ),
             0,
         );
+
+        // This ? operator is never going to fail because it is also called in
+        // `configure_next_instruction`
+        let instruction = self
+            .instruction_trace
+            .last_mut()
+            .ok_or(InstructionError::CallDepth)?;
+        instruction.index_of_parent_instruction = parent_index;
         Ok(())
     }
 
@@ -361,7 +368,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
         instruction_data: Cow<'ix_data, [u8]>,
-        parent_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         let trace_len = self.instruction_trace.len();
@@ -378,7 +384,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts.len(),
             instruction_data.len() as u64,
         );
-        instruction.index_of_caller_instruction = parent_index.unwrap_or(u16::MAX);
         self.deduplication_maps
             .push(deduplication_map.into_boxed_slice());
         self.instruction_accounts
@@ -409,7 +414,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts,
             dedup_map,
             Cow::Owned(instruction_data),
-            None,
         )
     }
 
@@ -917,6 +921,7 @@ mod tests {
                 vec![InstructionAccount::new(2, false, true)],
                 vec![0; 256],
                 Vec::new().into(),
+                2,
             )
             .unwrap();
         assert_eq!(
