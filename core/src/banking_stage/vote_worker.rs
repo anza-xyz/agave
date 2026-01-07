@@ -417,12 +417,8 @@ impl VoteWorker {
         total_transaction_counts
             .accumulate(&transaction_counts, commit_transactions_result.is_ok());
 
-        let should_bank_still_be_processing_txs = !bank.is_complete();
-        let reached_max_poh_height = match (
-            commit_transactions_result,
-            should_bank_still_be_processing_txs,
-        ) {
-            (Err(PohRecorderError::MaxHeightReached), _) | (_, false) => {
+        let reached_max_poh_height = match (commit_transactions_result, bank.is_complete()) {
+            (Err(PohRecorderError::MaxHeightReached), _) | (_, true) => {
                 info!(
                     "process transactions: max height reached slot: {} height: {}",
                     bank.slot(),
