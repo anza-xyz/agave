@@ -511,7 +511,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
         data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         self.transaction_frame.return_data_pubkey = program_id;
-        // SAFETY: We are synchronizing the new data with the mapped scratchpad area
+        // SAFETY: `return_data_scratchpad` is backed by `self.return_data_bytes`
+        // and `return_data_bytes` is being reset to `data`
+        // in the next statement.
         unsafe {
             self.transaction_frame
                 .return_data_scratchpad
