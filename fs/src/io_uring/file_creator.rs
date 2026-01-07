@@ -12,7 +12,7 @@ use {
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
     io_uring::{opcode, squeue, types, IoUring},
-    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
+    libc::{O_CREAT, O_DIRECT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
@@ -20,6 +20,7 @@ use {
         fs::File,
         io::{self, Read},
         mem,
+        num::NonZeroU32,
         os::fd::{AsRawFd, BorrowedFd, FromRawFd as _, IntoRawFd as _, RawFd},
         path::PathBuf,
         pin::Pin,
@@ -59,6 +60,7 @@ pub struct IoUringFileCreatorBuilder<'sp> {
     shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
     /// Register buffer as fixed with the kernel
     register_buffer: bool,
+    use_direct_io: bool,
 }
 
 impl<'sp> IoUringFileCreatorBuilder<'sp> {
@@ -69,6 +71,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
             ring_squeue_size: None,
             shared_sqpoll_fd: None,
             register_buffer: true,
+            use_direct_io: false,
         }
     }
 
@@ -86,6 +89,12 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
     /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
     pub fn use_registered_buffers(mut self, register_buffers: bool) -> Self {
         self.register_buffer = register_buffers;
+        self
+    }
+
+    #[cfg(test)]
+    pub fn use_direct_io(mut self, enable_direct_io: bool) -> Self {
+        self.use_direct_io = enable_direct_io;
         self
     }
 
@@ -152,6 +161,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
 
         Ok(IoUringFileCreator {
             ring,
+            use_direct_io: self.use_direct_io,
             _backing_buffer: buffer,
         })
     }
@@ -177,6 +187,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
 /// operations.
 pub struct IoUringFileCreator<'a> {
     ring: Ring<FileCreatorState<'a>, FileCreatorOp>,
+    use_direct_io: bool,
     /// Owned buffer used (chunked into [`IoBufferChunk`] items) across lifespan of `ring`
     /// (should get dropped last)
     _backing_buffer: PageAlignedMemory,
@@ -221,6 +232,7 @@ impl IoUringFileCreator<'_> {
             path_cstring,
             mode,
             file_key,
+            use_direct_io: self.use_direct_io,
         });
         self.ring.push(op)?;
 
@@ -294,13 +306,20 @@ impl IoUringFileCreator<'_> {
                     break;
                 }
 
+                let direct_io_alignment = if self.use_direct_io {
+                    Some(NonZeroU32::new(4096).unwrap())
+                } else {
+                    None
+                };
+
                 let op = WriteOp {
                     file_key,
                     fd: types::Fd(file.as_raw_fd()),
                     offset,
                     buf,
                     buf_offset: 0,
-                    write_len,
+                    write_len: write_len as u32,
+                    direct_io_alignment,
                 };
                 state.submitted_writes_size += write_len;
                 self.ring.push(FileCreatorOp::Write(op))?;
@@ -436,13 +455,18 @@ struct OpenOp {
     path_cstring: Pin<CString>,
     mode: libc::mode_t,
     file_key: usize,
+    use_direct_io: bool,
 }
 
 impl OpenOp {
     fn entry(&mut self) -> squeue::Entry {
         let at_dir_fd = types::Fd(self.dir_handle.as_raw_fd());
+        let mut flags = O_CREAT | O_TRUNC | O_NOFOLLOW | O_RDWR | O_NOATIME;
+        if self.use_direct_io {
+            flags |= O_DIRECT
+        };
         opcode::OpenAt::new(at_dir_fd, self.path_cstring.as_ptr() as _)
-            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_RDWR | O_NOATIME)
+            .flags(flags)
             .mode(self.mode)
             .build()
     }
@@ -455,9 +479,14 @@ impl OpenOp {
     where
         Self: Sized,
     {
-        let fd = types::Fd(res?);
+        let fd = types::Fd(res.unwrap());
 
         let backlog = ring.context_mut().mark_file_opened(self.file_key, fd);
+        let direct_io_alignment = if self.use_direct_io {
+            Some(NonZeroU32::new(4096).unwrap())
+        } else {
+            None
+        };
         for (buf, offset, len) in backlog {
             if len == 0 {
                 FileCreatorState::mark_write_completed(ring, self.file_key, 0, buf);
@@ -469,7 +498,8 @@ impl OpenOp {
                 offset,
                 buf,
                 buf_offset: 0,
-                write_len: len,
+                write_len: len as u32,
+                direct_io_alignment,
             };
             ring.context_mut().submitted_writes_size += len;
             ring.push(FileCreatorOp::Write(op));
@@ -516,7 +546,10 @@ struct WriteOp {
     offset: usize,
     buf: IoBufferChunk,
     buf_offset: usize,
-    write_len: usize,
+    /// Number of bytes from `buf` that should be written and contribute to the final file size
+    write_len: u32,
+    /// For enabled direct IO, the minimum size of writes issued to the kernel
+    direct_io_alignment: Option<NonZeroU32>,
 }
 
 impl<'a> WriteOp {
@@ -528,12 +561,18 @@ impl<'a> WriteOp {
             buf,
             buf_offset,
             write_len,
+            direct_io_alignment,
         } = self;
 
         // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
         // reclaimed after completion passed in a call to `mark_write_completed`.
         let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset) };
-        let write_len = *write_len as u32;
+
+        let write_len = if let Some(alignment) = direct_io_alignment {
+            write_len.next_multiple_of(alignment.get())
+        } else {
+            *write_len
+        };
 
         let entry = match buf.io_buf_index() {
             Some(io_buf_index) => opcode::WriteFixed::new(*fd, buf_ptr, write_len, io_buf_index)
@@ -556,12 +595,18 @@ impl<'a> WriteOp {
     where
         Self: Sized,
     {
-        let written = match res {
+        let mut written = match res {
             // Fail fast if no progress. FS should report an error (e.g. `StorageFull`) if the
             // condition isn't transient, but it's hard to verify without extra tracking.
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-            Ok(res) => res as usize,
-            Err(err) => return Err(err),
+            Ok(res) => res as u32,
+            Err(err) => panic!(
+                "write err {err} - {} {} {} {}",
+                self.offset,
+                self.write_len,
+                unsafe { self.buf.as_mut_ptr().addr() },
+                self.buf_offset
+            ),
         };
 
         let WriteOp {
@@ -571,20 +616,35 @@ impl<'a> WriteOp {
             buf,
             buf_offset,
             write_len,
+            direct_io_alignment,
         } = self;
 
+        if written > *write_len {
+            // With Direct IO the issued write might be beyond the target amount of bytes that should be stored.
+            // This may happen only for the write at the end of the file, after which manual update of file
+            // size is required.
+            debug_assert!(direct_io_alignment.is_some());
+            // Note: io-uring supports `ftruncate` only from kernel 6.9, for compatibility use the syscall
+            // Safety: fd is an open file descriptor and we just wrote beyond offset + write_len
+            unsafe {
+                libc::ftruncate64(fd.0, *offset as libc::off_t + *write_len as libc::off_t);
+            }
+            written = *write_len;
+        }
+
         let buf = mem::replace(buf, IoBufferChunk::empty());
-        let total_written = *buf_offset + written;
+        let total_written = *buf_offset + written as usize;
 
         if written < *write_len {
             log::warn!("short write ({written}/{}), file={}", *write_len, *file_key);
             ring.push(FileCreatorOp::Write(WriteOp {
                 file_key: *file_key,
                 fd: *fd,
-                offset: *offset + written,
+                offset: *offset + written as usize,
                 buf,
                 buf_offset: total_written,
                 write_len: *write_len - written,
+                direct_io_alignment: *direct_io_alignment,
             }));
             return Ok(());
         }
@@ -669,7 +729,11 @@ impl PendingFile {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::io::Cursor, test_case::test_case};
+    use {
+        super::*,
+        std::{alloc::Layout, io::Cursor},
+        test_case::test_case,
+    };
 
     // Check several edge cases:
     // * creating empty file
@@ -729,6 +793,37 @@ mod tests {
         let dir = Arc::new(File::open(temp_dir.path()).unwrap());
         let file_path = temp_dir.path().join("file.txt");
         let file_size = 64 * 1024;
+        let data = (0..).take(file_size).map(|v| v as u8).collect::<Vec<_>>();
+        creator
+            .schedule_create_at_dir(file_path, 0o600, dir, &mut Cursor::new(&data))
+            .unwrap();
+        creator.drain().unwrap();
+
+        drop(creator);
+        assert_eq!(file_size, read_data.len());
+        assert_eq!(data, read_data);
+    }
+
+    #[test]
+    fn test_direct_io_create() {
+        let file_size: usize = 61_000;
+        let layout = Layout::from_size_align(file_size, 4096).unwrap();
+        let read_data = unsafe { std::alloc::alloc(layout) as *mut u8 };
+        let read_data = unsafe { std::slice::from_raw_parts_mut(read_data, file_size) };
+        let callback = |mut fi: FileInfo| {
+            fi.file.read(read_data).unwrap();
+            Some(fi.file)
+        };
+
+        let mut creator = IoUringFileCreatorBuilder::new()
+            .write_capacity(8 * 1024)
+            .use_direct_io(true)
+            .build(16 * 1024, callback)
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = Arc::new(File::open(temp_dir.path()).unwrap());
+        let file_path = temp_dir.path().join("file.txt");
         let data = (0..).take(file_size).map(|v| v as u8).collect::<Vec<_>>();
         creator
             .schedule_create_at_dir(file_path, 0o600, dir, &mut Cursor::new(&data))
