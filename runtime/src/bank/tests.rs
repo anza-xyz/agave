@@ -65,7 +65,8 @@ use {
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::{keypair_from_seed, Keypair},
     solana_loader_v3_interface::{
-        instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
+        get_program_data_address, instruction::UpgradeableLoaderInstruction,
+        state::UpgradeableLoaderState,
     },
     solana_loader_v4_interface::{instruction as loader_v4, state::LoaderV4State},
     solana_message::{
@@ -12420,4 +12421,139 @@ fn test_parent_block_id() {
     // expected value.
     let child_bank = Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), 1);
     assert_eq!(parent_block_id, child_bank.parent_block_id());
+}
+
+#[test]
+fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
+    let (genesis_config, _mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let bank_client = BankClient::new_shared(bank.clone());
+
+    // Setup keypairs and addresses
+    let payer_keypair = Keypair::new();
+    let program_keypair = Keypair::new();
+    let buffer_address = Pubkey::new_unique();
+    let (programdata_address, _) = Pubkey::find_program_address(
+        &[program_keypair.pubkey().as_ref()],
+        &bpf_loader_upgradeable::id(),
+    );
+    let upgrade_authority_keypair = Keypair::new();
+
+    // Load program file
+    let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
+        .expect("file open failed");
+    let mut elf = Vec::new();
+    file.read_to_end(&mut elf).unwrap();
+
+    // Compute rent exempt balances
+    let program_len = elf.len();
+    let min_program_balance =
+        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
+    let min_buffer_balance = bank.get_minimum_balance_for_rent_exemption(
+        UpgradeableLoaderState::size_of_buffer(program_len),
+    );
+    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
+        UpgradeableLoaderState::size_of_programdata(program_len),
+    );
+
+    // Setup accounts
+    let buffer_account = {
+        let mut account = AccountSharedData::new(
+            min_buffer_balance,
+            UpgradeableLoaderState::size_of_buffer(elf.len()),
+            &bpf_loader_upgradeable::id(),
+        );
+        account
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(upgrade_authority_keypair.pubkey()),
+            })
+            .unwrap();
+        account
+            .data_as_mut_slice()
+            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+            .unwrap()
+            .copy_from_slice(&elf);
+        account
+    };
+
+    // Test successful deploy
+    let payer_base_balance = LAMPORTS_PER_SOL;
+    let deploy_fees = {
+        let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
+        3 * fee_calculator.lamports_per_signature
+    };
+    let min_payer_balance = min_program_balance
+        .saturating_add(min_programdata_balance)
+        .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
+    bank.store_account(
+        &payer_keypair.pubkey(),
+        &AccountSharedData::new(
+            payer_base_balance.saturating_add(min_payer_balance),
+            0,
+            &system_program::id(),
+        ),
+    );
+    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
+    bank.store_account(&programdata_address, &AccountSharedData::default());
+    bank.store_account(&buffer_address, &buffer_account);
+
+    fn deploy_with_max_program_len(
+        payer_address: &Pubkey,
+        program_address: &Pubkey,
+        buffer_address: &Pubkey,
+        upgrade_authority_address: &Pubkey,
+        program_lamports: u64,
+        max_data_len: usize,
+    ) -> std::result::Result<Vec<Instruction>, InstructionError> {
+        let programdata_address = get_program_data_address(program_address);
+        let dummy_pubkey = Pubkey::new_unique();
+        let mut deploy_ix_accounts = vec![
+            AccountMeta::new(*payer_address, true),
+            AccountMeta::new(programdata_address, false),
+            AccountMeta::new(*program_address, false),
+            AccountMeta::new(*buffer_address, false),
+            AccountMeta::new_readonly(sysvar::rent::id(), false),
+            AccountMeta::new_readonly(sysvar::clock::id(), false),
+            AccountMeta::new_readonly(dummy_pubkey, false),
+            AccountMeta::new_readonly(*upgrade_authority_address, true),
+        ];
+        while deploy_ix_accounts.len() < 256 {
+            deploy_ix_accounts.push(AccountMeta::new_readonly(dummy_pubkey, false));
+        }
+
+        Ok(vec![
+            system_instruction::create_account(
+                payer_address,
+                program_address,
+                program_lamports,
+                UpgradeableLoaderState::size_of_program() as u64,
+                &bpf_loader_upgradeable::id(),
+            ),
+            Instruction::new_with_bincode(
+                bpf_loader_upgradeable::id(),
+                &UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len },
+                deploy_ix_accounts,
+            ),
+        ])
+    }
+
+    let message = Message::new(
+        &deploy_with_max_program_len(
+            &payer_keypair.pubkey(),
+            &program_keypair.pubkey(),
+            &buffer_address,
+            &upgrade_authority_keypair.pubkey(),
+            min_program_balance,
+            elf.len(),
+        )
+        .unwrap(),
+        Some(&payer_keypair.pubkey()),
+    );
+    assert!(bank_client
+        .send_and_confirm_message(
+            &[&payer_keypair, &program_keypair, &upgrade_authority_keypair],
+            message
+        )
+        .is_err());
 }
