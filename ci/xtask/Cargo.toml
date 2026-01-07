@@ -19,7 +19,7 @@ frozen-abi = []
 
 [dependencies]
 anyhow = "1.0.100"
-clap = { version = "4.5.53", features = ["derive"] }
+clap = { version = "4.5.54", features = ["derive"] }
 env_logger = "0.11.8"
 log = "0.4.28"
 semver = "1.0.27"

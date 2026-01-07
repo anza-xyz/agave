@@ -85,6 +85,8 @@ impl SnapshotPackagerService {
                     let snapshot_slot = snapshot_package.slot;
                     let snapshot_hash = snapshot_package.hash;
 
+                    snapshot_controller.set_latest_bank_snapshot_slot(snapshot_slot);
+
                     if exit_backpressure.is_some() {
                         // With exit backpressure, we will delay flushing snapshot storages
                         // until we receive a graceful exit request.

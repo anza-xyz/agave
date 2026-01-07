@@ -7,7 +7,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
     solana_pubkey::Pubkey,
     solana_quic_definitions::NotifyKeyUpdate,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
@@ -82,4 +82,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub cluster_slots: Arc<ClusterSlots>,
     pub node: Option<Arc<NodeMultihoming>>,
     pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
+    pub snapshot_controller: Arc<SnapshotController>,
 }

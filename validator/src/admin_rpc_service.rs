@@ -24,9 +24,11 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
+    solana_metrics::datapoint_warn,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
+    solana_runtime::snapshot_controller::SnapshotController,
     solana_signer::Signer,
     solana_validator_exit::Exit,
     std::{
@@ -41,7 +43,7 @@ use {
             Arc, RwLock,
         },
         thread::{self, Builder},
-        time::{Duration, SystemTime},
+        time::{Duration, Instant, SystemTime},
     },
     tokio::runtime::Runtime,
 };
@@ -74,6 +76,15 @@ impl AdminRpcRequestMetadata {
                 "Retry once validator start up is complete",
             ))
         }
+    }
+
+    fn snapshot_controller(&self) -> Option<Arc<SnapshotController>> {
+        self.with_post_init(|post_init| Ok(post_init.snapshot_controller.clone()))
+            .map_err(|_| {
+                // The error from with_post_init is not relevant, as it is meant for RPC callers
+                warn!("snapshot_controller unavailable, shutting down without taking snapshot");
+            })
+            .ok()
     }
 }
 
@@ -295,9 +306,42 @@ impl AdminRpc for AdminRpcImpl {
         thread::Builder::new()
             .name("solProcessExit".into())
             .spawn(move || {
+                let start_time = Instant::now();
+
+                // Trigger a fastboot snapshot before exiting
+                if let Some(snapshot_controller) = meta.snapshot_controller() {
+                    let latest_snapshot_slot = snapshot_controller.latest_bank_snapshot_slot();
+
+                    info!("Requesting fastboot snapshot before exit");
+                    snapshot_controller.request_fastboot_snapshot();
+
+                    // Wait up to 5s for a snapshot to finish. This should allow time for the
+                    // fastboot snapshot to complete without stalling exit indefinitely.
+                    // The timeout will be hit in the event new roots are not being created.
+                    let timeout = Duration::from_secs(5);
+                    while snapshot_controller.latest_bank_snapshot_slot() == latest_snapshot_slot {
+                        if start_time.elapsed() > timeout {
+                            warn!("Timeout waiting for snapshot to complete");
+                            datapoint_warn!(
+                                "admin-rpc-snapshot-timeout",
+                                ("timeout_us", start_time.elapsed().as_micros(), i64)
+                            );
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                    info!(
+                        "Requesting fastboot snapshot before exit... Done in {:?}",
+                        start_time.elapsed()
+                    );
+                }
+
                 // Delay exit signal until this RPC request completes, otherwise the caller of `exit` might
                 // receive a confusing error as the validator shuts down before a response is sent back.
-                thread::sleep(Duration::from_millis(100));
+                // If elapsed time has already taken 100ms, there is no need for further delay
+                if start_time.elapsed().as_millis() < 100 {
+                    thread::sleep(Duration::from_millis(100));
+                }
 
                 info!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
@@ -1030,6 +1074,8 @@ pub fn load_staked_nodes_overrides(
 mod tests {
     use {
         super::*,
+        agave_snapshots::snapshot_config::SnapshotConfig,
+        crossbeam_channel::unbounded,
         serde_json::Value,
         solana_account::{Account, AccountSharedData},
         solana_accounts_db::{
@@ -1058,7 +1104,6 @@ mod tests {
             bank_forks::BankForks,
         },
         solana_system_interface::program as system_program,
-        solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         spl_generic_token::token,
         spl_token_2022_interface::state::{
             Account as TokenAccount, AccountState as TokenAccountState, Mint,
@@ -1102,6 +1147,14 @@ mod tests {
                     ..ACCOUNTS_DB_CONFIG_FOR_TESTING
                 },
             });
+
+            let (snapshot_request_sender, _) = unbounded();
+            let snapshot_controller = Arc::new(SnapshotController::new(
+                snapshot_request_sender.clone(),
+                SnapshotConfig::default(),
+                bank_forks.read().unwrap().root(),
+            ));
+
             let vote_account = vote_keypair.pubkey();
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
             let repair_whitelist = Arc::new(RwLock::new(HashSet::new()));
@@ -1128,6 +1181,7 @@ mod tests {
                     ),
                     node: None,
                     banking_control_sender: mpsc::channel(1).0,
+                    snapshot_controller,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
@@ -1565,7 +1619,7 @@ mod tests {
                 None, // rpc_to_plugin_manager_receiver
                 start_progress.clone(),
                 SocketAddrSpace::Unspecified,
-                ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+                ValidatorTpuConfig::new_for_tests(),
                 post_init.clone(),
             )
             .expect("assume successful validator start");
@@ -1608,6 +1662,31 @@ mod tests {
         fn drop(&mut self) {
             remove_dir_all(self.validator_ledger_path.clone()).unwrap();
         }
+    }
+
+    #[test]
+    fn test_no_post_init_no_snapshot_controller() {
+        let validator_exit = create_validator_exit(Arc::new(AtomicBool::new(false)));
+        let voting_keypair = Arc::new(Keypair::new());
+        let authorized_voter_keypairs = Arc::new(RwLock::new(vec![voting_keypair]));
+        let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
+
+        let post_init = Arc::new(RwLock::new(None));
+        let meta = AdminRpcRequestMetadata {
+            rpc_addr: None,
+            start_time: SystemTime::now(),
+            start_progress: start_progress.clone(),
+            validator_exit,
+            validator_exit_backpressure: HashMap::default(),
+            authorized_voter_keypairs: authorized_voter_keypairs.clone(),
+            tower_storage: Arc::new(NullTowerStorage {}),
+            post_init: post_init.clone(),
+            staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+            rpc_to_plugin_manager_sender: None,
+        };
+
+        let snapshot_controller = meta.snapshot_controller();
+        assert!(snapshot_controller.is_none());
     }
 
     // This test checks that `set_identity` call works with working validator and client.

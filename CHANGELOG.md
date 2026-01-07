@@ -32,6 +32,8 @@ Release channels have their own copy of this changelog:
   * `--wait-for-exit` (`exit` subcommand)
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+#### Changes
+* `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
 ### CLI
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`

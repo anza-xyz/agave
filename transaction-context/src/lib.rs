@@ -217,8 +217,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(InstructionContext {
             transaction_context: self,
             index_in_trace,
-            nesting_level: instruction.nesting_level,
-            program_account_index_in_tx: instruction.program_account_index_in_tx,
+            nesting_level: instruction.nesting_level as usize,
+            program_account_index_in_tx: instruction.program_account_index_in_tx as IndexOfAccount,
             instruction_accounts,
             dedup_map,
             instruction_data,
@@ -250,14 +250,18 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.instruction_stack.len()
     }
 
+    /// Returns the index in the instruction trace of the current executing instruction
+    pub fn get_current_instruction_index(&self) -> Result<usize, InstructionError> {
+        self.get_instruction_stack_height()
+            .checked_sub(1)
+            .ok_or(InstructionError::CallDepth)
+    }
+
     /// Returns a view on the current instruction
     pub fn get_current_instruction_context(
         &self,
     ) -> Result<InstructionContext<'_, '_>, InstructionError> {
-        let level = self
-            .get_instruction_stack_height()
-            .checked_sub(1)
-            .ok_or(InstructionError::CallDepth)?;
+        let level = self.get_current_instruction_index()?;
         self.get_instruction_context_at_nesting_level(level)
     }
 
@@ -284,6 +288,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
         instruction_data: Cow<'ix_data, [u8]>,
+        parent_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         let trace_len = self.instruction_trace.len();
@@ -300,6 +305,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts.len(),
             instruction_data.len() as u64,
         );
+        instruction.index_of_parent_instruction = parent_index.unwrap_or(u16::MAX);
         self.deduplication_maps
             .push(deduplication_map.into_boxed_slice());
         self.instruction_accounts
@@ -330,6 +336,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts,
             dedup_map,
             Cow::Owned(instruction_data),
+            None,
         )
     }
 
@@ -345,7 +352,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .instruction_trace
                 .last_mut()
                 .ok_or(InstructionError::CallDepth)?;
-            instruction.nesting_level = nesting_level;
+            instruction.nesting_level = nesting_level as u16;
         }
         let index_in_trace = self.get_instruction_trace_length();
         if index_in_trace >= self.instruction_trace_capacity {

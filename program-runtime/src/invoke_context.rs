@@ -423,11 +423,15 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             program_account_index_in_transaction.unwrap()
         };
 
+        // This ? operator should not error out because `fn get_current_instruction_index` is also called
+        // in `get_current_instruction_context`
+        let parent_index = self.transaction_context.get_current_instruction_index()?;
         self.transaction_context.configure_next_instruction(
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
             Cow::Owned(instruction.data),
+            Some(parent_index as u16),
         )?;
         Ok(())
     }
@@ -470,6 +474,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             instruction_accounts,
             transaction_callee_map,
             Cow::Borrowed(data),
+            None,
         )?;
         Ok(())
     }
