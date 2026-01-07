@@ -305,6 +305,6 @@ name = "bpf_loader"
 # statements in place, run `cargo update -p solana-program` to remove extraneous
 # versions from your Cargo.lock file.
 #
-# There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
+# There is a similar override in `../../Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
