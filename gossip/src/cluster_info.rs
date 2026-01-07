@@ -1651,7 +1651,7 @@ impl ClusterInfo {
     where
         R: Rng + CryptoRng,
     {
-        let mut cache = HashMap::<(Pubkey, SocketAddr), bool>::new();
+        let mut cache = HashMap::<SocketAddr, bool>::new();
         let mut ping_cache = self.ping_cache.lock().unwrap();
         let mut hard_check = move |node| {
             let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node);
@@ -1674,7 +1674,9 @@ impl ClusterInfo {
         move |request| {
             ContactInfo::is_valid_address(&request.addr, &self.socket_addr_space) && {
                 let node = (request.pubkey, request.addr);
-                *cache.entry(node).or_insert_with(|| hard_check(node))
+                *cache
+                    .entry(request.addr)
+                    .or_insert_with(|| hard_check(node))
             }
         }
     }
