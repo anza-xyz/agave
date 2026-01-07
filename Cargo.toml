@@ -395,7 +395,7 @@ sha2 = "0.10.9"
 sha3 = "0.10.8"
 shaq = { version = "1.0.1" }
 shuttle = "0.7.1"
-signal-hook = "0.3.18"
+signal-hook = "0.4.1"
 siphasher = "1.0.1"
 slab = "0.4.11"
 smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
