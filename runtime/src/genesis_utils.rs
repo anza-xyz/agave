@@ -114,6 +114,7 @@ pub fn create_genesis_config_with_vote_accounts(
         voting_keypairs,
         stakes,
         ClusterType::Development,
+        &FeatureSet::all_enabled(),
         false,
     )
 }
@@ -128,6 +129,7 @@ pub fn create_genesis_config_with_alpenglow_vote_accounts(
         voting_keypairs,
         stakes,
         ClusterType::Development,
+        &FeatureSet::all_enabled(),
         true,
     )
 }
@@ -137,6 +139,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
     cluster_type: ClusterType,
+    feature_set: &FeatureSet,
     is_alpenglow: bool,
 ) -> GenesisConfigInfo {
     assert!(!voting_keypairs.is_empty());
@@ -168,6 +171,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         cluster_type,
+        feature_set,
         vec![],
     );
 
@@ -269,6 +273,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
+        &FeatureSet::all_enabled(),
         vec![],
     );
 
@@ -350,6 +355,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     fee_rate_governor: FeeRateGovernor,
     rent: Rent,
     cluster_type: ClusterType,
+    _feature_set: &FeatureSet,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
     let validator_vote_account = vote_state::create_v4_account_with_authorized(
@@ -423,6 +429,7 @@ pub fn create_genesis_config_with_leader_ex(
     fee_rate_governor: FeeRateGovernor,
     rent: Rent,
     cluster_type: ClusterType,
+    feature_set: &FeatureSet,
     initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
     let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
@@ -437,6 +444,7 @@ pub fn create_genesis_config_with_leader_ex(
         fee_rate_governor,
         rent,
         cluster_type,
+        feature_set,
         initial_accounts,
     );
 

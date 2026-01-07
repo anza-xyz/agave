@@ -57,7 +57,7 @@ use {
     },
     solana_runtime::{
         bank_forks::BankForks,
-        genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
+        genesis_utils::{self, create_genesis_config_with_leader_ex},
         runtime_config::RuntimeConfig,
     },
     solana_sdk_ids::address_lookup_table,
@@ -997,7 +997,7 @@ impl TestValidator {
             );
         }
 
-        let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+        let mut genesis_config = create_genesis_config_with_leader_ex(
             mint_lamports,
             &mint_address,
             &validator_identity.pubkey(),
@@ -1009,6 +1009,7 @@ impl TestValidator {
             config.fee_rate_governor.clone(),
             config.rent.clone(),
             solana_cluster_type::ClusterType::Development,
+            &feature_set,
             accounts.into_iter().collect(),
         );
         genesis_config.epoch_schedule = config

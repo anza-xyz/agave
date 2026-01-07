@@ -839,6 +839,7 @@ impl ProgramTest {
             fee_rate_governor,
             rent.clone(),
             ClusterType::Development,
+            &feature_set,
             std::mem::take(&mut self.genesis_accounts),
         );
 
