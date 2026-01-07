@@ -6,12 +6,12 @@ use {
             GUEST_REGION_SIZE,
         },
         vm_slice::VmSlice,
-        IndexOfAccount, InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
+        IndexOfAccount, InstructionAccount, TransactionContext,
     },
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    std::{collections::HashSet, ops::Range},
+    std::collections::HashSet,
 };
 
 /// Instruction shared between runtime and programs.
@@ -37,14 +37,6 @@ impl Default for InstructionFrame {
 }
 
 impl InstructionFrame {
-    /// This function retrieves the range to index transaction_context.deduplication_maps
-    pub fn deduplication_map_range(instruction_index: usize) -> Range<usize> {
-        instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
-            ..instruction_index
-                .saturating_add(1)
-                .saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
-    }
-
     pub fn configure_vm_slices(
         &mut self,
         instruction_index: u64,

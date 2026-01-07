@@ -16,8 +16,14 @@ targets = ["x86_64-unknown-linux-gnu"]
 default = ["remote-wallet-hidraw"]
 agave-unstable-api = []
 dev-context-only-utils = []
-remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
-remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
+remote-wallet-hidraw = [
+    "solana-remote-wallet/linux-static-hidraw",
+    "solana-cli/remote-wallet-hidraw",
+]
+remote-wallet-libusb = [
+    "solana-remote-wallet/linux-static-libusb",
+    "solana-cli/remote-wallet-libusb",
+]
 
 [dependencies]
 agave-logger = { workspace = true }

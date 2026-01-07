@@ -49,7 +49,7 @@ mod tests {
         crate::{
             file_io::FileCreator,
             io_uring::{
-                file_creator::IoUringFileCreator,
+                file_creator::IoUringFileCreatorBuilder,
                 sequential_file_reader::SequentialFileReaderBuilder,
             },
         },
@@ -67,10 +67,9 @@ mod tests {
 
         let read_bytes = RwLock::new(vec![]);
         let read_bytes_ref = &read_bytes;
-        let mut file_creator = IoUringFileCreator::with_buffer_capacity(
-            1 << 20,
-            io_setup.shared_sqpoll_fd(),
-            move |file_info| {
+        let mut file_creator = IoUringFileCreatorBuilder::new()
+            .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .build(1 << 20, move |file_info| {
                 let mut reader = SequentialFileReaderBuilder::new()
                     .shared_sqpoll(io_setup.shared_sqpoll_fd())
                     .build(file_info.path, 1 << 20)
@@ -79,9 +78,8 @@ mod tests {
                     .read_to_end(read_bytes_ref.write().unwrap().as_mut())
                     .unwrap();
                 None
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_handle = Arc::new(File::open(temp_dir.path()).unwrap());
