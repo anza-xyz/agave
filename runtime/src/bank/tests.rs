@@ -1183,7 +1183,7 @@ fn test_one_tx_two_out_atomic_pass() {
 // This test demonstrates that fees are paid even when a program fails.
 #[test]
 fn test_detect_failed_duplicate_transactions() {
-    let (mut genesis_config, mint_keypair) = create_genesis_config(10_000_000);
+    let (mut genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     genesis_config.fee_rate_governor = FeeRateGovernor::new(5_000, 0);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
@@ -1193,7 +1193,7 @@ fn test_detect_failed_duplicate_transactions() {
     let tx = system_transaction::transfer(
         &mint_keypair,
         &dest.pubkey(),
-        10_000_000,
+        LAMPORTS_PER_SOL,
         genesis_config.hash(),
     );
     let signature = tx.signatures[0];
@@ -1211,7 +1211,10 @@ fn test_detect_failed_duplicate_transactions() {
     assert_eq!(bank.get_balance(&dest.pubkey()), 0);
 
     // This should be the original balance minus the transaction fee.
-    assert_eq!(bank.get_balance(&mint_keypair.pubkey()), 10_000_000 - 5_000);
+    assert_eq!(
+        bank.get_balance(&mint_keypair.pubkey()),
+        LAMPORTS_PER_SOL - 5_000
+    );
 }
 
 #[test]
@@ -1937,13 +1940,10 @@ fn test_load_and_execute_commit_transactions_fees_only() {
     );
 
     let fee_payer = Pubkey::new_unique();
+    let fee_payer_initial_balance = 10 * genesis_config.rent.minimum_balance(0);
     bank.store_account(
         &fee_payer,
-        &AccountSharedData::new(
-            10 * genesis_config.rent.minimum_balance(0),
-            0,
-            &system_program::id(),
-        ),
+        &AccountSharedData::new(fee_payer_initial_balance, 0, &system_program::id()),
     );
 
     // Use nonce to show that loaded account stats also included loaded
@@ -1998,7 +1998,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
                 loaded_accounts_count: 2,
                 loaded_accounts_data_size: nonce_size as u32,
             },
-            fee_payer_post_balance: 10 * genesis_config.rent.minimum_balance(0) - 5000,
+            fee_payer_post_balance: fee_payer_initial_balance - 5000,
         })]
     );
 }
@@ -3358,7 +3358,7 @@ fn test_bank_cloned_stake_delegations() {
 
 #[test]
 fn test_is_delta_with_no_committables() {
-    let (genesis_config, mint_keypair) = create_genesis_config(10_000_000);
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank.is_delta.store(false, Relaxed);
 
@@ -3381,7 +3381,11 @@ fn test_is_delta_with_no_committables() {
     // Should fail with InstructionError, but InstructionErrors are committable,
     // so is_delta should be true
     assert_eq!(
-        bank.transfer(10_000_001, &mint_keypair, &solana_pubkey::new_rand()),
+        bank.transfer(
+            LAMPORTS_PER_SOL + 1,
+            &mint_keypair,
+            &solana_pubkey::new_rand()
+        ),
         Err(TransactionError::InstructionError(
             0,
             SystemError::ResultWithNegativeLamports.into(),
@@ -7310,7 +7314,7 @@ fn test_timestamp_fast() {
 
 #[test]
 fn test_program_is_native_loader() {
-    let (genesis_config, mint_keypair) = create_genesis_config(10_000_000);
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let bank = Bank::new_for_tests(&genesis_config);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
