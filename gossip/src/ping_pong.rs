@@ -212,17 +212,28 @@ impl<const N: usize> PingCache<N> {
         now: Instant,
         remote_node: (Pubkey, SocketAddr),
     ) -> Option<Ping<N>> {
-        // Rate limit consecutive pings sent to a remote node.
-        let ip = remote_node.1.ip();
-        if matches!(self.pings.peek(&ip),
-            Some(&t) if now.saturating_duration_since(t) < self.rate_limit_delay)
-        {
-            return None;
+        let socket = remote_node.1;
+
+        let has_valid_pong = self
+            .pongs
+            .peek(&socket)
+            .map(|&t| now.saturating_duration_since(t) <= self.ttl)
+            .unwrap_or(false);
+
+        // Only rate limit by IP if we don't have a valid pong.
+        if !has_valid_pong {
+            let ip = socket.ip();
+            if matches!(self.ping_times.peek(&ip),
+                Some(&t) if now.saturating_duration_since(t) < self.rate_limit_delay)
+            {
+                return None;
+            }
         }
-        self.pings.put(ip, now);
+
+        self.pings.put(socket.ip(), now);
         self.maybe_refresh_key(rng, now);
         let token = make_ping_token::<N>(self.hashers[0], &remote_node);
-        self.ping_times.put(ip, now);
+        self.ping_times.put(socket.ip(), now);
         Some(Ping::new(token, keypair))
     }
 
