@@ -1069,7 +1069,10 @@ fn process_loader_upgradeable_instruction(
                 );
                 return Err(InstructionError::InvalidInstructionData);
             }
-            common_extend_program(invoke_context, additional_bytes, false)?;
+            let check_authority = invoke_context
+                .get_feature_set()
+                .loader_v3_permissioned_extend_program;
+            common_extend_program(invoke_context, additional_bytes, check_authority)?;
         }
         UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
             if !invoke_context
