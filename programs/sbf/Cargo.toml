@@ -297,16 +297,14 @@ name = "bpf_loader"
 # Unfortunately, Cargo will try to resolve the `spl-token` `solana-program`
 # dependency only using what is available on crates.io.  Crates.io normally
 # contains a previous version of these crates, and we end up with two versions
-# of `solana-program` and `solana-zk-token-sdk` and all of their dependencies in
-# our build tree.
+# of `solana-program` and all of their dependencies in our build tree.
 #
 # If you are developing downstream using non-crates-io solana-program (local or
 # forked repo, or from github rev, eg), duplicate the following patch statements
 # in your Cargo.toml. If you still hit duplicate-type errors with the patch
-# statements in place, run `cargo update -p solana-program` and/or `cargo update
-# -p solana-zk-token-sdk` to remove extraneous versions from your Cargo.lock
-# file.
+# statements in place, run `cargo update -p solana-program` to remove extraneous
+# versions from your Cargo.lock file.
 #
-# There is a similar override in `../../Cargo.toml`.  Please keep both comments
-# and the overrides in sync.
+# There is a similar override in `../../Cargo.toml`.  Please keep both
+# comments and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
