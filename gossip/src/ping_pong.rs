@@ -58,8 +58,8 @@ pub struct PingCache<const N: usize> {
     hashers: [SipHasher24; 2],
     // When hashers were last refreshed.
     key_refresh: Instant,
-    // Timestamp of last ping message sent to a remote IP address.
-    pings: LruCache<IpAddr, Instant>,
+    // Timestamp of last ping message sent to a remote socket address.
+    pings: LruCache<SocketAddr, Instant>,
     // Verified pong responses from remote socket addresses.
     // Keyed by SocketAddr to detect port changes (if port changes, no pong found, so we reping).
     pongs: LruCache<SocketAddr, Instant>,
@@ -214,6 +214,16 @@ impl<const N: usize> PingCache<N> {
     ) -> Option<Ping<N>> {
         let socket = remote_node.1;
 
+        // Always rate limit by socket to prevent spamming the same node when we
+        // receive their contact info multiple times (even if we have a valid pong).
+        if matches!(self.pings.peek(&socket),
+            Some(&t) if now.saturating_duration_since(t) < self.rate_limit_delay)
+        {
+            return None;
+        }
+
+        // Check if we have a valid pong for this socket. If we do, we trust it
+        // and skip IP-based rate limiting to allow legitimate nodes on the same IP.
         let has_valid_pong = self
             .pongs
             .peek(&socket)
@@ -221,6 +231,9 @@ impl<const N: usize> PingCache<N> {
             .unwrap_or(false);
 
         // Only rate limit by IP if we don't have a valid pong.
+        // This prevents DoS attacks: an attacker sends contact info with victim IP,
+        // we ping, victim responds with pong (which fails validation), so we don't
+        // have a valid pong and are rate limited from pinging that IP again.
         if !has_valid_pong {
             let ip = socket.ip();
             if matches!(self.ping_times.peek(&ip),
@@ -230,7 +243,7 @@ impl<const N: usize> PingCache<N> {
             }
         }
 
-        self.pings.put(socket.ip(), now);
+        self.pings.put(socket, now);
         self.maybe_refresh_key(rng, now);
         let token = make_ping_token::<N>(self.hashers[0], &remote_node);
         self.ping_times.put(socket.ip(), now);
