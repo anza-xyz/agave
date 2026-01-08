@@ -158,7 +158,6 @@ impl FeatureSet {
             fix_alt_bn128_multiplication_input_length: self
                 .is_active(&fix_alt_bn128_multiplication_input_length::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
-            enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
             formalize_loaded_transaction_data_size: self
                 .is_active(&formalize_loaded_transaction_data_size::id()),
             disable_zk_elgamal_proof_program: self
@@ -1118,9 +1117,6 @@ pub mod enshrine_slashing_program {
     solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
 }
 
-pub mod enable_extend_program_checked {
-    solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
-}
 
 pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
@@ -2102,10 +2098,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enshrine_slashing_program::id(),
             "SIMD-0204: Slashable event verification",
-        ),
-        (
-            enable_extend_program_checked::id(),
-            "Enable ExtendProgramChecked instruction",
         ),
         (
             formalize_loaded_transaction_data_size::id(),
