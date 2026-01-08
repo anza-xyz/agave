@@ -3662,13 +3662,13 @@ pub mod rpc_full {
                                 .tvu(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu: contact_info
-                                .tpu(Protocol::UDP)
+                                .tpu(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_quic: contact_info
                                 .tpu(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_forwards: contact_info
-                                .tpu_forwards(Protocol::UDP)
+                                .tpu_forwards(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)

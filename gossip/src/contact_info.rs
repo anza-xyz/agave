@@ -905,16 +905,8 @@ mod tests {
                 sockets.get(&SOCKET_TAG_SERVE_REPAIR_QUIC)
             );
             assert_eq!(
-                node.tpu(Protocol::UDP).as_ref(),
-                sockets.get(&SOCKET_TAG_TPU)
-            );
-            assert_eq!(
                 node.tpu(Protocol::QUIC).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_QUIC)
-            );
-            assert_eq!(
-                node.tpu_forwards(Protocol::UDP).as_ref(),
-                sockets.get(&SOCKET_TAG_TPU_FORWARDS)
             );
             assert_eq!(
                 node.tpu_forwards(Protocol::QUIC).as_ref(),

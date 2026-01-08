@@ -596,10 +596,10 @@ impl ClusterInfo {
                         },
                         self.addr_to_string(&ip_addr, &node.gossip()),
                         self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
-                        self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::UDP)),
+                        self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
                         self.addr_to_string(
                             &ip_addr,
-                            &node.tpu_forwards(contact_info::Protocol::UDP)
+                            &node.tpu_forwards(contact_info::Protocol::QUIC)
                         ),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::QUIC)),
@@ -1147,7 +1147,7 @@ impl ClusterInfo {
 
     fn is_spy_node(node: &ContactInfo, socket_addr_space: &SocketAddrSpace) -> bool {
         ![
-            node.tpu(contact_info::Protocol::UDP),
+            node.tpu(contact_info::Protocol::QUIC),
             node.gossip(),
             node.tvu(contact_info::Protocol::UDP),
         ]
@@ -1166,7 +1166,7 @@ impl ClusterInfo {
             .get_nodes_contact_info()
             .filter(|node| {
                 node.pubkey() != &self_pubkey
-                    && self.check_socket_addr_space(&node.tpu(contact_info::Protocol::UDP))
+                    && self.check_socket_addr_space(&node.tpu(contact_info::Protocol::QUIC))
             })
             .cloned()
             .collect()
@@ -3774,7 +3774,7 @@ mod tests {
         agave_logger::setup();
         // If you change the format of cluster_info_trace or rpc_info_trace, please make sure
         // you read the actual output so the headers lign up with the output.
-        const CLUSTER_INFO_TRACE_LENGTH: usize = 461;
+        const CLUSTER_INFO_TRACE_LENGTH: usize = 452;
         const RPC_INFO_TRACE_LENGTH: usize = 335;
         let keypair43 = Arc::new(
             Keypair::try_from(
