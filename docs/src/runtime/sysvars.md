@@ -35,7 +35,7 @@ let clock_sysvar_info = next_account_info(account_info_iter)?;
 let clock = Clock::from_account_info(&clock_sysvar_info)?;
 ```
 
-The first method is more efficient and does not require that the sysvar account
+The first method is less efficient but does not require that the sysvar account
 be passed to the program, or specified in the `Instruction` the program is
 processing.
 
