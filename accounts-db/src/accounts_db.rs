@@ -336,6 +336,7 @@ impl AccountFromStorage {
     }
 }
 
+#[derive(Debug)]
 pub struct GetUniqueAccountsResult {
     pub stored_accounts: Vec<AccountFromStorage>,
     pub capacity: u64,
@@ -5351,6 +5352,59 @@ impl AccountsDb {
     /// Updates the accounts index with the given `infos` and `accounts`.
     /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
     /// The element of the returned vector is guaranteed to be non-empty.
+    fn cache_accounts<'a>(
+        &self,
+        infos: Vec<bool>,
+        accounts: &impl StorableAccounts<'a>,
+        update_index_thread_selection: UpdateIndexThreadSelection,
+    ) {
+        let target_slot = accounts.target_slot();
+        let len = std::cmp::min(accounts.len(), infos.len());
+
+        let update = |start, end| {
+            (start..end).for_each(|i| {
+                if infos[i] {
+                    accounts.account(i, |account| {
+                        let info =
+                            AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
+                        self.accounts_index.upsert(
+                            target_slot,
+                            target_slot,
+                            account.pubkey(),
+                            &account,
+                            &self.account_indexes,
+                            info,
+                            ReclaimsSlotList::default().as_mut(),
+                            UpsertReclaim::PreviousSlotEntryWasCached,
+                        );
+                    });
+                }
+            });
+        };
+
+        let threshold = 1;
+        if matches!(
+            update_index_thread_selection,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        ) && len > threshold
+        {
+            let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
+            let batches = 1 + len / chunk_size;
+            self.thread_pool_foreground.install(|| {
+                (0..batches).into_par_iter().for_each(|batch| {
+                    let start = batch * chunk_size;
+                    let end = std::cmp::min(start + chunk_size, len);
+                    update(start, end)
+                })
+            });
+        } else {
+            update(0, len);
+        }
+    }
+
+    /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
+    /// The element of the returned vector is guaranteed to be non-empty.
     fn update_index<'a>(
         &self,
         infos: Vec<AccountInfo>,
@@ -5801,13 +5855,7 @@ impl AccountsDb {
         // Update the index
         let mut update_index_time = Measure::start("update_index");
 
-        self.update_index(
-            infos,
-            &accounts,
-            UpsertReclaim::PreviousSlotEntryWasCached,
-            update_index_thread_selection,
-            &self.thread_pool_foreground,
-        );
+        self.cache_accounts(infos, &accounts, update_index_thread_selection);
 
         update_index_time.stop();
         self.stats
@@ -5942,7 +5990,7 @@ impl AccountsDb {
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         txs: Option<&[&SanitizedTransaction]>,
-    ) -> Vec<AccountInfo> {
+    ) -> Vec<bool> {
         let mut current_write_version = if self.accounts_update_notifier.is_some() {
             self.write_version
                 .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel)
@@ -5956,8 +6004,13 @@ impl AccountsDb {
                 accounts_and_meta_to_store.account(index, |account| {
                     let account_shared_data = account.take_account();
                     let pubkey = account.pubkey();
-                    let account_info =
-                        AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
+                    if account.is_zero_lamport()
+                        && self
+                            .accounts_index
+                            .get_and_then(pubkey, |account| (false, account.is_none()))
+                    {
+                        return false;
+                    }
 
                     // if geyser is enabled, send the account update notification
                     // with the original version of the account
@@ -5978,7 +6031,7 @@ impl AccountsDb {
                         account_shared_data
                     };
                     self.accounts_cache.store(slot, pubkey, account_to_store);
-                    account_info
+                    true
                 })
             })
             .collect()
