@@ -25,11 +25,6 @@ pub type Age = u8;
 pub type AtomicAge = AtomicU8;
 const _: () = assert!(std::mem::size_of::<Age>() == std::mem::size_of::<AtomicAge>());
 
-// - 400 milliseconds was causing excessive disk iops due to flushing the index to disk very often.
-// - 4 seconds was tried and showed a large reduction in disk iops, almost as good as when the disk
-//   index is entirely disabled!  But there were concerns about the in-mem index growth behavior.
-// - 2 seconds is much faster, and does also reduce disk iops quite a lot.
-const AGE_MS: u64 = 2_000;
 // Trigger eviction when a bin exceeds this percent of the target entries.
 // 85% strikes a balance: high enough to avoid frequent oscillations yet low enough
 // to catch growth before bins overshoot far past the target.
@@ -46,7 +41,7 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     pub count_buckets_flushed: AtomicUsize,
 
     /// These three ages are individual atomics because their values are read many times from code during runtime.
-    /// Instead of accessing the single age and doing math each time, each value is incremented each time the age occurs, which is `AGE_MS`.
+    /// Instead of accessing the single age and doing math each time, each value is incremented each time the age occurs, which is `age_ms`.
     /// Callers can ask for the precomputed value they already want.
     /// rolling 'current' age
     pub age: AtomicAge,
@@ -58,6 +53,9 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 
     pub stats: Stats,
 
+    /// This controlls how often 'age' is incremented.
+    /// Additionally controlls how often the in-mem index runs its flush/evict loop.
+    age_ms: u64,
     age_timer: AtomicInterval,
 
     // used by bg processing to know when any bucket has become dirty
@@ -280,6 +278,29 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             }
         };
 
+        // The age interval, `age_ms`, varies depending on `config.index_limit`
+        let age_ms = match config.index_limit {
+            IndexLimit::Minimal => {
+                // - 400 milliseconds was causing excessive disk iops due to
+                //   flushing the index to disk very often.
+                // - 4 seconds was tried and showed a large reduction in disk iops,
+                //   almost as good as when the disk index is entirely disabled!
+                //   But there were concerns about the in-mem index growth behavior.
+                // - 2 seconds is much faster, and does also reduce disk iops quite a lot.
+                2_000
+            }
+            IndexLimit::InMemOnly => {
+                // the disk index is disabled, thus this value doesn't actually matter
+                2_000
+            }
+            IndexLimit::Threshold(_) => {
+                // In this case, we do not evict unless the memory threshold was exceeded.
+                // Thus it is necessary to check often enough so that we avoid growing
+                // the in-mem hashmaps unintentionally.
+                400
+            }
+        };
+
         Self {
             disk,
             ages_to_stay_in_cache,
@@ -293,10 +314,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             stats: Stats::new(bins),
             wait_dirty_or_aged: Arc::default(),
             next_bucket_to_flush: AtomicUsize::new(0),
+            age_ms,
             age_timer: AtomicInterval::default(),
             bins,
             startup: AtomicBool::default(),
-
             threads,
             _phantom: PhantomData,
             startup_stats: Arc::default(),
@@ -349,7 +370,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
     /// prepare for this to be dynamic if necessary
     /// For example, maybe startup has a shorter age interval.
     fn age_interval_ms(&self) -> u64 {
-        AGE_MS
+        self.age_ms
     }
 
     /// return an amount of ms to sleep
@@ -701,8 +722,9 @@ pub mod tests {
         let bins = 1;
         let test = BucketMapHolder::<u64, u64>::new(bins, &AccountsIndexConfig::default(), 1);
         let threads = 2;
-        let time = AGE_MS * 8 / 3;
-        let expected = (time / AGE_MS) as Age;
+        let age_ms = test.age_interval_ms();
+        let time = age_ms * 8 / 3;
+        let expected = (time / age_ms) as Age;
         let now = Instant::now();
         test.bucket_flushed_at_current_age(true); // done with age 0
         (0..threads).into_par_iter().for_each(|_| {
@@ -737,7 +759,7 @@ pub mod tests {
             assert!(!test.all_buckets_flushed_at_current_age());
             test.bucket_flushed_at_current_age(true);
         }
-        std::thread::sleep(std::time::Duration::from_millis(AGE_MS * 2));
+        std::thread::sleep(std::time::Duration::from_millis(test.age_interval_ms() * 2));
         test.maybe_advance_age();
         assert_eq!(test.current_age(), 1);
         assert!(!test.all_buckets_flushed_at_current_age());
