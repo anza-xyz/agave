@@ -169,7 +169,7 @@ pub enum ProgramCliCommand {
         use_lamports_unit: bool,
         bypass_warning: bool,
     },
-    ExtendProgramChecked {
+    ExtendProgram {
         program_pubkey: Pubkey,
         authority_signer_index: SignerIndex,
         additional_bytes: u32,
@@ -1029,7 +1029,7 @@ pub fn parse_program_subcommand(
             )?;
 
             CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgram {
                     program_pubkey,
                     authority_signer_index: signer_info.index_of(authority_pubkey).unwrap(),
                     additional_bytes,
@@ -1267,7 +1267,7 @@ pub async fn process_program_subcommand(
             )
             .await
         }
-        ProgramCliCommand::ExtendProgramChecked {
+        ProgramCliCommand::ExtendProgram {
             program_pubkey,
             authority_signer_index,
             additional_bytes,
@@ -2527,15 +2527,16 @@ async fn process_extend_program(
     let feature_set = fetch_feature_set(rpc_client).await?;
 
     let instruction =
-        if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
-            loader_v3_instruction::extend_program_checked(
+        if feature_set.is_active(&agave_feature_set::loader_v3_permissioned_extend_program::id()) {
+            // SIMD-0431: ExtendProgram now requires the upgrade authority
+            loader_v3_instruction::extend_program(
                 &program_pubkey,
                 &upgrade_authority_address,
                 Some(&payer_pubkey),
                 additional_bytes,
             )
         } else {
-            loader_v3_instruction::extend_program(
+            loader_v3_instruction::extend_program_legacy(
                 &program_pubkey,
                 Some(&payer_pubkey),
                 additional_bytes,
@@ -3139,15 +3140,20 @@ async fn extend_program_data_if_needed(
 
     let feature_set = fetch_feature_set(rpc_client).await?;
     let instruction =
-        if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
-            loader_v3_instruction::extend_program_checked(
+        if feature_set.is_active(&agave_feature_set::loader_v3_permissioned_extend_program::id()) {
+            // SIMD-0431: ExtendProgram now requires the upgrade authority
+            loader_v3_instruction::extend_program(
                 program_id,
                 &upgrade_authority_address,
                 Some(fee_payer),
                 additional_bytes,
             )
         } else {
-            loader_v3_instruction::extend_program(program_id, Some(fee_payer), additional_bytes)
+            loader_v3_instruction::extend_program_legacy(
+                program_id,
+                Some(fee_payer),
+                additional_bytes,
+            )
         };
     initial_instructions.push(instruction);
 
@@ -4588,7 +4594,7 @@ mod tests {
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgram {
                     program_pubkey,
                     authority_signer_index: 0,
                     additional_bytes

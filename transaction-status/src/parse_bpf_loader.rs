@@ -198,28 +198,6 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
-        UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
-            check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
-            Ok(ParsedInstructionEnum {
-                instruction_type: "extendProgramChecked".to_string(),
-                info: json!({
-                    "additionalBytes": additional_bytes,
-                    "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "authority": account_keys[instruction.accounts[2] as usize].to_string(),
-                    "systemProgram": if instruction.accounts.len() > 3 {
-                        Some(account_keys[instruction.accounts[3] as usize].to_string())
-                    } else {
-                        None
-                    },
-                    "payerAccount": if instruction.accounts.len() > 4 {
-                        Some(account_keys[instruction.accounts[4] as usize].to_string())
-                    } else {
-                        None
-                    },
-                }),
-            })
-        }
     }
 }
 
