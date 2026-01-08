@@ -92,11 +92,11 @@ The following method is used for notifying on an account update:
 
 ```
     fn update_account(
-        &mut self,
-        account: ReplicaAccountInfoVersions,
-        slot: u64,
-        is_startup: bool,
-    ) -> Result<()>
+	        &self,
+	        account: ReplicaAccountInfoVersions,
+	        slot: Slot,
+	        is_startup: bool,
+	    ) -> Result<()>
 ```
 
 The `ReplicaAccountInfoVersions` struct contains the metadata and data of the account
@@ -110,7 +110,7 @@ The following method is called when all accounts have been notified when the
 validator restores the AccountsDb from snapshots at startup.
 
 ```
-fn notify_end_of_startup(&mut self) -> Result<()>
+fn notify_end_of_startup(&self) -> Result<()>
 ```
 
 When `update_account` is called during processing transactions, the plugin
@@ -122,11 +122,11 @@ The following method is used for notifying slot status changes:
 
 ```
     fn update_slot_status(
-        &mut self,
-        slot: u64,
-        parent: Option<u64>,
-        status: SlotStatus,
-    ) -> Result<()>
+	        &self,
+	        slot: Slot,
+	        parent: Option<u64>,
+	        status: &SlotStatus,
+	    ) -> Result<()>
 ```
 
 To ensure data consistency, the plugin implementation can choose to abort
@@ -137,10 +137,10 @@ The following method is used for notifying transactions:
 
 ```
     fn notify_transaction(
-        &mut self,
-        transaction: ReplicaTransactionInfoVersions,
-        slot: u64,
-    ) -> Result<()>
+	        &self,
+	        transaction: ReplicaTransactionInfoVersions,
+	        slot: Slot,
+	    ) -> Result<()>
 ```
 
 The `ReplicaTransactionInfoVersions` struct
@@ -244,8 +244,9 @@ pub struct ReplicaBlockInfoV4<'a> {
 ```
 
 The plugin can associate accounts with transactions via the txn field in the
-ReplicaAccountInfoV3 structure. It can also use ReplicaTransactionInfoV2 in
-the notify_transaction callback to get the account addresses.
+ReplicaAccountInfoV3 structure. It can also use ReplicaTransactionInfoV3 (via the
+V0_0_3 variant of ReplicaTransactionInfoVersions) in the notify_transaction
+callback to get the account addresses.
 
 The SlotStatus::Confirmed and SlotStatus::Processed events can reach the plugin
 in any order as they are sent asynchronous to each other. A plugin should wait
