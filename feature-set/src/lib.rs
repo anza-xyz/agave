@@ -178,6 +178,8 @@ impl FeatureSet {
             create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
             bls_pubkey_management_in_vote_account: self
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
+            loader_v3_enable_reclaim_closed_program: self
+                .is_active(&loader_v3_enable_reclaim_closed_program::id()),
         }
     }
 }
@@ -1224,6 +1226,10 @@ pub mod relax_programdata_account_check_migration {
     solana_pubkey::declare_id!("rexav5eNTUSNT1K2N7cfRjnthwhcP5BC25v2tA4rW4h");
 }
 
+pub mod loader_v3_enable_reclaim_closed_program {
+    solana_pubkey::declare_id!("Q3HXoz4yrao46vwMEJxqCV72MeB3m24hkTXZTh8kX9L");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2194,6 +2200,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_programdata_account_check_migration::id(),
             "SIMD-0444: Relax program data account check in migration",
+        ),
+        (
+            loader_v3_enable_reclaim_closed_program::id(),
+            "SIMD-0432: Loader V3: Reclaim Closed Program",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
