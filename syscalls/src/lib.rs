@@ -269,6 +269,9 @@ fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<
     Ok(())
 }
 
+// NOTE: This macro name is checked by gen-syscall-list to create the list of
+// syscalls. If this macro name is changed, or if a new one is added, then
+// gen-syscall-list/build.rs must also be updated.
 macro_rules! register_feature_gated_function {
     ($result:expr, $is_feature_active:expr, $name:expr, $call:expr $(,)?) => {
         if $is_feature_active {
@@ -333,6 +336,10 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         aligned_memory_mapping: !feature_set.stricter_abi_and_runtime_constraints,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
+
+    // NOTE: `register_function` calls are checked by gen-syscall-list to create
+    // the list of syscalls. If this function name is changed, or if a new one
+    // is added, then gen-syscall-list/build.rs must also be updated.
     let mut result = BuiltinProgram::new_loader(config);
 
     // Abort

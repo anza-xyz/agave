@@ -341,8 +341,9 @@ impl VoteWorker {
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> ProcessTransactionsSummary {
-        let (mut process_transactions_summary, process_transactions_us) =
-            measure_us!(self.process_transactions(bank, sanitized_transactions));
+        let (mut process_transactions_summary, process_transactions_us) = measure_us!(
+            Self::process_transactions(&self.consumer, bank, sanitized_transactions)
+        );
         slot_metrics_tracker.increment_process_transactions_us(process_transactions_us);
         banking_stage_stats
             .transaction_processing_elapsed
@@ -388,14 +389,14 @@ impl VoteWorker {
     ///
     /// Returns the number of transactions successfully processed by the bank, which may be less
     /// than the total number if max PoH height was reached and the bank halted
+    #[cfg_attr(test, qualifier_attr::qualifiers(pub(crate)))]
     fn process_transactions(
-        &self,
+        consumer: &Consumer,
         bank: &Bank,
         transactions: &[impl TransactionWithMeta],
     ) -> ProcessTransactionsSummary {
-        let process_transaction_batch_output = self
-            .consumer
-            .process_and_record_transactions(bank, transactions);
+        let process_transaction_batch_output =
+            consumer.process_and_record_transactions(bank, transactions);
 
         let ProcessTransactionBatchOutput {
             cost_model_throttled_transactions_count,
@@ -416,12 +417,8 @@ impl VoteWorker {
         total_transaction_counts
             .accumulate(&transaction_counts, commit_transactions_result.is_ok());
 
-        let should_bank_still_be_processing_txs = bank.is_complete();
-        let reached_max_poh_height = match (
-            commit_transactions_result,
-            should_bank_still_be_processing_txs,
-        ) {
-            (Err(PohRecorderError::MaxHeightReached), _) | (_, false) => {
+        let reached_max_poh_height = match (commit_transactions_result, bank.is_complete()) {
+            (Err(PohRecorderError::MaxHeightReached), _) | (_, true) => {
                 info!(
                     "process transactions: max height reached slot: {} height: {}",
                     bank.slot(),
@@ -560,13 +557,19 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::{
-            tests::create_slow_genesis_config, vote_storage::tests::packet_from_slots,
+            committer::Committer,
+            qos_service::QosService,
+            tests::{create_slow_genesis_config, sanitize_transactions},
+            vote_storage::tests::packet_from_slots,
         },
+        crossbeam_channel::unbounded,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::BytesPacket,
+        solana_poh::record_channels::record_channels,
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_svm::account_loader::CheckedTransactionDetails,
+        solana_system_transaction as system_transaction,
         std::collections::HashSet,
     };
 
@@ -727,5 +730,45 @@ mod tests {
 
         assert!(has_reached_end_of_slot(false, &bank));
         assert!(has_reached_end_of_slot(true, &bank));
+    }
+
+    #[test]
+    fn test_should_bank_still_be_processing_txs() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(10_000);
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+
+        // Sanity.
+        assert!(!bank.is_complete());
+
+        // Set up Consumer infrastructure to process a transaction
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = solana_poh::transaction_recorder::TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
+        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let committer = Committer::new(None, replay_vote_sender, None);
+        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+
+        // Create and process a simple transfer transaction
+        let pubkey = solana_pubkey::new_rand();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &pubkey,
+            1,
+            bank.last_blockhash(),
+        )]);
+
+        // Process some transactions on a bank that hasn't finished.
+        let summary = VoteWorker::process_transactions(&consumer, &bank, &transactions);
+
+        // Assert - Transaction were prcoessed.
+        assert!(summary.transaction_counts.committed_transactions_count.0 > 0);
+
+        // Assert - We have not yet reached max_poh_height.
+        assert!(!summary.reached_max_poh_height);
     }
 }

@@ -597,8 +597,6 @@ pub struct ValidatorTpuConfig {
     pub vote_use_quic: bool,
     /// Controls the connection cache pool size
     pub tpu_connection_pool_size: usize,
-    /// Controls if to enable UDP for TPU transactions.
-    pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
@@ -610,7 +608,7 @@ pub struct ValidatorTpuConfig {
 impl ValidatorTpuConfig {
     /// A convenient function to build a ValidatorTpuConfig for testing with good
     /// default.
-    pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
+    pub fn new_for_tests() -> Self {
         let tpu_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
@@ -642,7 +640,6 @@ impl ValidatorTpuConfig {
         ValidatorTpuConfig {
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -721,7 +718,6 @@ impl Validator {
         let ValidatorTpuConfig {
             vote_use_quic,
             tpu_connection_pool_size,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1726,8 +1722,6 @@ impl Validator {
             entry_receiver,
             retransmit_slots_receiver,
             TpuSockets {
-                transactions: node.sockets.tpu,
-                transaction_forwards: node.sockets.tpu_forwards,
                 vote: node.sockets.tpu_vote,
                 broadcast: node.sockets.broadcast,
                 transactions_quic: node.sockets.tpu_quic,
@@ -1760,7 +1754,6 @@ impl Validator {
             config.staked_nodes_overrides.clone(),
             banking_tracer_channels,
             tracer_thread,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1810,6 +1803,7 @@ impl Validator {
             cluster_slots,
             node: Some(node_multihoming),
             banking_control_sender,
+            snapshot_controller,
         });
 
         Ok(Self {
@@ -2984,7 +2978,6 @@ mod tests {
         },
         solana_poh_config::PohConfig,
         solana_sha256_hasher::hash,
-        solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
 
@@ -3022,7 +3015,7 @@ mod tests {
             None, // rpc_to_plugin_manager_receiver
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
-            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -3236,7 +3229,7 @@ mod tests {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,
-                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+                    ValidatorTpuConfig::new_for_tests(),
                     Arc::new(RwLock::new(None)),
                 )
                 .expect("assume successful validator start")

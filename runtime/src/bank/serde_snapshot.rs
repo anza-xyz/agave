@@ -8,10 +8,7 @@ mod tests {
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
-            snapshot_utils::{
-                create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
-                StorageAndNextAccountsFileId,
-            },
+            snapshot_utils::{create_tmp_accounts_dir_for_tests, StorageAndNextAccountsFileId},
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
@@ -33,7 +30,7 @@ mod tests {
             mem,
             ops::RangeFull,
             path::Path,
-            sync::{atomic::Ordering, Arc, OnceLock},
+            sync::{Arc, OnceLock},
         },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
@@ -121,7 +118,7 @@ mod tests {
                 &mut writer,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
+                &bank2.get_snapshot_storages(None),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
                     obsolete_incremental_snapshot_persistence: None,
@@ -129,7 +126,6 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                 },
-                accounts_db.write_version.load(Ordering::Acquire),
             )
             .unwrap();
         }
@@ -217,7 +213,7 @@ mod tests {
         crate::serde_snapshot::bank_to_stream(
             &mut std::io::BufWriter::new(&mut writer),
             &bank,
-            &get_storages_to_serialize(&snapshot_storages),
+            &snapshot_storages,
         )
         .unwrap();
 
@@ -348,7 +344,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "AA17oKJsK6QTAntr31iPoonMYtVfks2syxMfj15AkXfa")
+            frozen_abi(digest = "6TVD4xhoKHV6mMFHotMJ2UMdraAffjmfVRHRZEJguzoC")
         )]
         #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
@@ -379,7 +375,7 @@ mod tests {
                 serializer,
                 bank_fields,
                 BankHashStats::default(),
-                &get_storages_to_serialize(&snapshot_storages),
+                &snapshot_storages,
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
                     obsolete_incremental_snapshot_persistence: Some(
@@ -389,7 +385,6 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },
-                u64::default(), // obsolete, formerly write_version
             )
         }
     }

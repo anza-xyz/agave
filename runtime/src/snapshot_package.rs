@@ -5,10 +5,7 @@ use {
     agave_snapshots::{snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotKind},
     solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_clock::Slot,
-    std::{
-        sync::{atomic::Ordering, Arc},
-        time::Instant,
-    },
+    std::{sync::Arc, time::Instant},
 };
 
 mod compare;
@@ -52,12 +49,6 @@ impl SnapshotPackage {
             bank_fields: bank_fields_to_serialize,
             bank_hash_stats: bank.get_bank_hash_stats(),
             status_cache_slot_deltas,
-            write_version: bank
-                .rc
-                .accounts
-                .accounts_db
-                .write_version
-                .load(Ordering::Acquire),
         };
 
         Self {
@@ -80,7 +71,6 @@ impl SnapshotPackage {
             bank_fields: BankFieldsToSerialize::default_for_tests(),
             bank_hash_stats: BankHashStats::default(),
             status_cache_slot_deltas: Vec::default(),
-            write_version: u64::default(),
         };
 
         Self {
@@ -109,5 +99,4 @@ pub struct BankSnapshotPackage {
     pub bank_fields: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
     pub status_cache_slot_deltas: Vec<BankSlotDelta>,
-    pub write_version: u64,
 }

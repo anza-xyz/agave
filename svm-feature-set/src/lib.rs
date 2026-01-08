@@ -53,6 +53,7 @@ pub struct SVMFeatureSet {
     pub poseidon_enforce_padding: bool,
     pub fix_alt_bn128_pairing_length_check: bool,
     pub alt_bn128_little_endian: bool,
+    pub create_account_allow_prefund: bool,
     pub bls_pubkey_management_in_vote_account: bool,
 }
 
@@ -103,6 +104,7 @@ impl SVMFeatureSet {
             poseidon_enforce_padding: true,
             fix_alt_bn128_pairing_length_check: true,
             alt_bn128_little_endian: true,
+            create_account_allow_prefund: true,
             bls_pubkey_management_in_vote_account: true,
         }
     }

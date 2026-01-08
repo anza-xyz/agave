@@ -1027,7 +1027,9 @@ pub(crate) mod external {
 
         fn validate_message_flags(flags: u16) -> bool {
             if flags & pack_message_flags::EXECUTE != 0 {
-                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE;
+                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING;
 
                 flags & !ALLOWED_EXECUTE_FLAGS == 0
             } else {
@@ -1120,9 +1122,27 @@ pub(crate) mod external {
 
         #[test]
         fn test_validate_message_flags() {
+            // Execute flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::EXECUTE
             ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::DROP_ON_FAILURE
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::ALL_OR_NOTHING
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING
+            ));
+            // Invalid execute flag
+            assert!(!ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | (1 << 15)
+            ));
+
+            // Check flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::CHECK
                     | agave_scheduler_bindings::pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES
