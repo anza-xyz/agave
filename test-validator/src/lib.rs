@@ -1367,11 +1367,6 @@ impl TestValidator {
         panic!("Timeout waiting for program to become usable");
     }
 
-    /// Return the validator's TPU address
-    pub fn tpu(&self) -> &SocketAddr {
-        &self.tpu_quic
-    }
-
     /// Return the validator's TPU QUIC address
     pub fn tpu_quic(&self) -> &SocketAddr {
         &self.tpu_quic
