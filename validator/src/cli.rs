@@ -137,6 +137,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         usage_warning: "CUDA support will be dropped"
     );
     add_arg!(
+        // deprecated in v4.0.0
+        Arg::with_name("enable_accounts_disk_index")
+            .long("enable-accounts-disk-index")
+            .help("Enables the disk-based accounts index")
+            .conflicts_with("accounts_index_limit"),
+        replaced_by: "accounts-index-limit",
+    );
+    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("tpu_coalesce_ms")
             .long("tpu-coalesce-ms")

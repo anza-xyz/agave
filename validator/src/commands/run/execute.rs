@@ -297,8 +297,32 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
+    let accounts_index_limit =
+        value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
+    let index_limit = match accounts_index_limit.as_str() {
+        "minimal" => IndexLimit::Minimal,
+        "25GB" => IndexLimit::Threshold(25_000_000_000),
+        "50GB" => IndexLimit::Threshold(50_000_000_000),
+        "100GB" => IndexLimit::Threshold(100_000_000_000),
+        "200GB" => IndexLimit::Threshold(200_000_000_000),
+        "400GB" => IndexLimit::Threshold(400_000_000_000),
+        "800GB" => IndexLimit::Threshold(800_000_000_000),
+        "unlimited" => IndexLimit::InMemOnly,
+        x => {
+            // clap will enforce only the above values are possible
+            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+        }
+    };
+    // Note: need to still handle --enable-accounts-disk-index until it is removed
+    let index_limit = if matches.is_present("enable_accounts_disk_index") {
+        IndexLimit::Minimal
+    } else {
+        index_limit
+    };
+
     let mut accounts_index_config = AccountsIndexConfig {
         num_flush_threads: Some(accounts_index_flush_threads),
+        index_limit,
         ..AccountsIndexConfig::default()
     };
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
@@ -309,12 +333,6 @@ pub fn execute(
     {
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
-
-    accounts_index_config.index_limit = if !matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::InMemOnly
-    } else {
-        IndexLimit::Minimal
-    };
 
     {
         let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
