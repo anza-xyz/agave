@@ -158,7 +158,6 @@ impl FeatureSet {
             fix_alt_bn128_multiplication_input_length: self
                 .is_active(&fix_alt_bn128_multiplication_input_length::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
-            enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
             formalize_loaded_transaction_data_size: self
                 .is_active(&formalize_loaded_transaction_data_size::id()),
             disable_zk_elgamal_proof_program: self
@@ -178,6 +177,8 @@ impl FeatureSet {
             create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
             bls_pubkey_management_in_vote_account: self
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
+            loader_v3_permissioned_extend_program: self
+                .is_active(&loader_v3_permissioned_extend_program::id()),
         }
     }
 }
@@ -1116,9 +1117,6 @@ pub mod enshrine_slashing_program {
     solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
 }
 
-pub mod enable_extend_program_checked {
-    solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
-}
 
 pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
@@ -1222,6 +1220,10 @@ pub mod bls_pubkey_management_in_vote_account {
 
 pub mod relax_programdata_account_check_migration {
     solana_pubkey::declare_id!("rexav5eNTUSNT1K2N7cfRjnthwhcP5BC25v2tA4rW4h");
+}
+
+pub mod loader_v3_permissioned_extend_program {
+    solana_pubkey::declare_id!("YbbRLkvenrocjGPGyoQE4wjnvYzTgfsk38NFmcYK7a5");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2102,10 +2104,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0204: Slashable event verification",
         ),
         (
-            enable_extend_program_checked::id(),
-            "Enable ExtendProgramChecked instruction",
-        ),
-        (
             formalize_loaded_transaction_data_size::id(),
             "SIMD-0186: Loaded transaction data size specification",
         ),
@@ -2194,6 +2192,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_programdata_account_check_migration::id(),
             "SIMD-0444: Relax program data account check in migration",
+        ),
+        (
+            loader_v3_permissioned_extend_program::id(),
+            "SIMD-0431: Loader V3: Permissioned Extend Program",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

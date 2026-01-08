@@ -5,11 +5,10 @@ use {
     solana_instruction::error::InstructionError,
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
-        instruction::extend_program_checked, state::UpgradeableLoaderState,
+        instruction::extend_program, state::UpgradeableLoaderState,
     },
     solana_program_test::*,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader_upgradeable::id,
     solana_signer::Signer,
     solana_system_interface::{
         error::SystemError, instruction as system_instruction, program as system_program,
@@ -59,7 +58,7 @@ async fn test_extend_program() {
     let recent_blockhash = context.last_blockhash;
     const ADDITIONAL_BYTES: u32 = 42;
     let transaction = Transaction::new_signed_with_payer(
-        &[extend_program_checked(
+        &[extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer.pubkey()),
@@ -120,7 +119,7 @@ async fn test_failed_extend_twice_in_same_slot() {
     let recent_blockhash = context.last_blockhash;
     const ADDITIONAL_BYTES: u32 = 42;
     let transaction = Transaction::new_signed_with_payer(
-        &[extend_program_checked(
+        &[extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer.pubkey()),
@@ -148,7 +147,7 @@ async fn test_failed_extend_twice_in_same_slot() {
         .unwrap();
     // Extending the program in the same slot should fail
     let transaction = Transaction::new_signed_with_payer(
-        &[extend_program_checked(
+        &[extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer.pubkey()),
@@ -207,7 +206,7 @@ async fn test_failed_extend_upgrade_authority_did_not_sign() {
     let recent_blockhash = context.last_blockhash;
     const ADDITIONAL_BYTES: u32 = 42;
     let transaction = Transaction::new_signed_with_payer(
-        &[extend_program_checked(
+        &[extend_program(
             &program_address,
             &payer.pubkey(),
             Some(&payer.pubkey()),
@@ -227,7 +226,7 @@ async fn test_failed_extend_upgrade_authority_did_not_sign() {
         TransactionError::InstructionError(0, InstructionError::IncorrectAuthority)
     );
 
-    let mut ix = extend_program_checked(
+    let mut ix = extend_program(
         &program_address,
         &upgrade_authority.pubkey(),
         Some(&payer.pubkey()),
@@ -282,7 +281,7 @@ async fn test_extend_program_not_upgradeable() {
     let payer_address = context.payer.pubkey();
     assert_ix_error(
         &mut context,
-        extend_program_checked(&program_address, &payer_address, Some(&payer_address), 42),
+        extend_program(&program_address, &payer_address, Some(&payer_address), 42),
         None,
         InstructionError::Immutable,
         "should fail because the program data account isn't upgradeable",
@@ -322,7 +321,7 @@ async fn test_extend_program_by_zero_bytes() {
     let payer_address = context.payer.pubkey();
     assert_ix_error(
         &mut context,
-        extend_program_checked(
+        extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer_address),
@@ -367,7 +366,7 @@ async fn test_extend_program_past_max_size() {
     let payer_address = context.payer.pubkey();
     assert_ix_error(
         &mut context,
-        extend_program_checked(
+        extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer_address),
@@ -430,7 +429,7 @@ async fn test_extend_program_with_invalid_payer() {
 
     assert_ix_error(
         &mut context,
-        extend_program_checked(
+        extend_program(
             &program_address,
             &upgrade_authority_address,
             Some(&payer_with_insufficient_funds.pubkey()),
@@ -444,7 +443,7 @@ async fn test_extend_program_with_invalid_payer() {
 
     assert_ix_error(
         &mut context,
-        extend_program_checked(
+        extend_program(
             &program_address,
             &upgrade_authority_address,
             Some(&payer_with_invalid_owner.pubkey()),
@@ -456,7 +455,7 @@ async fn test_extend_program_with_invalid_payer() {
     )
     .await;
 
-    let mut ix = extend_program_checked(
+    let mut ix = extend_program(
         &program_address,
         &upgrade_authority_address,
         Some(&payer_with_sufficient_funds.pubkey()),
@@ -520,7 +519,7 @@ async fn test_extend_program_without_payer() {
 
     assert_ix_error(
         &mut context,
-        extend_program_checked(&program_address, &upgrade_authority.pubkey(), None, 1024),
+        extend_program(&program_address, &upgrade_authority.pubkey(), None, 1024),
         Some(&upgrade_authority),
         InstructionError::MissingAccount,
         "should fail because program data has insufficient funds to cover rent",
@@ -543,7 +542,7 @@ async fn test_extend_program_without_payer() {
                 &programdata_address,
                 min_balance_increase_for_extend,
             ),
-            extend_program_checked(
+            extend_program(
                 &program_address,
                 &upgrade_authority.pubkey(),
                 None,
@@ -598,7 +597,7 @@ async fn test_extend_program_with_invalid_system_program() {
     .await;
 
     let payer_address = context.payer.pubkey();
-    let mut ix = extend_program_checked(
+    let mut ix = extend_program(
         &program_address,
         &upgrade_authority.pubkey(),
         Some(&payer_address),
@@ -657,7 +656,7 @@ async fn test_extend_program_with_mismatch_program_data() {
     )
     .await;
 
-    let mut ix = extend_program_checked(
+    let mut ix = extend_program(
         &program_address,
         &upgrade_authority.pubkey(),
         Some(&payer_address),
@@ -714,7 +713,7 @@ async fn test_extend_program_with_readonly_program_data() {
     )
     .await;
 
-    let mut ix = extend_program_checked(
+    let mut ix = extend_program(
         &program_address,
         &upgrade_authority.pubkey(),
         Some(&payer_address),
@@ -772,7 +771,7 @@ async fn test_extend_program_with_invalid_program_data_state() {
 
     assert_ix_error(
         &mut context,
-        extend_program_checked(
+        extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer_address),
@@ -818,7 +817,7 @@ async fn test_extend_program_with_invalid_program_data_owner() {
 
     assert_ix_error(
         &mut context,
-        extend_program_checked(&program_address, &payer_address, Some(&payer_address), 1024),
+        extend_program(&program_address, &payer_address, Some(&payer_address), 1024),
         None,
         InstructionError::InvalidAccountOwner,
         "should fail because the program data account owner isn't valid",
@@ -856,7 +855,7 @@ async fn test_extend_program_with_readonly_program() {
     )
     .await;
 
-    let mut ix = extend_program_checked(
+    let mut ix = extend_program(
         &program_address,
         &upgrade_authority.pubkey(),
         Some(&payer_address),
@@ -916,7 +915,7 @@ async fn test_extend_program_with_invalid_program_owner() {
 
     assert_ix_error(
         &mut context,
-        extend_program_checked(
+        extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer_address),
@@ -962,7 +961,7 @@ async fn test_extend_program_with_invalid_program_state() {
 
     assert_ix_error(
         &mut context,
-        extend_program_checked(
+        extend_program(
             &program_address,
             &upgrade_authority.pubkey(),
             Some(&payer_address),

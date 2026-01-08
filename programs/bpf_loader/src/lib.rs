@@ -1060,26 +1060,11 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
-            if invoke_context
+            // SIMD-0431: When feature is active, require authority check.
+            let check_authority = invoke_context
                 .get_feature_set()
-                .enable_extend_program_checked
-            {
-                ic_logger_msg!(
-                    log_collector,
-                    "ExtendProgram was superseded by ExtendProgramChecked"
-                );
-                return Err(InstructionError::InvalidInstructionData);
-            }
-            common_extend_program(invoke_context, additional_bytes, false)?;
-        }
-        UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
-            if !invoke_context
-                .get_feature_set()
-                .enable_extend_program_checked
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-            common_extend_program(invoke_context, additional_bytes, true)?;
+                .loader_v3_permissioned_extend_program;
+            common_extend_program(invoke_context, additional_bytes, check_authority)?;
         }
         UpgradeableLoaderInstruction::Migrate => {
             if !invoke_context.get_feature_set().enable_loader_v4 {
