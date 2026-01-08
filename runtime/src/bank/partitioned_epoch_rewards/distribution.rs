@@ -13,10 +13,10 @@ use {
     log::error,
     serde::{Deserialize, Serialize},
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::stake_rewards::StakeReward,
+    solana_accounts_db::stake_rewards::{StakeReward, StakeRewardInfo},
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
-    solana_reward_info::{RewardInfo, RewardType},
+    solana_reward_info::RewardType,
     solana_stake_interface::state::{Delegation, StakeStateV2},
     std::sync::{atomic::Ordering::Relaxed, Arc},
     thiserror::Error,
@@ -185,7 +185,7 @@ impl Bank {
         stake_rewards
             .iter()
             .filter(|x| x.get_stake_reward() > 0)
-            .for_each(|x| rewards.push((x.stake_pubkey, x.stake_reward_info)));
+            .for_each(|x| rewards.push((x.stake_pubkey, x.stake_reward_info.into())));
         rewards.len().saturating_sub(initial_len)
     }
 
@@ -225,7 +225,7 @@ impl Bank {
             .map_err(|_| DistributionError::UnableToSetState)?;
         Ok(StakeReward {
             stake_pubkey: partitioned_stake_reward.stake_pubkey,
-            stake_reward_info: RewardInfo {
+            stake_reward_info: StakeRewardInfo {
                 reward_type: RewardType::Staking,
                 lamports: i64::try_from(partitioned_stake_reward.stake_reward).unwrap(),
                 post_balance: account.lamports(),
@@ -317,6 +317,7 @@ mod tests {
                 tests::create_genesis_config,
             },
             inflation_rewards::points::PointValue,
+            reward_info::RewardInfo,
             stake_utils,
         },
         rand::Rng,
@@ -326,7 +327,7 @@ mod tests {
         solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_rent::Rent,
-        solana_reward_info::{RewardInfo, RewardType},
+        solana_reward_info::RewardType,
         solana_stake_interface::{
             stake_flags::StakeFlags,
             state::{Meta, Stake},
@@ -596,7 +597,7 @@ mod tests {
                     assert_eq!(
                         (
                             &expected_stake_reward.stake_pubkey,
-                            &expected_stake_reward.stake_reward_info
+                            &RewardInfo::from(expected_stake_reward.stake_reward_info),
                         ),
                         (k, reward_info)
                     );
@@ -718,7 +719,7 @@ mod tests {
         let expected_stake_reward = StakeReward {
             stake_pubkey: successful_account,
             stake_account: expected_stake_account,
-            stake_reward_info: RewardInfo {
+            stake_reward_info: StakeRewardInfo {
                 reward_type: RewardType::Staking,
                 lamports: stake_reward as i64,
                 post_balance: expected_lamports,
