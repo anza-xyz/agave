@@ -73,7 +73,7 @@ pub fn adjust_nofile_limit(enforce_nofile_limit: bool) -> Result<(), ResourceLim
 
 /// Check kernel memory lock limit and tires to increase it if necessary.
 ///
-/// Returns `Ok(false)` when current limit is below `min_required` and cannot be increased.
+/// Returns `false` when current limit is below `min_required` and cannot be increased.
 #[cfg(target_os = "linux")]
 fn try_adjust_ulimit_memlock(min_required: usize) -> bool {
     fn get_memlock() -> libc::rlimit {
