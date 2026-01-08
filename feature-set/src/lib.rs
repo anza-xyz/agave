@@ -178,6 +178,8 @@ impl FeatureSet {
             create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
             bls_pubkey_management_in_vote_account: self
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
+            loader_v3_relax_program_buffer_constraints: self
+                .is_active(&loader_v3_relax_program_buffer_constraints::id()),
         }
     }
 }
@@ -1224,6 +1226,10 @@ pub mod relax_programdata_account_check_migration {
     solana_pubkey::declare_id!("rexav5eNTUSNT1K2N7cfRjnthwhcP5BC25v2tA4rW4h");
 }
 
+pub mod loader_v3_relax_program_buffer_constraints {
+    solana_pubkey::declare_id!("H5AgGhTzvHp2GH9SVGZYBpjeQPy1V9bqYQ4MmTtiCWr9");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2194,6 +2200,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_programdata_account_check_migration::id(),
             "SIMD-0444: Relax program data account check in migration",
+        ),
+        (
+            loader_v3_relax_program_buffer_constraints::id(),
+            "SIMD-0430: Loader V3: Relax Program Buffer Constraints",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
