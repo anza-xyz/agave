@@ -10058,12 +10058,11 @@ dependencies = [
 
 [[package]]
 name = "solana-reward-info"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82be7946105c2ee6be9f9ee7bd18a068b558389221d29efa92b906476102bfcc"
+version = "4.0.0-alpha.0"
 dependencies = [
  "serde",
- "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
 ]
 
 [[package]]
