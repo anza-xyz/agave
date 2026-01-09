@@ -39,6 +39,6 @@ jobs:
           exempt-pr-labels: do-not-close,feature-gate
           operations-per-run: ${{ github.event_name == 'pull_request' && 1000 || 900}}
           stale-issue-label: stale
-          stale-issue-message: 'This issue is stale because it has been open 60 days with no activity. Remove stale label or comment or this will be closed in 7 days.'
+          stale-issue-message: 'This issue is stale because it has been open 365 days with no activity. Remove stale label or comment or this will be closed in 7 days.'
           stale-pr-label: stale
           stale-pr-message: 'This pull request is stale because it has been open 60 days with no activity. Remove stale label or comment or this will be closed in 7 days.'
