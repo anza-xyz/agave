@@ -9,13 +9,14 @@ use {
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
+            outstanding_requests::OutstandingRequests,
             repair_handler::RepairHandler,
             repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairStats},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
     },
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
     bincode::{Options, serialize},
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lazy_lru::LruCache,
@@ -36,7 +37,10 @@ use {
     },
     solana_hash::{HASH_BYTES, Hash},
     solana_keypair::{Keypair, signable::Signable},
-    solana_ledger::shred::{self, Nonce, SIZE_OF_NONCE, ShredFetchStats},
+    solana_ledger::shred::{
+        self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
+        ShredFetchStats, ShredType, layout::get_merkle_root, merkle_tree,
+    },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::{
@@ -45,6 +49,7 @@ use {
     solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_runtime::bank_forks::SharableBanks,
+    solana_sha256_hasher::hashv,
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
     solana_streamer::{
@@ -102,6 +107,14 @@ pub enum ShredRepairType {
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
     Shred(Slot, u64),
+    /// Requesting the missing shred at a particular index for a specific block ID
+    ShredForBlockId {
+        slot: Slot,
+        index: u32,
+        fec_set_merkle_root: Hash,
+        // Double merkle block id
+        block_id: Hash,
+    },
 }
 
 impl ShredRepairType {
@@ -110,6 +123,7 @@ impl ShredRepairType {
             ShredRepairType::Orphan(slot)
             | ShredRepairType::HighestShred(slot, _)
             | ShredRepairType::Shred(slot, _) => *slot,
+            ShredRepairType::ShredForBlockId { slot, .. } => *slot,
         }
     }
 }
@@ -119,7 +133,9 @@ impl RequestResponse for ShredRepairType {
     fn num_expected_responses(&self) -> u32 {
         match self {
             ShredRepairType::Orphan(_) => MAX_ORPHAN_REPAIR_RESPONSES as u32,
-            ShredRepairType::Shred(_, _) | ShredRepairType::HighestShred(_, _) => 1,
+            ShredRepairType::Shred(_, _)
+            | ShredRepairType::HighestShred(_, _)
+            | ShredRepairType::ShredForBlockId { .. } => 1,
         }
     }
     fn verify_response(&self, shred: &Self::Response) -> bool {
@@ -137,6 +153,17 @@ impl RequestResponse for ShredRepairType {
             }
             ShredRepairType::Shred(slot, index) => {
                 shred_slot == *slot && get_shred_index(shred) == Some(*index)
+            }
+            ShredRepairType::ShredForBlockId {
+                slot,
+                index,
+                fec_set_merkle_root,
+                ..
+            } => {
+                shred_slot == *slot
+                    && matches!(shred::layout::get_shred_type(shred), Ok(ShredType::Data))
+                    && shred::layout::get_index(shred) == Some(*index)
+                    && get_merkle_root(shred) == Some(*fec_set_merkle_root)
             }
         }
     }
@@ -169,6 +196,127 @@ impl RequestResponse for AncestorHashesRepairType {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BlockIdRepairType {
+    ParentAndFecSetCount {
+        slot: Slot,
+        block_id: Hash,
+    },
+
+    FecSetRoot {
+        slot: Slot,
+        block_id: Hash,
+        fec_set_index: u32,
+    },
+}
+
+#[allow(dead_code)]
+impl BlockIdRepairType {
+    pub(crate) fn block(&self) -> Block {
+        match self {
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => (*slot, *block_id),
+            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => (*slot, *block_id),
+        }
+    }
+
+    pub(crate) fn slot(&self) -> Slot {
+        self.block().0
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum BlockIdRepairResponse {
+    ParentFecSetCount {
+        fec_set_count: u32,
+        parent_info: (Slot, Hash),
+        parent_proof: Vec<u8>,
+    },
+
+    FecSetRoot {
+        fec_set_root: Hash,
+        fec_set_proof: Vec<u8>,
+    },
+
+    Ping {
+        ping: Ping,
+    },
+}
+
+impl RequestResponse for BlockIdRepairType {
+    type Response = BlockIdRepairResponse;
+
+    fn num_expected_responses(&self) -> u32 {
+        // The only variable in the response are the merkle proofs.
+        // Even assuming an extreme of u64::MAX fec sets, that corresponds to
+        // 63 * 20 = 1260 bytes for a proof which fits in one packet.
+        1
+    }
+
+    fn verify_response(&self, response: &Self::Response) -> bool {
+        match (self, response) {
+            (_, Self::Response::Ping { ping }) => ping.verify(),
+            (
+                Self::ParentAndFecSetCount {
+                    slot: _slot,
+                    block_id,
+                },
+                Self::Response::ParentFecSetCount {
+                    fec_set_count,
+                    parent_info: (parent_slot, parent_block_id),
+                    parent_proof,
+                },
+            ) => {
+                if *fec_set_count > MAX_FEC_SETS_PER_SLOT {
+                    return false;
+                }
+
+                // + 1 here to account for the parent info which is the final leaf of the tree
+                let proof_size = merkle_tree::get_proof_size(*fec_set_count as usize + 1);
+                if parent_proof.len()
+                    != proof_size as usize * merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY
+                {
+                    return false;
+                }
+
+                let parent_info_leaf =
+                    hashv(&[&parent_slot.to_le_bytes(), parent_block_id.as_ref()]);
+                merkle_tree::verify_merkle_proof(
+                    parent_info_leaf,
+                    *fec_set_count as usize,
+                    parent_proof,
+                    *block_id,
+                )
+                .is_ok()
+            }
+
+            (
+                Self::FecSetRoot {
+                    slot: _slot,
+                    block_id,
+                    fec_set_index,
+                },
+                Self::Response::FecSetRoot {
+                    fec_set_root,
+                    fec_set_proof,
+                },
+            ) => {
+                debug_assert_eq!(*fec_set_index as usize % DATA_SHREDS_PER_FEC_BLOCK, 0);
+                // Convert from shred-space to leaf-index
+                let leaf_index = *fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
+                merkle_tree::verify_merkle_proof(
+                    *fec_set_root,
+                    leaf_index,
+                    fec_set_proof,
+                    *block_id,
+                )
+                .is_ok()
+            }
+
+            (Self::ParentAndFecSetCount { .. }, _) | (Self::FecSetRoot { .. }, _) => false,
+        }
+    }
+}
+
 #[derive(Default)]
 struct ServeRepairStats {
     total_requests: usize,
@@ -187,7 +335,13 @@ struct ServeRepairStats {
     orphan: usize,
     pong: usize,
     ancestor_hashes: usize,
+    parent: usize,
+    fec_set_root: usize,
+    window_index_for_block_id: usize,
     window_index_misses: usize,
+    parent_misses: usize,
+    fec_set_root_misses: usize,
+    window_index_for_block_id_misses: usize,
     ping_cache_check_failed: usize,
     pings_sent: usize,
     decode_time_us: u64,
@@ -237,17 +391,26 @@ impl RepairRequestHeader {
             nonce,
         }
     }
+
+    /// Returns the nonce for this repair request.
+    pub fn nonce(&self) -> Nonce {
+        self.nonce
+    }
 }
 
 type Ping = ping_pong::Ping<REPAIR_PING_TOKEN_SIZE>;
 type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 
 /// Window protocol messages
+/// Appending new messages here is safe as long as it is feature gated.
+/// Changing the format of an existing message is possible but not advised.
+/// Removing a message is possible by first removing the sender and feature gating the response.
+/// The message can then be removed once the feature gate is active and there are no responders.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample, StableAbi),
     frozen_abi(
-        api_digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ",
+        api_digest = "2wGmauKxLKD81QzmBo7CtW1tKVr9P5WgMs7RzJA9kvpd",
         abi_digest = "7DpV7t5vZAWSZEshJ4hAVTHnR37jzLwUMYhs1fGrX3G5"
     )
 )]
@@ -278,6 +441,24 @@ pub enum RepairProtocol {
     AncestorHashes {
         header: RepairRequestHeader,
         slot: Slot,
+    },
+    ParentAndFecSetCount {
+        header: RepairRequestHeader,
+        slot: Slot,
+        block_id: Hash,
+    },
+    FecSetRoot {
+        header: RepairRequestHeader,
+        slot: Slot,
+        block_id: Hash,
+        fec_set_index: u32,
+    },
+    WindowIndexForBlockId {
+        header: RepairRequestHeader,
+        slot: Slot,
+        shred_index: u32,
+        fec_set_merkle_root: Hash,
+        block_id: Hash,
     },
 }
 
@@ -350,10 +531,13 @@ impl RepairProtocol {
             | Self::LegacyOrphanWithNonce
             | Self::LegacyAncestorHashes => None,
             Self::Pong(pong) => Some(pong.from()),
-            Self::WindowIndex { header, .. } => Some(&header.sender),
-            Self::HighestWindowIndex { header, .. } => Some(&header.sender),
-            Self::Orphan { header, .. } => Some(&header.sender),
-            Self::AncestorHashes { header, .. } => Some(&header.sender),
+            Self::WindowIndex { header, .. }
+            | Self::HighestWindowIndex { header, .. }
+            | Self::Orphan { header, .. }
+            | Self::AncestorHashes { header, .. }
+            | Self::ParentAndFecSetCount { header, .. }
+            | Self::FecSetRoot { header, .. }
+            | Self::WindowIndexForBlockId { header, .. } => Some(&header.sender),
         }
     }
 
@@ -370,7 +554,10 @@ impl RepairProtocol {
             | Self::WindowIndex { .. }
             | Self::HighestWindowIndex { .. }
             | Self::Orphan { .. }
-            | Self::AncestorHashes { .. } => true,
+            | Self::AncestorHashes { .. }
+            | Self::ParentAndFecSetCount { .. }
+            | Self::FecSetRoot { .. }
+            | Self::WindowIndexForBlockId { .. } => true,
         }
     }
 
@@ -378,7 +565,10 @@ impl RepairProtocol {
         match self {
             RepairProtocol::WindowIndex { .. }
             | RepairProtocol::HighestWindowIndex { .. }
-            | RepairProtocol::AncestorHashes { .. } => 1,
+            | RepairProtocol::AncestorHashes { .. }
+            | RepairProtocol::ParentAndFecSetCount { .. }
+            | RepairProtocol::FecSetRoot { .. }
+            | RepairProtocol::WindowIndexForBlockId { .. } => 1,
             RepairProtocol::Orphan { .. } => MAX_ORPHAN_REPAIR_RESPONSES,
             RepairProtocol::Pong(_) => 0, // no response
             RepairProtocol::LegacyWindowIndex
@@ -601,6 +791,76 @@ impl ServeRepair {
                     stats.pong += 1;
                     ping_cache.add(pong, *from_addr, Instant::now());
                     (None, "Pong")
+                }
+                RepairProtocol::ParentAndFecSetCount {
+                    header: RepairRequestHeader { nonce, .. },
+                    slot,
+                    block_id,
+                } => {
+                    stats.parent += 1;
+                    let response = if self.migration_status.should_allow_block_markers(*slot) {
+                        let response = self.repair_handler.run_parent_fec_set_count(
+                            recycler, from_addr, *slot, *block_id, *nonce,
+                        );
+                        if response.is_none() {
+                            stats.parent_misses += 1;
+                        }
+                        response
+                    } else {
+                        None
+                    };
+                    (response, "Parent")
+                }
+                RepairProtocol::FecSetRoot {
+                    header: RepairRequestHeader { nonce, .. },
+                    slot,
+                    block_id,
+                    fec_set_index,
+                } => {
+                    stats.fec_set_root += 1;
+                    let response = if self.migration_status.should_allow_block_markers(*slot) {
+                        let response = self.repair_handler.run_fec_set_root(
+                            recycler,
+                            from_addr,
+                            *slot,
+                            *block_id,
+                            *fec_set_index,
+                            *nonce,
+                        );
+                        if response.is_none() {
+                            stats.fec_set_root_misses += 1;
+                        }
+                        response
+                    } else {
+                        None
+                    };
+                    (response, "FecSetRoot")
+                }
+                RepairProtocol::WindowIndexForBlockId {
+                    header: RepairRequestHeader { nonce, .. },
+                    slot,
+                    shred_index,
+                    fec_set_merkle_root: _,
+                    block_id,
+                } => {
+                    stats.window_index_for_block_id += 1;
+                    let response = if self.migration_status.should_allow_block_markers(*slot) {
+                        let batch = self.repair_handler.run_window_request_for_block_id(
+                            recycler,
+                            from_addr,
+                            *slot,
+                            u64::from(*shred_index),
+                            *block_id,
+                            *nonce,
+                        );
+                        if batch.is_none() {
+                            stats.window_index_for_block_id_misses += 1;
+                        }
+                        batch
+                    } else {
+                        None
+                    };
+                    (response, "WindowIndexForBlockIdWithNonce")
                 }
                 RepairProtocol::LegacyWindowIndex
                 | RepairProtocol::LegacyWindowIndexWithNonce
@@ -908,6 +1168,13 @@ impl ServeRepair {
             ),
             ("self_repair", stats.err_self_repair, i64),
             ("window_index", stats.window_index, i64),
+            ("parent", stats.parent, i64),
+            ("fec_set_root", stats.fec_set_root, i64),
+            (
+                "window_index_for_block_id",
+                stats.window_index_for_block_id,
+                i64
+            ),
             (
                 "request-highest-window-index",
                 stats.highest_window_index,
@@ -921,6 +1188,13 @@ impl ServeRepair {
             ),
             ("pong", stats.pong, i64),
             ("window_index_misses", stats.window_index_misses, i64),
+            ("parent_misses", stats.parent_misses, i64),
+            ("fec_set_root_misses", stats.fec_set_root_misses, i64),
+            (
+                "window_index_for_block_id_misses",
+                stats.window_index_for_block_id_misses,
+                i64
+            ),
             (
                 "ping_cache_check_failed",
                 stats.ping_cache_check_failed,
@@ -1017,7 +1291,10 @@ impl ServeRepair {
             RepairProtocol::WindowIndex { header, .. }
             | RepairProtocol::HighestWindowIndex { header, .. }
             | RepairProtocol::Orphan { header, .. }
-            | RepairProtocol::AncestorHashes { header, .. } => {
+            | RepairProtocol::AncestorHashes { header, .. }
+            | RepairProtocol::ParentAndFecSetCount { header, .. }
+            | RepairProtocol::FecSetRoot { header, .. }
+            | RepairProtocol::WindowIndexForBlockId { header, .. } => {
                 if &header.recipient != my_id {
                     return Err(Error::from(RepairVerifyError::IdMismatch));
                 }
@@ -1073,8 +1350,13 @@ impl ServeRepair {
             match request {
                 RepairProtocol::WindowIndex { .. }
                 | RepairProtocol::HighestWindowIndex { .. }
-                | RepairProtocol::Orphan { .. } => {
+                | RepairProtocol::Orphan { .. }
+                | RepairProtocol::WindowIndexForBlockId { .. } => {
                     let ping = RepairResponse::Ping(ping);
+                    Packet::from_data(Some(from_addr), ping).ok()
+                }
+                RepairProtocol::ParentAndFecSetCount { .. } | RepairProtocol::FecSetRoot { .. } => {
+                    let ping = BlockIdRepairResponse::Ping { ping };
                     Packet::from_data(Some(from_addr), ping).ok()
                 }
                 RepairProtocol::AncestorHashes { .. } => {
@@ -1245,6 +1527,52 @@ impl ServeRepair {
         Ok(Some((peer.serve_repair, out)))
     }
 
+    /// Similar to [`Self::repair_request`] but for [`BlockIdRepairType`] requests.
+    /// Uses stake-weighted peer selection rather than cluster_slots weights.
+    #[allow(dead_code)]
+    pub(crate) fn block_id_repair_request(
+        &self,
+        repair_validators: &Option<HashSet<Pubkey>>,
+        repair_request: BlockIdRepairType,
+        peers_cache: &mut LruCache<Slot, RepairPeers>,
+        outstanding_requests: &mut OutstandingRequests<BlockIdRepairType>,
+        identity_keypair: &Keypair,
+        staked_nodes: &HashMap<Pubkey, u64>,
+    ) -> Result<(Vec<u8>, SocketAddr)> {
+        let slot = repair_request.slot();
+        let repair_peers = match peers_cache.get(&slot) {
+            Some(entry) if entry.asof.elapsed() < REPAIR_PEERS_CACHE_TTL => entry,
+            _ => {
+                peers_cache.pop(&slot);
+                let repair_peers =
+                    self.repair_peers(repair_validators, slot, &identity_keypair.pubkey());
+                let weights: Vec<u64> = repair_peers
+                    .iter()
+                    .map(|peer| staked_nodes.get(peer.pubkey()).copied().unwrap_or(0))
+                    .collect();
+                let repair_peers = RepairPeers::new(Instant::now(), &repair_peers, &weights)?;
+                peers_cache.put(slot, repair_peers);
+                peers_cache.get(&slot).unwrap()
+            }
+        };
+        let peer = repair_peers.sample(&mut rand::rng());
+        let nonce = outstanding_requests.add_request(repair_request, timestamp());
+
+        let out = self.map_block_id_repair_request(
+            &repair_request,
+            &peer.pubkey,
+            nonce,
+            identity_keypair,
+        )?;
+        debug!(
+            "Sending block_id repair request from {} to {} for {:#?}",
+            identity_keypair.pubkey(),
+            peer.pubkey,
+            repair_request
+        );
+        Ok((out, peer.serve_repair))
+    }
+
     pub(crate) fn repair_request_ancestor_hashes_sample_peers(
         &self,
         slot: Slot,
@@ -1334,6 +1662,56 @@ impl ServeRepair {
                     slot: *slot,
                 }
             }
+            ShredRepairType::ShredForBlockId {
+                slot,
+                index,
+                fec_set_merkle_root,
+                block_id,
+            } => RepairProtocol::WindowIndexForBlockId {
+                header,
+                slot: *slot,
+                shred_index: *index,
+                fec_set_merkle_root: *fec_set_merkle_root,
+                block_id: *block_id,
+            },
+        };
+        Self::repair_proto_to_bytes(&request_proto, identity_keypair)
+    }
+
+    /// Transforms a [`BlockIdRepairType`] into a signed repair protocol message.
+    #[allow(dead_code)]
+    pub(crate) fn map_block_id_repair_request(
+        &self,
+        repair_request: &BlockIdRepairType,
+        repair_peer_id: &Pubkey,
+        nonce: Nonce,
+        identity_keypair: &Keypair,
+    ) -> Result<Vec<u8>> {
+        let header = RepairRequestHeader {
+            signature: Signature::default(),
+            sender: identity_keypair.pubkey(),
+            recipient: *repair_peer_id,
+            timestamp: timestamp(),
+            nonce,
+        };
+        let request_proto = match repair_request {
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => {
+                RepairProtocol::ParentAndFecSetCount {
+                    header,
+                    slot: *slot,
+                    block_id: *block_id,
+                }
+            }
+            BlockIdRepairType::FecSetRoot {
+                slot,
+                block_id,
+                fec_set_index,
+            } => RepairProtocol::FecSetRoot {
+                header,
+                slot: *slot,
+                block_id: *block_id,
+                fec_set_index: *fec_set_index,
+            },
         };
         Self::repair_proto_to_bytes(&request_proto, identity_keypair)
     }
@@ -2362,12 +2740,30 @@ mod tests {
             );
             shreds.remove(index as usize)
         }
+        fn new_test_coding_shred(slot: Slot, index: u32) -> Shred {
+            let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
+            let keypair = Keypair::new();
+            let reed_solomon_cache = ReedSolomonCache::default();
+            let (_, mut shreds) = shredder.entries_to_merkle_shreds_for_tests(
+                &keypair,
+                &[],
+                true,
+                Hash::default(),
+                0,
+                0,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            );
+            shreds.remove(index as usize)
+        }
+
         let repair = ShredRepairType::Orphan(9);
-        // Ensure new options are added to this test
         match repair {
             ShredRepairType::Orphan(_)
             | ShredRepairType::HighestShred(_, _)
-            | ShredRepairType::Shred(_, _) => (),
+            | ShredRepairType::Shred(_, _)
+            | ShredRepairType::ShredForBlockId { .. } => (),
+            // Ensure new options are added below to this test
         };
 
         let slot = 9;
@@ -2401,6 +2797,34 @@ mod tests {
         assert!(request.verify_response(shred.payload()));
         let shred = new_test_data_shred(slot, index + 1);
         assert!(!request.verify_response(shred.payload()));
+        let shred = new_test_data_shred(slot + 1, index);
+        assert!(!request.verify_response(shred.payload()));
+
+        // ShredForBlockId
+        let shred = new_test_data_shred(slot, index);
+        let merkle_root = shred.merkle_root().expect("No more legacy shreds");
+        let request = ShredRepairType::ShredForBlockId {
+            slot,
+            index,
+            fec_set_merkle_root: merkle_root,
+            block_id: Hash::new_unique(),
+        };
+        assert!(request.verify_response(shred.payload()));
+        // bad fec set root
+        let request = ShredRepairType::ShredForBlockId {
+            slot,
+            index,
+            fec_set_merkle_root: Hash::new_unique(),
+            block_id: Hash::new_unique(),
+        };
+        assert!(!request.verify_response(shred.payload()));
+        // coding shred
+        let shred = new_test_coding_shred(slot, index);
+        assert!(!request.verify_response(shred.payload()));
+        // bad index
+        let shred = new_test_data_shred(slot, index + 1);
+        assert!(!request.verify_response(shred.payload()));
+        // bad slot
         let shred = new_test_data_shred(slot + 1, index);
         assert!(!request.verify_response(shred.payload()));
     }

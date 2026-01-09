@@ -570,7 +570,6 @@ impl Blockstore {
 
     /// Checks all available block versions, if we have a *complete* block for
     /// `block_id`, returns the location where it is stored
-    #[allow(dead_code)]
     pub fn get_block_location(&self, slot: Slot, block_id: Hash) -> Result<Option<BlockLocation>> {
         for location in [
             BlockLocation::Original,
@@ -633,6 +632,25 @@ impl Blockstore {
             .unwrap_or_else(|| Index::new(slot));
         index.data_mut().insert(shred_index as u64);
         self.alt_index_cf.put((slot, block_id), &index)
+    }
+
+    /// Test helper: directly set the double merkle root for a slot/location.
+    /// This simulates Turbine completing for a slot with a specific block_id.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_double_merkle_root(
+        &self,
+        slot: Slot,
+        block_location: BlockLocation,
+        double_merkle_root: Hash,
+    ) -> Result<()> {
+        use crate::blockstore_meta::DoubleMerkleMeta;
+        let meta = DoubleMerkleMeta {
+            double_merkle_root,
+            fec_set_count: 1,       // Minimal valid value
+            proofs: ByteBuf::new(), // Empty proofs for testing
+        };
+        self.double_merkle_meta_cf
+            .put((slot, block_location), &meta)
     }
 
     /// Returns true if the specified slot is full.
@@ -730,7 +748,7 @@ impl Blockstore {
         self.merkle_root_meta_cf.get(erasure_set.store_key())
     }
 
-    fn merkle_root_meta_from_location(
+    pub fn merkle_root_meta_from_location(
         &self,
         erasure_set: ErasureSetId,
         location: BlockLocation,
@@ -766,6 +784,26 @@ impl Blockstore {
                 merkle_root_meta,
             ),
         }
+    }
+
+    /// Gets the double merkle meta for the given block denoted by block id
+    /// If the meta is present but the proofs have not yet been populated - generate and store them
+    /// returning the updated double merkle meta along with the location
+    pub fn get_double_merkle_meta_maybe_populate_proofs_for_block_id(
+        &self,
+        slot: Slot,
+        block_id: Hash,
+    ) -> Result<Option<(DoubleMerkleMeta, BlockLocation)>> {
+        // Find which column this block resides in (if any)
+        let Some(location) = self.get_block_location(slot, block_id)? else {
+            return Ok(None);
+        };
+
+        // Get the doulbe merkle meta - the block must be full, so we can unwrap here
+        let dmm = self
+            .get_double_merkle_meta_maybe_populate_proofs(slot, location)?
+            .expect("block is full, double merkle meta must exist");
+        Ok(Some((dmm, location)))
     }
 
     /// Gets the double merkle meta for the given block.
@@ -1410,7 +1448,7 @@ impl Blockstore {
         merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
         write_batch: &mut WriteBatch,
     ) -> Result<()> {
-        let fec_set_count = (last_index / (DATA_SHREDS_PER_FEC_BLOCK as u64) + 1) as usize;
+        let fec_set_count = last_index as u32 / (DATA_SHREDS_PER_FEC_BLOCK as u32) + 1;
         let merkle_tree = self.build_double_merkle_tree(
             slot,
             location,
@@ -1440,7 +1478,7 @@ impl Blockstore {
         &self,
         slot: Slot,
         location: BlockLocation,
-        fec_set_count: usize,
+        fec_set_count: u32,
         slot_metas: Option<&HashMap<(BlockLocation, Slot), SlotMetaWorkingSetEntry>>,
         merkle_root_metas: Option<
             &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
@@ -1461,7 +1499,7 @@ impl Blockstore {
         // Collect merkle roots for each FEC set
         let merkle_tree_leaves = (0..fec_set_count)
             .map(|i| {
-                let fec_set_index = (i * DATA_SHREDS_PER_FEC_BLOCK) as u32;
+                let fec_set_index = i * DATA_SHREDS_PER_FEC_BLOCK as u32;
                 let erasure_set = ErasureSetId::new(slot, fec_set_index);
                 self.get_merkle_root_from_tracker_or_db(location, erasure_set, merkle_root_metas)
                     .map_err(|_| shred::Error::InvalidMerkleRoot)
@@ -1473,7 +1511,7 @@ impl Blockstore {
                 parent_block_id.as_ref(),
             ]))));
 
-        MerkleTree::try_new_with_len(merkle_tree_leaves, fec_set_count + 1)
+        MerkleTree::try_new_with_len(merkle_tree_leaves, fec_set_count as usize + 1)
             .map_err(|_| BlockstoreError::MerkleTreeConstructionFailure(slot, location))
     }
 
@@ -1491,7 +1529,7 @@ impl Blockstore {
             None,
             None,
         )?;
-        let tree_size = double_merkle_meta.fec_set_count + 1;
+        let tree_size = double_merkle_meta.fec_set_count as usize + 1;
         let proof_len_bytes = get_proof_size(tree_size) as usize * SIZE_OF_MERKLE_PROOF_ENTRY;
         let mut proofs = ByteBuf::with_capacity(tree_size * proof_len_bytes);
 
@@ -5809,9 +5847,7 @@ pub mod tests {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             shred::{
                 max_ticks_per_n_shreds,
-                merkle_tree::{
-                    MerkleProofEntry, SIZE_OF_MERKLE_PROOF_ENTRY, get_merkle_root, get_proof_size,
-                },
+                merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, verify_merkle_proof},
             },
         },
         assert_matches::assert_matches,
@@ -12197,7 +12233,7 @@ pub mod tests {
             .get_double_merkle_meta_maybe_populate_proofs(slot, block_location)
             .unwrap()
             .unwrap();
-        let proof_size = get_proof_size(double_merkle_meta.fec_set_count + 1) as usize;
+        let proof_size = get_proof_size(double_merkle_meta.fec_set_count as usize + 1) as usize;
         assert_eq!(
             double_merkle_meta.proofs.len(),
             4 * proof_size * SIZE_OF_MERKLE_PROOF_ENTRY
@@ -12206,36 +12242,25 @@ pub mod tests {
         // Verify the proofs
         // FEC sets
         for (fec_set, root) in fec_set_roots.iter().enumerate() {
-            let proof: Vec<_> = double_merkle_meta
-                .get_fec_set_proof(fec_set)
-                .unwrap()
-                .chunks(SIZE_OF_MERKLE_PROOF_ENTRY)
-                .map(<&MerkleProofEntry>::try_from)
-                .map(std::result::Result::unwrap)
-                .collect();
-            assert_eq!(proof_size, proof.len());
-
-            let verified_root = get_merkle_root(fec_set, *root, proof).unwrap();
-            assert_eq!(double_merkle_meta.double_merkle_root, verified_root);
+            verify_merkle_proof(
+                *root,
+                fec_set,
+                double_merkle_meta
+                    .get_fec_set_proof(fec_set as u32)
+                    .unwrap(),
+                double_merkle_meta.double_merkle_root,
+            )
+            .unwrap();
         }
 
         // Parent info - final proof
-        let parent_info_proof: Vec<_> = double_merkle_meta
-            .get_parent_info_proof()
-            .unwrap()
-            .chunks(SIZE_OF_MERKLE_PROOF_ENTRY)
-            .map(<&MerkleProofEntry>::try_from)
-            .map(std::result::Result::unwrap)
-            .collect();
-        assert_eq!(proof_size, parent_info_proof.len());
-
-        let verified_root = get_merkle_root(
-            double_merkle_meta.fec_set_count,
+        verify_merkle_proof(
             parent_info_hash,
-            parent_info_proof,
+            double_merkle_meta.fec_set_count as usize,
+            double_merkle_meta.get_parent_info_proof().unwrap(),
+            double_merkle_meta.double_merkle_root,
         )
         .unwrap();
-        assert_eq!(double_merkle_meta.double_merkle_root, verified_root);
 
         // Slot not full should return None
         let incomplete_slot = 1001;
