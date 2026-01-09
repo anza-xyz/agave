@@ -1,6 +1,6 @@
 use {
     crate::{
-        account_loader::FeesOnlyTransaction,
+        account_loader::{FeesOnlyTransaction, NoOpTransaction},
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
     },
     solana_fee_structure::FeeDetails,
@@ -25,7 +25,7 @@ pub enum ProcessedTransaction {
     /// collected and any nonces are advanceable
     FeesOnly(Box<FeesOnlyTransaction>),
     /// Transactions that cannot modify state but can still be processed
-    NoOp(TransactionError),
+    NoOp(Box<NoOpTransaction>),
 }
 
 impl TransactionProcessingResultExtensions for TransactionProcessingResult {
@@ -63,7 +63,7 @@ impl ProcessedTransaction {
         match self {
             Self::Executed(executed_tx) => executed_tx.execution_details.status.clone(),
             Self::FeesOnly(details) => Err(TransactionError::clone(&details.load_error)),
-            Self::NoOp(err) => Err(err.clone()),
+            Self::NoOp(details) => Err(TransactionError::clone(&details.validation_error)),
         }
     }
 

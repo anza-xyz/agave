@@ -56,7 +56,7 @@ pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub(crate) enum TransactionValidationResult {
     Loadable(ValidatedTransactionDetails),
-    NoOp(TransactionError),
+    NoOp(NoOpTransaction),
     Unprocessable(TransactionError),
 }
 
@@ -71,7 +71,7 @@ pub(crate) enum TransactionLoadResult {
     /// This transaction will be processed but entail no account state changes.
     /// If SIMD-0290 is enabled, invalid fee-payers are processable.
     /// If SIMD-0297 is enabled, invalid nonce accounts are processable.
-    NoOp(TransactionError),
+    NoOp(NoOpTransaction),
     /// Mandatory checks failed; this transaction will be discarded as unprocessable.
     Unprocessable(TransactionError),
 }
@@ -163,6 +163,12 @@ pub struct FeesOnlyTransaction {
     pub load_error: TransactionError,
     pub rollback_accounts: RollbackAccounts,
     pub fee_details: FeeDetails,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct NoOpTransaction {
+    pub validation_error: TransactionError,
+    pub fee_payer_balance: Option<u64>,
 }
 
 // This is an internal SVM type that tracks account changes throughout a
@@ -420,7 +426,7 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 ) -> TransactionLoadResult {
     match validation_result {
         TransactionValidationResult::Unprocessable(e) => TransactionLoadResult::Unprocessable(e),
-        TransactionValidationResult::NoOp(e) => TransactionLoadResult::NoOp(e),
+        TransactionValidationResult::NoOp(tx_details) => TransactionLoadResult::NoOp(tx_details),
         TransactionValidationResult::Loadable(tx_details) => {
             let load_result = load_transaction_accounts(
                 account_loader,
