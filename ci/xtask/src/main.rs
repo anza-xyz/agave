@@ -67,6 +67,7 @@ async fn try_main() -> Result<()> {
         }
         Commands::UpdateCrate(args) => {
             commands::update_crate::run(args)?;
+        }
         Commands::Publish(args) => {
             commands::publish::run(args)?;
         }
