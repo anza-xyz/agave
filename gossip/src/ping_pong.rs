@@ -23,6 +23,13 @@ const KEY_REFRESH_CADENCE: Duration = Duration::from_secs(60);
 const PING_PONG_HASH_PREFIX: &[u8] = "SOLANA_PING_PONG".as_bytes();
 const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
 
+struct IpPingInfo {
+    /// Timestamp of last ping sent to this IP (for rate limiting)
+    last_ping_sent: Option<Instant>,
+    /// Timestamp of last valid pong received from any socket on this IP
+    last_valid_pong: Option<Instant>,
+}
+
 // For backward compatibility we are using a const generic parameter here.
 // N should always be >= 8 and only the first 8 bytes are used. So the new code
 // should only use N == 8.
@@ -64,6 +71,8 @@ pub struct PingCache<const N: usize> {
     // Keyed by SocketAddr to detect port changes (if port changes, no pong found, so we reping).
     pongs: LruCache<SocketAddr, Instant>,
     ping_times: LruCache<IpAddr, Instant>,
+    // IP-level ping/pong tracking
+    ip_ping_info: LruCache<IpAddr, IpPingInfo>,
 }
 
 impl<const N: usize> Ping<N> {
@@ -170,6 +179,7 @@ impl<const N: usize> PingCache<N> {
             pings: LruCache::new(cap),
             pongs: LruCache::new(cap),
             ping_times: LruCache::new(cap),
+            ip_ping_info: LruCache::new(cap),
         }
     }
 
@@ -186,7 +196,24 @@ impl<const N: usize> PingCache<N> {
             return false;
         };
         self.pongs.put(socket, now);
-        if let Some(sent_time) = self.ping_times.pop(&socket.ip()) {
+        let ip = socket.ip();
+        match self.ip_ping_info.peek_mut(&ip) {
+            Some(info) => {
+                info.last_valid_pong = Some(now);
+            }
+            None => {
+                // Entry was evicted. We received a pong, so we must have sent a ping,
+                // but we don't have a record of when.
+                self.ip_ping_info.put(
+                    ip,
+                    IpPingInfo {
+                        last_ping_sent: None,
+                        last_valid_pong: Some(now),
+                    },
+                );
+            }
+        }
+        if let Some(sent_time) = self.ping_times.pop(&ip) {
             if should_report_message_signature(
                 pong.signature(),
                 PONG_SIGNATURE_SAMPLE_LEADING_ZEROS,
@@ -222,31 +249,38 @@ impl<const N: usize> PingCache<N> {
             return None;
         }
 
-        // Check if we have a valid pong for this socket. If we do, we trust it
-        // and skip IP-based rate limiting to allow legitimate nodes on the same IP.
-        let has_valid_pong = self
-            .pongs
-            .peek(&socket)
-            .map(|&t| now.saturating_duration_since(t) <= self.ttl)
+        let ip = socket.ip();
+        let existing_pong = self
+            .ip_ping_info
+            .peek(&ip)
+            .and_then(|info| info.last_valid_pong);
+        let ip_has_valid_pong = existing_pong
+            .map(|t| now.saturating_duration_since(t) <= self.ttl)
             .unwrap_or(false);
 
-        // Only rate limit by IP if we don't have a valid pong.
-        // This prevents DoS attacks: an attacker sends contact info with victim IP,
-        // we ping, victim responds with pong (which fails validation), so we don't
-        // have a valid pong and are rate limited from pinging that IP again.
-        if !has_valid_pong {
-            let ip = socket.ip();
-            if matches!(self.ping_times.peek(&ip),
-                Some(&t) if now.saturating_duration_since(t) < self.rate_limit_delay)
-            {
-                return None;
+        // Only rate limit by IP if we don't have a valid pong for any socket on this IP.
+        if !ip_has_valid_pong {
+            if let Some(info) = self.ip_ping_info.peek(&ip) {
+                if let Some(last_ping_sent) = info.last_ping_sent {
+                    if now.saturating_duration_since(last_ping_sent) < self.rate_limit_delay {
+                        return None;
+                    }
+                }
             }
         }
 
         self.pings.put(socket, now);
         self.maybe_refresh_key(rng, now);
         let token = make_ping_token::<N>(self.hashers[0], &remote_node);
-        self.ping_times.put(socket.ip(), now);
+        let ip = socket.ip();
+        self.ping_times.put(ip, now);
+        self.ip_ping_info.put(
+            ip,
+            IpPingInfo {
+                last_ping_sent: Some(now),
+                last_valid_pong: existing_pong,
+            },
+        );
         Some(Ping::new(token, keypair))
     }
 
