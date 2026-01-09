@@ -22,5 +22,6 @@ mod file_info;
 pub mod file_io;
 pub mod io_setup;
 mod io_uring;
+mod metadata;
 
 pub use file_info::FileInfo;
