@@ -247,7 +247,12 @@ impl<const N: usize> PingCache<N> {
                 let age = now.saturating_duration_since(*t);
                 // Pop if the pong message has expired.
                 if age > self.ttl {
-                    self.pongs.pop(&remote_node);
+                    self.pongs.pop(&socket);
+                    (false, true)
+                } else {
+                    // If the pong message is not too recent, generate a new ping
+                    // message to extend remote node verification. If the pong message is too recent,
+                    (true, age > self.ttl / 8)
                 }
                 // If the pong message is not too recent, generate a new ping
                 // message to extend remote node verification.
@@ -443,5 +448,362 @@ mod tests {
             assert!(!check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
         }
+    }
+
+    #[test]
+    fn test_ip_rate_limiting_no_valid_pong() {
+        // Test that IP-based rate limiting prevents rapid pings to the same IP
+        // when there's no valid pong.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10); // Short delay for testing
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        
+        // Create two sockets on the same IP but different ports
+        let socket1 = SocketAddr::V4(SocketAddrV4::new(ip, 8000));
+        let socket2 = SocketAddr::V4(SocketAddrV4::new(ip, 8001));
+        
+        let node1 = (remote_keypair.pubkey(), socket1);
+        let node2 = (remote_keypair.pubkey(), socket2);
+        
+        // First ping to socket1 should succeed
+        let (check, ping1) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(!check);
+        assert!(ping1.is_some());
+        
+        // Immediately try to ping socket2 (same IP, different port)
+        // Should be rate limited by IP since we don't have a valid pong
+        let (check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check);
+        assert!(ping2.is_none(), "Should be rate limited by IP");
+        
+        // After delay passes, should be able to ping socket2
+        let now = now + delay + Duration::from_millis(1);
+        let (check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check);
+        assert!(ping2.is_some(), "Should be able to ping after delay");
+    }
+
+    #[test]
+    fn test_ip_rate_limiting_with_valid_pong() {
+        // Test that when we have a valid pong from any socket on an IP,
+        // we can ping other ports on that IP without IP-level rate limiting.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10);
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        
+        let socket1 = SocketAddr::V4(SocketAddrV4::new(ip, 8000));
+        let socket2 = SocketAddr::V4(SocketAddrV4::new(ip, 8001));
+        
+        let node1 = (remote_keypair.pubkey(), socket1);
+        let node2 = (remote_keypair.pubkey(), socket2);
+        
+        // Ping socket1 and get a pong back
+        let (check, ping1) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(!check);
+        assert!(ping1.is_some());
+        
+        let pong1 = Pong::new(ping1.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong1, socket1, now));
+        
+        // Now we have a valid pong from socket1. We should be able to ping socket2
+        // immediately without IP-level rate limiting (but socket-level rate limiting
+        // still applies, so we need to wait for socket1's rate limit to pass)
+        let now = now + delay + Duration::from_millis(1);
+        let (check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check);
+        assert!(ping2.is_some(), "Should be able to ping different port on same IP when valid pong exists");
+    }
+
+    #[test]
+    fn test_socket_rate_limiting_always_applies() {
+        // Test that socket-level rate limiting always applies, even when we have
+        // a valid pong from another socket on the same IP.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10);
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        
+        let socket1 = SocketAddr::V4(SocketAddrV4::new(ip, 8000));
+        let socket2 = SocketAddr::V4(SocketAddrV4::new(ip, 8001));
+        
+        let node1 = (remote_keypair.pubkey(), socket1);
+        let node2 = (remote_keypair.pubkey(), socket2);
+        
+        // Ping socket1 and get a pong back
+        let (_check, ping1) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(ping1.is_some());
+        let pong1 = Pong::new(ping1.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong1, socket1, now));
+        
+        // Ping socket2 (should succeed since we have valid pong from socket1)
+        let now = now + delay + Duration::from_millis(1);
+        let (_check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(ping2.is_some());
+        
+        // Immediately try to ping socket2 again - should be rate limited by socket
+        let (_check, ping2_again) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(ping2_again.is_none(), "Should be rate limited by socket");
+        
+        // But we can still ping socket1 (different socket, so socket-level rate limit doesn't apply)
+        // However, socket1 was pinged at the start, so we need to wait for its rate limit.
+        // Also need to wait long enough that the pong age triggers a reping (ttl/8).
+        let now = now + delay + Duration::from_millis(1);
+        // Wait until pong age > ttl/8 to trigger reping
+        let now = now + ttl / 8 + Duration::from_millis(1);
+        let (_check, ping1_again) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(ping1_again.is_some(), "Should be able to ping socket1 after delay and pong age");
+    }
+
+    #[test]
+    fn test_ip_ping_info_tracking() {
+        // Test that IP ping info is correctly tracked and updated.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10);
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        let ip_addr = IpAddr::V4(ip);
+        let socket = SocketAddr::V4(SocketAddrV4::new(ip, 8000));
+        let node = (remote_keypair.pubkey(), socket);
+        
+        // Initially, no IP ping info should exist
+        assert!(cache.ip_ping_info.peek(&ip_addr).is_none());
+        
+        // Ping the socket
+        let (_check, ping) = cache.check(&mut rng, &this_node, now, node);
+        assert!(ping.is_some());
+        
+        // After ping, IP ping info should exist with last_ping_sent set
+        let info = cache.ip_ping_info.peek(&ip_addr);
+        assert!(info.is_some());
+        assert!(info.unwrap().last_ping_sent.is_some());
+        assert!(info.unwrap().last_valid_pong.is_none());
+        
+        // Receive pong
+        let pong = Pong::new(ping.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong, socket, now));
+        
+        // After pong, IP ping info should have both last_ping_sent and last_valid_pong
+        let info = cache.ip_ping_info.peek(&ip_addr);
+        assert!(info.is_some());
+        assert!(info.unwrap().last_ping_sent.is_some());
+        assert!(info.unwrap().last_valid_pong.is_some());
+    }
+
+    #[test]
+    fn test_ip_ping_info_eviction_handling() {
+        // Test that when ip_ping_info entry is evicted and we receive a pong,
+        // we handle it correctly with last_ping_sent as None.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10);
+        // Use small capacity to force evictions
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 2);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        let ip_addr = IpAddr::V4(ip);
+        let socket = SocketAddr::V4(SocketAddrV4::new(ip, 8000));
+        let node = (remote_keypair.pubkey(), socket);
+        
+        // Ping the socket
+        let (_check, ping) = cache.check(&mut rng, &this_node, now, node);
+        assert!(ping.is_some());
+        
+        // Fill up the cache to force eviction of ip_ping_info entry
+        let ip2 = Ipv4Addr::new(192, 168, 1, 2);
+        let ip3 = Ipv4Addr::new(192, 168, 1, 3);
+        let socket2 = SocketAddr::V4(SocketAddrV4::new(ip2, 8000));
+        let socket3 = SocketAddr::V4(SocketAddrV4::new(ip3, 8000));
+        let node2 = (Keypair::new().pubkey(), socket2);
+        let node3 = (Keypair::new().pubkey(), socket3);
+        
+        let (_, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(ping2.is_some());
+        let (_, ping3) = cache.check(&mut rng, &this_node, now, node3);
+        assert!(ping3.is_some());
+        
+        // The ip_ping_info entry for ip should be evicted
+        assert!(cache.ip_ping_info.peek(&ip_addr).is_none());
+        
+        // Now receive pong for the original socket
+        let pong = Pong::new(ping.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong, socket, now));
+        
+        // After adding pong, ip_ping_info should be recreated with last_ping_sent as None
+        let info = cache.ip_ping_info.peek(&ip_addr);
+        assert!(info.is_some());
+        assert!(info.unwrap().last_ping_sent.is_none(), "last_ping_sent should be None after eviction");
+        assert!(info.unwrap().last_valid_pong.is_some(), "last_valid_pong should be set");
+    }
+
+    #[test]
+    fn test_multiple_sockets_same_ip_scenario() {
+        // Test a realistic scenario with multiple sockets on the same IP.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10);
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        
+        let socket1 = SocketAddr::V4(SocketAddrV4::new(ip, 8000));
+        let socket2 = SocketAddr::V4(SocketAddrV4::new(ip, 8001));
+        let socket3 = SocketAddr::V4(SocketAddrV4::new(ip, 8002));
+        
+        let node1 = (remote_keypair.pubkey(), socket1);
+        let node2 = (remote_keypair.pubkey(), socket2);
+        let node3 = (remote_keypair.pubkey(), socket3);
+        
+        // Ping socket1 - should succeed
+        let (check, ping1) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(!check);
+        assert!(ping1.is_some());
+        
+        // Try to ping socket2 immediately - should be rate limited by IP
+        let (check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check);
+        assert!(ping2.is_none());
+        
+        // Get pong from socket1
+        let pong1 = Pong::new(ping1.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong1, socket1, now));
+        
+        // Now we have a valid pong from socket1. After delay, we should be able
+        // to ping socket2 without IP-level rate limiting
+        let now = now + delay + Duration::from_millis(1);
+        let (check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check);
+        assert!(ping2.is_some(), "Should be able to ping socket2 after valid pong from socket1");
+        
+        // Get pong from socket2
+        let pong2 = Pong::new(ping2.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong2, socket2, now));
+        
+        // Now we have valid pongs from both socket1 and socket2. Should be able
+        // to ping socket3 immediately (after socket2's rate limit delay)
+        let now = now + delay + Duration::from_millis(1);
+        let (check, ping3) = cache.check(&mut rng, &this_node, now, node3);
+        assert!(!check);
+        assert!(ping3.is_some(), "Should be able to ping socket3 when valid pongs exist for other sockets on same IP");
+    }
+
+    #[test]
+    fn test_expired_pong_removes_ip_trust() {
+        // Test that when a pong expires, IP-level rate limiting kicks back in.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10);
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        
+        let socket1 = SocketAddr::V4(SocketAddrV4::new(ip, 8000));
+        let socket2 = SocketAddr::V4(SocketAddrV4::new(ip, 8001));
+        
+        let node1 = (remote_keypair.pubkey(), socket1);
+        let node2 = (remote_keypair.pubkey(), socket2);
+        
+        // Ping socket1 and get pong
+        let (_check, ping1) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(ping1.is_some());
+        let pong1 = Pong::new(ping1.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong1, socket1, now));
+        
+        // Should be able to ping socket2 after delay (valid pong exists)
+        let now = now + delay + Duration::from_millis(1);
+        let (_check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(ping2.is_some());
+        
+        // Get pong from socket2 as well
+        let pong2 = Pong::new(ping2.as_ref().unwrap(), &remote_keypair);
+        let now = now + Duration::from_millis(1);
+        assert!(cache.add(&pong2, socket2, now));
+        
+        // Expire both pongs by waiting past TTL
+        let now = now + ttl + Duration::from_millis(1);
+        
+        // Check socket1 - should remove expired pong
+        let (check, _) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(!check, "Pong should be expired");
+        
+        // Check socket2 - should also remove expired pong
+        let (check, _) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check, "Pong should be expired");
+        
+        // Now try to ping socket2 again - should be rate limited by IP since
+        // no valid pong exists anymore. Wait for socket rate limit first.
+        let now = now + delay + Duration::from_millis(1);
+        let (check, ping2_again) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check);
+        assert!(ping2_again.is_some(), "Should be able to ping after socket rate limit");
+        
+        // Immediately try to ping socket1 (same IP, different port) - should be rate limited by IP
+        let (_check, ping1_again) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(ping1_again.is_none(), "Should be rate limited by IP when no valid pong exists");
+    }
+
+    #[test]
+    fn test_expired_pong_returns_check_false() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let remote_node_keypair = Keypair::new();
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
+            rng.random(),
+        ));
+        let remote_node = (remote_node_keypair.pubkey(), remote_socket);
+        let ttl = Duration::from_secs(20 * 60); // 20 minutes
+        let delay = ttl / 64;
+        let mut now = Instant::now();
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+
+        // Add a pong for the remote node
+        cache.mock_pong(remote_node.1, now);
+
+        // Verify the pong is valid. `check` should return true
+        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        assert!(check, "Pong should be valid immediately after adding");
+        assert!(ping.is_none(), "Should not generate ping for recent pong");
+
+        // Advance time past TTL to expire the pong
+        now = now + ttl + Duration::from_secs(1);
+
+        // After expiration, check should return false but should_ping should be true (to re-verify)
+        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        assert!(!check, "Expired pong should return check=false");
+        assert!(
+            ping.is_some(),
+            "Should generate ping to re-verify expired node"
+        );
     }
 }
