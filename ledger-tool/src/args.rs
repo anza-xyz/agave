@@ -4,7 +4,7 @@ use {
     log::*,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, DEFAULT_MEMLOCK_BUDGET_SIZE},
+        accounts_db::AccountsDbConfig,
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimit, ScanFilter},
     },
@@ -15,6 +15,7 @@ use {
     },
     solana_cli_output::CliAccountNewConfig,
     solana_clock::Slot,
+    solana_core::resource_limits,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
@@ -314,7 +315,9 @@ pub fn get_accounts_db_config(
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         storage_access,
         scan_filter_for_shrinking,
-        memlock_budget_size: DEFAULT_MEMLOCK_BUDGET_SIZE,
+        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        ),
         ..AccountsDbConfig::default()
     }
 }

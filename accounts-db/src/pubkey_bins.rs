@@ -1,4 +1,7 @@
-use solana_pubkey::Pubkey;
+use {
+    solana_pubkey::Pubkey,
+    std::num::{NonZeroU32, NonZeroUsize},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct PubkeyBinCalculator24 {
@@ -8,22 +11,24 @@ pub struct PubkeyBinCalculator24 {
 
 impl PubkeyBinCalculator24 {
     const MAX_BITS: u32 = 24;
+    const MAX_BINS: usize = 1_usize << Self::MAX_BITS;
 
-    const fn num_bits<T>() -> usize {
-        std::mem::size_of::<T>() * 8
-    }
-
-    pub(crate) fn log_2(x: u32) -> u32 {
-        assert!(x > 0);
-        Self::num_bits::<u32>() as u32 - x.leading_zeros() - 1
-    }
-
+    /// Creates a new PubkeyBinCalculator24
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the following conditions are not met:
+    /// * `bins` must be greater than zero
+    /// * `bins` must be a power of two
+    /// * `bins` must be less than or equal to 2^24
     pub fn new(bins: usize) -> Self {
-        assert!(bins > 0);
-        let max_plus_1 = 1 << Self::MAX_BITS;
-        assert!(bins <= max_plus_1);
+        // SAFETY: Caller must guarantee `bins` is non-zero.
+        let bins = NonZeroUsize::new(bins).expect("bins is non-zero");
         assert!(bins.is_power_of_two());
-        let bits = Self::log_2(bins as u32);
+        assert!(bins.get() <= Self::MAX_BINS);
+        // SAFETY: `bins` was already non-zero, and we just asserted it fits in 24 bits.
+        let bins = unsafe { NonZeroU32::new_unchecked(bins.get() as u32) };
+        let bits = bins.ilog2();
         Self {
             shift_bits: Self::MAX_BITS - bits,
         }
@@ -64,17 +69,8 @@ impl PubkeyBinCalculator24 {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
-
-    #[test]
-    fn test_pubkey_bins_log2() {
-        assert_eq!(PubkeyBinCalculator24::num_bits::<u8>(), 8);
-        assert_eq!(PubkeyBinCalculator24::num_bits::<u32>(), 32);
-        for i in 0..32 {
-            assert_eq!(PubkeyBinCalculator24::log_2(2u32.pow(i)), i);
-        }
-    }
 
     #[test]
     fn test_pubkey_lowest_highest_bin4() {
@@ -265,18 +261,18 @@ pub mod tests {
 
     #[test]
     #[should_panic(expected = "bins.is_power_of_two()")]
-    fn test_pubkey_bins_illegal_bins3() {
+    fn test_pubkey_bins_bad_non_pow2() {
         PubkeyBinCalculator24::new(3);
     }
 
     #[test]
-    #[should_panic(expected = "bins <= max_plus_1")]
-    fn test_pubkey_bins_illegal_bins2() {
-        PubkeyBinCalculator24::new(65536 * 256 + 1);
+    #[should_panic(expected = "bins.get() <= Self::MAX_BINS")]
+    fn test_pubkey_bins_bad_too_large() {
+        PubkeyBinCalculator24::new(1 << (PubkeyBinCalculator24::MAX_BITS + 1));
     }
     #[test]
-    #[should_panic(expected = "bins > 0")]
-    fn test_pubkey_bins_illegal_bins() {
+    #[should_panic(expected = "bins is non-zero")]
+    fn test_pubkey_bins_bad_is_zero() {
         PubkeyBinCalculator24::new(0);
     }
 }

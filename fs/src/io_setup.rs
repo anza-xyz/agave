@@ -21,6 +21,7 @@ use {
 pub struct IoSetupState {
     #[cfg(target_os = "linux")]
     shared_sqpoll: Option<SharedSqPoll>,
+    pub use_registered_io_uring_buffers: bool,
 }
 
 impl IoSetupState {
@@ -33,7 +34,16 @@ impl IoSetupState {
         Ok(Self {
             #[cfg(target_os = "linux")]
             shared_sqpoll: Some(SharedSqPoll::new()?),
+            ..self
         })
+    }
+
+    /// Enables registering of buffers in io-uring (as `fixed`).
+    ///
+    /// Speeds up kernel operations on the memory, but requires appropriate memlock ulimit.
+    pub fn with_buffers_registered(mut self, fixed: bool) -> Self {
+        self.use_registered_io_uring_buffers = fixed;
+        self
     }
 
     #[cfg(target_os = "linux")]

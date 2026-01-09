@@ -56,8 +56,7 @@ use {
         client_error::Error as RpcClientError, request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_runtime::{
-        bank_forks::BankForks,
-        genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
+        bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig,
     },
     solana_sdk_ids::address_lookup_table,
@@ -935,10 +934,13 @@ impl TestValidator {
         let mint_lamports = 500_000_000 * LAMPORTS_PER_SOL;
 
         // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive().clone();
+        let mut feature_set = FeatureSet::all_enabled();
+        // TODO: remove after cli change for bls_pubkey_management_in_vote_account is checked in
+        feature_set.deactivate(&agave_feature_set::bls_pubkey_management_in_vote_account::id());
         for feature in &config.deactivate_feature_set {
-            if feature_set.remove(feature) {
-                info!("Feature for {feature:?} deactivated")
+            if FEATURE_NAMES.contains_key(feature) {
+                feature_set.deactivate(feature);
+                info!("Feature for {feature:?} deactivated");
             } else {
                 warn!("Feature {feature:?} set for deactivation is not a known Feature public key",)
             }
@@ -950,7 +952,7 @@ impl TestValidator {
         }
         for (address, account) in
             solana_program_binaries::core_bpf_programs(&config.rent, |feature_id| {
-                feature_set.contains(feature_id)
+                feature_set.is_active(feature_id)
             })
         {
             accounts.entry(address).or_insert(account);
@@ -994,7 +996,7 @@ impl TestValidator {
             );
         }
 
-        let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+        let mut genesis_config = create_genesis_config_with_leader_ex(
             mint_lamports,
             &mint_address,
             &validator_identity.pubkey(),
@@ -1006,6 +1008,7 @@ impl TestValidator {
             config.fee_rate_governor.clone(),
             config.rent.clone(),
             solana_cluster_type::ClusterType::Development,
+            &feature_set,
             accounts.into_iter().collect(),
         );
         genesis_config.epoch_schedule = config
@@ -1020,10 +1023,6 @@ impl TestValidator {
 
         if let Some(inflation) = config.inflation {
             genesis_config.inflation = inflation;
-        }
-
-        for feature in feature_set {
-            genesis_utils::activate_feature(&mut genesis_config, feature);
         }
 
         let ledger_path = match &config.ledger_path {

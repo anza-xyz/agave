@@ -106,9 +106,7 @@ const DEFAULT_NUM_DIRS: u32 = 4;
 // This value reflects recommended memory lock limit documented in the validator's
 // setup instructions at docs/src/operations/guides/validator-start.md allowing use of
 // several io_uring instances with fixed buffers for large disk IO operations.
-pub const DEFAULT_MEMLOCK_BUDGET_SIZE: usize = 2_000_000_000;
-// Linux distributions often have some small memory lock limit (e.g. 8MB) that we can tap into.
-const MEMLOCK_BUDGET_SIZE_FOR_TESTS: usize = 4_000_000;
+pub const TOTAL_IO_URING_BUFFERS_SIZE_LIMIT: usize = 2_000_000_000;
 
 // When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
 // This allows us to split up accounts index accesses across multiple threads.

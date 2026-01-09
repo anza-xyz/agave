@@ -1,6 +1,11 @@
 use {
     anyhow::{anyhow, Result},
-    std::{fs, path::PathBuf, process::Command},
+    ignore::WalkBuilder,
+    std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+    },
     toml_edit::Document,
     walkdir::WalkDir,
 };
@@ -12,6 +17,33 @@ pub fn get_git_root_path() -> Result<PathBuf> {
         .map_err(|e| anyhow!("failed to get git root path, error: {e}"))?;
     let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(PathBuf::from(root))
+}
+
+pub fn recursive_find_files(
+    path: &Path,
+    filename: &str,
+    filter_fn: impl Fn(&Path) -> bool,
+) -> Result<Vec<PathBuf>> {
+    let mut results = vec![];
+    for result in WalkBuilder::new(path)
+        .hidden(false)
+        .git_ignore(true)
+        .build()
+        .filter_map(Result::ok)
+    {
+        let path = result.path();
+        if !filter_fn(path) {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+            continue;
+        };
+        if file_name != filename {
+            continue;
+        }
+        results.push(path.to_path_buf());
+    }
+    Ok(results)
 }
 
 pub fn find_files_by_name(filename: &str) -> Result<Vec<PathBuf>> {

@@ -23,9 +23,7 @@ use {
             repair_handler::RepairHandlerType,
             serve_repair_service::ServeRepairService,
         },
-        resource_limits::{
-            adjust_nofile_limit, validate_memlock_limit_for_disk_io, ResourceLimitError,
-        },
+        resource_limits::{adjust_nofile_limit, ResourceLimitError},
         sample_performance_service::SamplePerformanceService,
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
@@ -797,8 +795,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {cluster_entrypoint:?}");
         }
-
-        validate_memlock_limit_for_disk_io(config.accounts_db_config.memlock_budget_size)?;
 
         if !ledger_path.is_dir() {
             return Err(anyhow!(

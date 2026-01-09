@@ -401,6 +401,7 @@ pub fn large_file_buf_reader(
 
         SequentialFileReaderBuilder::new()
             .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
             .build(path, buf_size)
     }
     #[cfg(not(target_os = "linux"))]

@@ -33,6 +33,7 @@ use {
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
+        resource_limits,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         tpu::MAX_VOTES_PER_SECOND,
@@ -434,7 +435,9 @@ pub fn execute(
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         mark_obsolete_accounts,
-        memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
+        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        ),
         ..AccountsDbConfig::default()
     };
 

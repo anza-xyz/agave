@@ -306,7 +306,7 @@ humantime = "2.3.0"
 hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-indexmap = "2.12.1"
+indexmap = "2.13.0"
 indicatif = "0.18.3"
 io-uring = { version = "0.7.11", features = ["io_safety"] }
 itertools = "0.14.0"
@@ -386,7 +386,7 @@ seqlock = "0.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.19"
-serde_json = "1.0.148"
+serde_json = "1.0.149"
 serde_with = { version = "3.16.1", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "3.3.1"
@@ -459,7 +459,7 @@ solana-fee = { path = "fee", version = "=4.0.0-alpha.0", features = ["agave-unst
 solana-fee-calculator = "3.0.0"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.0"
-solana-frozen-abi = "3.1.1"
+solana-frozen-abi = "3.1.2"
 solana-frozen-abi-macro = "3.2.1"
 solana-genesis = { path = "genesis", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "3.0.0"

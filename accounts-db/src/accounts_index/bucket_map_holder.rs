@@ -31,14 +31,14 @@ const _: () = assert!(std::mem::size_of::<Age>() == std::mem::size_of::<AtomicAg
 // - 2 seconds is much faster, and does also reduce disk iops quite a lot.
 const AGE_MS: u64 = 2_000;
 // Trigger eviction when a bin exceeds this percent of the target entries.
-// 85% strikes a balance: high enough to avoid frequent oscillations yet low enough
-// to catch growth before bins overshoot far past the target.
-const HIGH_WATER_MARK_PERCENTAGE: usize = 85;
+// Goal is to be as use a much of the available HashMap capacity as possible
+// while being able to catch growth before bins overshoot and trigger reallocations.
+const HIGH_WATER_MARK_PERCENTAGE: usize = 95;
 // Evict down to this percent of the target entries when flushing.
-// 70% is intentionally not too low; it reduces unnecessary evictions while
-// still providing headroom so bins don't immediately re-trigger flushing scan
+// Goal is to evict the least number of entries as possible while still providing
+// sufficient headroom that bins don't immediately re-trigger flushing scan
 // after eviction.
-const LOW_WATER_MARK_PERCENTAGE: usize = 70;
+const LOW_WATER_MARK_PERCENTAGE: usize = 85;
 
 pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub disk: Option<BucketMap<(Slot, U)>>,
@@ -490,7 +490,7 @@ struct ThresholdEntriesPerBin {
 
 #[cfg(test)]
 pub mod tests {
-    use {super::*, rayon::prelude::*, std::time::Instant};
+    use {super::*, rayon::prelude::*, std::time::Instant, test_case::test_case};
 
     #[test]
     fn test_next_bucket_to_flush() {
@@ -596,37 +596,35 @@ pub mod tests {
         assert!(test.is_disk_index_enabled());
     }
 
+    /// Ensure that should_flush() is correct when using IndexLimit::Threshold
     #[test]
-    fn test_should_flush_thresholds() {
+    fn test_should_flush_threshold() {
         let bins = 1;
-        let threshold_entries = 1000;
+        let num_entries = 1000;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
             + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-        let limit_bytes = (threshold_entries * bytes_per_entry) as u64;
         let config = AccountsIndexConfig {
-            index_limit: IndexLimit::Threshold(limit_bytes),
+            index_limit: IndexLimit::Threshold((num_entries * bytes_per_entry) as u64),
             ..Default::default()
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
         assert!(test.is_disk_index_enabled());
 
         let thresholds = test.threshold_entries_per_bin.unwrap();
-        assert_eq!(thresholds.target_entries, 448);
-        assert_eq!(thresholds.high_water_mark, 380);
-        assert_eq!(thresholds.low_water_mark, 313);
+        // the high water mark must be non-zero and less than num_entries
+        assert!((1..num_entries).contains(&thresholds.high_water_mark));
+        // the low water mark must be non-zero and less than the high water mark
+        assert!((1..thresholds.high_water_mark).contains(&thresholds.low_water_mark));
 
-        // Below high water mark
-        assert!(!test.should_flush(thresholds.high_water_mark.saturating_sub(200)));
+        // Test: Below, at, and above the should_flush() boundary
         assert!(!test.should_flush(thresholds.high_water_mark - 1));
-
-        // At boundary and above
         assert!(!test.should_flush(thresholds.high_water_mark));
         assert!(test.should_flush(thresholds.high_water_mark + 1));
-        assert!(test.should_flush(thresholds.high_water_mark + 120));
     }
 
+    /// Ensure that should_flush() is always true when using IndexLimit::Minimal
     #[test]
-    fn test_should_flush_minimal_always_flushes() {
+    fn test_should_flush_minimal() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::Minimal,
@@ -639,8 +637,9 @@ pub mod tests {
         assert!(test.should_flush(usize::MAX));
     }
 
+    /// Ensure that should_flush() is always false when using IndexLimit::InMemOnly
     #[test]
-    fn test_should_flush_in_mem_only_never_flushes() {
+    fn test_should_flush_in_mem_only() {
         let bins = 1;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::InMemOnly,
@@ -672,41 +671,28 @@ pub mod tests {
         );
     }
 
-    #[test]
-    fn test_max_evictions_threshold() {
-        let bins = 1;
-        let threshold_entries = 1000;
+    #[test_case(1; "bins=1")]
+    #[test_case(2; "bins=2")]
+    #[test_case(4; "bins=4")]
+    #[test_case(8; "bins=8")]
+    fn test_max_evictions_threshold(num_bins: usize) {
+        let num_entries = 1000;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
             + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-        let limit_bytes = (threshold_entries * bytes_per_entry) as u64;
+        let limit_bytes = (num_entries * bytes_per_entry) as u64;
         let config = AccountsIndexConfig {
             index_limit: IndexLimit::Threshold(limit_bytes),
             ..Default::default()
         };
-        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
-        let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
-        assert_eq!(low_water_mark, 313);
-        let expected = NonZeroUsize::new(500 - low_water_mark).unwrap();
-        assert_eq!(test.max_evictions_for_threshold(500), expected);
-    }
+        let test = BucketMapHolder::<u64, u64>::new(num_bins, &config, 1);
+        let threshold = test.threshold_entries_per_bin.unwrap();
+        let low_water_mark = threshold.low_water_mark;
+        // these two asserts ensure we actually have entries to evict
+        assert!(low_water_mark > 0);
+        assert!(low_water_mark < num_entries);
 
-    #[test]
-    fn test_max_evictions_threshold_multiple_bins() {
-        let bins = 4;
-        let threshold_entries = 1000;
-        let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
-            + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
-        let limit_bytes = (threshold_entries * bytes_per_entry) as u64;
-        let config = AccountsIndexConfig {
-            index_limit: IndexLimit::Threshold(limit_bytes),
-            ..Default::default()
-        };
-        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
-
-        let low_water_mark = test.threshold_entries_per_bin.unwrap().low_water_mark;
-        assert_eq!(low_water_mark, 78);
-        let expected = NonZeroUsize::new(100usize - low_water_mark).unwrap();
-        assert_eq!(test.max_evictions_for_threshold(100), expected);
+        let expected = NonZeroUsize::new(num_entries - low_water_mark).unwrap();
+        assert_eq!(test.max_evictions_for_threshold(num_entries), expected);
     }
 
     #[test]
