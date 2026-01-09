@@ -982,9 +982,8 @@ mod tests {
                 assert_eq!(loaded_transaction.program_indices[0], 1);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NoOp(e) | TransactionLoadResult::Unprocessable(e) => {
-                panic!("{e}")
-            }
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1045,9 +1044,8 @@ mod tests {
                 assert_eq!(loaded_transaction.program_indices[1], 2);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NoOp(e) | TransactionLoadResult::Unprocessable(e) => {
-                panic!("{e}")
-            }
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1147,9 +1145,8 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts[1].1.lamports(), 42);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NoOp(e) | TransactionLoadResult::Unprocessable(e) => {
-                panic!("{e}")
-            }
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
