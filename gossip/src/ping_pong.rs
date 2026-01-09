@@ -248,10 +248,12 @@ impl<const N: usize> PingCache<N> {
                 // Pop if the pong message has expired.
                 if age > self.ttl {
                     self.pongs.pop(&remote_node);
+                    (false, true)
+                } else {
+                    // If the pong message is not too recent, generate a new ping
+                    // message to extend remote node verification.
+                    (true, age > self.ttl / 8)
                 }
-                // If the pong message is not too recent, generate a new ping
-                // message to extend remote node verification.
-                (true, age > self.ttl / 8)
             }
         };
         let ping = should_ping
@@ -407,16 +409,19 @@ mod tests {
         }
 
         let now = now + ttl;
-        // Pong packets are still valid but expired. The first observation of
-        // each node will remove the pong packet from cache and create a new
-        // ping packet.
+        // Pong packets have expired. The first observation of each node will
+        // remove the expired pong packet from cache and create a new ping packet.
+        // check should be false because the pong is expired
         seen_nodes.clear();
         for (keypair, socket) in &remote_nodes {
             let node = (keypair.pubkey(), *socket);
             let (check, ping) = cache.check(&mut rng, &this_node, now, node);
             if seen_nodes.insert(node) {
-                assert!(check);
-                assert!(ping.is_some());
+                assert!(!check, "Expired pong should return check=false");
+                assert!(
+                    ping.is_some(),
+                    "Should generate ping to re-verify expired node"
+                );
             } else {
                 assert!(!check);
                 assert!(ping.is_none());
@@ -443,5 +448,40 @@ mod tests {
             assert!(!check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
         }
+    }
+
+    #[test]
+    fn test_expired_pong_returns_check_false() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let remote_node_keypair = Keypair::new();
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
+            rng.random(),
+        ));
+        let remote_node = (remote_node_keypair.pubkey(), remote_socket);
+        let ttl = Duration::from_secs(20 * 60); // 20 minutes
+        let delay = ttl / 64;
+        let mut now = Instant::now();
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+
+        // Add a pong for the remote node
+        cache.mock_pong(remote_node.0, remote_node.1, now);
+
+        // Verify the pong is valid. `check` should return true
+        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        assert!(check, "Pong should be valid immediately after adding");
+        assert!(ping.is_none(), "Should not generate ping for recent pong");
+
+        // Advance time past TTL to expire the pong
+        now = now + ttl + Duration::from_secs(1);
+
+        // After expiration, check should return false but should_ping should be true (to re-verify)
+        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        assert!(!check, "Expired pong should return check=false");
+        assert!(
+            ping.is_some(),
+            "Should generate ping to re-verify expired node"
+        );
     }
 }
