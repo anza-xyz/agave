@@ -854,41 +854,37 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut count_hits_and_misses = true;
         loop {
-            let (program_to_store, task_cookie, task_waiter) = {
-                // Lock the global cache.
-                let global_program_cache = self.global_program_cache.read().unwrap();
-                // Figure out which program needs to be loaded next.
-                let program_to_load = global_program_cache.extract(
-                    &mut missing_programs,
-                    program_cache_for_tx_batch,
+            // Lock the global cache.
+            let global_program_cache = self.global_program_cache.read().unwrap();
+            // Figure out which program needs to be loaded next.
+            let program_to_load = global_program_cache.extract(
+                &mut missing_programs,
+                program_cache_for_tx_batch,
+                program_runtime_environments_for_execution,
+                increment_usage_counter,
+                count_hits_and_misses,
+            );
+            count_hits_and_misses = false;
+            let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
+            let task_cookie = task_waiter.cookie();
+            // Unlock the global cache again.
+            drop(global_program_cache);
+
+            let program_to_store = program_to_load.map(|key| {
+                // Load, verify and compile one program.
+                let (program, last_modification_slot) = load_program_with_pubkey(
+                    account_loader,
                     program_runtime_environments_for_execution,
-                    increment_usage_counter,
-                    count_hits_and_misses,
-                );
-                count_hits_and_misses = false;
+                    &key,
+                    self.slot,
+                    execute_timings,
+                    false,
+                )
+                .expect("called load_program_with_pubkey() with nonexistent account");
+                (key, program, last_modification_slot)
+            });
 
-                let program_to_store = program_to_load.map(|key| {
-                    // Load, verify and compile one program.
-                    let (program, last_modification_slot) = load_program_with_pubkey(
-                        account_loader,
-                        program_runtime_environments_for_execution,
-                        &key,
-                        self.slot,
-                        execute_timings,
-                        false,
-                    )
-                    .expect(
-                        "called account_loader.get_account_shared_data() with nonexistent account",
-                    );
-                    (key, last_modification_slot, program)
-                });
-
-                let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
-                (program_to_store, task_waiter.cookie(), task_waiter)
-                // Unlock the global cache again.
-            };
-
-            if let Some((key, last_modification_slot, program)) = program_to_store {
+            if let Some((key, program, last_modification_slot)) = program_to_store {
                 program_cache_for_tx_batch.loaded_missing = true;
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
@@ -1562,7 +1558,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic = "called account_loader.get_account_shared_data() with nonexistent account"]
+    #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
         let account_loader = (&mock_bank).into();
