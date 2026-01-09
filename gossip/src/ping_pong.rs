@@ -24,9 +24,9 @@ const PING_PONG_HASH_PREFIX: &[u8] = "SOLANA_PING_PONG".as_bytes();
 const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
 
 struct IpPingInfo {
-    /// Timestamp of last ping sent to this IP (for rate limiting)
+    // Timestamp of last ping sent to this IP (for rate limiting)
     last_ping_sent: Option<Instant>,
-    /// Timestamp of last valid pong received from any socket on this IP
+    // Timestamp of last valid pong received from any socket on this IP
     last_valid_pong: Option<Instant>,
 }
 
@@ -65,10 +65,10 @@ pub struct PingCache<const N: usize> {
     hashers: [SipHasher24; 2],
     // When hashers were last refreshed.
     key_refresh: Instant,
-    // Timestamp of last ping message sent to a remote socket address.
+    // Timestamp of last ping message sent to a remote node.
+    // Used to rate limit pings to remote nodes.
     pings: LruCache<SocketAddr, Instant>,
-    // Verified pong responses from remote socket addresses.
-    // Keyed by SocketAddr to detect port changes (if port changes, no pong found, so we reping).
+    // Verified pong responses from remote nodes.
     pongs: LruCache<SocketAddr, Instant>,
     ping_times: LruCache<IpAddr, Instant>,
     // IP-level ping/pong tracking
@@ -330,7 +330,7 @@ impl<const N: usize> PingCache<N> {
     }
 
     /// Only for tests and simulations.
-    pub fn mock_pong(&mut self, _node: Pubkey, socket: SocketAddr, now: Instant) {
+    pub fn mock_pong(&mut self, socket: SocketAddr, now: Instant) {
         self.pongs.put(socket, now);
     }
 }

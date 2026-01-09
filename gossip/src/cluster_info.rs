@@ -2943,11 +2943,11 @@ mod tests {
             SocketAddrSpace::Unspecified,
         );
         let stakes = HashMap::<Pubkey, u64>::default();
-        cluster_info.ping_cache.lock().unwrap().mock_pong(
-            *peer.pubkey(),
-            peer.gossip().unwrap(),
-            Instant::now(),
-        );
+        cluster_info
+            .ping_cache
+            .lock()
+            .unwrap()
+            .mock_pong(peer.gossip().unwrap(), Instant::now());
         cluster_info.insert_info(peer);
         cluster_info.gossip.refresh_push_active_set(
             &cluster_info.keypair(),
@@ -3405,11 +3405,11 @@ mod tests {
         let other_node_pubkey = solana_pubkey::new_rand();
         let other_node = ContactInfo::new_localhost(&other_node_pubkey, timestamp());
         assert_ne!(other_node.gossip().unwrap(), entrypoint.gossip().unwrap());
-        cluster_info.ping_cache.lock().unwrap().mock_pong(
-            *other_node.pubkey(),
-            other_node.gossip().unwrap(),
-            Instant::now(),
-        );
+        cluster_info
+            .ping_cache
+            .lock()
+            .unwrap()
+            .mock_pong(other_node.gossip().unwrap(), Instant::now());
         cluster_info.insert_info(other_node.clone());
         stakes.insert(other_node_pubkey, 10);
 
