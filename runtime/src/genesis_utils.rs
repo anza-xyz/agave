@@ -485,10 +485,6 @@ pub fn create_genesis_config_with_leader_ex(
         if *feature_id == agave_feature_set::alpenglow::id() {
             continue;
         }
-        // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
-        if *feature_id == agave_feature_set::bls_pubkey_management_in_vote_account::id() {
-            continue;
-        }
         activate_feature(&mut genesis_config, *feature_id);
     }
 
