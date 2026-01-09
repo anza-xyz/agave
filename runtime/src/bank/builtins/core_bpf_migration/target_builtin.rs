@@ -5,9 +5,7 @@ use {
     solana_builtins::core_bpf_migration::CoreBpfMigrationTargetType,
     solana_loader_v3_interface::get_program_data_address,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::{
-        native_loader::ID as NATIVE_LOADER_ID, system_program::ID as SYSTEM_PROGRAM_ID,
-    },
+    solana_sdk_ids::native_loader::ID as NATIVE_LOADER_ID,
 };
 
 /// The account details of a built-in program to be migrated to Core BPF.
@@ -16,7 +14,6 @@ pub(crate) struct TargetBuiltin {
     pub program_address: Pubkey,
     pub program_account: AccountSharedData,
     pub program_data_address: Pubkey,
-    pub program_data_account_lamports: u64,
 }
 
 impl TargetBuiltin {
@@ -53,26 +50,20 @@ impl TargetBuiltin {
 
         let program_data_address = get_program_data_address(program_address);
 
-        // The program data account is expected not to exist.
-        let program_data_account_lamports =
-            if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
-                // The program data account should not exist, but a system account with funded
-                // lamports is acceptable.
-                if account.owner() != &SYSTEM_PROGRAM_ID {
-                    return Err(CoreBpfMigrationError::ProgramHasDataAccount(
-                        *program_address,
-                    ));
-                }
-                account.lamports()
-            } else {
-                0
-            };
+        // The program data account should not exist.
+        if bank
+            .get_account_with_fixed_root(&program_data_address)
+            .is_some()
+        {
+            return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                *program_address,
+            ));
+        }
 
         Ok(Self {
             program_address: *program_address,
             program_account,
             program_data_address,
-            program_data_account_lamports,
         })
     }
 }
