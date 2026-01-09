@@ -3,7 +3,7 @@ use {
     rand_chacha::{rand_core::SeedableRng, ChaChaRng},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, convert::identity, ops::Index, sync::Arc},
+    std::{collections::HashMap, ops::Index, sync::Arc},
 };
 
 mod identity_keyed;
@@ -22,11 +22,49 @@ pub struct FixedSchedule {
 /// Stake-weighted leader schedule for one epoch.
 pub type LeaderSchedule = Box<dyn LeaderScheduleVariant>;
 
+/// Iterator that expands compressed leader chunks into real slot numbers.
+struct LeaderSlotsIter<'a> {
+    slots: &'a [usize],
+    /// Number of physical slots each entry in `slots` represents.
+    repeat: usize,
+    num_slots: usize,
+    idx: usize,
+    repeat_offset: usize,
+    /// How many full epochs of this validator’s slots we’ve already emitted.
+    cycle: usize,
+}
+
+impl<'a> Iterator for LeaderSlotsIter<'a> {
+    type Item = usize;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.slots.is_empty() {
+            return None;
+        }
+        let base = self.slots[self.idx].saturating_mul(self.repeat);
+        let slot = base
+            .saturating_add(self.repeat_offset)
+            .saturating_add(self.cycle.saturating_mul(self.num_slots));
+        self.repeat_offset = self.repeat_offset.saturating_add(1);
+        if self.repeat_offset == self.repeat {
+            self.repeat_offset = 0;
+            self.idx += 1;
+            if self.idx == self.slots.len() {
+                self.idx = 0;
+                self.cycle = self.cycle.saturating_add(1);
+            }
+        }
+        Some(slot)
+    }
+}
+
 pub trait LeaderScheduleVariant:
     std::fmt::Debug + Send + Sync + Index<u64, Output = Pubkey>
 {
-    fn get_slot_leaders(&self) -> &[Pubkey];
+    fn get_slot_leaders(&self) -> Box<dyn Iterator<Item = &Pubkey> + '_>;
+    fn get_unrepeated_slot_leaders(&self) -> &[Pubkey];
     fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>>;
+    fn num_slots(&self) -> usize;
+    fn slots_per_leader(&self) -> usize;
 
     /// Get the vote account address for the given epoch slot index. This is
     /// guaranteed to be Some if the leader schedule is keyed by vote account
@@ -41,22 +79,37 @@ pub trait LeaderScheduleVariant:
     ) -> Box<dyn Iterator<Item = usize> + '_> {
         let index = self.get_leader_slots_map().get(pubkey);
         let num_slots = self.num_slots();
+        let repeat = self.slots_per_leader();
 
         match index {
-            Some(index) if !index.is_empty() => {
+            Some(index) if !index.is_empty() && num_slots > 0 && repeat > 0 => {
                 let size = index.len();
-                let start_offset = index
-                    .binary_search(&(offset % num_slots))
-                    .unwrap_or_else(identity)
-                    + offset / num_slots * size;
-                // The modular arithmetic here and above replicate Index implementation
-                // for LeaderSchedule, where the schedule keeps repeating endlessly.
-                // The '%' returns where in a cycle we are and the '/' returns how many
-                // times the schedule is repeated.
-                Box::new(
-                    (start_offset..=usize::MAX)
-                        .map(move |k| index[k % size] + k / size * num_slots),
-                )
+                let mut cycle = offset.saturating_div(num_slots);
+                let offset_in_epoch = offset % num_slots;
+                let offset_chunk = offset_in_epoch.saturating_div(repeat);
+                let mut repeat_offset = offset_in_epoch % repeat;
+                // `chunk_index` locates the first leadership chunk for this validator
+                // at or after the requested offset.
+                let chunk_index = match index.binary_search(&offset_chunk) {
+                    Ok(pos) => pos,
+                    Err(pos) => {
+                        repeat_offset = 0;
+                        if pos == size {
+                            cycle = cycle.saturating_add(1);
+                            0
+                        } else {
+                            pos
+                        }
+                    }
+                };
+                Box::new(LeaderSlotsIter {
+                    slots: index,
+                    repeat,
+                    num_slots,
+                    idx: chunk_index,
+                    repeat_offset,
+                    cycle,
+                })
             }
             _ => {
                 // Empty iterator for pubkeys not in schedule
@@ -64,10 +117,6 @@ pub trait LeaderScheduleVariant:
                 Box::new((1..=0).map(|_| 0))
             }
         }
-    }
-
-    fn num_slots(&self) -> usize {
-        self.get_slot_leaders().len()
     }
 }
 
@@ -78,20 +127,18 @@ fn stake_weighted_slot_leaders(
     len: u64,
     repeat: u64,
 ) -> Vec<Pubkey> {
+    debug_assert!(
+        len.is_multiple_of(repeat),
+        "expected `len` {len} to be divisible by `repeat` {repeat}"
+    );
     sort_stakes(&mut keyed_stakes);
     let (keys, stakes): (Vec<_>, Vec<_>) = keyed_stakes.into_iter().unzip();
     let weighted_index = WeightedU64Index::new(stakes).unwrap();
     let mut seed = [0u8; 32];
     seed[0..8].copy_from_slice(&epoch.to_le_bytes());
     let rng = &mut ChaChaRng::from_seed(seed);
-    let mut current_slot_leader = Pubkey::default();
-    (0..len)
-        .map(|i| {
-            if i % repeat == 0 {
-                current_slot_leader = keys[weighted_index.sample(rng)];
-            }
-            current_slot_leader
-        })
+    (0..len / repeat)
+        .map(|_| keys[weighted_index.sample(rng)])
         .collect()
 }
 
@@ -138,6 +185,30 @@ mod tests {
                 assert_eq!(schedule, index);
             }
         }
+    }
+
+    #[test]
+    fn test_get_leader_upcoming_slots_with_repeats() {
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
+        let repeat = 4;
+        let schedule = IdentityKeyedLeaderSchedule::new_from_schedule_with_repeat(
+            vec![pubkey0, pubkey1, pubkey2],
+            (3 * repeat) as u64,
+            repeat as u64,
+        );
+        let slots: Vec<_> = schedule
+            .get_leader_upcoming_slots(&pubkey1, 0)
+            .take(8)
+            .collect();
+        assert_eq!(slots, vec![4, 5, 6, 7, 16, 17, 18, 19]);
+
+        let slots_from_middle: Vec<_> = schedule
+            .get_leader_upcoming_slots(&pubkey1, 6)
+            .take(5)
+            .collect();
+        assert_eq!(slots_from_middle, vec![6, 7, 16, 17, 18]);
     }
 
     #[test]

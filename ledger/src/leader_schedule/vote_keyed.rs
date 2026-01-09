@@ -30,9 +30,28 @@ impl LeaderSchedule {
             .map(|(vote_pubkey, (stake, _account))| (vote_pubkey, *stake))
             .collect();
         let vote_keyed_slot_leaders = stake_weighted_slot_leaders(keyed_stakes, epoch, len, repeat);
-        Self::new_from_schedule(vote_keyed_slot_leaders, vote_accounts_map)
+        let slot_leaders: Vec<Pubkey> = vote_keyed_slot_leaders
+            .iter()
+            .map(|vote_account_address| {
+                *vote_accounts_map
+                    .get(vote_account_address)
+                    .expect("vote account must be in vote_accounts_map")
+                    .1
+                    .node_pubkey()
+            })
+            .collect();
+        Self {
+            vote_keyed_slot_leaders,
+            identity_keyed_leader_schedule:
+                IdentityKeyedLeaderSchedule::new_from_schedule_with_repeat(
+                    slot_leaders,
+                    len,
+                    repeat,
+                ),
+        }
     }
 
+    #[cfg(test)]
     fn new_from_schedule(
         vote_keyed_slot_leaders: Vec<Pubkey>,
         vote_accounts_map: &VoteAccountsHashMap,
@@ -76,8 +95,13 @@ impl LeaderSchedule {
 }
 
 impl LeaderScheduleVariant for LeaderSchedule {
-    fn get_slot_leaders(&self) -> &[Pubkey] {
-        self.identity_keyed_leader_schedule.get_slot_leaders()
+    fn get_slot_leaders(&self) -> Box<dyn Iterator<Item = &Pubkey> + '_> {
+        Box::new(self.identity_keyed_leader_schedule.get_slot_leaders())
+    }
+
+    fn get_unrepeated_slot_leaders(&self) -> &[Pubkey] {
+        self.identity_keyed_leader_schedule
+            .get_unrepeated_slot_leaders()
     }
 
     fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>> {
@@ -88,12 +112,27 @@ impl LeaderScheduleVariant for LeaderSchedule {
         let slot_vote_addresses = &self.vote_keyed_slot_leaders;
         Some(&slot_vote_addresses[index % slot_vote_addresses.len()])
     }
+
+    fn num_slots(&self) -> usize {
+        self.identity_keyed_leader_schedule.num_slots()
+    }
+
+    fn slots_per_leader(&self) -> usize {
+        self.identity_keyed_leader_schedule.repeat() as usize
+    }
 }
 
 impl Index<u64> for LeaderSchedule {
     type Output = Pubkey;
     fn index(&self, index: u64) -> &Pubkey {
-        &self.get_slot_leaders()[index as usize % self.num_slots()]
+        let chunk_index = (index / self.identity_keyed_leader_schedule.repeat()) as usize
+            % self
+                .identity_keyed_leader_schedule
+                .get_unrepeated_slot_leaders()
+                .len();
+        &self
+            .identity_keyed_leader_schedule
+            .get_unrepeated_slot_leaders()[chunk_index]
     }
 }
 
@@ -181,12 +220,12 @@ mod tests {
             .collect();
 
         let epoch = rand::random::<Epoch>();
-        let len = num_keys * 10;
         let repeat = 8;
+        let len = num_keys * repeat;
         let leader_schedule = LeaderSchedule::new(&vote_accounts_map, epoch, len, repeat);
         assert_eq!(leader_schedule.num_slots() as u64, len);
         let mut leader_node = Pubkey::default();
-        for (i, node) in leader_schedule.get_slot_leaders().iter().enumerate() {
+        for (i, node) in leader_schedule.get_slot_leaders().enumerate() {
             if i % repeat as usize == 0 {
                 leader_node = *node;
             } else {
@@ -211,35 +250,33 @@ mod tests {
         let epoch = 0;
         let len = 8;
         // What the schedule looks like without any repeats
-        let leaders1 = LeaderSchedule::new(&vote_accounts_map, epoch, len, 1)
-            .get_slot_leaders()
-            .to_vec();
+        let leader_schedule1 = LeaderSchedule::new(&vote_accounts_map, epoch, len, 1);
+        let leaders1: Vec<_> = leader_schedule1.get_slot_leaders().collect();
 
         // What the schedule looks like with repeats
-        let leaders2 = LeaderSchedule::new(&vote_accounts_map, epoch, len, 2)
-            .get_slot_leaders()
-            .to_vec();
+        let leader_schedule2 = LeaderSchedule::new(&vote_accounts_map, epoch, len, 2);
+        let leaders2: Vec<_> = leader_schedule2.get_slot_leaders().collect();
         assert_eq!(leaders1.len(), leaders2.len());
 
         let leaders1_expected = vec![
-            alice_pubkey,
-            alice_pubkey,
-            alice_pubkey,
-            bob_pubkey,
-            alice_pubkey,
-            alice_pubkey,
-            alice_pubkey,
-            alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &bob_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
         ];
         let leaders2_expected = vec![
-            alice_pubkey,
-            alice_pubkey,
-            alice_pubkey,
-            alice_pubkey,
-            alice_pubkey,
-            alice_pubkey,
-            bob_pubkey,
-            bob_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &alice_pubkey,
+            &bob_pubkey,
+            &bob_pubkey,
         ];
 
         assert_eq!(leaders1, leaders1_expected);
