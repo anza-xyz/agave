@@ -296,10 +296,12 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         } => {
             // SIMD-0291: Commission Rate in Basis Points
             // Requires SIMD-0185: Vote State V4
-            let simd_0291_enabled = invoke_context
-                .get_feature_set()
-                .commission_rate_in_basis_points;
-            if !(simd_0291_enabled && matches!(target_version, VoteStateTargetVersion::V4)) {
+            // Requires SIMD-0249: Delay Commission Updates
+            let feature_set = invoke_context.get_feature_set();
+            if !feature_set.commission_rate_in_basis_points
+                || !feature_set.delay_commission_updates
+                || !matches!(target_version, VoteStateTargetVersion::V4)
+            {
                 return Err(InstructionError::InvalidInstructionData);
             }
             vote_state::update_commission_bps(
