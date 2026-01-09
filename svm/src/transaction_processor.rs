@@ -2218,7 +2218,11 @@ mod tests {
 
         let expected_error = TransactionError::AccountNotFound;
         let expected_result = if relax_fee_payer_constraint {
-            TransactionValidationResult::NoOp(expected_error)
+            TransactionValidationResult::NoOp(NoOpTransaction {
+                validation_error: expected_error,
+                fee_payer_balance: None,
+                fee_details: FeeDetails::default(),
+            })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
         };
@@ -2245,10 +2249,13 @@ mod tests {
     #[test_case(true; "relaxed_fee_payer")]
     fn test_validate_transaction_fee_payer_insufficient_funds(relax_fee_payer_constraint: bool) {
         let lamports_per_signature = 5000;
+        let fee_payer_balance = 1;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
+        let fee_details =
+            MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0);
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::new(fee_payer_balance, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
         let mut mock_bank = MockBankCallback {
@@ -2262,7 +2269,11 @@ mod tests {
 
         let expected_error = TransactionError::InsufficientFundsForFee;
         let expected_result = if relax_fee_payer_constraint {
-            TransactionValidationResult::NoOp(expected_error)
+            TransactionValidationResult::NoOp(NoOpTransaction {
+                validation_error: expected_error,
+                fee_payer_balance: Some(fee_payer_balance),
+                fee_details,
+            })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
         };
@@ -2273,13 +2284,7 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
-                        MockBankCallback::calculate_fee_details(
-                            &message,
-                            lamports_per_signature,
-                            0,
-                        ),
-                    ),
+                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(fee_details),
                 ),
                 &Hash::default(),
                 lamports_per_signature,
@@ -2297,6 +2302,8 @@ mod tests {
         let lamports_per_signature = 5000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
+        let fee_details =
+            MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0);
         let fee_payer_address = message.fee_payer();
         let transaction_fee = lamports_per_signature;
         let rent = Rent::default();
@@ -2316,7 +2323,11 @@ mod tests {
 
         let expected_error = TransactionError::InsufficientFundsForRent { account_index: 0 };
         let expected_result = if relax_fee_payer_constraint {
-            TransactionValidationResult::NoOp(expected_error)
+            TransactionValidationResult::NoOp(NoOpTransaction {
+                validation_error: expected_error,
+                fee_payer_balance: Some(starting_balance),
+                fee_details,
+            })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
         };
@@ -2327,13 +2338,7 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
-                        MockBankCallback::calculate_fee_details(
-                            &message,
-                            lamports_per_signature,
-                            0,
-                        ),
-                    ),
+                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(fee_details),
                 ),
                 &Hash::default(),
                 lamports_per_signature,
@@ -2348,10 +2353,13 @@ mod tests {
     #[test_case(true; "relaxed_fee_payer")]
     fn test_validate_transaction_fee_payer_invalid(relax_fee_payer_constraint: bool) {
         let lamports_per_signature = 5000;
+        let fee_payer_balance = 1_000_000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
+        let fee_details =
+            MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0);
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
+        let fee_payer_account = AccountSharedData::new(fee_payer_balance, 0, &Pubkey::new_unique());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
         let mut mock_bank = MockBankCallback {
@@ -2365,7 +2373,11 @@ mod tests {
 
         let expected_error = TransactionError::InvalidAccountForFee;
         let expected_result = if relax_fee_payer_constraint {
-            TransactionValidationResult::NoOp(expected_error)
+            TransactionValidationResult::NoOp(NoOpTransaction {
+                validation_error: expected_error,
+                fee_payer_balance: Some(fee_payer_balance),
+                fee_details,
+            })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
         };
@@ -2376,13 +2388,7 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
-                        MockBankCallback::calculate_fee_details(
-                            &message,
-                            lamports_per_signature,
-                            0,
-                        ),
-                    ),
+                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(fee_details),
                 ),
                 &Hash::default(),
                 lamports_per_signature,
