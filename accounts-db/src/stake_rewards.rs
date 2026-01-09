@@ -5,15 +5,13 @@ use {
         is_zero_lamport::IsZeroLamport,
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
-    serde::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StakeRewardInfo {
     pub reward_type: RewardType,
     pub lamports: i64,
@@ -21,8 +19,7 @@ pub struct StakeRewardInfo {
     pub commission: Option<u8>,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StakeReward {
     pub stake_pubkey: Pubkey,
     pub stake_reward_info: StakeRewardInfo,

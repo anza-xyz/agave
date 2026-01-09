@@ -1,13 +1,8 @@
 //! Reward info.
 
-use {
-    serde::{Deserialize, Serialize},
-    solana_accounts_db::stake_rewards::StakeRewardInfo,
-    solana_reward_info::RewardType,
-};
+use {solana_accounts_db::stake_rewards::StakeRewardInfo, solana_reward_info::RewardType};
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RewardInfo {
     pub reward_type: RewardType,
     pub lamports: i64,
