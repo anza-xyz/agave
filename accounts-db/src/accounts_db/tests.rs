@@ -2850,7 +2850,7 @@ fn test_account_balance_for_capitalization_native_program() {
 fn test_store_overhead() {
     agave_logger::setup();
     let accounts = AccountsDb::new_single_for_tests();
-    let account = AccountSharedData::default();
+    let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let pubkey = solana_pubkey::new_rand();
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
@@ -2907,7 +2907,7 @@ fn test_store_clean_after_shrink() {
 fn test_wrapping_storage_id() {
     let db = AccountsDb::new_single_for_tests();
 
-    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
 
     // set 'next' id to the max possible value
     db.next_id.store(AccountsFileId::MAX, Ordering::Release);
@@ -2916,7 +2916,7 @@ fn test_wrapping_storage_id() {
     // write unique keys to successive slots
     keys.iter().enumerate().for_each(|(slot, key)| {
         let slot = slot as Slot;
-        db.store_for_tests((slot, [(key, &zero_lamport_account)].as_slice()));
+        db.store_for_tests((slot, [(key, &account)].as_slice()));
         db.add_root_and_flush_write_cache(slot);
     });
     assert_eq!(slots - 1, db.next_id.load(Ordering::Acquire));
@@ -2932,7 +2932,7 @@ fn test_reuse_storage_id() {
     agave_logger::setup();
     let db = AccountsDb::new_single_for_tests();
 
-    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
 
     // set 'next' id to the max possible value
     db.next_id.store(AccountsFileId::MAX, Ordering::Release);
@@ -2941,7 +2941,7 @@ fn test_reuse_storage_id() {
     // write unique keys to successive slots
     keys.iter().enumerate().for_each(|(slot, key)| {
         let slot = slot as Slot;
-        db.store_for_tests((slot, [(key, &zero_lamport_account)].as_slice()));
+        db.store_for_tests((slot, [(key, &account)].as_slice()));
         db.add_root_and_flush_write_cache(slot);
         // reset next_id to what it was previously to cause us to reuse the same id
         db.next_id.store(AccountsFileId::MAX, Ordering::Release);
@@ -3261,9 +3261,9 @@ fn test_flush_cache_clean() {
     let db = Arc::new(AccountsDb::new_single_for_tests());
 
     let account_key = Pubkey::new_unique();
-    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    let slot1_account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
-    db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
+    let slot0_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+    let slot1_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
+    db.store_for_tests((0, &[(&account_key, &slot0_account)][..]));
     db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
 
     db.add_root(0);
@@ -3280,7 +3280,7 @@ fn test_flush_cache_clean() {
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
         )
         .unwrap();
-    assert_eq!(account.0.lamports(), 0);
+    assert_eq!(account.0.lamports(), 1);
     // since this item is in the cache, it should not be in the read only cache
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
 
@@ -3468,18 +3468,18 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     let db = Arc::new(AccountsDb::new_single_for_tests());
     let account_key = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
-    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    let slot1_account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
-    let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
+    let slot0_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+    let slot1_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
+    let slot2_account = AccountSharedData::new(3, 1, AccountSharedData::default().owner());
 
     /*
-        Store zero lamport account into slots 0, 1, 2 where
+        Store account into slots 0, 1, 2 where
         root slots are 0, 2, and slot 1 is unrooted.
                                 0 (root)
                             /        \
                           1            2 (root)
     */
-    db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((0, &[(&account_key, &slot0_account)][..]));
     db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
     // Fodder for the scan so that the lock on `account_key` is not held
     db.store_for_tests((1, &[(&account_key2, &slot1_account)][..]));
@@ -3519,7 +3519,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
         )
         .unwrap();
-    assert_eq!(account.0.lamports(), zero_lamport_account.lamports());
+    assert_eq!(account.0.lamports(), slot0_account.lamports());
 
     // Run clean, unrooted slot 1 should not be purged, and still readable from the cache,
     // because we're still doing a scan on it.
