@@ -5,7 +5,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_loader_v3_interface::get_program_data_address,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader,
+    solana_sdk_ids::{bpf_loader, system_program::ID as SYSTEM_PROGRAM_ID},
 };
 
 /// The account details of a Loader v2 BPF program slated to be upgraded.
@@ -24,6 +24,7 @@ impl TargetBpfV2 {
     pub(crate) fn new_checked(
         bank: &Bank,
         program_address: &Pubkey,
+        allow_prefunded: bool,
     ) -> Result<Self, CoreBpfMigrationError> {
         // The program account should exist.
         let program_account = bank
@@ -44,15 +45,32 @@ impl TargetBpfV2 {
 
         let program_data_address = get_program_data_address(program_address);
 
-        // The program data account should not exist.
-        if bank
-            .get_account_with_fixed_root(&program_data_address)
-            .is_some()
-        {
-            return Err(CoreBpfMigrationError::ProgramHasDataAccount(
-                *program_address,
-            ));
-        }
+        let program_data_account_lamports = if allow_prefunded {
+            // The program data account should not exist, but a system account with funded
+            // lamports is acceptable.
+            if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
+                if account.owner() != &SYSTEM_PROGRAM_ID {
+                    return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                        *program_address,
+                    ));
+                }
+                account.lamports()
+            } else {
+                0
+            }
+        } else {
+            // The program data account should not exist and have zero lamports.
+            if bank
+                .get_account_with_fixed_root(&program_data_address)
+                .is_some()
+            {
+                return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                    *program_address,
+                ));
+            }
+
+            0
+        };
 
         Ok(Self {
             program_address: *program_address,
@@ -87,7 +105,7 @@ mod tests {
 
         // Fail if the program account does not exist.
         assert_matches!(
-            TargetBpfV2::new_checked(&bank, &program_address).unwrap_err(),
+            TargetBpfV2::new_checked(&bank, &program_address, true).unwrap_err(),
             CoreBpfMigrationError::AccountNotFound(..)
         );
 
@@ -100,7 +118,7 @@ mod tests {
             true,
         );
         assert_matches!(
-            TargetBpfV2::new_checked(&bank, &program_address).unwrap_err(),
+            TargetBpfV2::new_checked(&bank, &program_address, true).unwrap_err(),
             CoreBpfMigrationError::IncorrectOwner(..)
         );
 
@@ -113,14 +131,14 @@ mod tests {
             false, // Not executable
         );
         assert_matches!(
-            TargetBpfV2::new_checked(&bank, &program_address).unwrap_err(),
+            TargetBpfV2::new_checked(&bank, &program_address, true).unwrap_err(),
             CoreBpfMigrationError::ProgramAccountNotExecutable(..)
         );
 
         // Success
         store_account(&bank, &program_address, &elf, &bpf_loader::id(), true);
 
-        let target_bpf_v2 = TargetBpfV2::new_checked(&bank, &program_address).unwrap();
+        let target_bpf_v2 = TargetBpfV2::new_checked(&bank, &program_address, true).unwrap();
 
         assert_eq!(target_bpf_v2.program_address, program_address);
         assert_eq!(target_bpf_v2.program_account.data(), elf.as_slice());

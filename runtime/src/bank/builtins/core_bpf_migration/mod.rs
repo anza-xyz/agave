@@ -217,11 +217,16 @@ impl Bank {
         &mut self,
         builtin_program_id: &Pubkey,
         config: &CoreBpfMigrationConfig,
+        allow_prefunded: bool,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(config.datapoint_name, ("slot", self.slot, i64));
 
-        let target =
-            TargetBuiltin::new_checked(self, builtin_program_id, &config.migration_target)?;
+        let target = TargetBuiltin::new_checked(
+            self,
+            builtin_program_id,
+            &config.migration_target,
+            allow_prefunded,
+        )?;
         let source = if let Some(expected_hash) = config.verified_build_hash {
             SourceBuffer::new_checked_with_verified_build_hash(
                 self,
@@ -379,6 +384,7 @@ impl Bank {
     ///     self.upgrade_loader_v2_program_with_loader_v3_program(
     ///        &bpf_loader_v2_program_address,
     ///        &source_buffer_address,
+    ///        true,
     ///        "test_upgrade_loader_v2_program_with_loader_v3_program",
     ///     );
     /// }
@@ -390,11 +396,13 @@ impl Bank {
         &mut self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
+        allow_prefunded: bool,
         datapoint_name: &'static str,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(datapoint_name, ("slot", self.slot, i64));
 
-        let target = TargetBpfV2::new_checked(self, loader_v2_bpf_program_address)?;
+        let target =
+            TargetBpfV2::new_checked(self, loader_v2_bpf_program_address, allow_prefunded)?;
         let source = SourceBuffer::new_checked(self, source_buffer_address)?;
 
         // Attempt serialization first before modifying the bank.
@@ -789,7 +797,7 @@ pub(crate) mod tests {
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         // Run the post-migration program checks.
@@ -854,7 +862,7 @@ pub(crate) mod tests {
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         // Run the post-migration program checks.
@@ -921,7 +929,7 @@ pub(crate) mod tests {
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
                 .unwrap_err(),
             CoreBpfMigrationError::UpgradeAuthorityMismatch(_, _)
         )
@@ -975,7 +983,7 @@ pub(crate) mod tests {
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
                 .unwrap_err(),
             CoreBpfMigrationError::BuildHashMismatch(_, _)
         )
@@ -1037,7 +1045,7 @@ pub(crate) mod tests {
             datapoint_name: "test_migrate_builtin",
         };
 
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         let program_data_address = get_program_data_address(&builtin_id);
@@ -1807,6 +1815,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
         .unwrap();
@@ -1887,6 +1896,7 @@ pub(crate) mod tests {
             bank.upgrade_loader_v2_program_with_loader_v3_program(
                 &bpf_loader_v2_program_address,
                 &source_buffer_address,
+                true,
                 "test_upgrade_loader_v2_program_with_loader_v3_program",
             )
             .unwrap_err(),
@@ -2084,6 +2094,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
         .unwrap();
