@@ -3855,8 +3855,7 @@ impl Bank {
                         inner_instructions: None,
                         return_data: None,
                         executed_units,
-                        // HANA what is fee details doing here exactly? do we need to create it from Bank?
-                        fee_details: FeeDetails::default(),
+                        fee_details: no_op_tx.fee_details,
                         loaded_account_stats: TransactionLoadedAccountsStats {
                             loaded_accounts_count: 0,
                             loaded_accounts_data_size,

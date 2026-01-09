@@ -169,6 +169,7 @@ pub struct FeesOnlyTransaction {
 pub struct NoOpTransaction {
     pub validation_error: TransactionError,
     pub fee_payer_balance: Option<u64>,
+    pub fee_details: FeeDetails,
 }
 
 // This is an internal SVM type that tracks account changes throughout a

@@ -728,6 +728,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 TransactionValidationResult::NoOp(NoOpTransaction {
                     validation_error: e,
                     fee_payer_balance,
+                    fee_details: compute_budget_and_limits.fee_details,
                 })
             }
             Err(e) => TransactionValidationResult::Unprocessable(e),
