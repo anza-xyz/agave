@@ -3258,9 +3258,9 @@ impl Bank {
                         executed_units,
                         loaded_accounts_data_size,
                     ),
-                    ProcessedTransaction::NoOp(err) => (
+                    ProcessedTransaction::NoOp(no_op_tx) => (
                         vec![],
-                        Err(err),
+                        Err(no_op_tx.validation_error),
                         None,
                         None,
                         None,
@@ -3849,20 +3849,19 @@ impl Bank {
                             .1
                             .lamports(),
                     }),
-                    // HANA idk if i like making fee_payer_post_balance 0... maybe could be an Option
-                    // but it affects all the way out to rpc/bigtable so its very annoying and breaking
-                    ProcessedTransaction::NoOp(err) => Ok(CommittedTransaction {
-                        status: Err(err),
+                    ProcessedTransaction::NoOp(no_op_tx) => Ok(CommittedTransaction {
+                        status: Err(no_op_tx.validation_error),
                         log_messages: None,
                         inner_instructions: None,
                         return_data: None,
                         executed_units,
+                        // HANA what is fee details doing here exactly? do we need to create it from Bank?
                         fee_details: FeeDetails::default(),
                         loaded_account_stats: TransactionLoadedAccountsStats {
                             loaded_accounts_count: 0,
                             loaded_accounts_data_size,
                         },
-                        fee_payer_post_balance: 0,
+                        fee_payer_post_balance: no_op_tx.fee_payer_balance.unwrap_or(0),
                     }),
                 }
             })

@@ -2,9 +2,9 @@ use {
     crate::{
         account_loader::{
             AccountLoader, CheckedTransactionDetails, FeesOnlyTransaction, LoadedTransaction,
-            TransactionCheckResult, TransactionLoadResult, TransactionValidationResult,
-            ValidatedTransactionDetails, load_transaction, update_rent_exempt_status_for_account,
-            validate_fee_payer,
+            NoOpTransaction, TransactionCheckResult, TransactionLoadResult,
+            TransactionValidationResult, ValidatedTransactionDetails, load_transaction,
+            update_rent_exempt_status_for_account, validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
@@ -482,13 +482,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 TransactionLoadResult::Unprocessable(e) => Err(e),
 
                 // Pre-execution failures become an error here with drop_on_failure
-                TransactionLoadResult::NoOp(e)
+                TransactionLoadResult::NoOp(NoOpTransaction {
+                    validation_error: e,
+                    ..
+                })
                 | TransactionLoadResult::FeesOnly(FeesOnlyTransaction { load_error: e, .. })
                     if config.drop_on_failure =>
                     Err(e),
 
                 // SIMD-0290 fee-payer or SIMD-0297 nonce failure is signalled as a non-error no-op
-                TransactionLoadResult::NoOp(e) => Ok(ProcessedTransaction::NoOp(e)),
+                TransactionLoadResult::NoOp(no_op_tx) =>
+                    Ok(ProcessedTransaction::NoOp(Box::new(no_op_tx))),
 
                 // Transactions that fail at account loading charge fees and roll nonces
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
@@ -716,7 +720,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         match fee_payer_result {
             Ok(details) => TransactionValidationResult::Loadable(details),
-            Err(e) if allow_noop => TransactionValidationResult::NoOp(e),
+            Err(e) if allow_noop => {
+                let fee_payer_balance = account_loader
+                    .load_account(message.fee_payer())
+                    .map(|account| account.lamports());
+
+                TransactionValidationResult::NoOp(NoOpTransaction {
+                    validation_error: e,
+                    fee_payer_balance,
+                })
+            }
             Err(e) => TransactionValidationResult::Unprocessable(e),
         }
     }
