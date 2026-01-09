@@ -310,7 +310,7 @@ impl<const N: usize> PingCache<N> {
                     (false, true)
                 } else {
                     // If the pong message is not too recent, generate a new ping
-                    // message to extend remote node verification. If the pong message is too recent,
+                    // message to extend remote node verification.
                     (true, age > self.ttl / 8)
                 }
             }
@@ -482,6 +482,7 @@ mod tests {
                     "Should generate ping to re-verify expired node"
                 );
             } else {
+                // Subsequent checks: no valid pong, and rate limited by socket
                 assert!(!check);
                 assert!(ping.is_none());
             }
