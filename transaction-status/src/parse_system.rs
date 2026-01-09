@@ -204,7 +204,7 @@ pub fn parse_system(
             owner,
         } => {
             if lamports == 0 {
-                // No payer case: only need newAccount
+                // No `from` case: only need newAccount
                 check_num_system_accounts(&instruction.accounts, 1)?;
                 Ok(ParsedInstructionEnum {
                     instruction_type: "createAccountAllowPrefund".to_string(),
@@ -215,7 +215,7 @@ pub fn parse_system(
                     }),
                 })
             } else {
-                // With payer: need newAccount and source
+                // With `from`: need newAccount and source
                 check_num_system_accounts(&instruction.accounts, 2)?;
                 Ok(ParsedInstructionEnum {
                     instruction_type: "createAccountAllowPrefund".to_string(),

@@ -188,7 +188,7 @@ fn create_account(
 fn create_account_allow_prefund(
     to_account_index: IndexOfAccount,
     to_address: &Address,
-    payer_and_lamports: Option<(IndexOfAccount, u64)>,
+    from_and_lamports: Option<(IndexOfAccount, u64)>,
     space: u64,
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
@@ -199,7 +199,7 @@ fn create_account_allow_prefund(
         let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
         allocate_and_assign(&mut to, to_address, space, owner, signers, invoke_context)?;
     }
-    if let Some((from_account_index, lamports)) = payer_and_lamports {
+    if let Some((from_account_index, lamports)) = from_and_lamports {
         if lamports > 0 {
             transfer(
                 from_account_index,
@@ -538,7 +538,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let payer_and_lamports = if lamports > 0 {
+            let from_and_lamports = if lamports > 0 {
                 instruction_context.check_number_of_instruction_accounts(2)?;
                 Some((1, lamports))
             } else {
@@ -553,7 +553,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             create_account_allow_prefund(
                 0,
                 &to_address,
-                payer_and_lamports,
+                from_and_lamports,
                 space,
                 &owner,
                 &signers,
