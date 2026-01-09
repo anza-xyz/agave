@@ -323,42 +323,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
-    pub fn configure_cpi_instruction(
-        &mut self,
-        program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
-        deduplication_map: Vec<u16>,
-        instruction_data: Cow<'ix_data, [u8]>,
-        parent_index: u16,
-    ) -> Result<(), InstructionError> {
-        self.configure_next_instruction(
-            program_index,
-            instruction_accounts,
-            deduplication_map,
-            instruction_data,
-        )?;
-        self.transaction_frame.number_of_instructions = self
-            .transaction_frame
-            .number_of_instructions
-            .saturating_add(1);
-        self.transaction_frame.cpi_scratchpad = VmSlice::new(
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
-                GUEST_REGION_SIZE
-                    .saturating_mul(self.transaction_frame.number_of_instructions as u64),
-            ),
-            0,
-        );
-
-        // This ? operator is never going to fail because it is also called in
-        // `configure_next_instruction`
-        let instruction = self
-            .instruction_trace
-            .last_mut()
-            .ok_or(InstructionError::CallDepth)?;
-        instruction.index_of_parent_instruction = parent_index;
-        Ok(())
-    }
-
     /// Configures the next instruction.
     ///
     /// The last InstructionContext is always empty and pre-reserved for the next instruction.
@@ -368,6 +332,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
         instruction_data: Cow<'ix_data, [u8]>,
+        parent_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         let trace_len = self.instruction_trace.len();
@@ -377,6 +342,23 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .instruction_trace
             .last_mut()
             .ok_or(InstructionError::CallDepth)?;
+
+        // If we have a parent index, then we are dealing with a CPI.
+        if let Some(parent_index) = parent_index {
+            self.transaction_frame.number_of_instructions = self
+                .transaction_frame
+                .number_of_instructions
+                .saturating_add(1);
+            instruction.index_of_parent_instruction = parent_index;
+        }
+
+        self.transaction_frame.cpi_scratchpad = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                GUEST_REGION_SIZE
+                    .saturating_mul(self.transaction_frame.number_of_instructions as u64),
+            ),
+            0,
+        );
 
         instruction.program_account_index_in_tx = program_index;
         instruction.configure_vm_slices(
@@ -414,6 +396,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts,
             dedup_map,
             Cow::Owned(instruction_data),
+            None,
         )
     }
 
@@ -872,6 +855,7 @@ mod tests {
                 vec![InstructionAccount::new(1, false, false)],
                 vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
                 Vec::new().into(),
+                None,
             )
             .unwrap();
         transaction_context.push().unwrap();
@@ -899,6 +883,7 @@ mod tests {
                 vec![InstructionAccount::new(1, false, false)],
                 vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
                 Vec::new().into(),
+                None,
             )
             .unwrap();
         transaction_context.push().unwrap();
@@ -918,12 +903,12 @@ mod tests {
         );
 
         transaction_context
-            .configure_cpi_instruction(
+            .configure_next_instruction(
                 0,
                 vec![InstructionAccount::new(2, false, true)],
                 vec![0; 256],
                 Vec::new().into(),
-                2,
+                Some(2),
             )
             .unwrap();
         assert_eq!(
