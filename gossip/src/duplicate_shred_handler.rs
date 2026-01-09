@@ -19,9 +19,16 @@ use {
 // Normally num_chunks is 3, because there are two shreds (each is one packet)
 // and meta data. So we discard anything larger than 3 chunks.
 const MAX_NUM_CHUNKS: usize = 3;
+
+/// How far behind the reported duplicate slot can my root slot be to store the proof.
+/// We clearly do not want to store proofs for slots that are 2 hours in the future.
+const MAX_FUTURE_SLOTS: u64 = 256;
+
 // Limit number of entries per node.
-const MAX_NUM_ENTRIES_PER_PUBKEY: usize = 128;
-const BUFFER_CAPACITY: usize = 512 * MAX_NUM_ENTRIES_PER_PUBKEY;
+const MAX_NUM_ENTRIES_PER_PUBKEY: usize = 256;
+
+/// We may need to store up to MAX_NUM_ENTRIES_PER_PUBKEY entries per unique leader.
+const BUFFER_CAPACITY: usize = MAX_FUTURE_SLOTS as usize / 4 * MAX_NUM_ENTRIES_PER_PUBKEY;
 
 type BufferEntry = [Option<DuplicateShred>; MAX_NUM_CHUNKS];
 
@@ -112,13 +119,14 @@ impl DuplicateShredHandler {
                 self.cached_slots_in_epoch = epoch_info.slots_in_epoch;
             }
         }
+        self.consumed.retain(|&slot, _| slot > self.last_root);
     }
 
     fn handle_shred_data(&mut self, chunk: DuplicateShred) -> Result<(), Error> {
-        if !self.should_consume_slot(chunk.slot) {
+        let slot = chunk.slot;
+        if !Self::should_consume_slot(self.last_root, slot, &mut self.consumed, &self.blockstore) {
             return Ok(());
         }
-        let slot = chunk.slot;
         let num_chunks = chunk.num_chunks();
         let chunk_index = chunk.chunk_index();
         if usize::from(num_chunks) > MAX_NUM_CHUNKS || chunk_index >= num_chunks {
@@ -160,10 +168,20 @@ impl DuplicateShredHandler {
         Ok(())
     }
 
-    fn should_consume_slot(&mut self, slot: Slot) -> bool {
-        slot > self.last_root
-            && slot < self.last_root.saturating_add(self.cached_slots_in_epoch)
-            && should_consume_slot(slot, &self.blockstore, &mut self.consumed)
+    fn should_consume_slot(
+        last_root: u64,
+        slot: Slot,
+        consumed: &mut HashMap<Slot, bool>,
+        blockstore: &Blockstore,
+    ) -> bool {
+        // slot is not known to be rooted
+        slot > last_root
+        // slot is not too far in the future
+            && slot < last_root.saturating_add(MAX_FUTURE_SLOTS)
+            // we haven't already consumed it
+            && !*consumed
+                .entry(slot)
+                .or_insert_with(|| blockstore.has_duplicate_shreds_in_slot(slot))
     }
 
     fn maybe_prune_buffer(&mut self) {
@@ -173,18 +191,20 @@ impl DuplicateShredHandler {
         if self.buffer.len() < BUFFER_CAPACITY.saturating_mul(2) {
             return;
         }
-        self.consumed.retain(|&slot, _| slot > self.last_root);
         // Filter out obsolete slots and limit number of entries per pubkey.
         {
-            let mut counts = HashMap::<Pubkey, usize>::new();
+            let mut counts = HashMap::<Pubkey, usize>::with_capacity(1024);
             self.buffer.retain(|(slot, pubkey), _| {
-                *slot > self.last_root
-                    && should_consume_slot(*slot, &self.blockstore, &mut self.consumed)
-                    && {
-                        let count = counts.entry(*pubkey).or_default();
-                        *count = count.saturating_add(1);
-                        *count <= MAX_NUM_ENTRIES_PER_PUBKEY
-                    }
+                Self::should_consume_slot(
+                    self.last_root,
+                    *slot,
+                    &mut self.consumed,
+                    &self.blockstore,
+                ) && {
+                    let count = counts.entry(*pubkey).or_default();
+                    *count = count.saturating_add(1);
+                    *count <= MAX_NUM_ENTRIES_PER_PUBKEY
+                }
             });
         }
         if self.buffer.len() <= BUFFER_CAPACITY {
@@ -212,18 +232,6 @@ impl DuplicateShredHandler {
                 .map(|(_, entry)| entry),
         );
     }
-}
-
-// Returns false if a duplicate proof is already ingested for the slot,
-// and updates local `consumed` cache with blockstore.
-fn should_consume_slot(
-    slot: Slot,
-    blockstore: &Blockstore,
-    consumed: &mut HashMap<Slot, bool>,
-) -> bool {
-    !*consumed
-        .entry(slot)
-        .or_insert_with(|| blockstore.has_duplicate_shreds_in_slot(slot))
 }
 
 #[cfg(test)]
@@ -429,8 +437,7 @@ mod tests {
         assert!(receiver.is_empty());
 
         // This proof will be rejected because the slot is too far away in the future.
-        let future_slot =
-            blockstore.max_root() + duplicate_shred_handler.cached_slots_in_epoch + start_slot;
+        let future_slot = blockstore.max_root() + MAX_FUTURE_SLOTS + start_slot;
         let chunks = create_duplicate_proof(
             my_keypair.clone(),
             None,
