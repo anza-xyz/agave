@@ -876,6 +876,7 @@ impl JsonRpcRequestProcessor {
                         amount: reward.lamports.unsigned_abs(),
                         post_balance: reward.post_balance,
                         commission: reward.commission,
+                        commission_bps: reward.commission_bps,
                     });
                 }
                 None
