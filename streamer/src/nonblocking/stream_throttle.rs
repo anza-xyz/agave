@@ -108,7 +108,6 @@ impl StakedStreamLoadEMA {
             / STREAM_LOAD_EMA_MULTIPLIER
     }
 
-    // Implicitly serialized by the self.last_update RwLock.
     fn update_ema(&self, time_since_last_update_ms: u128) {
         // if time_since_last_update_ms > STREAM_LOAD_EMA_INTERVAL_MS, there might be intervals where ema was not updated.
         // count how many updates (1 + missed intervals) are needed.
@@ -183,6 +182,8 @@ impl StakedStreamLoadEMA {
             ConnectionPeerType::Unstaked => self.max_unstaked_load_in_throttling_window,
             ConnectionPeerType::Staked(stake) => {
                 if self.staked_throttling.load(Ordering::Relaxed) {
+                    // 1 is added to `max_unstaked_load_in_throttling_window` to guarantee that staked
+                    // clients get at least 1 more number of streams than unstaked connections.
                     self.max_staked_load_in_throttling_window
                         .saturating_mul(stake)
                         .checked_div(total_stake)
@@ -298,7 +299,7 @@ pub mod test {
         assert_eq!(
             load_ema.available_load_capacity_in_throttling_duration(
                 ConnectionPeerType::Unstaked,
-                10000
+                10000,
             ),
             20
         );
