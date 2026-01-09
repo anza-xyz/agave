@@ -71,7 +71,7 @@ impl ProcessedTransaction {
         match self {
             Self::Executed(executed_tx) => executed_tx.loaded_transaction.fee_details,
             Self::FeesOnly(details) => details.fee_details,
-            Self::NoOp(_) => FeeDetails::default(),
+            Self::NoOp(details) => details.fee_details,
         }
     }
 
