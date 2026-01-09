@@ -288,6 +288,9 @@ impl TransactionStatusService {
                 keyed_rewards,
                 num_partitions,
             } = rewards;
+            let commission_bps_enabled = bank
+                .feature_set
+                .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
             let rewards = keyed_rewards
                 .into_iter()
                 .map(|(pubkey, reward_info)| Reward {
@@ -295,8 +298,16 @@ impl TransactionStatusService {
                     lamports: reward_info.lamports,
                     post_balance: reward_info.post_balance,
                     reward_type: Some(reward_info.reward_type),
-                    commission: reward_info.commission_bps.map(|bps| (bps / 100) as u8),
-                    commission_bps: reward_info.commission_bps,
+                    commission: if commission_bps_enabled {
+                        None
+                    } else {
+                        reward_info.commission_bps.map(|bps| (bps / 100) as u8)
+                    },
+                    commission_bps: if commission_bps_enabled {
+                        reward_info.commission_bps
+                    } else {
+                        None
+                    },
                 })
                 .collect();
             let blockstore_rewards = RewardsAndNumPartitions {
