@@ -2850,7 +2850,7 @@ fn test_account_balance_for_capitalization_native_program() {
 fn test_store_overhead() {
     agave_logger::setup();
     let accounts = AccountsDb::new_single_for_tests();
-    let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
     let pubkey = solana_pubkey::new_rand();
     accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
