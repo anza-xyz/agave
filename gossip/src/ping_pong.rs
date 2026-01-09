@@ -258,8 +258,10 @@ impl<const N: usize> PingCache<N> {
             .map(|t| now.saturating_duration_since(t) <= self.ttl)
             .unwrap_or(false);
 
+        // Skip IP-based rate limiting for loopback addresses (localhost), which are
+        // commonly used in tests. Socket-based rate limiting still applies.
         // Only rate limit by IP if we don't have a valid pong for any socket on this IP.
-        if !ip_has_valid_pong {
+        if !ip.is_loopback() && !ip_has_valid_pong {
             if let Some(info) = self.ip_ping_info.peek(&ip) {
                 if let Some(last_ping_sent) = info.last_ping_sent {
                     if now.saturating_duration_since(last_ping_sent) < self.rate_limit_delay {
@@ -888,6 +890,59 @@ mod tests {
         assert!(
             ping.is_some(),
             "Should generate ping to re-verify expired node"
+        );
+    }
+
+    #[test]
+    fn test_loopback_skips_ip_rate_limiting() {
+        // Test that loopback addresses (localhost) skip IP-based rate limiting,
+        // which is important for local cluster tests. Socket-based rate limiting still applies.
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = Duration::from_millis(10);
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_keypair = Keypair::new();
+
+        // Use loopback addresses (localhost)
+        let loopback_ip = Ipv4Addr::new(127, 0, 0, 1);
+        let socket1 = SocketAddr::V4(SocketAddrV4::new(loopback_ip, rng.random()));
+        let socket2 = SocketAddr::V4(SocketAddrV4::new(loopback_ip, rng.random()));
+
+        let node1 = (remote_keypair.pubkey(), socket1);
+        let node2 = (remote_keypair.pubkey(), socket2);
+
+        // Ping socket1 - should succeed
+        let (check, ping1) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(!check);
+        assert!(ping1.is_some());
+
+        // Immediately try to ping socket2 (same IP, different port)
+        // Should NOT be rate limited by IP because it's a loopback address
+        // Socket-based rate limiting still applies, but socket2 is different from socket1
+        let (check, ping2) = cache.check(&mut rng, &this_node, now, node2);
+        assert!(!check);
+        assert!(
+            ping2.is_some(),
+            "Loopback addresses should skip IP-based rate limiting"
+        );
+
+        // Try to ping socket1 again immediately - should be rate limited by socket (not IP)
+        let (check, ping1_again) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(!check);
+        assert!(
+            ping1_again.is_none(),
+            "Socket-based rate limiting should still apply for loopback addresses"
+        );
+
+        // After delay, should be able to ping socket1 again
+        let now = now + delay + Duration::from_millis(1);
+        let (check, ping1_final) = cache.check(&mut rng, &this_node, now, node1);
+        assert!(!check);
+        assert!(
+            ping1_final.is_some(),
+            "Should be able to ping after socket rate limit delay"
         );
     }
 }
