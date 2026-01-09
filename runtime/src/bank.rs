@@ -3261,8 +3261,7 @@ impl Bank {
                     ProcessedTransaction::NoOp(err) => (
                         vec![],
                         Err(err),
-                        // HANA unclear to me if Some(0) and None have any important semantic distinction
-                        Some(0),
+                        None,
                         None,
                         None,
                         None,
