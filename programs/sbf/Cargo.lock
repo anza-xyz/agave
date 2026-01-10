@@ -6673,6 +6673,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
  "agave-logger",
+ "agave-reserved-account-keys",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",

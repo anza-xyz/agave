@@ -12,10 +12,7 @@ use {
     },
     crate::banking_stage::{
         consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
-        transaction_scheduler::transaction_state_container::{RuntimeTransactionView, SharedBytes},
-    },
-    agave_transaction_view::{
-        transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
+        transaction_scheduler::transaction_state_container::RuntimeTransactionView,
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
@@ -26,23 +23,19 @@ use {
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-        transaction_with_meta::TransactionWithMeta,
+        transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::{
         account_loader::TransactionCheckResult, transaction_error_metrics::TransactionErrorMetrics,
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_time_utils::timestamp,
-    solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
-    std::{
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
-        },
-        time::Instant,
+    std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
     },
+    std::time::Instant,
 };
 
 mod transaction {
@@ -246,11 +239,9 @@ impl VoteWorker {
                 continue;
             }
 
-            // Sanitize & resolve our chunk.
-            for packet in chunk.into_iter() {
-                if let Some(tx) =
-                    consume_scan_should_process_packet(bank, packet, &mut error_counters)
-                {
+            // Validate the already-resolved transactions.
+            for tx in chunk.into_iter() {
+                if consume_scan_should_process_packet(bank, &tx, &mut error_counters) {
                     resolved_txs.push(tx);
                 }
             }
@@ -264,16 +255,12 @@ impl VoteWorker {
                 rebuffered_packet_count,
                 slot_metrics_tracker,
             ) {
-                self.storage.reinsert_packets(
-                    Self::extract_retryable(&mut resolved_txs, retryable_vote_indices)
-                        .map(|tx| tx.into_inner_transaction().into_view()),
-                );
+                self.storage.reinsert_packets(Self::extract_retryable(
+                    &mut resolved_txs,
+                    retryable_vote_indices,
+                ));
             } else {
-                self.storage.reinsert_packets(
-                    resolved_txs
-                        .drain(..)
-                        .map(|tx| tx.into_inner_transaction().into_view()),
-                );
+                self.storage.reinsert_packets(resolved_txs.drain(..));
             }
         }
 
@@ -505,47 +492,29 @@ impl VoteWorker {
     }
 }
 
+/// Validates whether a resolved vote transaction should be processed.
+/// Returns true if the transaction passes all validation checks.
 fn consume_scan_should_process_packet(
     bank: &Bank,
-    packet: SanitizedTransactionView<SharedBytes>,
+    tx: &RuntimeTransactionView,
     error_counters: &mut TransactionErrorMetrics,
-) -> Option<RuntimeTransactionView> {
-    // Construct the RuntimeTransaction.
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-        packet,
-        MessageHash::Compute,
-        None,
-    ) else {
-        return None;
-    };
-
+) -> bool {
     // Filter invalid votes (should never be triggered).
-    if !view.is_simple_vote_transaction() {
-        return None;
+    if !tx.is_simple_vote_transaction() {
+        return false;
     }
-
-    // Resolve the transaction (votes do not have LUTs).
-    debug_assert!(!matches!(view.version(), TransactionVersion::V0));
-    let Ok(view) = RuntimeTransactionView::try_new(view, None, bank.get_reserved_account_keys())
-    else {
-        return None;
-    };
 
     // Check the number of locks and whether there are duplicates
-    if validate_account_locks(
-        view.account_keys(),
-        bank.get_transaction_account_lock_limit(),
-    )
-    .is_err()
+    if validate_account_locks(tx.account_keys(), bank.get_transaction_account_lock_limit()).is_err()
     {
-        return None;
+        return false;
     }
 
-    if Consumer::check_fee_payer_unlocked(bank, &view, error_counters).is_err() {
-        return None;
+    if Consumer::check_fee_payer_unlocked(bank, tx, error_counters).is_err() {
+        return false;
     }
 
-    Some(view)
+    true
 }
 
 fn has_reached_end_of_slot(reached_max_poh_height: bool, bank: &Bank) -> bool {
@@ -562,14 +531,18 @@ mod tests {
             tests::{create_slow_genesis_config, sanitize_transactions},
             vote_storage::tests::packet_from_slots,
         },
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
         crossbeam_channel::unbounded,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::BytesPacket,
         solana_poh::record_channels::record_channels,
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
-        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        },
         solana_svm::account_loader::CheckedTransactionDetails,
         solana_system_transaction as system_transaction,
+        solana_transaction::sanitized::MessageHash,
         std::collections::HashSet,
     };
 
