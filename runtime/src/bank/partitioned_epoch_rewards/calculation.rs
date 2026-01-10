@@ -832,7 +832,9 @@ mod tests {
                     reward_type: RewardType::Voting,
                     lamports: vote_reward_info.vote_rewards as i64,
                     post_balance: vote_reward_info.vote_rewards,
-                    commission_bps: Some(vote_reward_info.commission_bps),
+                    // TODO: Update RewardInfo in solana-reward-info crate to support
+                    // commission_bps: Option<u16>, then pass bps here without loss.
+                    commission: Some((vote_reward_info.commission_bps / 100).min(100) as u8),
                 };
                 vote_rewards_account.accounts_with_rewards.push((
                     *vote_key,
@@ -1028,11 +1030,11 @@ mod tests {
 
     #[derive(Default)]
     struct VoteOperations {
-        expected_reward_commission_bps: Option<u16>,
+        expected_reward_commission: Option<u8>,
         // ops to perform before epoch ends
         create_with_balance: Option<u64>,
         delegate_stake_amount: Option<u64>,
-        new_commission_bps: Option<u16>,
+        new_commission: Option<u8>,
         earned_credits: Option<u64>,
     }
 
@@ -1116,9 +1118,9 @@ mod tests {
                 bank.store_account(vote_address, &vote_account);
             };
 
-            if let Some(commission_bps) = vote_op.new_commission_bps {
+            if let Some(commission) = vote_op.new_commission {
                 modify_vote_state(&|vote_state: &mut VoteStateV4| {
-                    vote_state.inflation_rewards_commission_bps = commission_bps;
+                    vote_state.inflation_rewards_commission_bps = commission as u16 * 100;
                 });
             }
 
@@ -1144,7 +1146,7 @@ mod tests {
         bank = Bank::new_from_parent(prev_bank.clone(), &Pubkey::new_unique(), slot);
 
         for (vote_address, vote_op) in &op.vote_operations {
-            let expected_commission_bps = vote_op.expected_reward_commission_bps;
+            let expected_commission = vote_op.expected_reward_commission;
             let recalculated_vote_reward = recalculate_vote_rewards_for_tests(&bank, vote_address);
             let vote_reward = bank
                 .rewards
@@ -1160,10 +1162,10 @@ mod tests {
                 .lamports();
             let vote_balance = bank.get_balance(vote_address);
 
-            if let Some(expected_commission_bps) = &expected_commission_bps {
+            if let Some(expected_commission) = &expected_commission {
                 let reward_lamports = vote_balance - prev_vote_balance;
                 let expected_vote_reward = RewardInfo {
-                    commission_bps: Some(*expected_commission_bps),
+                    commission: Some(*expected_commission),
                     reward_type: RewardType::Voting,
                     lamports: reward_lamports as i64,
                     post_balance: vote_balance,
@@ -1231,7 +1233,7 @@ mod tests {
                     vote_address,
                     VoteOperations {
                         create_with_balance: Some(LAMPORTS_PER_SOL),
-                        new_commission_bps: Some(100),
+                        new_commission: Some(1),
                         earned_credits: Some(1000),
                         delegate_stake_amount: Some(LAMPORTS_PER_SOL),
                         ..VoteOperations::default()
@@ -1244,7 +1246,7 @@ mod tests {
         // new vote accounts), that the reward commission falls back to the
         // commission from the end of the rewarded epoch.
         bank = {
-            let expected_commission_bps = if delay_commission_updates { 100 } else { 200 };
+            let expected_commission = if delay_commission_updates { 1 } else { 2 };
             apply_epoch_operations(
                 bank,
                 EpochOperations {
@@ -1252,9 +1254,9 @@ mod tests {
                     vote_operations: vec![(
                         vote_address,
                         VoteOperations {
-                            new_commission_bps: Some(200),
+                            new_commission: Some(2),
                             earned_credits: Some(1000),
-                            expected_reward_commission_bps: Some(expected_commission_bps),
+                            expected_reward_commission: Some(expected_commission),
                             ..VoteOperations::default()
                         },
                     )],
@@ -1262,7 +1264,7 @@ mod tests {
             )
         };
 
-        let expected_commission_bps = if delay_commission_updates { 100 } else { 300 };
+        let expected_commission = if delay_commission_updates { 1 } else { 3 };
         apply_epoch_operations(
             bank,
             EpochOperations {
@@ -1270,9 +1272,9 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        new_commission_bps: Some(300),
+                        new_commission: Some(3),
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(expected_commission_bps),
+                        expected_reward_commission: Some(expected_commission),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1320,9 +1322,9 @@ mod tests {
                     vote_address,
                     VoteOperations {
                         create_with_balance: Some(LAMPORTS_PER_SOL),
-                        new_commission_bps: Some(100),
+                        new_commission: Some(1),
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(100),
+                        expected_reward_commission: Some(1),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1339,9 +1341,9 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        new_commission_bps: Some(200),
+                        new_commission: Some(2),
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(100),
+                        expected_reward_commission: Some(1),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1355,9 +1357,9 @@ mod tests {
                 vote_operations: vec![(
                     vote_address,
                     VoteOperations {
-                        new_commission_bps: Some(300),
+                        new_commission: Some(3),
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(100),
+                        expected_reward_commission: Some(1),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1392,9 +1394,9 @@ mod tests {
                 vote_operations: vec![(
                     genesis_vote_address,
                     VoteOperations {
-                        new_commission_bps: Some(100),
+                        new_commission: Some(1),
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(0),
+                        expected_reward_commission: Some(0),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1410,9 +1412,9 @@ mod tests {
                 vote_operations: vec![(
                     genesis_vote_address,
                     VoteOperations {
-                        new_commission_bps: Some(200),
+                        new_commission: Some(2),
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(0),
+                        expected_reward_commission: Some(0),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1427,7 +1429,7 @@ mod tests {
                     genesis_vote_address,
                     VoteOperations {
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(100),
+                        expected_reward_commission: Some(1),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1442,7 +1444,7 @@ mod tests {
                     genesis_vote_address,
                     VoteOperations {
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(200),
+                        expected_reward_commission: Some(2),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1457,7 +1459,7 @@ mod tests {
                     genesis_vote_address,
                     VoteOperations {
                         earned_credits: Some(1000),
-                        expected_reward_commission_bps: Some(200),
+                        expected_reward_commission: Some(2),
                         ..VoteOperations::default()
                     },
                 )],
@@ -1530,7 +1532,9 @@ mod tests {
                 reward_type: RewardType::Voting,
                 lamports: vote_rewards as i64,
                 post_balance: vote_account.lamports(),
-                commission_bps: Some(commission_bps),
+                // TODO: Update RewardInfo in solana-reward-info crate to support
+                // commission_bps: Option<u16>, then pass bps here without loss.
+                commission: Some((commission_bps / 100) as u8),
             }
         );
         assert_eq!(vote_pubkey_from_result, vote_pubkey);
