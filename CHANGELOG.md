@@ -34,6 +34,7 @@ Release channels have their own copy of this changelog:
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 #### Changes
 * `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
+* Votes will be sent over QUIC by default. The old behavior is available via `--vote_use_quic false`.
 ### CLI
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`
@@ -68,6 +69,7 @@ without warning. From v4.0.0 onward, symbols in these crates will be unavailable
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.
+* The votes are now transported over QUIC and not UDP. The old mode can be manually enabled with `--vote-use-quic false`.
 
 ## 3.0.0
 

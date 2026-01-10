@@ -722,14 +722,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Controls the rate of the clients connections per IpAddr per minute."),
     )
     .arg(
-        Arg::with_name("vote_use_quic")
-            .long("vote-use-quic")
-            .takes_value(true)
-            .default_value(&default_args.vote_use_quic)
-            .hidden(hidden_unless_forced())
-            .help("Controls if to use QUIC to send votes."),
-    )
-    .arg(
         Arg::with_name("tpu_max_connections_per_peer")
             .long("tpu-max-connections-per-peer")
             .takes_value(true)
