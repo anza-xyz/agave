@@ -531,7 +531,11 @@ fn process_loader_upgradeable_instruction(
 
             let buffer = instruction_context.try_borrow_instruction_account(3)?;
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
-                if authority_address != authority_key {
+                if !invoke_context
+                    .get_feature_set()
+                    .loader_v3_relax_program_buffer_constraints
+                    && authority_address != authority_key
+                {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
                     return Err(InstructionError::IncorrectAuthority);
                 }
@@ -702,7 +706,11 @@ fn process_loader_upgradeable_instruction(
 
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
-                if authority_address != authority_key {
+                if !invoke_context
+                    .get_feature_set()
+                    .loader_v3_relax_program_buffer_constraints
+                    && authority_address != authority_key
+                {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
                     return Err(InstructionError::IncorrectAuthority);
                 }
@@ -1785,11 +1793,13 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{error::InstructionError, AccountMeta},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, with_mock_invoke_context,
+            invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::{system_program, sysvar},
+        solana_svm_feature_set::SVMFeatureSet,
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
     };
 
@@ -2444,10 +2454,11 @@ mod tests {
             transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
             instruction_accounts: Vec<AccountMeta>,
             expected_result: Result<(), InstructionError>,
+            feature_set: &SVMFeatureSet,
         ) -> Vec<AccountSharedData> {
             let instruction_data =
                 bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
-            mock_process_instruction(
+            mock_process_instruction_with_feature_set(
                 &bpf_loader_upgradeable::id(),
                 None,
                 &instruction_data,
@@ -2457,8 +2468,11 @@ mod tests {
                 Entrypoint::vm,
                 |_invoke_context| {},
                 |_invoke_context| {},
+                feature_set,
             )
         }
+
+        let all_features = SVMFeatureSet::all_enabled();
 
         // Case: Success
         let (transaction_accounts, instruction_accounts) = get_accounts(
@@ -2468,7 +2482,12 @@ mod tests {
             &elf_orig,
             &elf_new,
         );
-        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        let accounts = process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Ok(()),
+            &all_features,
+        );
         let min_programdata_balance = Rent::default().minimum_balance(
             UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
         );
@@ -2522,6 +2541,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::Immutable),
+            &all_features,
         );
 
         // Case: wrong authority
@@ -2539,6 +2559,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &all_features,
         );
 
         // Case: authority did not sign
@@ -2554,6 +2575,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::MissingRequiredSignature),
+            &all_features,
         );
 
         // Case: Buffer account and spill account alias
@@ -2569,6 +2591,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountBorrowFailed),
+            &all_features,
         );
 
         // Case: Programdata account and spill account alias
@@ -2584,6 +2607,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountBorrowFailed),
+            &all_features,
         );
 
         // Case: Program account not a program
@@ -2614,6 +2638,7 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::InvalidAccountData),
+            &all_features,
         );
 
         // Case: Program account now owned by loader
@@ -2633,6 +2658,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectProgramId),
+            &all_features,
         );
 
         // Case: Program account not writable
@@ -2648,6 +2674,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
+            &all_features,
         );
 
         // Case: Program account not initialized
@@ -2668,6 +2695,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidAccountData),
+            &all_features,
         );
 
         // Case: Program ProgramData account mismatch
@@ -2685,6 +2713,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
+            &all_features,
         );
 
         // Case: Buffer account not initialized
@@ -2705,6 +2734,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
+            &all_features,
         );
 
         // Case: Buffer account too big
@@ -2734,6 +2764,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountDataTooSmall),
+            &all_features,
         );
 
         // Case: Buffer account too small
@@ -2757,9 +2788,17 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidAccountData),
+            &all_features,
         );
 
-        // Case: Mismatched buffer and program authority
+        let feature_set_with_simd_0430_disabled = SVMFeatureSet {
+            loader_v3_relax_program_buffer_constraints: false,
+            ..SVMFeatureSet::all_enabled()
+        };
+
+        // Case: Mismatched buffer and program authority with feature
+        // loader_v3_relax_program_buffer_constraints DISABLED.
+        // Should fail with `IncorrectAuthority`.
         let (transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &buffer_address,
@@ -2771,9 +2810,29 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &feature_set_with_simd_0430_disabled,
         );
 
-        // Case: No buffer authority
+        // Case: Mismatched buffer and program authority with feature
+        // loader_v3_relax_program_buffer_constraints ENABLED.
+        // Should succeed.
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Ok(()),
+            &all_features,
+        );
+
+        // Case: No buffer authority with feature
+        // loader_v3_relax_program_buffer_constraints DISABLED.
+        // Should fail with `IncorrectAuthority`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &buffer_address,
@@ -2793,9 +2852,37 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &feature_set_with_simd_0430_disabled,
         );
 
-        // Case: No buffer and program authority
+        // Case: No buffer authority with feature
+        // loader_v3_relax_program_buffer_constraints ENABLED.
+        // Should succeed.
+        let (mut transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        transaction_accounts
+            .get_mut(2)
+            .unwrap()
+            .1
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: None,
+            })
+            .unwrap();
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Ok(()),
+            &all_features,
+        );
+
+        // Case: No buffer and program authority with feature
+        // loader_v3_relax_program_buffer_constraints DISABLED.
+        // Should fail with `IncorrectAuthority`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &buffer_address,
@@ -2824,6 +2911,41 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &feature_set_with_simd_0430_disabled,
+        );
+
+        // Case: No buffer and program authority with feature
+        // loader_v3_relax_program_buffer_constraints ENABLED.
+        // Should fail with `Immutable` (program has no upgrade authority).
+        let (mut transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        transaction_accounts
+            .get_mut(0)
+            .unwrap()
+            .1
+            .set_state(&UpgradeableLoaderState::ProgramData {
+                slot: SLOT,
+                upgrade_authority_address: None,
+            })
+            .unwrap();
+        transaction_accounts
+            .get_mut(2)
+            .unwrap()
+            .1
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: None,
+            })
+            .unwrap();
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::Immutable),
+            &all_features,
         );
     }
 
