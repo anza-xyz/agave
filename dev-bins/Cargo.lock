@@ -7866,6 +7866,7 @@ dependencies = [
 name = "solana-local-cluster"
 version = "3.1.6"
 dependencies = [
+ "agave-feature-set",
  "agave-logger",
  "agave-snapshots",
  "crossbeam-channel",

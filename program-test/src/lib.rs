@@ -14,7 +14,7 @@
 pub use tokio;
 use {
     agave_feature_set::{
-        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FEATURE_NAMES,
+        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES,
     },
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
@@ -814,6 +814,19 @@ impl ProgramTest {
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
 
+        // Remove features tagged to deactivate
+        let mut feature_set = FeatureSet::all_enabled();
+        for deactivate_feature_pk in &self.deactivate_feature_set {
+            if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
+                feature_set.deactivate(deactivate_feature_pk);
+            } else {
+                warn!(
+                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
+                     Feature public key"
+                );
+            }
+        }
+
         let mut genesis_config = create_genesis_config_with_leader_ex(
             1_000_000 * LAMPORTS_PER_SOL,
             &mint_keypair.pubkey(),
@@ -826,26 +839,9 @@ impl ProgramTest {
             fee_rate_governor,
             rent.clone(),
             ClusterType::Development,
+            &feature_set,
             std::mem::take(&mut self.genesis_accounts),
         );
-
-        // Remove features tagged to deactivate
-        for deactivate_feature_pk in &self.deactivate_feature_set {
-            if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
-                match genesis_config.accounts.remove(deactivate_feature_pk) {
-                    Some(_) => debug!("Feature for {deactivate_feature_pk:?} deactivated"),
-                    None => warn!(
-                        "Feature {deactivate_feature_pk:?} set for deactivation not found in \
-                         genesis_config account list, ignored."
-                    ),
-                }
-            } else {
-                warn!(
-                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
-                     Feature public key"
-                );
-            }
-        }
 
         let target_tick_duration = Duration::from_micros(100);
         genesis_config.poh_config = PohConfig::new_sleep(target_tick_duration);
