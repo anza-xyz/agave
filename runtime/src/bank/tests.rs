@@ -808,7 +808,7 @@ where
                 reward_type: RewardType::Voting,
                 lamports: 0,
                 post_balance: bank1.get_balance(&vote_id),
-                commission_bps: Some(0),
+                commission: Some(0),
             }
         ),]
     );
@@ -856,7 +856,7 @@ where
                 reward_type: RewardType::Staking,
                 lamports: validator_rewards_lamports as i64,
                 post_balance: bank2.get_balance(&stake_id),
-                commission_bps: Some(0),
+                commission: Some(0),
             }
         )]
     );
@@ -1468,7 +1468,7 @@ fn test_bank_tx_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + expected_fee_collected,
-                commission_bps: None,
+                commission: None,
             }
         )]
     );
@@ -1503,7 +1503,7 @@ fn test_bank_tx_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + 2 * expected_fee_collected,
-                commission_bps: None,
+                commission: None,
             }
         )]
     );
@@ -1578,7 +1578,7 @@ fn test_bank_tx_compute_unit_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + expected_fee_collected,
-                commission_bps: None,
+                commission: None,
             }
         )]
     );
@@ -1613,7 +1613,7 @@ fn test_bank_tx_compute_unit_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + 2 * expected_fee_collected,
-                commission_bps: None,
+                commission: None,
             }
         )]
     );
@@ -11274,7 +11274,9 @@ fn test_calc_vote_accounts_to_store_normal() {
                     reward_type: RewardType::Voting,
                     lamports: vote_rewards as i64,
                     post_balance: vote_account.lamports(),
-                    commission_bps: Some(commission_bps),
+                    // TODO: Update RewardInfo in solana-reward-info crate to support
+                    // commission_bps: Option<u16>, then pass bps here without loss.
+                    commission: Some((commission_bps / 100) as u8),
                 }
             );
             assert_eq!(*pubkey_result, pubkey);

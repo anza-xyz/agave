@@ -8176,9 +8176,9 @@ dependencies = [
 
 [[package]]
 name = "solana-reward-info"
-version = "4.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41a0cb91cb3ef9a1c70128f31233cc0f4420c069e8bd22b26d84d9d90d162a0b"
+checksum = "82be7946105c2ee6be9f9ee7bd18a068b558389221d29efa92b906476102bfcc"
 dependencies = [
  "serde",
  "serde_derive",
