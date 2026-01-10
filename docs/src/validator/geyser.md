@@ -92,11 +92,11 @@ The following method is used for notifying on an account update:
 
 ```
     fn update_account(
-	        &self,
-	        account: ReplicaAccountInfoVersions,
-	        slot: Slot,
-	        is_startup: bool,
-	    ) -> Result<()>
+		&self,
+		account: ReplicaAccountInfoVersions,
+		slot: Slot,
+		is_startup: bool,
+	) -> Result<()>
 ```
 
 The `ReplicaAccountInfoVersions` struct contains the metadata and data of the account
@@ -122,11 +122,11 @@ The following method is used for notifying slot status changes:
 
 ```
     fn update_slot_status(
-	        &self,
-	        slot: Slot,
-	        parent: Option<u64>,
-	        status: &SlotStatus,
-	    ) -> Result<()>
+		&self,
+		slot: Slot,
+		parent: Option<u64>,
+		status: &SlotStatus,
+	) -> Result<()>
 ```
 
 To ensure data consistency, the plugin implementation can choose to abort
@@ -137,10 +137,10 @@ The following method is used for notifying transactions:
 
 ```
     fn notify_transaction(
-	        &self,
-	        transaction: ReplicaTransactionInfoVersions,
-	        slot: Slot,
-	    ) -> Result<()>
+		&self,
+		transaction: ReplicaTransactionInfoVersions,
+		slot: Slot,
+	) -> Result<()>
 ```
 
 The `ReplicaTransactionInfoVersions` struct
