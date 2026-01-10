@@ -9681,6 +9681,7 @@ dependencies = [
  "agave-votor",
  "agave-xdp",
  "arc-swap",
+ "aya",
  "bincode",
  "caps",
  "core_affinity",

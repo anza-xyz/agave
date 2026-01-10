@@ -141,7 +141,7 @@ use {
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
-        xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitter},
+        xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitBuilder, XdpRetransmitter},
     },
     solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
@@ -1543,27 +1543,28 @@ impl Validator {
             )
         });
 
-        let (xdp_retransmitter, xdp_sender) = if let Some(xdp_config) =
-            config.retransmit_xdp.clone()
-        {
-            let src_port = node.sockets.retransmit_sockets[0]
-                .local_addr()
-                .expect("failed to get local address")
-                .port();
-            let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                IpAddr::V4(_unspecified) => xdp_config
-                    .interface
-                    .as_ref()
-                    .and_then(|iface| master_ip_if_bonded(iface)),
-                _ => panic!("IPv6 not supported"),
+        let (xdp_retransmitter, xdp_sender) =
+            if let Some(xdp_config) = config.retransmit_xdp.clone() {
+                let src_port = node.sockets.retransmit_sockets[0]
+                    .local_addr()
+                    .expect("failed to get local address")
+                    .port();
+                let src_ip = match node.bind_ip_addrs.active() {
+                    IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+                    IpAddr::V4(_unspecified) => xdp_config
+                        .interface
+                        .as_ref()
+                        .and_then(|iface| master_ip_if_bonded(iface)),
+                    _ => panic!("IPv6 not supported"),
+                };
+                let xdp_retransmit_builder =
+                    XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
+                        .expect("failed to create xdp retransmitter");
+                let (rtx, sender) = xdp_retransmit_builder.build();
+                (Some(rtx), Some(sender))
+            } else {
+                (None, None)
             };
-            let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip, exit.clone())
-                .expect("failed to create xdp retransmitter");
-            (Some(rtx), Some(sender))
-        } else {
-            (None, None)
-        };
 
         // disable all2all tests if not allowed for a given cluster type
         let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet

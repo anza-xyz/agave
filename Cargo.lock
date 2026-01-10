@@ -11746,6 +11746,7 @@ dependencies = [
  "agave-xdp",
  "arc-swap",
  "assert_matches",
+ "aya",
  "bencher",
  "bincode",
  "bs58",
