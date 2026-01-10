@@ -36,6 +36,8 @@ pub struct SequentialFileReaderBuilder<'sp> {
     shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
     /// Register buffer as fixed with the kernel
     register_buffer: bool,
+    /// Toggle option for opening files with the O_DIRECT flag
+    use_direct_io: bool,
 }
 
 impl<'sp> SequentialFileReaderBuilder<'sp> {
@@ -46,6 +48,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             ring_squeue_size: None,
             shared_sqpoll_fd: None,
             register_buffer: false,
+            use_direct_io: false,
         }
     }
 
@@ -63,6 +66,16 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
     pub fn use_registered_buffers(mut self, register_buffers: bool) -> Self {
         self.register_buffer = register_buffers;
+        self
+    }
+
+    /// Set whether to use directio when reading
+    ///
+    /// Enabling requires the filesystem to support directio and subbuffers to be a multiple
+    /// of the fs block size
+    #[cfg(test)]
+    pub fn use_direct_io(mut self, use_direct_io: bool) -> Self {
+        self.use_direct_io = use_direct_io;
         self
     }
 
@@ -116,7 +129,21 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         .map(ReadBufState::Uninit)
         .collect();
 
-        let state = SequentialFileReaderState::new(path, buffers, self.read_capacity)?;
+        #[cfg(debug_assertions)]
+        if self.use_direct_io {
+            // O_DIRECT reads have size and alignment restrictions and must be into a sub-buffer of
+            // some multiple of the fs block size (see https://man7.org/linux/man-pages/man2/open.2.html#NOTES).
+
+            use crate::metadata::direct_io_offset_alignment;
+            let block_size = direct_io_offset_alignment(&path);
+            assert!(
+                self.read_capacity.is_multiple_of(block_size as usize),
+                "read size is not multiple of fs block size={block_size}"
+            );
+        }
+
+        let state =
+            SequentialFileReaderState::new(path, buffers, self.read_capacity, self.use_direct_io)?;
 
         let io_uring = self.create_io_uring(buf_capacity)?;
         let ring = Ring::new(io_uring, state);
@@ -332,10 +359,12 @@ impl SequentialFileReaderState {
         path: impl AsRef<Path>,
         buffers: Vec<ReadBufState>,
         read_capacity: usize,
+        use_direct_io: bool,
     ) -> io::Result<Self> {
+        let flags = libc::O_NOATIME | if use_direct_io { libc::O_DIRECT } else { 0 };
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOATIME)
+            .custom_flags(flags)
             .open(path)?;
         Ok(Self {
             file,
@@ -486,7 +515,12 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
 mod tests {
     use {super::*, tempfile::NamedTempFile};
 
-    fn check_reading_file(file_size: usize, backing_buffer_size: usize, read_capacity: usize) {
+    fn check_reading_file(
+        file_size: usize,
+        backing_buffer_size: usize,
+        read_capacity: usize,
+        use_direct_io: bool,
+    ) {
         let pattern: Vec<u8> = (0..251).collect();
 
         // Create a temp file and write the pattern to it repeatedly
@@ -499,6 +533,7 @@ mod tests {
         let buf = PageAlignedMemory::new(backing_buffer_size).unwrap();
         let mut reader = SequentialFileReaderBuilder::new()
             .read_capacity(read_capacity)
+            .use_direct_io(use_direct_io)
             .build_with_buffer(temp_file.path(), buf)
             .unwrap();
 
@@ -516,28 +551,28 @@ mod tests {
     /// Test with buffer larger than the whole file
     #[test]
     fn test_reading_small_file() {
-        check_reading_file(2500, 4096, 1024);
-        check_reading_file(2500, 4096, 2048);
-        check_reading_file(2500, 4096, 4096);
+        check_reading_file(2500, 4096, 1024, false);
+        check_reading_file(2500, 4096, 2048, false);
+        check_reading_file(2500, 4096, 4096, false);
     }
 
     /// Test with buffer smaller than the whole file
     #[test]
     fn test_reading_file_in_chunks() {
-        check_reading_file(25_000, 16384, 1024);
-        check_reading_file(25_000, 4096, 1024);
-        check_reading_file(25_000, 4096, 2048);
-        check_reading_file(25_000, 4096, 4096);
+        check_reading_file(25_000, 16384, 1024, false);
+        check_reading_file(25_000, 4096, 1024, false);
+        check_reading_file(25_000, 4096, 2048, false);
+        check_reading_file(25_000, 4096, 4096, false);
     }
 
     /// Test with buffer much smaller than the whole file
     #[test]
     fn test_reading_large_file() {
-        check_reading_file(250_000, 32768, 1024);
-        check_reading_file(250_000, 16384, 1024);
-        check_reading_file(250_000, 4096, 1024);
-        check_reading_file(250_000, 4096, 2048);
-        check_reading_file(250_000, 4096, 4096);
+        check_reading_file(250_000, 32768, 1024, false);
+        check_reading_file(250_000, 16384, 1024, false);
+        check_reading_file(250_000, 4096, 1024, false);
+        check_reading_file(250_000, 4096, 2048, false);
+        check_reading_file(250_000, 4096, 4096, false);
     }
 
     #[test]
@@ -557,5 +592,19 @@ mod tests {
         reader.read_to_end(&mut all_read_data).unwrap();
         assert_eq!(all_read_data.len(), file_size);
         assert_eq!(all_read_data, data);
+    }
+
+    #[test]
+    fn test_direct_io_read() {
+        check_reading_file(2_500, 4096, 4096, true);
+        check_reading_file(2_500, 16384, 4096, true);
+        check_reading_file(25_000, 4096, 4096, true);
+        check_reading_file(25_000, 16384, 4096, true);
+        check_reading_file(250_000, 4096, 4096, true);
+        check_reading_file(250_000, 16384, 4096, true);
+        check_reading_file(4096, 4096, 4096, true);
+        check_reading_file(4096, 16384, 4096, true);
+        check_reading_file(16384, 4096, 4096, true);
+        check_reading_file(16384, 16384, 4096, true);
     }
 }
