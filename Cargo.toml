@@ -46,6 +46,7 @@ members = [
     "keygen",
     "lattice-hash",
     "ledger",
+    "loader",
     "local-cluster",
     "logger",
     "measure",

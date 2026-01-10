@@ -66,14 +66,14 @@ use {
     },
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
-        xdp::{set_cpu_affinity, XdpConfig},
+        xdp::{set_cpu_affinity, FirewallConfig, XdpConfig},
     },
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
         env,
         fs::{self, File},
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         process::exit,
@@ -455,6 +455,7 @@ pub fn execute(
         || matches.is_present("geyser_plugin_always_enabled");
 
     let xdp_interface = matches.value_of("retransmit_xdp_interface");
+    let enable_firewall = matches.is_present("enable_xdp_firewall");
     let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
     let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
         XdpConfig::new(
@@ -856,6 +857,54 @@ pub fn execute(
         .collect::<Vec<_>>();
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
+
+    if let Some(retransmit_xdp) = validator_config.retransmit_xdp.as_mut() {
+        if enable_firewall {
+            fn port(sock: Option<&UdpSocket>) -> u16 {
+                let Some(sock) = sock else {
+                    return 0;
+                };
+                sock.local_addr().map(|sa| sa.port()).unwrap_or(0)
+            }
+            let primary_ipv4 = match advertised_ip {
+                IpAddr::V4(ipv4_addr) => ipv4_addr,
+                IpAddr::V6(_) => {
+                    Err("XDP firewall only supported in IPv4 mode".to_string())?;
+                    unreachable!()
+                }
+            };
+            retransmit_xdp.firewall_config = Some(FirewallConfig {
+                tpu_vote: port(node.sockets.tpu_vote.first()),
+                tpu_quic: port(node.sockets.tpu_quic.first()),
+                tpu_forwards_quic: port(node.sockets.tpu_forwards_quic.first()),
+                tpu_vote_quic: port(node.sockets.tpu_vote_quic.first()),
+                turbine: port(node.sockets.tvu.first()),
+                repair: port(Some(&node.sockets.repair)),
+                serve_repair: port(Some(&node.sockets.serve_repair)),
+                ancestor_repair: port(Some(&node.sockets.ancestor_hashes_requests)),
+                gossip: port(node.sockets.gossip.first()),
+                solana_min_port: dynamic_port_range.0,
+                solana_max_port: dynamic_port_range.1,
+                my_ip: primary_ipv4,
+                deny_ingress_ports: [
+                    // UDP versions of the TPU ports - not in use
+                    port(node.sockets.tpu_forwards.first()),
+                    port(node.sockets.tpu.first()),
+                    // TX only ports
+                    port(node.sockets.retransmit_sockets.first()),
+                    port(node.sockets.broadcast.first()),
+                    // QUIC transports for repair and turbine - not in use
+                    port(Some(&node.sockets.serve_repair_quic)),
+                    port(Some(&node.sockets.ancestor_hashes_requests_quic)),
+                    port(Some(&node.sockets.repair_quic)),
+                    port(Some(&node.sockets.tvu_quic)),
+                ],
+                strip_gre: true, // support operating with DZ turned on
+                drop_frags: false,
+                enforce: false,
+            })
+        }
+    }
 
     if restricted_repair_only_mode {
         if validator_config.wen_restart_proto_path.is_some() {
