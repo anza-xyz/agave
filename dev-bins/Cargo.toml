@@ -109,7 +109,7 @@ solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "../gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-hash = "3.1.0"
+solana-hash = "4.0.1"
 solana-inflation = "3.0.0"
 solana-instruction = "3.1.0"
 solana-keypair = "3.0.1"
