@@ -44,6 +44,7 @@ frozen-abi = [
 agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
+agave-reserved-account-keys = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
@@ -193,7 +194,6 @@ shaq = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]
-agave-reserved-account-keys = { workspace = true }
 agave-scheduler-bindings = { workspace = true, features = ["dev-context-only-utils"] }
 bencher = { workspace = true }
 criterion = { workspace = true }
