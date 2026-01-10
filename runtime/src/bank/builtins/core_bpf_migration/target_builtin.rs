@@ -5,7 +5,9 @@ use {
     solana_builtins::core_bpf_migration::CoreBpfMigrationTargetType,
     solana_loader_v3_interface::get_program_data_address,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::native_loader::ID as NATIVE_LOADER_ID,
+    solana_sdk_ids::{
+        native_loader::ID as NATIVE_LOADER_ID, system_program::ID as SYSTEM_PROGRAM_ID,
+    },
 };
 
 /// The account details of a built-in program to be migrated to Core BPF.
@@ -14,6 +16,7 @@ pub(crate) struct TargetBuiltin {
     pub program_address: Pubkey,
     pub program_account: AccountSharedData,
     pub program_data_address: Pubkey,
+    pub program_data_account_lamports: u64,
 }
 
 impl TargetBuiltin {
@@ -82,6 +85,7 @@ impl TargetBuiltin {
             program_address: *program_address,
             program_account,
             program_data_address,
+            program_data_account_lamports,
         })
     }
 }

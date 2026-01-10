@@ -14,6 +14,7 @@ pub(crate) struct TargetBpfV2 {
     pub program_address: Pubkey,
     pub program_account: AccountSharedData,
     pub program_data_address: Pubkey,
+    pub program_data_account_lamports: u64,
 }
 
 impl TargetBpfV2 {
@@ -76,6 +77,7 @@ impl TargetBpfV2 {
             program_address: *program_address,
             program_account,
             program_data_address,
+            program_data_account_lamports,
         })
     }
 }
