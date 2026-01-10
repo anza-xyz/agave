@@ -293,6 +293,9 @@ impl SigVerifyStage {
         stats: &mut SigVerifierStats,
     ) -> Result<(), T::SendType> {
         let (mut batches, num_packets, recv_duration) = streamer::recv_packet_batches(recvr)?;
+        if num_packets == 0 {
+            return Ok(());
+        }
 
         let batches_len = batches.len();
         debug!(
@@ -408,9 +411,6 @@ impl SigVerifyStage {
                             SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
                                 RecvTimeoutError::Disconnected,
                             )) => break,
-                            SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
-                                RecvTimeoutError::Timeout,
-                            )) => (),
                             SigVerifyServiceError::Send(_) => {
                                 break;
                             }
