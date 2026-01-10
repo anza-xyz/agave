@@ -102,7 +102,8 @@ impl solana_frozen_abi::rand::prelude::Distribution<CertificateType>
             3 => {
                 CertificateType::NotarizeFallback(rng.random(), Hash::new_from_array(rng.random()))
             }
-            _ => CertificateType::Skip(rng.random()),
+            4 => CertificateType::Skip(rng.random()),
+            _ => unreachable!(),
         }
     }
 }
