@@ -4,6 +4,10 @@ use {
         keypair::{parse_signer_source, SignerSourceKind, ASK_KEYWORD},
     },
     chrono::DateTime,
+    solana_bls_signatures::{
+        ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
+        PubkeyCompressed as BLSPubkeyCompressed,
+    },
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_keypair::read_keypair_file,
@@ -61,6 +65,22 @@ where
     T: AsRef<str> + Display,
 {
     is_parsable_generic::<Pubkey, _>(string)
+}
+
+// Return an error if a BLS pubkey cannot be parsed.
+pub fn is_bls_pubkey_compressed<T>(string: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    is_parsable_generic::<BLSPubkeyCompressed, _>(string)
+}
+
+// Return an error if a BLS proof of possession cannot be parsed.
+pub fn is_bls_proof_of_possession_compressed<T>(string: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    is_parsable_generic::<BLSProofOfPossessionCompressed, _>(string)
 }
 
 // Return an error if a hash cannot be parsed.
@@ -460,7 +480,16 @@ pub fn is_non_zero(value: impl AsRef<str>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        solana_bls_signatures::{
+            keypair::Keypair as BLSKeypair,
+            proof_of_possession::{
+                ProofOfPossession as BLSProofOfPossession,
+                ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
+            },
+        },
+    };
 
     #[test]
     fn test_is_derivation() {
@@ -473,5 +502,33 @@ mod tests {
         assert!(is_derivation("4294967296").is_err());
         assert!(is_derivation("a/b").is_err());
         assert!(is_derivation("0/4294967296").is_err());
+    }
+
+    #[test]
+    fn test_bls_pubkey_and_proof_of_possession() {
+        // Test BLS Pubkey Compressed
+        assert!(is_bls_pubkey_compressed("").is_err());
+        assert!(is_bls_pubkey_compressed("invalid_pubkey").is_err());
+        let bls_keypair = BLSKeypair::new();
+        let bls_pubkey = bls_keypair.public;
+        let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
+        assert!(is_bls_pubkey_compressed(bls_pubkey.to_string()).is_err());
+        assert!(is_bls_pubkey_compressed(bls_pubkey_compressed.to_string()).is_ok());
+
+        // Test BLS Proof of Possession Compressed
+        assert!(is_bls_proof_of_possession_compressed("").is_err());
+        assert!(is_bls_proof_of_possession_compressed("invalid_proof_of_possession").is_err());
+        let bls_proof_of_possession = bls_keypair.proof_of_possession(None);
+        let bls_proof_of_possession_affine: BLSProofOfPossession = bls_proof_of_possession.into();
+        let bls_proof_of_possession_compressed: BLSProofOfPossessionCompressed =
+            bls_proof_of_possession_affine.try_into().unwrap();
+        assert!(
+            is_bls_proof_of_possession_compressed(bls_proof_of_possession_affine.to_string())
+                .is_err()
+        );
+        assert!(is_bls_proof_of_possession_compressed(
+            bls_proof_of_possession_compressed.to_string()
+        )
+        .is_ok());
     }
 }

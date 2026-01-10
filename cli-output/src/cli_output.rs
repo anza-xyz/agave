@@ -2018,6 +2018,28 @@ impl fmt::Display for CliSignOnlyData {
     }
 }
 
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CliSignOnlyDataWithBLS {
+    #[serde(flatten)]
+    pub base: CliSignOnlyData,
+    pub bls_pubkey: String,
+    pub bls_proof_of_possession: String,
+}
+
+impl QuietDisplay for CliSignOnlyDataWithBLS {}
+impl VerboseDisplay for CliSignOnlyDataWithBLS {}
+
+impl fmt::Display for CliSignOnlyDataWithBLS {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f)?;
+        write!(f, "{}", self.base)?;
+        writeln_name_value(f, "BLS Public Key:", &self.bls_pubkey)?;
+        writeln_name_value(f, "BLS Proof of Possession:", &self.bls_proof_of_possession)?;
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliSignature {
@@ -3342,6 +3364,10 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
+        solana_bls_signatures::{
+            ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
+            PubkeyCompressed as BLSPubkeyCompressed,
+        },
         solana_keypair::keypair_from_seed,
         solana_message::Message,
         solana_pubkey::Pubkey,
@@ -3444,6 +3470,34 @@ mod tests {
                 bad_sig: vec![bad.pubkey().to_string()],
             }
         );
+    }
+
+    #[test]
+    fn test_return_signers_with_bls() {
+        let bls_pubkey = BLSPubkeyCompressed([2u8; 48]);
+        let bls_proof_of_possession = BLSProofOfPossessionCompressed([3u8; 96]);
+        let res_data_with_bls = CliSignOnlyDataWithBLS {
+            base: CliSignOnlyData {
+                blockhash: Hash::new_from_array([9u8; 32]).to_string(),
+                message: None,
+                signers: vec![format!(
+                    "{}={}",
+                    Pubkey::default().to_string(),
+                    Signature::default().to_string()
+                )],
+                absent: vec![],
+                bad_sig: vec![],
+            },
+            bls_pubkey: bls_pubkey.to_string(),
+            bls_proof_of_possession: bls_proof_of_possession.to_string(),
+        };
+        let output = format!("{res_data_with_bls}");
+        // Check expected BLS pubkey
+        assert!(output.contains("AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC"));
+        // Check expected BLS proof of possession
+        assert!(output.contains("AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD\
+            AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD\
+            AwMDAwMDAwMDAwMDAwMD"));
     }
 
     #[test]

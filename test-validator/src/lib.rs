@@ -935,8 +935,6 @@ impl TestValidator {
 
         // Only activate features which are not explicitly deactivated.
         let mut feature_set = FeatureSet::all_enabled();
-        // TODO: remove after cli change for bls_pubkey_management_in_vote_account is checked in
-        feature_set.deactivate(&agave_feature_set::bls_pubkey_management_in_vote_account::id());
         for feature in &config.deactivate_feature_set {
             if FEATURE_NAMES.contains_key(feature) {
                 feature_set.deactivate(feature);
@@ -1530,7 +1528,6 @@ mod test {
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
             alpenglow::id(),
-            agave_feature_set::bls_pubkey_management_in_vote_account::id(),
         ]
         .into_iter()
         .for_each(|feature| {
