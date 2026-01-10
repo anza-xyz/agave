@@ -1,19 +1,23 @@
 //! Service in charge of ingesting new messages into the certificate pool
 //! and notifying votor of new events that occur
+
+mod stats;
+
 use {
     crate::{
-        commitment::{
-            update_commitment_cache, CommitmentAggregationData, CommitmentError, CommitmentType,
-        },
+        commitment::{update_commitment_cache, CommitmentAggregationData, CommitmentType},
+        common::DELTA_STANDSTILL,
         consensus_pool::{
-            parent_ready_tracker::BlockProductionParent, AddMessageError, ConsensusPool,
+            parent_ready_tracker::BlockProductionParent, AddVoteError, ConsensusPool,
         },
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
-        votor::Votor,
     },
-    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
+    agave_votor_messages::{
+        consensus_message::{Certificate, ConsensusMessage},
+        migration::MigrationStatus,
+    },
+    crossbeam_channel::{select, Receiver, Sender, TrySendError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
@@ -22,24 +26,21 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    stats::Stats,
+    stats::ConsensusPoolServiceStats,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, Condvar, Mutex,
+            Arc,
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
-
-mod stats;
 
 /// Inputs for the certificate pool thread
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
-    pub(crate) start: Arc<(Mutex<bool>, Condvar)>,
+    pub(crate) migration_status: Arc<MigrationStatus>,
 
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) my_vote_pubkey: Pubkey,
@@ -50,43 +51,26 @@ pub(crate) struct ConsensusPoolContext {
     // TODO: for now we ingest our own votes into the certificate pool
     // just like regular votes. However do we need to convert
     // Vote -> BLSMessage -> Vote?
-    // consider adding a separate pathway in consensus_pool.add_transaction for ingesting own votes
+    // consider adding a separate pathway in consensus_pool.add_message() for ingesting own votes
     pub(crate) consensus_message_receiver: Receiver<ConsensusMessage>,
 
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
-
-    pub(crate) delta_standstill: Duration,
 }
 
 pub(crate) struct ConsensusPoolService {
     t_ingest: JoinHandle<()>,
 }
 
-#[derive(Debug, Error)]
-enum ServiceError {
-    #[error("Failed to add message into the consensus pool: {0}")]
-    AddMessage(#[from] AddMessageError),
-    #[error("Channel {0} disconnected")]
-    ChannelDisconnected(String),
-    #[error("Channel is full")]
-    ChannelFull,
-    #[error("Failed to add block event: {0}")]
-    FailedToAddBlockEvent(String),
-}
-
 impl ConsensusPoolService {
-    pub(crate) fn new(mut ctx: ConsensusPoolContext) -> Self {
+    pub(crate) fn new(ctx: ConsensusPoolContext) -> Self {
         let t_ingest = Builder::new()
-            .name("solCnsPoolIngst".to_string())
+            .name("solCertPoolIngest".to_string())
             .spawn(move || {
-                info!("ConsensusPoolService has started");
-                if let Err(e) = Self::consensus_pool_ingest_loop(&mut ctx) {
-                    ctx.exit.store(true, Ordering::Relaxed);
-                    error!("ConsensusPoolService exited with error: {e}");
+                if let Err(e) = Self::consensus_pool_ingest_loop(ctx) {
+                    info!("Certificate pool service exited: {e:?}. Shutting down");
                 }
-                info!("ConsensusPoolService has stopped");
             })
             .unwrap();
 
@@ -100,16 +84,16 @@ impl ConsensusPoolService {
         new_finalized_slot: Option<Slot>,
         new_certificates_to_send: Vec<Arc<Certificate>>,
         standstill_timer: &mut Instant,
-        stats: &mut Stats,
-    ) -> Result<(), ServiceError> {
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), AddVoteError> {
         // If we have a new finalized slot, update the root and send new certificates
         if new_finalized_slot.is_some() {
             // Reset standstill timer
             *standstill_timer = Instant::now();
             stats.new_finalized_slot += 1;
         }
-        let root_bank = sharable_banks.root();
-        consensus_pool.prune_old_state(root_bank.slot());
+        let bank = sharable_banks.root();
+        consensus_pool.prune_old_state(bank.slot());
         stats.prune_old_state_called += 1;
         // Send new certificates to peers
         Self::send_certificates(bls_sender, new_certificates_to_send, stats)
@@ -117,25 +101,26 @@ impl ConsensusPoolService {
 
     fn send_certificates(
         bls_sender: &Sender<BLSOp>,
-        certs: Vec<Arc<Certificate>>,
-        stats: &mut Stats,
-    ) -> Result<(), ServiceError> {
-        let certs_len = certs.len();
-        for (i, certificate) in certs.into_iter().enumerate() {
-            // The BLS cert channel is expected to be large enough, so we don't
-            // handle certificate re-send here.
-            match bls_sender.try_send(BLSOp::PushCertificate { certificate }) {
-                Ok(()) => {
+        certificates_to_send: Vec<Arc<Certificate>>,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), AddVoteError> {
+        for (i, certificate) in certificates_to_send.iter().enumerate() {
+            // The buffer should normally be large enough, so we don't handle
+            // certificate re-send here.
+            match bls_sender.try_send(BLSOp::PushCertificate {
+                certificate: certificate.clone(),
+            }) {
+                Ok(_) => {
                     stats.certificates_sent += 1;
                 }
                 Err(TrySendError::Disconnected(_)) => {
-                    return Err(ServiceError::ChannelDisconnected(
+                    return Err(AddVoteError::ChannelDisconnected(
                         "VotingService".to_string(),
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
-                    stats.certificates_dropped += certs_len.saturating_sub(i);
-                    return Err(ServiceError::ChannelFull);
+                    stats.certificates_dropped += certificates_to_send.len().saturating_sub(i);
+                    return Err(AddVoteError::VotingServiceQueueFull);
                 }
             }
         }
@@ -149,8 +134,8 @@ impl ConsensusPoolService {
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
-        stats: &mut Stats,
-    ) -> Result<(), ServiceError> {
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), AddVoteError> {
         match message {
             ConsensusMessage::Certificate(_) => {
                 stats.received_certificates += 1;
@@ -181,55 +166,97 @@ impl ConsensusPoolService {
         )
     }
 
-    // Main loop for the consensus pool service. Only exits when signalled or if
-    // any channel is disconnected.
-    fn consensus_pool_ingest_loop(ctx: &mut ConsensusPoolContext) -> Result<(), ServiceError> {
+    fn handle_channel_disconnected(
+        ctx: &mut ConsensusPoolContext,
+        channel_name: &str,
+    ) -> Result<(), ()> {
+        info!(
+            "{}: {} disconnected. Exiting",
+            ctx.cluster_info.id(),
+            channel_name
+        );
+        ctx.exit.store(true, Ordering::Relaxed);
+        Err(())
+    }
+
+    // Main loop for the certificate pool service, it only exits when any channel is disconnected
+    fn consensus_pool_ingest_loop(mut ctx: ConsensusPoolContext) -> Result<(), ()> {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
-        let mut consensus_pool =
-            ConsensusPool::new_from_root_bank(ctx.cluster_info.clone(), &root_bank);
 
-        // Wait until migration has completed
-        info!("{my_pubkey}: Consensus pool loop initialized, waiting for Alpenglow migration");
-        Votor::wait_for_migration_or_exit(&ctx.exit, &ctx.start);
-        info!("{my_pubkey}: Consensus pool loop starting");
+        // Unlike the other votor threads, consensus pool starts even before alpenglow is enabled
+        // As it is required to track the Genesis Vote.
+        let mut consensus_pool = if ctx.migration_status.is_alpenglow_enabled() {
+            ConsensusPool::new_from_root_bank(my_pubkey, &root_bank)
+        } else {
+            ConsensusPool::new_from_root_bank_pre_migration(
+                my_pubkey,
+                &root_bank,
+                ctx.migration_status.clone(),
+            )
+        };
 
-        let mut stats = Stats::default();
+        info!("{}: Certificate pool loop starting", &my_pubkey);
+        let mut stats = ConsensusPoolServiceStats::new();
+        let mut highest_parent_ready = root_bank.slot();
 
         // Standstill tracking
         let mut standstill_timer = Instant::now();
 
         // Kick off parent ready
-        let root_block = (root_bank.slot(), root_bank.block_id().unwrap_or_default());
-        let mut highest_parent_ready = root_bank.slot();
-        events.push(VotorEvent::ParentReady {
-            slot: root_bank.slot().checked_add(1).unwrap(),
-            parent_block: root_block,
-        });
+        let mut kick_off_parent_ready = false;
 
-        // Ingest votes into consensus pool and notify voting loop of new events
+        // Ingest votes into certificate pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
             // Update the current pubkey if it has changed
             let new_pubkey = ctx.cluster_info.id();
             if my_pubkey != new_pubkey {
                 my_pubkey = new_pubkey;
-                info!("Consensus pool pubkey updated to {my_pubkey}");
+                consensus_pool.update_pubkey(my_pubkey);
+                warn!("Certificate pool pubkey updated to {my_pubkey}");
+            }
+
+            // Kick off parent ready event, this either happens:
+            // - When we first migrate to alpenglow from TowerBFT - kick off with genesis block
+            // - If we startup post alpenglow migration - kick off with root block
+            if !kick_off_parent_ready && ctx.migration_status.is_alpenglow_enabled() {
+                let genesis_block = ctx
+                    .migration_status
+                    .genesis_block()
+                    .expect("Alpenglow is enabled");
+                let root_bank = ctx.sharable_banks.root();
+                // can expect once we have block id in snapshots (SIMD-0333)
+                let root_block = (root_bank.slot(), root_bank.block_id().unwrap_or_default());
+                let kick_off_block @ (kick_off_slot, _) = genesis_block.max(root_block);
+                let start_slot = kick_off_slot.checked_add(1).unwrap();
+
+                events.push(VotorEvent::ParentReady {
+                    slot: start_slot,
+                    parent_block: kick_off_block,
+                });
+                highest_parent_ready = start_slot;
+                kick_off_parent_ready = true;
             }
 
             Self::add_produce_block_event(
                 &mut highest_parent_ready,
                 &consensus_pool,
                 &my_pubkey,
-                ctx,
+                &mut ctx,
                 &mut events,
                 &mut stats,
-            )?;
+            );
 
-            if standstill_timer.elapsed() > ctx.delta_standstill {
-                events.push(VotorEvent::Standstill(
-                    consensus_pool.highest_finalized_slot(),
-                ));
+            if standstill_timer.elapsed() > DELTA_STANDSTILL {
+                // No reason to pollute channel with Standstill before the
+                // migration is complete. We still need standstill to refresh the
+                // Genesis cert though.
+                if kick_off_parent_ready {
+                    events.push(VotorEvent::Standstill(
+                        consensus_pool.highest_finalized_slot(),
+                    ));
+                }
                 stats.standstill = true;
                 standstill_timer = Instant::now();
                 match Self::send_certificates(
@@ -238,8 +265,8 @@ impl ConsensusPoolService {
                     &mut stats,
                 ) {
                     Ok(()) => (),
-                    Err(ServiceError::ChannelDisconnected(channel_name)) => {
-                        return Err(ServiceError::ChannelDisconnected(channel_name));
+                    Err(AddVoteError::ChannelDisconnected(channel_name)) => {
+                        return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str());
                     }
                     Err(e) => {
                         trace!("{my_pubkey}: unable to push standstill certificates into pool {e}");
@@ -247,29 +274,27 @@ impl ConsensusPoolService {
                 }
             }
 
-            events
+            if events
                 .drain(..)
                 .try_for_each(|event| ctx.event_sender.send(event))
-                .map_err(|_| {
-                    ServiceError::ChannelDisconnected("Votor event receiver".to_string())
-                })?;
+                .is_err()
+            {
+                return Self::handle_channel_disconnected(&mut ctx, "Votor event receiver");
+            }
 
-            let consensus_message_receiver = ctx.consensus_message_receiver.clone();
-            let messages = match consensus_message_receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok(first_message) => {
-                    std::iter::once(first_message).chain(consensus_message_receiver.try_iter())
-                }
-                Err(RecvTimeoutError::Timeout) => continue,
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(ServiceError::ChannelDisconnected(
-                        "BLS receiver".to_string(),
-                    ));
-                }
+            let messages: Vec<ConsensusMessage> = select! {
+                recv(ctx.consensus_message_receiver) -> msg => {
+                    let Ok(first) = msg else {
+                        return Self::handle_channel_disconnected(&mut ctx, "BLS receiver");
+                    };
+                    std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).collect()
+                },
+                default(Duration::from_secs(1)) => continue
             };
 
             for message in messages {
                 match Self::process_consensus_message(
-                    ctx,
+                    &mut ctx,
                     &my_pubkey,
                     message,
                     &mut consensus_pool,
@@ -278,11 +303,12 @@ impl ConsensusPoolService {
                     &mut stats,
                 ) {
                     Ok(()) => {}
-                    Err(ServiceError::ChannelDisconnected(n)) => {
-                        return Err(ServiceError::ChannelDisconnected(n));
+                    Err(AddVoteError::ChannelDisconnected(channel_name)) => {
+                        return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str())
                     }
                     Err(e) => {
-                        warn!("{my_pubkey}: process_consensus_message() failed with {e}");
+                        // This is a non critical error, a duplicate vote for example
+                        trace!("{}: unable to push vote into pool {}", &my_pubkey, e);
                         stats.add_message_failed += 1;
                     }
                 }
@@ -293,10 +319,9 @@ impl ConsensusPoolService {
         Ok(())
     }
 
-    /// Adds a message to the consensus pool and updates the commitment cache if necessary
+    /// Adds a vote to the certificate pool and updates the commitment cache if necessary
     ///
-    /// Returns any newly finalized slot as well as any new certificates to broadcast out.
-    /// Returns error if consensus message could not be added to the pool.
+    /// If a new finalization slot was recognized, returns the slot
     fn add_message_and_maybe_update_commitment(
         root_bank: &Bank,
         my_pubkey: &Pubkey,
@@ -305,7 +330,7 @@ impl ConsensusPoolService {
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
         commitment_sender: &Sender<CommitmentAggregationData>,
-    ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), ServiceError> {
+    ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let (new_finalized_slot, new_certificates_to_send) = consensus_pool.add_message(
             root_bank.epoch_schedule(),
             root_bank.epoch_stakes_map(),
@@ -322,12 +347,7 @@ impl ConsensusPoolService {
             CommitmentType::Finalized,
             new_finalized_slot,
             commitment_sender,
-        )
-        .map_err(|e| match e {
-            CommitmentError::ChannelDisconnected => {
-                ServiceError::ChannelDisconnected("CommitmentSender".to_string())
-            }
-        })?;
+        )?;
         Ok((Some(new_finalized_slot), new_certificates_to_send))
     }
 
@@ -337,8 +357,8 @@ impl ConsensusPoolService {
         my_pubkey: &Pubkey,
         ctx: &mut ConsensusPoolContext,
         events: &mut Vec<VotorEvent>,
-        stats: &mut Stats,
-    ) -> Result<(), ServiceError> {
+        stats: &mut ConsensusPoolServiceStats,
+    ) {
         let Some(new_highest_parent_ready) = events
             .iter()
             .filter_map(|event| match event {
@@ -348,11 +368,11 @@ impl ConsensusPoolService {
             .max()
             .copied()
         else {
-            return Ok(());
+            return;
         };
 
         if new_highest_parent_ready <= *highest_parent_ready {
-            return Ok(());
+            return;
         }
         *highest_parent_ready = new_highest_parent_ready;
 
@@ -361,14 +381,16 @@ impl ConsensusPoolService {
             .leader_schedule_cache
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
-            return Err(ServiceError::FailedToAddBlockEvent(format!(
+            error!(
                 "Unable to compute the leader at slot {highest_parent_ready}. Something is wrong, \
                  exiting"
-            )));
+            );
+            ctx.exit.store(true, Ordering::Relaxed);
+            return;
         };
 
         if &leader_pubkey != my_pubkey {
-            return Ok(());
+            return;
         }
 
         let start_slot = *highest_parent_ready;
@@ -379,7 +401,7 @@ impl ConsensusPoolService {
                 "{my_pubkey}: We have already produced shreds in the window \
                  {start_slot}-{end_slot}, skipping production of our leader window"
             );
-            return Ok(());
+            return;
         }
 
         match consensus_pool
@@ -395,22 +417,23 @@ impl ConsensusPoolService {
             }
             BlockProductionParent::ParentNotReady => {
                 // This can't happen, place holder depending on how we hook up optimistic
-                return Err(ServiceError::FailedToAddBlockEvent(
-                    "Must have a block production parent".to_string(),
-                ));
+                ctx.exit.store(true, Ordering::Relaxed);
+                panic!(
+                    "Must have a block production parent: {:#?}",
+                    consensus_pool.parent_ready_tracker
+                );
             }
             BlockProductionParent::Parent(parent_block) => {
                 events.push(VotorEvent::ProduceWindow(LeaderWindowInfo {
                     start_slot,
                     end_slot,
                     parent_block,
+                    // TODO: we can just remove this
                     skip_timer: Instant::now(),
                 }));
                 stats.parent_ready_produce_window += 1;
             }
         }
-
-        Ok(())
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -422,7 +445,6 @@ impl ConsensusPoolService {
 mod tests {
     use {
         super::*,
-        crate::common::DELTA_STANDSTILL,
         agave_votor_messages::{
             consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
@@ -442,7 +464,7 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        std::sync::{Arc, Mutex},
+        std::sync::Arc,
         test_case::test_case,
     };
 
@@ -458,7 +480,7 @@ mod tests {
         sharable_banks: SharableBanks,
     }
 
-    fn setup(delta_standstill: Option<Duration>) -> ConsensusPoolServiceTestComponents {
+    fn setup() -> ConsensusPoolServiceTestComponents {
         let (consensus_message_sender, consensus_message_receiver) = crossbeam_channel::unbounded();
         let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
@@ -495,7 +517,7 @@ mod tests {
             Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
         let ctx = ConsensusPoolContext {
             exit: exit.clone(),
-            start: Arc::new((Mutex::new(true), Condvar::new())),
+            migration_status: Arc::new(MigrationStatus::post_migration_status()),
             cluster_info: Arc::new(cluster_info),
             my_vote_pubkey: Pubkey::new_unique(),
             blockstore: Arc::new(blockstore),
@@ -505,7 +527,6 @@ mod tests {
             bls_sender,
             event_sender,
             commitment_sender,
-            delta_standstill: delta_standstill.unwrap_or(DELTA_STANDSTILL),
         };
         ConsensusPoolServiceTestComponents {
             consensus_pool_service: ConsensusPoolService::new(ctx),
@@ -524,8 +545,8 @@ mod tests {
         let start = Instant::now();
         let mut event_received = false;
         while start.elapsed() < Duration::from_secs(5) {
-            let res = receiver.recv_timeout(Duration::from_millis(500));
-            if let Ok(event) = res {
+            let recv = receiver.recv_timeout(Duration::from_millis(500));
+            if let Ok(event) = recv {
                 if condition(&event) {
                     event_received = true;
                     break;
@@ -550,7 +571,7 @@ mod tests {
     #[test]
     fn test_receive_and_send_consensus_message() {
         agave_logger::setup();
-        let setup_result = setup(None);
+        let setup_result = setup();
 
         // validator 0 to 7 send Notarize on slot 2
         let block_id = Hash::new_unique();
@@ -576,13 +597,14 @@ mod tests {
             |event| {
                 if let BLSOp::PushCertificate { certificate } = event {
                     assert_eq!(certificate.cert_type.slot(), target_slot);
-                    let certificate_type = certificate.cert_type;
-                    assert!(matches!(
-                        certificate_type,
-                        CertificateType::Notarize(_, _)
-                            | CertificateType::FinalizeFast(_, _)
-                            | CertificateType::NotarizeFallback(_, _)
-                    ));
+                    assert!(
+                        matches!(certificate.cert_type, CertificateType::Notarize(_, _))
+                            || matches!(certificate.cert_type, CertificateType::FinalizeFast(_, _))
+                            || matches!(
+                                certificate.cert_type,
+                                CertificateType::NotarizeFallback(_, _)
+                            )
+                    );
                     true
                 } else {
                     false
@@ -639,7 +661,7 @@ mod tests {
 
     #[test]
     fn test_send_produce_block_event() {
-        let setup_result = setup(None);
+        let setup_result = setup();
         // Find when is the next leader slot for me (validator 0)
         let my_pubkey = setup_result.validator_keypairs[0].node_keypair.pubkey();
         let next_leader_slot = setup_result
@@ -682,9 +704,9 @@ mod tests {
 
     #[test]
     fn test_send_standstill() {
-        let delta_standstill_for_test = Duration::from_millis(100);
-        let setup_result = setup(Some(delta_standstill_for_test));
-        thread::sleep(delta_standstill_for_test);
+        let setup_result = setup();
+        // Do nothing for a little more than DELTA_STANDSTILL
+        thread::sleep(DELTA_STANDSTILL + Duration::from_millis(100));
         // Verify that we received a standstill event
         wait_for_event(
             &setup_result.event_receiver,
@@ -699,7 +721,7 @@ mod tests {
     #[test_case("votor_event_receiver")]
     #[test_case("commitment_receiver")]
     fn test_channel_disconnection(channel_name: &str) {
-        let setup_result = setup(None);
+        let setup_result = setup();
         // A lot of the receiver needs a finalize certificate to trigger an exit
         if channel_name != "consensus_message_receiver" {
             let finalize_certificate = Certificate {

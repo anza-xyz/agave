@@ -524,6 +524,7 @@ name = "agave-votor"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "agave-votor",
  "agave-votor-messages",
  "anyhow",
  "bincode",
@@ -586,7 +587,11 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-votor-messages",
+ "bitvec",
+ "bytemuck",
  "log",
+ "num_enum",
  "serde",
  "solana-address 2.0.0",
  "solana-bls-signatures",
@@ -596,6 +601,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash 3.1.0",
  "solana-pubkey 4.0.0",
+ "tempfile",
 ]
 
 [[package]]
