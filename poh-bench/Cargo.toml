@@ -17,7 +17,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
-clap = { version = "3.1.5", features = ["cargo"] }
+clap = { version = "4.5.31", features = ["cargo"] }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
