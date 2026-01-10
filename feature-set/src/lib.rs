@@ -1220,6 +1220,10 @@ pub mod bls_pubkey_management_in_vote_account {
     solana_pubkey::declare_id!("EGJLweNUVskAPEwpjvNB7JT6uUi6h4mFhowNYXVSrimG");
 }
 
+pub mod relax_programdata_account_check_migration {
+    solana_pubkey::declare_id!("rexav5eNTUSNT1K2N7cfRjnthwhcP5BC25v2tA4rW4h");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2186,6 +2190,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             bls_pubkey_management_in_vote_account::id(),
             "SIMD-0387: BLS Pubkey Management in Vote Account",
+        ),
+        (
+            relax_programdata_account_check_migration::id(),
+            "SIMD-0444: Relax program data account check in migration",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
