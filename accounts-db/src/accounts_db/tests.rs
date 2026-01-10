@@ -1208,6 +1208,13 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
 
         accounts.store_for_tests((
             slot,
+            [(&pubkey_zero, &account), (&pubkey2, &account)].as_slice(),
+        ));
+
+        let slot = 2;
+
+        accounts.store_for_tests((
+            slot,
             [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
         ));
 
@@ -1231,7 +1238,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
         accounts.accounts_index.get_and_then(&pubkey_zero, |entry| {
             let expected_ref_count = if pass < 2 { 1 } else { 2 };
             assert_eq!(entry.unwrap().ref_count(), expected_ref_count, "{pass}");
-            let expected_slot_list = if pass < 1 { 1 } else { 2 };
+            let expected_slot_list = if pass < 1 { 2 } else { 3 };
             assert_eq!(entry.unwrap().slot_list_lock_read_len(), expected_slot_list);
             (false, ())
         });
@@ -1252,11 +1259,11 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
             match pass {
                 0 => {
                     // should not exist in index at all
-                    assert!(entry.is_none(), "{pass}");
+                    assert_eq!(entry.unwrap().slot_list_lock_read_len(), 1);
                 }
                 1 => {
                     // alive only in slot + 1
-                    assert_eq!(entry.unwrap().slot_list_lock_read_len(), 1);
+                    assert_eq!(entry.unwrap().slot_list_lock_read_len(), 2);
                     assert_eq!(
                         entry
                             .unwrap()
@@ -1265,7 +1272,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
                             .map(|(s, _)| s)
                             .cloned()
                             .unwrap(),
-                        slot + 1
+                        1
                     );
                     let expected_ref_count = 0;
                     assert_eq!(
@@ -1276,7 +1283,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
                 }
                 2 => {
                     // alive in both slot, slot + 1
-                    assert_eq!(entry.unwrap().slot_list_lock_read_len(), 2);
+                    assert_eq!(entry.unwrap().slot_list_lock_read_len(), 3);
 
                     let slots = entry
                         .unwrap()
@@ -1285,7 +1292,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
                         .map(|(s, _)| s)
                         .cloned()
                         .collect::<Vec<_>>();
-                    assert_eq!(slots, vec![slot, slot + 1]);
+                    assert_eq!(slots, vec![slot - 1, slot, slot + 1]);
                     let expected_ref_count = 2;
                     assert_eq!(
                         entry.map(|e| e.ref_count()),
@@ -1324,6 +1331,13 @@ fn test_shrink_zero_lamport_single_ref_account() {
         // Store a zero-lamport account and a non-zero lamport account
         accounts.store_for_tests((
             slot,
+            [(&pubkey_zero, &account), (&pubkey2, &account)].as_slice(),
+        ));
+
+        let slot = 2;
+        // Store a zero-lamport account and a non-zero lamport account
+        accounts.store_for_tests((
+            slot,
             [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
         ));
 
@@ -1348,7 +1362,7 @@ fn test_shrink_zero_lamport_single_ref_account() {
         accounts.shrink_slot_forced(slot);
 
         assert!(
-            accounts.storage.get_slot_storage_entry(1).is_some(),
+            accounts.storage.get_slot_storage_entry(2).is_some(),
             "{latest_full_snapshot_slot:?}"
         );
 
@@ -1399,16 +1413,18 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     let pubkey1 = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    let single_lamport_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
 
     // If there is no latest full snapshot, zero lamport accounts can be cleaned and removed
     // immediately. Set latest full snapshot slot to zero to avoid cleaning zero lamport accounts
     accounts.set_latest_full_snapshot_slot(0);
 
     // Store 2 accounts in slot 0, then update account 1 in two more slots
-    accounts.store_for_tests((0, [(&pubkey1, &zero_lamport_account)].as_slice()));
-    accounts.store_for_tests((0, [(&pubkey2, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((0, [(&pubkey1, &single_lamport_account)].as_slice()));
+    accounts.store_for_tests((0, [(&pubkey2, &single_lamport_account)].as_slice()));
     accounts.store_for_tests((1, [(&pubkey1, &zero_lamport_account)].as_slice()));
     accounts.store_for_tests((2, [(&pubkey1, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((2, [(&pubkey2, &zero_lamport_account)].as_slice()));
     // Root all slots
     accounts.add_root_and_flush_write_cache(0);
     accounts.add_root_and_flush_write_cache(1);
@@ -1431,7 +1447,7 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     // should be 1 since slot 2 is the only alive slot; account 2 should have a ref
     // count of 0 due to slot 0 being dead
     accounts.assert_ref_count(&pubkey1, 1);
-    accounts.assert_ref_count(&pubkey2, 0);
+    accounts.assert_ref_count(&pubkey2, 1);
 
     // Allow clean to clean any zero lamports up to and including slot 2
     accounts.set_latest_full_snapshot_slot(2);
@@ -1439,6 +1455,7 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     // Slot 2 will now be cleaned, which will leave account 1 with a ref count of 0
     assert!(accounts.storage.get_slot_storage_entry(2).is_none());
     accounts.assert_ref_count(&pubkey1, 0);
+    accounts.assert_ref_count(&pubkey2, 0);
 }
 
 #[test]
@@ -2957,9 +2974,11 @@ fn test_zero_lamport_new_root_not_cleaned() {
     let db = AccountsDb::new_single_for_tests();
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    let non_zero_lamport_account =
+        AccountSharedData::new(1, 0, AccountSharedData::default().owner());
 
     // Store zero lamport account into slots 0 and 1, root both slots
-    db.store_for_tests((0, [(&account_key, &zero_lamport_account)].as_slice()));
+    db.store_for_tests((0, [(&account_key, &non_zero_lamport_account)].as_slice()));
     db.store_for_tests((1, [(&account_key, &zero_lamport_account)].as_slice()));
     db.add_root_and_flush_write_cache(0);
     db.add_root_and_flush_write_cache(1);
@@ -3631,12 +3650,14 @@ define_accounts_db_test!(
         let num_keys = 10;
         let mut pubkeys = vec![];
 
+        let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+        let non_zero_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+
         // populate storage with zero lamport single ref (zlsr) accounts
         for _i in 0..num_keys {
-            let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-
             let key = Pubkey::new_unique();
-            accounts_db.store_for_tests((slot, &[(&key, &zero_account)][..]));
+            accounts_db.store_for_tests((slot, &[(&key, &non_zero_account)][..]));
+            accounts_db.store_for_tests((slot + 1, &[(&key, &zero_account)][..]));
             pubkeys.push(key);
         }
 
@@ -3653,7 +3674,7 @@ define_accounts_db_test!(
             pubkeys.iter(),
             |_pubkey, slots_refs| {
                 let (slot_list, ref_count) = slots_refs.unwrap();
-                assert_eq!(slot_list.len(), 1);
+                assert_eq!(slot_list.len(), 2);
                 assert_eq!(ref_count, 1);
 
                 let (slot, acct_info) = slot_list.first().unwrap();
@@ -5737,6 +5758,7 @@ fn test_shrink_collect_simple() {
                                  {normal_account_count}"
                             );
                             let db = AccountsDb::new_single_for_tests();
+                            let slot4 = 4;
                             let slot5 = 5;
                             // don't do special zero lamport account handling
                             db.set_latest_full_snapshot_slot(0);
@@ -5745,6 +5767,8 @@ fn test_shrink_collect_simple() {
                                 space,
                                 AccountSharedData::default().owner(),
                             );
+                            let mut normal_account = account.clone();
+                            normal_account.set_lamports(1);
                             let mut to_purge = Vec::default();
                             for pubkey in pubkeys.iter().take(account_count) {
                                 // store in append vec and index
@@ -5752,7 +5776,7 @@ fn test_shrink_collect_simple() {
                                 if Some(pubkey) == pubkey_opposite_zero_lamports {
                                     account.set_lamports(u64::from(old_lamports == 0));
                                 }
-
+                                db.store_for_tests((slot4, [(pubkey, &normal_account)].as_slice()));
                                 db.store_for_tests((slot5, [(pubkey, &account)].as_slice()));
                                 account.set_lamports(old_lamports);
                                 let mut alive = alive;
@@ -5767,6 +5791,7 @@ fn test_shrink_collect_simple() {
                                     to_purge.push(*pubkey);
                                 }
                             }
+                            db.add_root_and_flush_write_cache(slot4);
                             db.add_root_and_flush_write_cache(slot5);
                             to_purge.iter().for_each(|pubkey| {
                                 db.accounts_index.purge_exact(
@@ -5911,6 +5936,8 @@ fn test_shrink_collect_with_obsolete_accounts() {
     let mut unref_pubkeys = Vec::new();
 
     for (i, pubkey) in pubkeys.iter().enumerate() {
+        account.set_lamports(200);
+        db.store_for_tests((slot, [(pubkey, &account)].as_slice()));
         if i % 3 == 0 {
             // Mark third account as zero lamport
             // These will be removed during shrink
@@ -5918,11 +5945,12 @@ fn test_shrink_collect_with_obsolete_accounts() {
             zero_lamport_pubkeys.push(*pubkey);
         } else {
             // Regular accounts that should be kept
-            account.set_lamports(200);
             regular_pubkeys.push(*pubkey);
         }
-        db.store_for_tests((slot, [(pubkey, &account)].as_slice()));
+        db.store_for_tests((slot + 1, [(pubkey, &account)].as_slice()));
     }
+    db.add_root_and_flush_write_cache(slot);
+    let slot = slot + 1;
 
     // Flush the cache
     db.add_root_and_flush_write_cache(slot);
