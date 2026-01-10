@@ -1,9 +1,10 @@
 use {
-    crate::stakes::SerdeStakesToStakeFormat,
+    crate::stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
     serde::{Deserialize, Serialize},
     solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::HashMap,
@@ -90,7 +91,21 @@ pub struct NodeVoteAccounts {
     pub total_stake: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Simplified, intermediate representation of [`VersionedEpochStakes`]
+///
+/// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
+/// deserialization by storing stakes in [`DeserializableStakes`]).
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) enum DeserializableVersionedEpochStakes {
+    Current {
+        stakes: DeserializableStakes<Stake>,
+        total_stake: u64,
+        node_id_to_vote_accounts: NodeIdToVoteAccounts,
+        epoch_authorized_voters: EpochAuthorizedVoters,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
@@ -103,6 +118,24 @@ pub enum VersionedEpochStakes {
         #[serde(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
+}
+
+impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
+    fn from(epoch_stakes: DeserializableVersionedEpochStakes) -> Self {
+        let DeserializableVersionedEpochStakes::Current {
+            stakes,
+            total_stake,
+            node_id_to_vote_accounts,
+            epoch_authorized_voters,
+        } = epoch_stakes;
+        Self::Current {
+            stakes: SerdeStakesToStakeFormat::Stake(Stakes::from_deserialized(stakes)),
+            total_stake,
+            node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
+            epoch_authorized_voters: Arc::new(epoch_authorized_voters),
+            bls_pubkey_to_rank_map: OnceLock::new(),
+        }
+    }
 }
 
 impl VersionedEpochStakes {

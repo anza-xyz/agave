@@ -43,7 +43,9 @@ use {
             },
         },
         bank_forks::BankForks,
-        epoch_stakes::{NodeVoteAccounts, VersionedEpochStakes},
+        epoch_stakes::{
+            DeserializableVersionedEpochStakes, NodeVoteAccounts, VersionedEpochStakes,
+        },
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollector,
@@ -55,7 +57,7 @@ use {
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
         },
-        stakes::{SerdeStakesToStakeFormat, Stakes, StakesCache},
+        stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes, StakesCache},
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
@@ -428,7 +430,6 @@ impl TransactionLogCollector {
 /// new fields can be optionally serialized and optionally deserialized. At some point, the serialization and
 /// deserialization will use a new mechanism or otherwise be in sync more clearly.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BankFieldsToDeserialize {
     pub(crate) blockhash_queue: BlockhashQueue,
     pub(crate) ancestors: AncestorsForSerialization,
@@ -455,8 +456,8 @@ pub struct BankFieldsToDeserialize {
     pub(crate) rent_collector: RentCollector,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
-    pub(crate) stakes: Stakes<Delegation>,
-    pub(crate) versioned_epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
+    pub(crate) stakes: DeserializableStakes<Delegation>,
+    pub(crate) versioned_epoch_stakes: HashMap<Epoch, DeserializableVersionedEpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
     pub(crate) accounts_lt_hash: AccountsLtHash,
@@ -1828,12 +1829,15 @@ impl Bank {
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
-        let (stakes, stakes_time) = measure_time!(Stakes::new(&fields.stakes, |pubkey| {
-            let (account, _slot) = bank_rc
-                .accounts
-                .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
-            Some(account)
-        })
+        let (stakes, stakes_time) = measure_time!(Stakes::load_from_deserialized_delegations(
+            fields.stakes,
+            |pubkey| {
+                let (account, _slot) = bank_rc
+                    .accounts
+                    .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
+                Some(account)
+            }
+        )
         .expect(
             "Stakes cache is inconsistent with accounts-db. This can indicate a corrupted \
              snapshot or bugs in cached accounts or accounts-db.",
@@ -1875,7 +1879,11 @@ impl Bank {
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
             stakes_cache: StakesCache::new(stakes),
-            epoch_stakes: fields.versioned_epoch_stakes,
+            epoch_stakes: fields
+                .versioned_epoch_stakes
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
             is_delta: AtomicBool::new(fields.is_delta),
             rewards: RwLock::new(vec![]),
             cluster_type: Some(genesis_config.cluster_type),

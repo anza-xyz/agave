@@ -2,7 +2,7 @@ use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
     im::HashMap as ImHashMap,
-    serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
+    serde::{ser::SerializeMap, Deserialize, Serialize, Serializer},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::Stake,
@@ -67,16 +67,6 @@ impl Serialize for SerdeStakesToStakeFormat {
             Self::Stake(stakes) => stakes.serialize(serializer),
             Self::Account(stakes) => serialize_stake_accounts_to_stake_format(stakes, serializer),
         }
-    }
-}
-
-impl<'de> Deserialize<'de> for SerdeStakesToStakeFormat {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let stakes = Stakes::<Stake>::deserialize(deserializer)?;
-        Ok(Self::Stake(stakes))
     }
 }
 
@@ -184,12 +174,27 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
     }
 }
 
+/// Simplified, intermediate representation of [`Stakes<T>`]
+///
+/// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
+/// deserialization without creating im::HashMap (such conversion is deferred until
+/// data is actually needed).
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct DeserializableStakes<T> {
+    pub vote_accounts: VoteAccounts,
+    pub stake_delegations: Vec<(Pubkey, T)>,
+    pub unused: u64,
+    pub epoch: Epoch,
+    pub stake_history: StakeHistory,
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crate::{stake_utils, stakes::StakesCache},
         rand::Rng,
+        serde::Deserialize,
         solana_rent::Rent,
         solana_stake_interface::state::Delegation,
         solana_vote_program::vote_state,
@@ -229,7 +234,9 @@ mod tests {
 
         let wrapped_stakes = SerdeStakesToStakeFormat::Account(stake_account_stakes.clone());
         let serialized_stakes = bincode::serialize(&wrapped_stakes).unwrap();
-        let stake_stakes = bincode::deserialize::<Stakes<Stake>>(&serialized_stakes).unwrap();
+        let stake_stakes = Stakes::from_deserialized(
+            bincode::deserialize::<DeserializableStakes<Stake>>(&serialized_stakes).unwrap(),
+        );
         let expected_stake_stakes = Stakes::<Stake>::from(stake_account_stakes);
         assert_eq!(expected_stake_stakes, stake_stakes);
     }
@@ -244,21 +251,11 @@ mod tests {
             tail: String,
         }
 
-        #[derive(Debug, PartialEq, Deserialize)]
+        #[derive(Debug, Deserialize)]
         struct DeserializableDummy {
             head: String,
-            stakes: Stakes<Delegation>,
+            stakes: DeserializableStakes<Delegation>,
             tail: String,
-        }
-
-        impl From<SerializableDummy> for DeserializableDummy {
-            fn from(dummy: SerializableDummy) -> Self {
-                DeserializableDummy {
-                    head: dummy.head,
-                    stakes: dummy.stakes.into(),
-                    tail: dummy.tail,
-                }
-            }
         }
 
         let mut rng = rand::rng();
@@ -305,10 +302,18 @@ mod tests {
         assert!(dummy.stakes.vote_accounts().as_ref().len() >= 5);
         let data = bincode::serialize(&dummy).unwrap();
         let other: DeserializableDummy = bincode::deserialize(&data).unwrap();
-        assert_eq!(other, dummy.into());
-        let stakes = Stakes::<Delegation>::from(stakes);
-        assert!(stakes.vote_accounts.as_ref().len() >= 5);
-        assert!(stakes.stake_delegations.len() >= 50);
-        assert_eq!(other.stakes, stakes)
+        assert_eq!(other.head, dummy.head);
+        assert_eq!(other.tail, dummy.tail);
+
+        assert!(other.stakes.vote_accounts.as_ref().len() >= 5);
+        assert_eq!(other.stakes.vote_accounts, stakes.vote_accounts);
+
+        assert_eq!(other.stakes.epoch, stakes.epoch);
+        assert_eq!(other.stakes.stake_history, stakes.stake_history);
+
+        assert!(other.stakes.stake_delegations.len() >= 50);
+        // DeserializableStakes doesn't preserve same order of elements as Stakes, compare converted
+        let other_stakes = Stakes::from_deserialized(other.stakes);
+        assert_eq!(other_stakes, dummy.stakes.into());
     }
 }
