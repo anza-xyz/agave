@@ -163,7 +163,7 @@ use {
         time::{Duration, Instant},
     },
     strum::VariantNames,
-    strum_macros::{Display, EnumCount, EnumIter, EnumString, EnumVariantNames, IntoStaticStr},
+    strum_macros::{Display, EnumCount, EnumIter, EnumString, IntoStaticStr},
     thiserror::Error,
     tokio::{runtime::Runtime as TokioRuntime, sync::mpsc},
     tokio_util::sync::CancellationToken,
@@ -177,9 +177,7 @@ const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
     WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT;
 
-#[derive(
-    Clone, EnumCount, EnumIter, EnumString, EnumVariantNames, Default, IntoStaticStr, Display,
-)]
+#[derive(Clone, EnumCount, EnumIter, EnumString, VariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockVerificationMethod {
     BlockstoreProcessor,
@@ -203,7 +201,7 @@ impl BlockVerificationMethod {
     EnumCount,
     EnumIter,
     EnumString,
-    EnumVariantNames,
+    VariantNames,
     Default,
     IntoStaticStr,
     Display,
@@ -253,7 +251,7 @@ impl BlockProductionMethod {
     Clone,
     Debug,
     EnumString,
-    EnumVariantNames,
+    VariantNames,
     Default,
     IntoStaticStr,
     Display,
@@ -281,7 +279,7 @@ impl TransactionStructure {
 }
 
 #[derive(
-    Clone, Debug, EnumVariantNames, IntoStaticStr, Display, Serialize, Deserialize, PartialEq, Eq,
+    Clone, Debug, VariantNames, IntoStaticStr, Display, Serialize, Deserialize, PartialEq, Eq,
 )]
 #[strum(serialize_all = "kebab-case")]
 #[serde(rename_all = "kebab-case")]
