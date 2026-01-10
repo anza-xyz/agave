@@ -333,6 +333,7 @@ impl RpcRequestMiddleware {
             RpcHealthStatus::Ok => "ok",
             RpcHealthStatus::Behind { .. } => "behind",
             RpcHealthStatus::Unknown => "unknown",
+            RpcHealthStatus::TransactionStatusBehind { .. } => "transaction status behind",
         };
         info!("health check: {response}");
         response
@@ -595,6 +596,7 @@ impl JsonRpcService {
             Arc::clone(&blockstore),
             config.health_check_slot_distance,
             override_health_check,
+            max_complete_transaction_status_slot.clone(),
         ));
 
         let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
