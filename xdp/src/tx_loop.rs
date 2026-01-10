@@ -97,7 +97,7 @@ pub struct TxLoopConfig {
     src_port: u16,
 }
 
-pub struct TxLoopBuilder<U: Umem, R: Fn(&IpAddr) -> Option<NextHop>> {
+pub struct TxLoopBuilder<U: Umem> {
     cpu_id: usize,
     queue_id: QueueId,
     zero_copy: bool,
@@ -107,17 +107,15 @@ pub struct TxLoopBuilder<U: Umem, R: Fn(&IpAddr) -> Option<NextHop>> {
     queue: DeviceQueue,
     tx_size: usize,
     umem: U,
-    route_fn: R,
 }
 
-impl<R: Fn(&IpAddr) -> Option<NextHop>> TxLoopBuilder<OwnedUmem<PageAlignedMemory>, R> {
+impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
     pub fn new(
         cpu_id: usize,
         queue_id: QueueId,
         config: TxLoopConfig,
         dev: &NetworkDevice,
-        route_fn: R,
-    ) -> TxLoopBuilder<OwnedUmem<PageAlignedMemory>, R> {
+    ) -> TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         let TxLoopConfig {
             zero_copy,
             src_mac,
@@ -170,11 +168,10 @@ impl<R: Fn(&IpAddr) -> Option<NextHop>> TxLoopBuilder<OwnedUmem<PageAlignedMemor
             queue,
             tx_size,
             umem,
-            route_fn,
         }
     }
 
-    pub fn build(self) -> TxLoop<OwnedUmem<PageAlignedMemory>, R> {
+    pub fn build(self) -> TxLoop<OwnedUmem<PageAlignedMemory>> {
         let TxLoopBuilder {
             cpu_id,
             queue_id,
@@ -185,7 +182,6 @@ impl<R: Fn(&IpAddr) -> Option<NextHop>> TxLoopBuilder<OwnedUmem<PageAlignedMemor
             queue,
             tx_size,
             umem,
-            route_fn,
         } = self;
 
         // we need NET_ADMIN and NET_RAW for the socket
@@ -218,12 +214,11 @@ impl<R: Fn(&IpAddr) -> Option<NextHop>> TxLoopBuilder<OwnedUmem<PageAlignedMemor
             socket,
             ring,
             completion,
-            route_fn,
         }
     }
 }
 
-pub struct TxLoop<U: Umem, R: Fn(&IpAddr) -> Option<NextHop>> {
+pub struct TxLoop<U: Umem> {
     cpu_id: usize,
     src_mac: MacAddress,
     src_ip: Ipv4Addr,
@@ -231,14 +226,14 @@ pub struct TxLoop<U: Umem, R: Fn(&IpAddr) -> Option<NextHop>> {
     socket: Socket<U>,
     ring: TxRing<U::Frame>,
     completion: TxCompletionRing,
-    route_fn: R,
 }
 
-impl<U: Umem, R: Fn(&IpAddr) -> Option<NextHop>> TxLoop<U, R> {
-    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
+impl<U: Umem> TxLoop<U> {
+    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
         self,
         receiver: Receiver<(A, T)>,
         drop_sender: Sender<(A, T)>,
+        route_fn: R,
     ) {
         // How long we sleep waiting to receive shreds from the channel.
         const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
@@ -258,7 +253,6 @@ impl<U: Umem, R: Fn(&IpAddr) -> Option<NextHop>> TxLoop<U, R> {
             mut socket,
             mut ring,
             mut completion,
-            route_fn,
         } = self;
 
         // each queue is bound to its own CPU core
