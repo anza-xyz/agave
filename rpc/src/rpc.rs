@@ -981,20 +981,21 @@ impl JsonRpcRequestProcessor {
 
         let mut slot_leaders = Vec::with_capacity(limit);
         while slot_leaders.len() < limit {
-            if let Some(leader_schedule) =
-                self.leader_schedule_cache.get_epoch_leader_schedule(epoch)
-            {
-                slot_leaders.extend(
-                    leader_schedule
-                        .get_slot_leaders()
-                        .iter()
-                        .skip(slot_index as usize)
-                        .take(limit.saturating_sub(slot_leaders.len())),
-                );
-            } else {
-                return Err(Error::invalid_params(format!(
-                    "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
-                )));
+            match self.leader_schedule_cache.get_epoch_leader_schedule(epoch) {
+                Some(leader_schedule) => {
+                    slot_leaders.extend(
+                        leader_schedule
+                            .get_slot_leaders()
+                            .iter()
+                            .skip(slot_index as usize)
+                            .take(limit.saturating_sub(slot_leaders.len())),
+                    );
+                }
+                _ => {
+                    return Err(Error::invalid_params(format!(
+                        "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
+                    )));
+                }
             }
 
             epoch += 1;
@@ -1598,10 +1599,9 @@ impl JsonRpcRequestProcessor {
             Ok(result.ok())
         } else {
             let r_bank_forks = self.bank_forks.read().unwrap();
-            if let Some(bank) = r_bank_forks.get(slot) {
-                Ok(Some(bank.clock().unix_timestamp))
-            } else {
-                Err(RpcCustomError::BlockNotAvailable { slot }.into())
+            match r_bank_forks.get(slot) {
+                Some(bank) => Ok(Some(bank.clock().unix_timestamp)),
+                _ => Err(RpcCustomError::BlockNotAvailable { slot }.into()),
             }
         }
     }

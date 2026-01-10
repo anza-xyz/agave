@@ -365,25 +365,23 @@ pub fn parse_program_v4_subcommand(
                 .map(|location| location.to_string());
 
             let program_address = pubkey_of(matches, "program-id");
-            let mut program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
-                signer_of(matches, "program-keypair", wallet_manager)
-            {
-                bulk_signers.push(program_signer);
-                Some(program_pubkey)
-            } else {
-                pubkey_of_signer(matches, "program-keypair", wallet_manager)?
+            let mut program_pubkey = match signer_of(matches, "program-keypair", wallet_manager) {
+                Ok((program_signer, Some(program_pubkey))) => {
+                    bulk_signers.push(program_signer);
+                    Some(program_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "program-keypair", wallet_manager)?,
             };
 
-            let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
-                signer_of(matches, "buffer", wallet_manager)
-            {
-                if program_address.is_none() && program_pubkey.is_none() {
-                    program_pubkey = Some(buffer_pubkey);
+            let buffer_pubkey = match signer_of(matches, "buffer", wallet_manager) {
+                Ok((buffer_signer, Some(buffer_pubkey))) => {
+                    if program_address.is_none() && program_pubkey.is_none() {
+                        program_pubkey = Some(buffer_pubkey);
+                    }
+                    bulk_signers.push(buffer_signer);
+                    Some(buffer_pubkey)
                 }
-                bulk_signers.push(buffer_signer);
-                Some(buffer_pubkey)
-            } else {
-                pubkey_of_signer(matches, "buffer", wallet_manager)?
+                _ => pubkey_of_signer(matches, "buffer", wallet_manager)?,
             };
 
             let (authority, authority_pubkey) = signer_of(matches, "authority", wallet_manager)?;
@@ -975,16 +973,19 @@ async fn process_transfer_authority_of_program(
     new_auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
-    if let Some(program_account) = rpc_client
+    match rpc_client
         .get_account_with_commitment(program_address, config.commitment)
         .await?
         .value
     {
-        if !loader_v4::check_id(&program_account.owner) {
-            return Err(format!("{program_address} is not owned by loader-v4").into());
+        Some(program_account) => {
+            if !loader_v4::check_id(&program_account.owner) {
+                return Err(format!("{program_address} is not owned by loader-v4").into());
+            }
         }
-    } else {
-        return Err(format!("Unable to find the account {program_address}").into());
+        _ => {
+            return Err(format!("Unable to find the account {program_address}").into());
+        }
     }
 
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
@@ -1021,16 +1022,19 @@ async fn process_finalize_program(
     next_version_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
-    if let Some(program_account) = rpc_client
+    match rpc_client
         .get_account_with_commitment(program_address, config.commitment)
         .await?
         .value
     {
-        if !loader_v4::check_id(&program_account.owner) {
-            return Err(format!("{program_address} is not owned by loader-v4").into());
+        Some(program_account) => {
+            if !loader_v4::check_id(&program_account.owner) {
+                return Err(format!("{program_address} is not owned by loader-v4").into());
+            }
         }
-    } else {
-        return Err(format!("Unable to find the account {program_address}").into());
+        _ => {
+            return Err(format!("Unable to find the account {program_address}").into());
+        }
     }
 
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
@@ -1067,37 +1071,38 @@ async fn process_show(
     all: bool,
 ) -> ProcessResult {
     if let Some(program_address) = program_address {
-        if let Some(account) = rpc_client
+        match rpc_client
             .get_account_with_commitment(&program_address, config.commitment)
             .await?
             .value
         {
-            if loader_v4::check_id(&account.owner) {
-                if let Ok(state) = solana_loader_v4_program::get_state(&account.data) {
-                    let status = match state.status {
-                        LoaderV4Status::Retracted => "retracted",
-                        LoaderV4Status::Deployed => "deployed",
-                        LoaderV4Status::Finalized => "finalized",
-                    };
-                    Ok(config.output_format.formatted_string(&CliProgramV4 {
-                        program_id: program_address.to_string(),
-                        owner: account.owner.to_string(),
-                        authority: state.authority_address_or_next_version.to_string(),
-                        last_deploy_slot: state.slot,
-                        data_len: account
-                            .data
-                            .len()
-                            .saturating_sub(LoaderV4State::program_data_offset()),
-                        status: status.to_string(),
-                    }))
+            Some(account) => {
+                if loader_v4::check_id(&account.owner) {
+                    if let Ok(state) = solana_loader_v4_program::get_state(&account.data) {
+                        let status = match state.status {
+                            LoaderV4Status::Retracted => "retracted",
+                            LoaderV4Status::Deployed => "deployed",
+                            LoaderV4Status::Finalized => "finalized",
+                        };
+                        Ok(config.output_format.formatted_string(&CliProgramV4 {
+                            program_id: program_address.to_string(),
+                            owner: account.owner.to_string(),
+                            authority: state.authority_address_or_next_version.to_string(),
+                            last_deploy_slot: state.slot,
+                            data_len: account
+                                .data
+                                .len()
+                                .saturating_sub(LoaderV4State::program_data_offset()),
+                            status: status.to_string(),
+                        }))
+                    } else {
+                        Err(format!("{program_address} program state is invalid").into())
+                    }
                 } else {
-                    Err(format!("{program_address} program state is invalid").into())
+                    Err(format!("{program_address} is not owned by loader-v4").into())
                 }
-            } else {
-                Err(format!("{program_address} is not owned by loader-v4").into())
             }
-        } else {
-            Err(format!("Unable to find the account {program_address}").into())
+            _ => Err(format!("Unable to find the account {program_address}").into()),
         }
     } else {
         let authority_pubkey = if all { None } else { Some(authority) };
@@ -1113,20 +1118,21 @@ pub async fn process_dump(
     output_location: &str,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        match rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)
             .await?
             .value
         {
-            if loader_v4::check_id(&account.owner) {
-                let mut f = File::create(output_location)?;
-                f.write_all(&account.data[LoaderV4State::program_data_offset()..])?;
-                Ok(format!("Wrote program to {output_location}"))
-            } else {
-                Err(format!("{account_pubkey} is not owned by loader-v4").into())
+            Some(account) => {
+                if loader_v4::check_id(&account.owner) {
+                    let mut f = File::create(output_location)?;
+                    f.write_all(&account.data[LoaderV4State::program_data_offset()..])?;
+                    Ok(format!("Wrote program to {output_location}"))
+                } else {
+                    Err(format!("{account_pubkey} is not owned by loader-v4").into())
+                }
             }
-        } else {
-            Err(format!("Unable to find the account {account_pubkey}").into())
+            _ => Err(format!("Unable to find the account {account_pubkey}").into()),
         }
     } else {
         Err("No account specified".into())

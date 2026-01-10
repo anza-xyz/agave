@@ -815,49 +815,52 @@ fn handle_chunks(
     }
     let packet_batch = PacketBatch::Single(packet);
 
-    if let Err(err) = packet_sender.try_send(packet_batch) {
-        stats
-            .total_handle_chunk_to_packet_send_err
-            .fetch_add(1, Ordering::Relaxed);
-        match err {
-            TrySendError::Full(_) => {
-                stats
-                    .total_handle_chunk_to_packet_send_full_err
-                    .fetch_add(1, Ordering::Relaxed);
+    match packet_sender.try_send(packet_batch) {
+        Err(err) => {
+            stats
+                .total_handle_chunk_to_packet_send_err
+                .fetch_add(1, Ordering::Relaxed);
+            match err {
+                TrySendError::Full(_) => {
+                    stats
+                        .total_handle_chunk_to_packet_send_full_err
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                TrySendError::Disconnected(_) => {
+                    stats
+                        .total_handle_chunk_to_packet_send_disconnected_err
+                        .fetch_add(1, Ordering::Relaxed);
+                }
             }
-            TrySendError::Disconnected(_) => {
-                stats
-                    .total_handle_chunk_to_packet_send_disconnected_err
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            trace!("packet batch send error {err:?}");
         }
-        trace!("packet batch send error {err:?}");
-    } else {
-        if let Some(ppm) = &packet_perf_measure {
-            track_streamer_fetch_packet_performance(core::array::from_ref(ppm), stats);
-        }
-
-        stats
-            .total_bytes_sent_to_consumer
-            .fetch_add(packet_size, Ordering::Relaxed);
-        stats
-            .total_packets_sent_to_consumer
-            .fetch_add(1, Ordering::Relaxed);
-
-        match peer_type {
-            ConnectionPeerType::Unstaked => {
-                stats
-                    .total_unstaked_packets_sent_for_batching
-                    .fetch_add(1, Ordering::Relaxed);
+        _ => {
+            if let Some(ppm) = &packet_perf_measure {
+                track_streamer_fetch_packet_performance(core::array::from_ref(ppm), stats);
             }
-            ConnectionPeerType::Staked(_) => {
-                stats
-                    .total_staked_packets_sent_for_batching
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-        }
 
-        trace!("sent {bytes_sent} byte packet for batching");
+            stats
+                .total_bytes_sent_to_consumer
+                .fetch_add(packet_size, Ordering::Relaxed);
+            stats
+                .total_packets_sent_to_consumer
+                .fetch_add(1, Ordering::Relaxed);
+
+            match peer_type {
+                ConnectionPeerType::Unstaked => {
+                    stats
+                        .total_unstaked_packets_sent_for_batching
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                ConnectionPeerType::Staked(_) => {
+                    stats
+                        .total_staked_packets_sent_for_batching
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+
+            trace!("sent {bytes_sent} byte packet for batching");
+        }
     }
 
     Ok(StreamState::Finished)

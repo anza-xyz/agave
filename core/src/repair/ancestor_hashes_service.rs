@@ -425,33 +425,32 @@ impl AncestorHashesService {
                 let request_slot = request_slot.unwrap();
                 stats.processed += 1;
 
-                if let Occupied(mut ancestor_hashes_status_ref) =
-                    ancestor_hashes_request_statuses.entry(request_slot)
-                {
-                    let decision = ancestor_hashes_status_ref.get_mut().add_response(
-                        &from_addr,
-                        hashes.clone(),
-                        blockstore,
-                    );
-                    let request_type = ancestor_hashes_status_ref.get().request_type();
-                    if decision.is_some() {
-                        // Once a request is completed, remove it from the map so that new
-                        // requests for the same slot can be made again if necessary. It's
-                        // important to hold the `write` lock here via
-                        // `ancestor_hashes_status_ref` so that we don't race with deletion +
-                        // insertion from the `t_ancestor_requests` thread, which may
-                        // 1) Remove expired statuses from `ancestor_hashes_request_statuses`
-                        // 2) Insert another new one via `manage_ancestor_requests()`.
-                        // In which case we wouldn't want to delete the newly inserted entry here.
-                        ancestor_hashes_status_ref.remove();
+                match ancestor_hashes_request_statuses.entry(request_slot) {
+                    Occupied(mut ancestor_hashes_status_ref) => {
+                        let decision = ancestor_hashes_status_ref.get_mut().add_response(
+                            &from_addr,
+                            hashes.clone(),
+                            blockstore,
+                        );
+                        let request_type = ancestor_hashes_status_ref.get().request_type();
+                        if decision.is_some() {
+                            // Once a request is completed, remove it from the map so that new
+                            // requests for the same slot can be made again if necessary. It's
+                            // important to hold the `write` lock here via
+                            // `ancestor_hashes_status_ref` so that we don't race with deletion +
+                            // insertion from the `t_ancestor_requests` thread, which may
+                            // 1) Remove expired statuses from `ancestor_hashes_request_statuses`
+                            // 2) Insert another new one via `manage_ancestor_requests()`.
+                            // In which case we wouldn't want to delete the newly inserted entry here.
+                            ancestor_hashes_status_ref.remove();
+                        }
+                        decision.map(|decision| AncestorRequestDecision {
+                            slot: request_slot,
+                            decision,
+                            request_type,
+                        })
                     }
-                    decision.map(|decision| AncestorRequestDecision {
-                        slot: request_slot,
-                        decision,
-                        request_type,
-                    })
-                } else {
-                    None
+                    _ => None,
                 }
             }
             AncestorHashesResponse::Ping(ping) => {

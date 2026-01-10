@@ -316,17 +316,20 @@ async fn run_transactions_dos(
         if !accounts_created {
             let mut accounts_to_create = vec![];
             for kp in account_keypairs {
-                if let Ok(account) = client.get_account(&kp.pubkey()) {
-                    if account.data.len() as u64 != space {
-                        info!(
-                            "account {} doesn't have space specified. Has {} requested: {}",
-                            kp.pubkey(),
-                            account.data.len(),
-                            space,
-                        );
+                match client.get_account(&kp.pubkey()) {
+                    Ok(account) => {
+                        if account.data.len() as u64 != space {
+                            info!(
+                                "account {} doesn't have space specified. Has {} requested: {}",
+                                kp.pubkey(),
+                                account.data.len(),
+                                space,
+                            );
+                        }
                     }
-                } else {
-                    accounts_to_create.push(kp);
+                    _ => {
+                        accounts_to_create.push(kp);
+                    }
                 }
             }
 

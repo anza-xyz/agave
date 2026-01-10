@@ -21,17 +21,16 @@ impl TransactionAccountStateInfo {
         (0..message.account_keys().len())
             .map(|i| {
                 let rent_state = if message.is_writable(i) {
-                    let state = if let Ok(account) = transaction_context
+                    let state = match transaction_context
                         .accounts()
                         .try_borrow(i as IndexOfAccount)
                     {
-                        Some(get_account_rent_state(
+                        Ok(account) => Some(get_account_rent_state(
                             rent,
                             account.lamports(),
                             account.data().len(),
-                        ))
-                    } else {
-                        None
+                        )),
+                        _ => None,
                     };
                     debug_assert!(
                         state.is_some(),

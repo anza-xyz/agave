@@ -508,10 +508,11 @@ impl BankWithScheduler {
     }
 
     pub fn has_installed_active_bp_scheduler(&self) -> bool {
-        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
-        } else {
-            false
+        match &*self.inner.scheduler.read().unwrap() {
+            SchedulerStatus::Active(scheduler) => {
+                matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
+            }
+            _ => false,
         }
     }
 
