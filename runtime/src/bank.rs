@@ -47,6 +47,7 @@ use {
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollector,
+        reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
         stake_account::StakeAccount,
         stake_history::StakeHistory as CowStakeHistory,
@@ -125,7 +126,6 @@ use {
         loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
-    solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
