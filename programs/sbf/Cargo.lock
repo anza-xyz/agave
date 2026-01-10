@@ -8546,7 +8546,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-genesis-config",
- "solana-hash 4.0.1",
+ "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
  "solana-ledger",
