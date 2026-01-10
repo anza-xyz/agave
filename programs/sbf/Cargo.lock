@@ -9787,6 +9787,7 @@ dependencies = [
  "solana-instruction",
  "solana-instruction-error",
  "solana-last-restart-slot",
+ "solana-loader-v4-interface",
  "solana-message",
  "solana-precompile-error",
  "solana-program-runtime",
