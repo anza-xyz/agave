@@ -82,6 +82,7 @@ pub(crate) struct ConnectionWorker {
     peer: SocketAddr,
     transactions_receiver: mpsc::Receiver<TransactionBatch>,
     connection: ConnectionState,
+    last_congestion_events: u64,
     skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
     send_txs_stats: Arc<SendTransactionStats>,
@@ -120,6 +121,7 @@ impl ConnectionWorker {
             send_txs_stats,
             cancel: cancel.clone(),
             handshake_timeout,
+            last_congestion_events: 0,
         };
 
         (this, cancel)
@@ -296,6 +298,13 @@ impl ConnectionWorker {
                 // Exit early since connection is likely broken
                 break;
             } else {
+                let events = connection.stats().path.congestion_events;
+                self.send_txs_stats.transport_congestion_events.fetch_add(
+                    self.last_congestion_events.saturating_sub(events),
+                    Ordering::Relaxed,
+                );
+                self.last_congestion_events = events;
+
                 self.send_txs_stats
                     .successfully_sent
                     .fetch_add(1, Ordering::Relaxed);
