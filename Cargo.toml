@@ -59,7 +59,6 @@ members = [
     "platform-tools-sdk/gen-headers",
     "poh",
     "poh-bench",
-    "poseidon",
     "precompiles",
     "program-binaries",
     "program-runtime",
@@ -499,7 +498,7 @@ solana-packet = "4.0.0"
 solana-perf = { path = "perf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh-config = "3.0.0"
-solana-poseidon = { path = "poseidon", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-poseidon = "4.0.0"
 solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
 solana-program = { version = "3.0.0", default-features = false }
