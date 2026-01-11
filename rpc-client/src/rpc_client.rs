@@ -2686,6 +2686,40 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_leader_schedule_with_config(slot, config))
     }
 
+    /// Returns the leader schedule for an epoch, keyed by vote account addresses.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getLeaderSchedule`] RPC method
+    /// with the `useVoteAccount` option set to `true`.
+    ///
+    /// [`getLeaderSchedule`]: https://solana.com/docs/rpc/http/getleaderschedule
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// # let slot = rpc_client.get_slot()?;
+    /// let leader_schedule = rpc_client.get_leader_schedule_with_vote_account(
+    ///     Some(slot),
+    /// )?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_leader_schedule_with_vote_account(
+        &self,
+        slot: Option<Slot>,
+    ) -> ClientResult<Option<RpcLeaderSchedule>> {
+        self.get_leader_schedule_with_config(
+            slot,
+            RpcLeaderScheduleConfig {
+                use_vote_account: Some(true),
+                ..RpcLeaderScheduleConfig::default()
+            },
+        )
+    }
+
     /// Returns epoch schedule information from this cluster's genesis config.
     ///
     /// # RPC Reference
