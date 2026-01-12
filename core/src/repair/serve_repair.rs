@@ -235,8 +235,11 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 /// Window protocol messages
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ")
+    derive(AbiEnumVisitor, AbiExample, StableAbi),
+    frozen_abi(
+        api_digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ",
+        abi_digest = "G3bL3XN317iTiem5Lk1ZFSdVNDETdUNrZLi8zYLKsQWT"
+    )
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -1381,6 +1384,79 @@ impl ServeRepair {
                 .collect()
         } else {
             self.cluster_info.repair_peers(slot)
+        }
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> RepairProtocol {
+        use {
+            ping_pong::{Ping, Pong},
+            solana_signature::Signature,
+        };
+
+        let variant = rng.random_range(0..12);
+        match variant {
+            0 => RepairProtocol::LegacyWindowIndex,
+            1 => RepairProtocol::LegacyHighestWindowIndex,
+            2 => RepairProtocol::LegacyOrphan,
+            3 => RepairProtocol::LegacyWindowIndexWithNonce,
+            4 => RepairProtocol::LegacyHighestWindowIndexWithNonce,
+            5 => RepairProtocol::LegacyOrphanWithNonce,
+            6 => RepairProtocol::LegacyAncestorHashes,
+            7 => {
+                let mut token = [0u8; 8];
+                rng.fill_bytes(&mut token);
+                let keypair = Keypair::new_from_array(rng.random());
+                let ping = Ping::new(token, &keypair);
+                RepairProtocol::Pong(Pong::new(&ping, &keypair))
+            }
+            8 => RepairProtocol::WindowIndex {
+                header: RepairRequestHeader {
+                    signature: Signature::from(rng.random::<[u8; 64]>()),
+                    sender: Pubkey::new_from_array(rng.random()),
+                    recipient: Pubkey::new_from_array(rng.random()),
+                    timestamp: rng.random(),
+                    nonce: rng.random(),
+                },
+                slot: rng.random(),
+                shred_index: rng.random(),
+            },
+            9 => RepairProtocol::HighestWindowIndex {
+                header: RepairRequestHeader {
+                    signature: Signature::from(rng.random::<[u8; 64]>()),
+                    sender: Pubkey::new_from_array(rng.random()),
+                    recipient: Pubkey::new_from_array(rng.random()),
+                    timestamp: rng.random(),
+                    nonce: rng.random(),
+                },
+                slot: rng.random(),
+                shred_index: rng.random(),
+            },
+            10 => RepairProtocol::Orphan {
+                header: RepairRequestHeader {
+                    signature: Signature::from(rng.random::<[u8; 64]>()),
+                    sender: Pubkey::new_from_array(rng.random()),
+                    recipient: Pubkey::new_from_array(rng.random()),
+                    timestamp: rng.random(),
+                    nonce: rng.random(),
+                },
+                slot: rng.random(),
+            },
+            11 => RepairProtocol::AncestorHashes {
+                header: RepairRequestHeader {
+                    signature: Signature::from(rng.random::<[u8; 64]>()),
+                    sender: Pubkey::new_from_array(rng.random()),
+                    recipient: Pubkey::new_from_array(rng.random()),
+                    timestamp: rng.random(),
+                    nonce: rng.random(),
+                },
+                slot: rng.random(),
+            },
+            _ => unreachable!(),
         }
     }
 }
