@@ -82,6 +82,10 @@ use {
 // assumption these days...
 const MAX_BLOCK_SIZE_THRESHOLD: BlockSize = 20 * 1024 * 1024;
 
+// This const is intentionally aligned with central scheduler's corresponding const called
+// TOTAL_BUFFERED_PACKETS.
+const MAX_UNIQUE_ACTIVE_TASK_COUNT: usize = 100_000;
+
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
 
@@ -1855,6 +1859,32 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
+    fn max_unique_active_task_count(mode: SchedulingMode) -> Option<usize> {
+        match mode {
+            BlockVerification => {
+                // We can't silently drop block verification tasks by imposing some arbitrary limit
+                // here; otherwise same transactions could be allowed in the same block!
+                // The block size (i.e. shred count) limit is already enforced before unified
+                // scheduler.
+                None
+            }
+            BlockProduction => {
+                // Unlike BlockVerification, we need to cap the maximum number of tasks at hand at
+                // any given moment, in order to avoid unbounded memory consumption, which is
+                // remotely controllable. Also, drop duplicate tasks to make better use of the now
+                // constrained space.
+                // Note that this deduplication isn't perfect because it searches duplicates only
+                // among the _current_ active task set, allowing false negatives (i.e. failure of
+                // duplicate detection) in the already handled tasks. However, it's effective
+                // enough, given that significant buffering just before the first leader slot.
+                // This naive impl is chosen; otherwise proper eviction would rather be hard here,
+                // considering the existence of transaction retires (same tx but with different
+                // task id).
+                Some(MAX_UNIQUE_ACTIVE_TASK_COUNT)
+            }
+        }
+    }
+
     fn can_receive_unblocked_task(
         session_ending: bool,
         mode: SchedulingMode,
@@ -2197,6 +2227,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
                         Self::max_running_task_count(scheduling_mode, handler_context.thread_count),
+                        Self::max_unique_active_task_count(scheduling_mode),
                     )
                 };
 
@@ -2330,6 +2361,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             "unified_scheduler-bp_session_stats",
                             ("slot", current_slot.unwrap_or_default(), i64),
                             ("block_size_estimate", block_size_estimate, i64),
+                            ("total_task_count", state_machine.total_task_count(), i64),
+                            (
+                                "peak_active_task_count",
+                                state_machine.peak_active_task_count(),
+                                i64
+                            ),
+                            (
+                                "dropped_task_count",
+                                state_machine.dropped_task_count(),
+                                i64
+                            ),
                         );
                     }
                     if matches!(scheduling_mode, BlockVerification) {
@@ -3000,6 +3042,7 @@ mod tests {
         BeforeEndSession,
         AfterSession,
         AfterDiscarded,
+        BeforeDiscardRequested,
     }
 
     #[test]
@@ -5197,15 +5240,13 @@ mod tests {
 
         agave_logger::setup();
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_for_block_production(10_000);
 
         const DISCARDED_TASK_COUNT: OrderedTaskId = 3;
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
+            &TestCheckPoint::BeforeDiscardRequested,
             &CheckPoint::DiscardRequested,
             &CheckPoint::Discarded(DISCARDED_TASK_COUNT.try_into().unwrap()),
             &TestCheckPoint::AfterDiscarded,
@@ -5227,16 +5268,18 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
 
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
                 for task_id in 0..DISCARDED_TASK_COUNT {
-                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), task_id))
+                    let tx = RuntimeTransaction::from_transaction_for_tests(
+                        system_transaction::transfer(
+                            &Keypair::new(),
+                            &solana_pubkey::new_rand(),
+                            2,
+                            genesis_config.hash(),
+                        ),
+                    );
+                    helper.send_new_task(helper.create_new_unconstrained_task(tx, task_id))
                 }
             });
 
@@ -5256,6 +5299,7 @@ mod tests {
             Box::new(SimpleBankingMinitor),
         );
 
+        sleepless_testing::at(TestCheckPoint::BeforeDiscardRequested);
         // By now, there should be a buffered transaction. Let's discard it.
         *START_DISCARD.lock().unwrap() = true;
 
