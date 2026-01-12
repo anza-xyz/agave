@@ -138,19 +138,19 @@ impl<'ix_data> TransactionContext<'ix_data> {
         rent: Rent,
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
-        number_of_instructions: usize,
+        number_of_top_level_instructions: usize,
     ) -> Self {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
             return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
             cpi_scratchpad: VmSlice::new(
                 GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
-                    GUEST_REGION_SIZE.saturating_mul(number_of_instructions as u64),
+                    GUEST_REGION_SIZE.saturating_mul(number_of_top_level_instructions as u64),
                 ),
                 0,
             ),
             current_executing_instruction: 0,
-            number_of_instructions: number_of_instructions as u16,
+            number_of_instructions: number_of_top_level_instructions as u16,
             number_of_executed_cpis: 0,
             number_of_transaction_accounts: transaction_accounts.len() as u16,
         };
@@ -650,7 +650,7 @@ mod tests {
                 Rent::default(),
                 /* max_instruction_stack_depth */ 2,
                 /* max_instruction_trace_length */ 2,
-                1,
+                /* number_of_top_level_instructions */ 1,
             )
         };
 

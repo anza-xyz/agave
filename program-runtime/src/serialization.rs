@@ -1481,7 +1481,7 @@ mod tests {
             Rent::default(),
             /* max_instruction_stack_depth */ 1,
             /* max_instruction_trace_length */ 1,
-            1,
+            /* number_of_top_level_instructions */ 1,
         );
         let transaction_accounts_indexes = [0, 1, 2, 3, 4, 5];
         let instruction_accounts =
