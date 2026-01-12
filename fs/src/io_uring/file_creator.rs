@@ -725,6 +725,10 @@ impl PendingFile {
         let size = self.size_on_eof?;
         let file = self.open_file.take()?;
         let path = mem::take(&mut self.path);
+        unsafe {
+            libc::fcntl(file.as_raw_fd(), libc::F_SETFL, O_NOATIME);
+        }
+
         Some(FileInfo { file, size, path })
     }
 }
