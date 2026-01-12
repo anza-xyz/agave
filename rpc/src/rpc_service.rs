@@ -807,7 +807,7 @@ pub fn service_runtime(
     // negatively impact performance.
     let rpc_threads = 1.max(rpc_threads);
     let rpc_blocking_threads = 1.max(rpc_blocking_threads);
-    let runtime = Arc::new(
+    Arc::new(
         TokioBuilder::new_multi_thread()
             .worker_threads(rpc_threads)
             .max_blocking_threads(rpc_blocking_threads)
@@ -816,8 +816,7 @@ pub fn service_runtime(
             .enable_all()
             .build()
             .expect("Runtime"),
-    );
-    runtime
+    )
 }
 
 #[cfg(test)]
