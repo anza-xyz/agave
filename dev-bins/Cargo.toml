@@ -58,7 +58,7 @@ agave-syscalls = { path = "../syscalls", version = "=4.0.0-alpha.0", features = 
 ahash = "0.8.11"
 assert_cmd = "2.0"
 assert_matches = "1.5.0"
-bincode = "1.3.3"
+bincode = "3.0.0"
 bs58 = { version = "0.5.1", default-features = false }
 chrono = { version = "0.4.42", default-features = false }
 clap = "2.33.1"
