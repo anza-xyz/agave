@@ -64,7 +64,7 @@ chrono = { version = "0.4.42", default-features = false }
 clap = "2.33.1"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
-dashmap = "5.5.3"
+dashmap = "6.1.0"
 futures = "0.3.31"
 histogram = "0.6.9"
 itertools = "0.14.0"
