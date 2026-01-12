@@ -39,7 +39,7 @@ pub fn check_rent_state(
     transaction_context: &TransactionContext,
     index: IndexOfAccount,
 ) -> TransactionResult<()> {
-    let expect_msg = "account must exist at TransactionContext index if rent-states are Some";
+    let expect_msg = "account must exist at TransactionContext index";
     check_rent_state_with_account(
         pre_rent_state,
         post_rent_state,
