@@ -594,7 +594,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     rent: &Rent,
 ) -> LoadedTransactionAccount {
     let is_writable = message.is_writable(account_index);
-    let loaded_account = if solana_sdk_ids::sysvar::instructions::check_id(account_key) {
+    if solana_sdk_ids::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
         // for each transaction instruction, it cannot be loaded.
         LoadedTransactionAccount {
@@ -615,9 +615,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             loaded_size: default_account.data().len(),
             account: default_account,
         }
-    };
-
-    loaded_account
+    }
 }
 
 fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
