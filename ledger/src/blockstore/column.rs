@@ -5,10 +5,10 @@ use {
         blockstore_meta::{self},
     },
     bincode::Options as BincodeOptions,
-    serde::{de::DeserializeOwned, Serialize},
+    serde::{Serialize, de::DeserializeOwned},
     solana_clock::{Slot, UnixTimestamp},
-    solana_pubkey::{Pubkey, PUBKEY_BYTES},
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_pubkey::{PUBKEY_BYTES, Pubkey},
+    solana_signature::{SIGNATURE_BYTES, Signature},
     solana_storage_proto::convert::generated,
 };
 
@@ -25,7 +25,7 @@ pub mod columns {
     // This avoids relatively obvious `super::` qualifications required for all non-trivial type
     // references in the column doc-comments.
     #[cfg(doc)]
-    use super::{blockstore_meta, generated, Pubkey, Signature, Slot, SlotColumn, UnixTimestamp};
+    use super::{Pubkey, Signature, Slot, SlotColumn, UnixTimestamp, blockstore_meta, generated};
 
     #[derive(Debug)]
     /// The slot metadata column.

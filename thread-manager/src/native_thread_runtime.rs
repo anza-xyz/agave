@@ -1,7 +1,7 @@
 use {
     crate::{
-        policy::{apply_policy, parse_policy, CoreAllocation},
         MAX_THREAD_NAME_CHARS,
+        policy::{CoreAllocation, apply_policy, parse_policy},
     },
     anyhow::bail,
     log::warn,
@@ -10,8 +10,8 @@ use {
     std::{
         ops::Deref,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
         },
     },
 };

@@ -6,7 +6,7 @@ use {
     std::{
         collections::HashMap,
         fmt::{Debug, Formatter},
-        fs::{self, remove_file, OpenOptions},
+        fs::{self, OpenOptions, remove_file},
         io::{Seek, SeekFrom, Write},
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
@@ -326,10 +326,10 @@ mod test {
             .collect::<Vec<_>>();
 
         let skip = 2; // skip this file
-                      // note starting at 1 to avoid default values of 0 for file_name
-                      // create 4 bucket files.
-                      // 1,3,4 will match buckets 0,2,3
-                      // 5 is an extra file that will get deleted
+        // note starting at 1 to avoid default values of 0 for file_name
+        // create 4 bucket files.
+        // 1,3,4 will match buckets 0,2,3
+        // 5 is an extra file that will get deleted
         (0..config.max_buckets + 1).for_each(|i| {
             if i == skip {
                 return;

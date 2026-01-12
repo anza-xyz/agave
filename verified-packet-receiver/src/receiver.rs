@@ -5,7 +5,7 @@ use {
     solana_streamer::streamer::{self, PacketBatchSender, StreamerReceiveStats},
     std::{
         net::UdpSocket,
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
         thread::{self, JoinHandle},
     },
 };

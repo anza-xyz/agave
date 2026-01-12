@@ -2,7 +2,7 @@ use {
     crate::{
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
         cli::CliError,
-        compute_budget::{simulate_and_update_compute_unit_limit, UpdateComputeUnitLimitResult},
+        compute_budget::{UpdateComputeUnitLimitResult, simulate_and_update_compute_unit_limit},
         stake,
     },
     clap::ArgMatches,

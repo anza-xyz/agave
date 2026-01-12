@@ -7,14 +7,15 @@ use {
     crate::{
         post_processing::post_process,
         toolchain::{
-            corrupted_toolchain, generate_toolchain_name, get_base_rust_version,
-            install_and_link_tools, install_tools, make_platform_tools_path_for_version,
-            rust_target_triple, validate_platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION,
+            DEFAULT_PLATFORM_TOOLS_VERSION, corrupted_toolchain, generate_toolchain_name,
+            get_base_rust_version, install_and_link_tools, install_tools,
+            make_platform_tools_path_for_version, rust_target_triple,
+            validate_platform_tools_version,
         },
         utils::spawn,
     },
     cargo_metadata::camino::Utf8PathBuf,
-    clap::{crate_description, crate_name, crate_version, Arg},
+    clap::{Arg, crate_description, crate_name, crate_version},
     log::*,
     regex::Regex,
     std::{

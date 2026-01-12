@@ -1,5 +1,5 @@
 use {
-    super::{stake_weighted_slot_leaders, IdentityKeyedLeaderSchedule, LeaderScheduleVariant},
+    super::{IdentityKeyedLeaderSchedule, LeaderScheduleVariant, stake_weighted_slot_leaders},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,

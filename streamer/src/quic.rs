@@ -11,8 +11,8 @@ use {
     crossbeam_channel::Sender,
     pem::Pem,
     quinn::{
-        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
         Endpoint, IdleTimeout, ServerConfig, VarInt,
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
@@ -24,8 +24,8 @@ use {
         net::UdpSocket,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self},
         time::Duration,
@@ -731,7 +731,7 @@ mod test {
             quic::test::*,
             testing_utilities::{check_multiple_streams, make_client_endpoint},
         },
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::{Receiver, unbounded},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,

@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg},
+    clap::{App, Arg, crate_description, crate_name, value_t, value_t_or_exit},
     crossbeam_channel::unbounded,
     solana_clap_utils::{input_parsers::keypair_of, input_validators::is_keypair_or_ask_keyword},
     solana_client::connection_cache::ConnectionCache,
@@ -11,7 +11,7 @@ use {
     solana_message::Message,
     solana_net_utils::{
         bind_to_unspecified,
-        sockets::{multi_bind_in_range_with_config, SocketConfiguration as SocketConfig},
+        sockets::{SocketConfiguration as SocketConfig, multi_bind_in_range_with_config},
     },
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -19,10 +19,10 @@ use {
         nonblocking::swqos::SwQosConfig,
         packet::PacketBatchRecycler,
         quic::{
-            spawn_stake_wighted_qos_server, QuicStreamerConfig,
             DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
+            QuicStreamerConfig, spawn_stake_wighted_qos_server,
         },
-        streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
+        streamer::{PacketBatchReceiver, StakedNodes, StreamerReceiveStats, receiver},
     },
     solana_transaction::Transaction,
     solana_vote_program::{vote_instruction, vote_state::Vote},
@@ -31,10 +31,10 @@ use {
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        thread::{self, spawn, JoinHandle, Result},
+        thread::{self, JoinHandle, Result, spawn},
         time::{Duration, Instant, SystemTime},
     },
     tokio_util::sync::CancellationToken,

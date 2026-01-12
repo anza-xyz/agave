@@ -2,25 +2,25 @@
 mod tests {
     use {
         crate::{
-            bank::{test_utils as bank_test_utils, Bank},
+            bank::{Bank, test_utils as bank_test_utils},
             epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
-            snapshot_utils::{create_tmp_accounts_dir_for_tests, StorageAndNextAccountsFileId},
+            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
+            ObsoleteAccounts,
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
             accounts_db::{
-                get_temp_accounts_paths, AccountsDb, AtomicAccountsFileId,
-                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AtomicAccountsFileId,
+                get_temp_accounts_paths,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-            ObsoleteAccounts,
         },
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::create_genesis_config,

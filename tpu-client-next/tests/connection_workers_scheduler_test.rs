@@ -10,39 +10,39 @@ use {
     solana_streamer::{
         nonblocking::{
             swqos::SwQosConfig,
-            testing_utilities::{make_client_endpoint, setup_quic_server, SpawnTestServerResult},
+            testing_utilities::{SpawnTestServerResult, make_client_endpoint, setup_quic_server},
         },
         packet::PacketBatch,
         quic::QuicStreamerConfig,
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
+        ClientBuilder, ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        SendTransactionStats,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::create_pinned_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ClientBuilder, ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
-        SendTransactionStats,
     },
     std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc,
+            atomic::{AtomicU64, Ordering},
         },
         time::Duration,
     },
     tokio::{
         sync::{
-            mpsc::{channel, Receiver},
+            mpsc::{Receiver, channel},
             oneshot, watch,
         },
         task::JoinHandle,
-        time::{interval, sleep, Instant},
+        time::{Instant, interval, sleep},
     },
     tokio_util::sync::CancellationToken,
 };

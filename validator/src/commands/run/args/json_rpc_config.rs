@@ -1,6 +1,6 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
-    clap::{value_t, Arg, ArgMatches},
+    clap::{Arg, ArgMatches, value_t},
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_clap_utils::input_validators::is_parsable,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
@@ -178,8 +178,8 @@ pub(super) mod tests {
     use {
         super::*,
         crate::commands::run::args::{
-            pub_sub_config::DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            RunArgs, pub_sub_config::DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
+            tests::verify_args_struct_by_command_run_with_identity_setup,
         },
         solana_rpc::rpc_pubsub_service::PubSubConfig,
         std::{

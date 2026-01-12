@@ -1,5 +1,5 @@
 use {
-    crate::{input_validators::is_parsable, ArgConstant},
+    crate::{ArgConstant, input_validators::is_parsable},
     clap::Arg,
 };
 

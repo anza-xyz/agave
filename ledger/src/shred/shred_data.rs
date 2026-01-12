@@ -1,5 +1,5 @@
 use crate::shred::{
-    traits::ShredData as ShredDataTrait, Error, ShredType, MAX_DATA_SHREDS_PER_SLOT,
+    Error, MAX_DATA_SHREDS_PER_SLOT, ShredType, traits::ShredData as ShredDataTrait,
 };
 
 #[inline]
