@@ -530,7 +530,7 @@ dependencies = [
  "bitvec",
  "bs58",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "histogram",
  "itertools 0.14.0",
  "log",
@@ -2468,6 +2468,21 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core 0.9.8",
+ "serde",
+]
+
+[[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if 1.0.4",
+ "crossbeam-utils",
+ "hashbrown 0.14.3",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core 0.9.8",
  "rayon",
  "serde",
 ]
@@ -2981,7 +2996,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3040,7 +3055,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if 1.0.4",
  "rustix 1.1.3",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6369,7 +6384,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6447,7 +6462,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7195,7 +7210,7 @@ dependencies = [
  "bytemuck_derive",
  "criterion",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "indexmap 2.13.0",
  "itertools 0.14.0",
  "libsecp256k1",
@@ -7921,7 +7936,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "futures 0.3.31",
  "futures-util",
  "indexmap 2.13.0",
@@ -8197,7 +8212,7 @@ dependencies = [
  "chrono",
  "criterion",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "derive_more 2.1.1",
  "fs_extra",
  "futures 0.3.31",
@@ -8704,7 +8719,7 @@ dependencies = [
  "bs58",
  "bv",
  "bytes",
- "dashmap",
+ "dashmap 5.5.3",
  "im",
  "log",
  "memmap2 0.5.10",
@@ -9143,7 +9158,7 @@ dependencies = [
  "chrono-humanize",
  "criterion",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "eager",
  "fs_extra",
  "futures 0.3.31",
@@ -9450,7 +9465,7 @@ dependencies = [
  "bincode",
  "bytes",
  "cfg-if 1.0.4",
- "dashmap",
+ "dashmap 6.1.0",
  "hxdmp",
  "itertools 0.14.0",
  "log",
@@ -10079,7 +10094,7 @@ dependencies = [
  "bincode",
  "bs58",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "itertools 0.14.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
@@ -10360,7 +10375,7 @@ dependencies = [
  "bv",
  "bytemuck",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "dir-diff",
  "ed25519-dalek 1.0.1",
  "fnv",
@@ -10930,7 +10945,7 @@ dependencies = [
  "chrono",
  "clap 4.5.31",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "futures 0.3.31",
  "futures-util",
  "histogram",
@@ -11784,7 +11799,7 @@ dependencies = [
  "aquamarine",
  "assert_matches",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "derive-where",
  "derive_more 2.1.1",
  "dyn-clone",
@@ -11845,7 +11860,7 @@ dependencies = [
  "bytes",
  "clap 4.5.31",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 6.1.0",
  "futures 0.3.31",
  "futures-util",
  "histogram",
@@ -12588,7 +12603,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
