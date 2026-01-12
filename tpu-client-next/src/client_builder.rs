@@ -43,7 +43,7 @@ use {
     crate::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
-            StakeIdentity, WorkersBroadcaster,
+            ResumptionStrategy, StakeIdentity, WorkersBroadcaster,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
@@ -85,6 +85,7 @@ pub struct ClientBuilder {
     sender_channel_size: usize,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
+    resumption: ResumptionStrategy,
     broadcaster: Box<dyn WorkersBroadcaster>,
     report_fn: Option<ReportFn>,
     cancel_scheduler: CancellationToken,
@@ -104,6 +105,8 @@ impl ClientBuilder {
             worker_channel_size: 2,
             sender_channel_size: 64,
             max_reconnect_attempts: 2,
+            // Default size of the in-memory session storage.
+            resumption: ResumptionStrategy::InMemory(1024),
             broadcaster: Box::new(NonblockingBroadcaster),
             report_fn: None,
             cancel_scheduler: CancellationToken::new(),
@@ -178,6 +181,17 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the resumption strategy used to configure the storage for the 0-RTT session tickets
+    ///
+    /// 0-RTT connection establishment allows reducing the latency by sending data immediately after
+    /// connection establishment without waiting for the handshake to complete. If not explicitly
+    /// set, the default will be in-memory storage with a capacity of 1024 sessions. See
+    /// [`ResumptionStrategy`] for configuration details.
+    pub fn resumption_strategy_for_0rtt(mut self, strategy: ResumptionStrategy) -> Self {
+        self.resumption = strategy;
+        self
+    }
+
     /// Set the broadcaster used by the scheduler.
     pub fn broadcaster(mut self, broadcaster: impl WorkersBroadcaster + 'static) -> Self {
         self.broadcaster = Box::new(broadcaster);
@@ -213,6 +227,7 @@ impl ClientBuilder {
                 connect: self.leader_send_fanout.saturating_add(1),
                 send: self.leader_send_fanout,
             },
+            resumption: self.resumption,
         };
 
         let scheduler = ConnectionWorkersScheduler::new(

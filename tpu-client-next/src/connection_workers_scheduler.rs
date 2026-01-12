@@ -100,6 +100,21 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Configures the number of leaders to connect to and send transactions to.
     pub leaders_fanout: Fanout,
+
+    /// Configures the resumption strategy for QUIC connections, affecting 0-RTT behavior.
+    pub resumption: ResumptionStrategy,
+}
+
+/// The [`ResumptionStrategy`] enum defines the strategy for handling session
+/// ticket storage for QUIC connections requiered to establish 0-RTT connections.
+#[derive(Debug, Clone)]
+pub enum ResumptionStrategy {
+    /// In-memory session ticket storage for 0-RTT connections, with a specified sessions number.
+    InMemory(usize),
+    /// Disabled session ticket storage, effectively disabling 0-RTT connections.
+    Disabled,
+    /// Custom session ticket storage implementation provided by the user.
+    Custom(Arc<dyn rustls::client::ClientSessionStore>),
 }
 
 /// The [`BindTarget`] enum defines how the UDP socket should be bound:
@@ -214,6 +229,7 @@ impl ConnectionWorkersScheduler {
             worker_channel_size,
             max_reconnect_attempts,
             leaders_fanout,
+            resumption,
         }: ConnectionWorkersSchedulerConfig,
         broadcaster: Box<dyn WorkersBroadcaster>,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
@@ -224,7 +240,7 @@ impl ConnectionWorkersScheduler {
             cancel,
             stats,
         } = self;
-        let mut endpoint = setup_endpoint(bind, stake_identity)?;
+        let mut endpoint = setup_endpoint(bind, stake_identity, resumption.clone())?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
@@ -252,7 +268,7 @@ impl ConnectionWorkersScheduler {
                         continue;
                     };
 
-                    let client_config = build_client_config(update_identity_receiver.borrow_and_update().as_ref());
+                    let client_config = build_client_config(update_identity_receiver.borrow_and_update().as_ref(), resumption.clone());
                     endpoint.set_default_client_config(client_config);
                     // Flush workers since they are handling connections created
                     // with outdated certificate.
@@ -296,6 +312,7 @@ impl ConnectionWorkersScheduler {
 
         workers.shutdown().await;
 
+        //endpoint.wait_idle().await;
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop().await;
         if let Some(error) = last_error {
@@ -309,18 +326,22 @@ impl ConnectionWorkersScheduler {
 pub fn setup_endpoint(
     bind: BindTarget,
     stake_identity: Option<StakeIdentity>,
+    resumption: ResumptionStrategy,
 ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-    let client_config = build_client_config(stake_identity.as_ref());
+    let client_config = build_client_config(stake_identity.as_ref(), resumption);
     let endpoint = create_client_endpoint(bind, client_config)?;
     Ok(endpoint)
 }
 
-fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
+fn build_client_config(
+    stake_identity: Option<&StakeIdentity>,
+    resumption: ResumptionStrategy,
+) -> ClientConfig {
     let client_certificate = match stake_identity {
         Some(identity) => identity.as_certificate(),
         None => &QuicClientCertificate::new(None),
     };
-    create_client_config(client_certificate)
+    create_client_config(client_certificate, resumption)
 }
 
 /// [`NonblockingBroadcaster`] attempts to immediately send transactions to all

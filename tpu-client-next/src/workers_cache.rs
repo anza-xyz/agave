@@ -364,7 +364,7 @@ mod tests {
     use {
         crate::{
             connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
-            connection_workers_scheduler::BindTarget,
+            connection_workers_scheduler::{BindTarget, ResumptionStrategy},
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
             transaction_batch::TransactionBatch,
@@ -388,7 +388,10 @@ mod tests {
 
     fn create_test_endpoint() -> Endpoint {
         let socket = bind_to_localhost_unique().unwrap();
-        let client_config = create_client_config(&QuicClientCertificate::new(None));
+        let client_config = create_client_config(
+            &QuicClientCertificate::new(None),
+            ResumptionStrategy::InMemory(16),
+        );
         create_client_endpoint(BindTarget::Socket(socket), client_config).unwrap()
     }
 
@@ -421,6 +424,7 @@ mod tests {
             stats.read_and_reset(),
             SendTransactionStatsNonAtomic {
                 connection_error_timed_out: 1,
+                connection_succeeded_1rtt: 1,
                 ..Default::default()
             }
         );
@@ -510,6 +514,7 @@ mod tests {
             stats.read_and_reset(),
             SendTransactionStatsNonAtomic {
                 connection_error_timed_out: 1,
+                connection_succeeded_1rtt: 1,
                 ..Default::default()
             }
         );

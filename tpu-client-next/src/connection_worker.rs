@@ -4,7 +4,7 @@
 use {
     super::SendTransactionStats,
     crate::{
-        logging::{debug, error, trace, warn},
+        logging::{debug, error, info, trace, warn},
         quic_networking::send_data_over_stream,
         send_transaction_stats::record_error,
         transaction_batch::TransactionBatch,
@@ -320,15 +320,50 @@ impl ConnectionWorker {
         let connecting = self.endpoint.connect(self.peer, &server_name);
         match connecting {
             Ok(connecting) => {
+                // try to do 0rtt connection if possible. If `into_0rtt` returns Ok, it doesn't
+                // necessarily mean that 0rtt was accepted by server. If it is not accepted
+                // `zero_rtt_accepted` will resolve to false. In practice, we haven't seen
+                // `zero_rtt_accepted` resolved to false. For details, see `Connecting::into_0rtt` documentation.
                 let mut measure_connection = Measure::start("establish connection");
-                let res = timeout(self.handshake_timeout, connecting).await;
+                let (connection, zero_rtt_accepted) = match connecting.into_0rtt() {
+                    Ok((connection, zero_rtt_accepted)) => {
+                        debug!("Trying 0rtt connection.");
+                        (Ok(Ok(connection)), Some(zero_rtt_accepted))
+                    }
+                    Err(connecting) => {
+                        debug!(
+                            "0rtt connection has been rejected. Falling back to regular handshake."
+                        );
+                        self.send_txs_stats
+                            .connection_succeeded_1rtt
+                            .fetch_add(1, Ordering::Relaxed);
+                        (timeout(self.handshake_timeout, connecting).await, None)
+                    }
+                };
                 measure_connection.stop();
                 debug!(
                     "Establishing connection with {} took: {} us",
                     self.peer,
                     measure_connection.as_us()
                 );
-                match res {
+
+                if let Some(zero_rtt_accepted) = zero_rtt_accepted {
+                    let stats = self.send_txs_stats.clone();
+                    tokio::spawn(async move {
+                        if zero_rtt_accepted.await {
+                            stats
+                                .connection_succeeded_0rtt
+                                .fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            info!("0-RTT was not accepted by server.");
+                            stats
+                                .connection_succeeded_1rtt
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    });
+                }
+
+                match connection {
                     Ok(Ok(connection)) => {
                         self.connection = ConnectionState::Active(connection);
                     }
@@ -383,9 +418,6 @@ impl ConnectionWorker {
             "Trying to reconnect to {}. Reopen connection, 0rtt is not implemented yet.",
             self.peer
         );
-        // We can reconnect using 0rtt, but not a priority for now. Check if we
-        // need to call config.enable_0rtt() on the client side and where
-        // session tickets are stored.
         self.create_connection(num_reconnects).await;
     }
 }
