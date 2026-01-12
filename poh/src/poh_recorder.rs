@@ -21,12 +21,13 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded, unbounded},
     log::*,
-    solana_clock::{BankId, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
+    solana_clock::{BankId, Slot},
     solana_entry::{
         entry::Entry,
         poh::{Poh, PohEntry},
     },
     solana_hash::Hash,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_measure::measure_us,
     solana_poh_config::PohConfig,
@@ -795,15 +796,15 @@ impl PohRecorder {
     }
 
     fn start_slot_was_mine_or_previous_leader(&self, next_leader_slot: Slot) -> bool {
-        (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).any(
-            |slot| {
+        (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
+            ..next_leader_slot)
+            .any(|slot| {
                 // Check if the last slot PoH reset to was any of the
                 // previous leader's slots.
                 // If so, PoH is currently building on the previous leader's blocks
                 // If not, PoH is building on a different fork
                 slot == self.start_slot()
-            },
-        )
+            })
     }
 
     // Check if the last slot PoH reset onto was the previous leader's last slot.
@@ -813,8 +814,9 @@ impl PohRecorder {
         next_leader_slot: Slot,
     ) -> bool {
         // Walk backwards from the slot before our next leader slot.
-        for slot in
-            (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).rev()
+        for slot in (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
+            ..next_leader_slot)
+            .rev()
         {
             // Identify which leader is responsible for building this slot.
             let leader_for_slot = self.leader_schedule_cache.slot_leader_at(slot, None);
@@ -893,7 +895,7 @@ impl PohRecorder {
                 0,
                 cmp::min(
                     ticks_per_slot * MAX_GRACE_SLOTS,
-                    ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS / GRACE_TICKS_FACTOR,
+                    ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 / GRACE_TICKS_FACTOR,
                 ),
             ))
     }
@@ -1867,16 +1869,12 @@ mod tests {
         let leader_b = SlotLeader::new_unique();
         let leader_c = SlotLeader::new_unique();
         let leader_d = SlotLeader::new_unique();
-        let consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS as usize;
-        let mut slot_leaders = Vec::with_capacity(consecutive_leader_slots * 3);
-        slot_leaders.extend(std::iter::repeat_n(leader_a, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_b, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_c, consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat_n(leader_d, consecutive_leader_slots));
+        let slot_leaders = vec![leader_a, leader_b, leader_c, leader_d];
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = solana_leader_schedule::FixedSchedule {
             leader_schedule: Arc::new(solana_leader_schedule::LeaderSchedule::new_from_schedule(
                 slot_leaders,
+                NUM_CONSECUTIVE_LEADER_SLOTS,
             )),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
@@ -1900,15 +1898,17 @@ mod tests {
         let grace_ticks = ticks_per_slot * MAX_GRACE_SLOTS;
         poh_recorder.grace_ticks = grace_ticks;
 
+        let num_consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64;
+
         // Setup leader slot ranges.
         let leader_a_start_slot = 0;
-        let leader_a_end_slot = leader_a_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_a_end_slot = leader_a_start_slot + num_consecutive_leader_slots - 1;
         let leader_b_start_slot = leader_a_end_slot + 1;
-        let leader_b_end_slot = leader_b_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_b_end_slot = leader_b_start_slot + num_consecutive_leader_slots - 1;
         let leader_c_start_slot = leader_b_end_slot + 1;
-        let leader_c_end_slot = leader_c_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_c_end_slot = leader_c_start_slot + num_consecutive_leader_slots - 1;
         let leader_d_start_slot = leader_c_end_slot + 1;
-        let leader_d_end_slot = leader_d_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_d_end_slot = leader_d_start_slot + num_consecutive_leader_slots - 1;
 
         // Reset onto Leader A's first slot 0.
         poh_recorder.reset(
@@ -1917,7 +1917,7 @@ mod tests {
         );
 
         // Setup leader start ticks.
-        let ticks_in_leader_slot_set = ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS;
+        let ticks_in_leader_slot_set = ticks_per_slot * num_consecutive_leader_slots;
         let leader_a_start_tick = 1;
         let leader_b_start_tick = leader_a_start_tick + ticks_in_leader_slot_set;
         let leader_c_start_tick = leader_b_start_tick + ticks_in_leader_slot_set;
@@ -1996,7 +1996,7 @@ mod tests {
         assert!(poh_recorder.reached_leader_tick(&leader_d.id, leader_d_start_tick));
 
         // Add some active (partially received) blocks to the active fork.
-        let active_descendants = vec![NUM_CONSECUTIVE_LEADER_SLOTS];
+        let active_descendants = vec![NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64];
         poh_recorder.update_start_bank_active_descendants(&active_descendants);
 
         // True, because Leader D observes pending blocks on the active fork,
