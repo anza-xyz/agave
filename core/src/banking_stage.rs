@@ -500,7 +500,9 @@ impl BankingStage {
         error!("Spawning the default block production method as a fallback...");
 
         self.cycle_threads(BankingControlMsg::Internal {
-            block_production_method: BlockProductionMethod::default(),
+            // Unified scheduler can't be used as a fallback scheduler because it needs special
+            // upfront setup at booting...
+            block_production_method: BlockProductionMethod::CentralSchedulerGreedy,
             num_workers: BankingStage::default_num_workers(),
             config: SchedulerConfig::default(),
         })
@@ -1031,7 +1033,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_banking_stage_tick() {
         agave_logger::setup();
         let GenesisConfigInfo {
