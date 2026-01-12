@@ -305,7 +305,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts.len(),
             instruction_data.len() as u64,
         );
-        instruction.index_of_parent_instruction = parent_index.unwrap_or(u16::MAX);
+        instruction.index_of_caller_instruction = parent_index.unwrap_or(u16::MAX);
         self.deduplication_maps
             .push(deduplication_map.into_boxed_slice());
         self.instruction_accounts
