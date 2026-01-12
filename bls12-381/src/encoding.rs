@@ -73,7 +73,7 @@ impl PodG1Point {
             Endianness::LE => {
                 let mut bytes = self.0;
                 swap_fq_endianness(&mut bytes);
-                G1Affine::from_uncompressed_unchecked(&bytes).into_option()
+                G1Affine::from_uncompressed(&bytes).into_option()
             }
         }
     }
@@ -118,12 +118,12 @@ impl PodG2Point {
     /// Checks: Field validity, Curve equation, Subgroup membership.
     pub fn to_affine(&self, endianness: Endianness) -> Option<G2Affine> {
         match endianness {
-            Endianness::BE => G2Affine::from_uncompressed_unchecked(&self.0).into_option(),
+            Endianness::BE => G2Affine::from_uncompressed(&self.0).into_option(),
             Endianness::LE => {
                 let mut bytes = self.0;
                 swap_fq_endianness(&mut bytes);
                 swap_g2_c0_c1(&mut bytes);
-                G2Affine::from_uncompressed_unchecked(&bytes).into_option()
+                G2Affine::from_uncompressed(&bytes).into_option()
             }
         }
     }
