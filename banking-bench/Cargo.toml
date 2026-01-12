@@ -22,7 +22,7 @@ frozen-abi = []
 agave-banking-stage-ingress-types = { workspace = true }
 agave-logger = { workspace = true }
 assert_matches = { workspace = true }
-clap = { version = "3.1.8", features = ["derive", "cargo"] }
+clap = { version = "3.2.25", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
