@@ -182,22 +182,26 @@ mod tests {
             false,
         );
 
-        // Fail if prefund is not allowed.
-        if !allow_prefund {
+        if allow_prefund {
+            // Succeed if prefund is allowed.
+            assert!(TargetBpfV2::new_checked(&bank, &program_address, allow_prefund).is_ok());
+        } else {
+            // Fail if prefund is not allowed.
             assert_matches!(
                 TargetBpfV2::new_checked(&bank, &program_address, allow_prefund).unwrap_err(),
                 CoreBpfMigrationError::ProgramHasDataAccount(..)
             );
-            // Clean up the program data account lamports.
-            store_account(
-                &bank,
-                &program_data_address,
-                &[],
-                0,
-                &SYSTEM_PROGRAM_ID,
-                false,
-            );
         }
+
+        // Clean up the program data account lamports for zero-lamport test.
+        store_account(
+            &bank,
+            &program_data_address,
+            &[],
+            0,
+            &SYSTEM_PROGRAM_ID,
+            false,
+        );
 
         // Success.
         let target_bpf_v2 =

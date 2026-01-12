@@ -222,8 +222,17 @@ mod tests {
             &SYSTEM_PROGRAM_ID,
         );
 
-        // Fail if prefund is not allowed
-        if !allow_prefund {
+        if allow_prefund {
+            // Succeed if prefund is allowed
+            assert!(TargetBuiltin::new_checked(
+                &bank,
+                &program_address,
+                &migration_target,
+                allow_prefund,
+            )
+            .is_ok());
+        } else {
+            // Fail if prefund is not allowed
             assert_matches!(
                 TargetBuiltin::new_checked(
                     &bank,
@@ -234,12 +243,13 @@ mod tests {
                 .unwrap_err(),
                 CoreBpfMigrationError::ProgramHasDataAccount(..)
             );
-            // Clean up the program data account lamports
-            bank.store_account_and_update_capitalization(
-                &program_data_address,
-                &AccountSharedData::default(),
-            );
         }
+
+        // Clean up the program data account lamports for zero-lamport test
+        bank.store_account_and_update_capitalization(
+            &program_data_address,
+            &AccountSharedData::default(),
+        );
 
         // Success
         let target_builtin =
