@@ -140,9 +140,11 @@ impl SnapshotStorageRebuilder {
     ) {
         thread_pool.spawn(move || {
             for file_info in rebuilder.file_receiver.iter() {
+                let path = file_info.path.clone();
                 match rebuilder.process_append_vec_file(file_info) {
                     Ok(_) => {}
                     Err(err) => {
+                        log::info!("Error processing append_vec_file {}: {err}", path.display());
                         exit_sender
                             .send(Err(err))
                             .expect("sender should be connected");
