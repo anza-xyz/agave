@@ -2806,9 +2806,10 @@ fn test_oc_bad_signatures() {
     // to casting votes with invalid blockhash. This is not what is meant to be
     // test and only inflates test time.
     let fixed_schedule = FixedSchedule {
-        leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader::from(
-            &validator_keys.first().unwrap().0,
-        )])),
+        leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(
+            vec![SlotLeader::from(&validator_keys.first().unwrap().0)],
+            1,
+        )),
     };
 
     let mut validator_config = ValidatorConfig {
