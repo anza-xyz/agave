@@ -2787,8 +2787,6 @@ fn wait_for_supermajority(
 // Get the activated stake percentage (based on the provided bank) that is visible in gossip
 fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: bool) -> u64 {
     let mut online_stake = 0;
-    let mut wrong_shred_stake = 0;
-    let mut wrong_shred_nodes = vec![];
     let mut offline_stake = 0;
     let mut offline_nodes = vec![];
 
@@ -2807,7 +2805,6 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         })
         .map(|node| (*node.pubkey(), node))
         .collect();
-    let my_shred_version = cluster_info.my_shred_version();
     let my_id = cluster_info.id();
 
     for (activated_stake, vote_account) in bank.vote_accounts().values() {
@@ -2819,17 +2816,11 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         }
         let vote_state_node_pubkey = *vote_account.node_pubkey();
 
-        if let Some(peer) = peers.get(&vote_state_node_pubkey) {
-            if peer.shred_version() == my_shred_version {
-                trace!(
-                    "observed {vote_state_node_pubkey} in gossip, \
-                     (activated_stake={activated_stake})"
-                );
-                online_stake += activated_stake;
-            } else {
-                wrong_shred_stake += activated_stake;
-                wrong_shred_nodes.push((activated_stake, vote_state_node_pubkey));
-            }
+        if peers.contains_key(&vote_state_node_pubkey) {
+            trace!(
+                "observed {vote_state_node_pubkey} in gossip, (activated_stake={activated_stake})"
+            );
+            online_stake += activated_stake;
         } else if vote_state_node_pubkey == my_id {
             online_stake += activated_stake; // This node is online
         } else {
@@ -2841,21 +2832,6 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     let online_stake_percentage = (online_stake as f64 / total_activated_stake as f64) * 100.;
     if log {
         info!("{online_stake_percentage:.3}% of active stake visible in gossip");
-
-        if !wrong_shred_nodes.is_empty() {
-            info!(
-                "{:.3}% of active stake has the wrong shred version in gossip",
-                (wrong_shred_stake as f64 / total_activated_stake as f64) * 100.,
-            );
-            wrong_shred_nodes.sort_by(|b, a| a.0.cmp(&b.0)); // sort by reverse stake weight
-            for (stake, identity) in wrong_shred_nodes {
-                info!(
-                    "    {:.3}% - {}",
-                    (stake as f64 / total_activated_stake as f64) * 100.,
-                    identity
-                );
-            }
-        }
 
         if !offline_nodes.is_empty() {
             info!(
