@@ -4835,10 +4835,12 @@ impl AccountsDb {
             excess_slot_count = old_slots.len();
             let mut flush_stats = FlushStats::default();
             old_slots.into_iter().for_each(|old_slot| {
-                // Don't flush slots that are known to be unrooted
+                // Slots <= max_flushed_root can never become roots later (any unrooted slot that
+                // might become rooted must be > max_flushed_root). They will be cleaned by
+                // remove_unrooted_slots at a later time.
                 if old_slot > max_flushed_root {
                     if self.should_aggressively_flush_cache() {
-                        if let Some(stats) = self.flush_slot_cache(old_slot) {
+                        if let Some(stats) = self.flush_unrooted_cache_slot(old_slot) {
                             flush_stats.accumulate(&stats);
                         }
                     }
@@ -5089,8 +5091,9 @@ impl AccountsDb {
         flush_stats
     }
 
-    /// flush all accounts in this slot
-    fn flush_slot_cache(&self, slot: Slot) -> Option<FlushStats> {
+    /// Flushes an unrooted slot from the write cache to storage to free up memory
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn flush_unrooted_cache_slot(&self, slot: Slot) -> Option<FlushStats> {
         self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None)
     }
 
@@ -7237,7 +7240,7 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
-        self.flush_slot_cache(slot);
+        self.add_root_and_flush_write_cache(slot);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache
