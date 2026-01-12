@@ -348,7 +348,7 @@ num_enum = "0.7.4"
 openssl = "0.10"
 parking_lot = "0.12"
 pbkdf2 = { version = "0.12.2", default-features = false }
-pem = "1.1.1"
+pem = "3.0.6"
 percentage = "0.1.0"
 pickledb = { version = "0.5.1", default-features = false }
 predicates = "3.1"
