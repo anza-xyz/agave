@@ -269,7 +269,7 @@ dependencies = [
  "agave-logger",
  "agave-snapshots",
  "chrono",
- "clap",
+ "clap 4.5.54",
  "console 0.16.2",
  "core_affinity",
  "crossbeam-channel",
@@ -512,9 +512,9 @@ dependencies = [
 
 [[package]]
 name = "ansi_term"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee49baf6cb617b853aa8d93bf420db2383fab46d314482ca2803b40d5fde979b"
+checksum = "d52a9bb7ec0cf484c551830a7ce27bd20d67eac647e1befb56b0be4ee39a55d2"
 dependencies = [
  "winapi",
 ]
@@ -1531,9 +1531,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "2.33.3"
+version = "2.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37e58ac78573c40708d45522f0d80fa2f01cc4f9b4e2bf749807255454312002"
+checksum = "a0610544180c38b88101fecf2dd634b174a62eef6946f84dfc6a7127512b381c"
 dependencies = [
  "ansi_term",
  "atty",
@@ -1543,6 +1543,33 @@ dependencies = [
  "unicode-width 0.1.8",
  "vec_map",
 ]
+
+[[package]]
+name = "clap"
+version = "4.5.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6e6ff9dcd79cff5cd969a17a545d79e84ab086e444102a591e288a8aa3ce394"
+dependencies = [
+ "clap_builder",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.5.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa42cf4d2b7a41bc8f663a7cab4031ebafa1bf3875705bfaf8466dc60ab52c00"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap_lex",
+ "strsim 0.11.1",
+]
+
+[[package]]
+name = "clap_lex"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "colorchoice"
@@ -6407,7 +6434,7 @@ name = "solana-clap-utils"
 version = "4.0.0-alpha.0"
 dependencies = [
  "chrono",
- "clap",
+ "clap 2.34.0",
  "rpassword",
  "solana-bls-signatures",
  "solana-clock",
@@ -6450,7 +6477,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "base64 0.22.1",
  "chrono",
- "clap",
+ "clap 2.34.0",
  "console 0.16.2",
  "humantime",
  "indicatif 0.18.3",
@@ -7044,7 +7071,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "bincode",
- "clap",
+ "clap 4.5.54",
  "crossbeam-channel",
  "log",
  "serde",
@@ -7212,7 +7239,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bv",
- "clap",
+ "clap 4.5.54",
  "crossbeam-channel",
  "flate2",
  "indexmap 2.13.0",
