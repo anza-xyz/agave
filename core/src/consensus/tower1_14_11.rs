@@ -10,7 +10,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "H3PUUxvCCu8MFwoXppzyJenXCJswSude7DiWK49yKKRo")
+    frozen_abi(digest = "A5VjnPLPpApf7kjBxMX89crYHxsk6XotSqpG6qXuuwS1")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower1_14_11 {
