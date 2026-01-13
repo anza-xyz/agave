@@ -175,14 +175,10 @@ impl Tpu {
 
         let (packet_sender, packet_receiver) = unbounded();
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
-        let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
             tpu_vote_sockets,
             exit.clone(),
-            &packet_sender,
             &vote_packet_sender,
-            forwarded_packet_receiver,
-            poh_recorder,
             None, // coalesce
         );
 
@@ -231,7 +227,7 @@ impl Tpu {
                 "quic_streamer_tpu",
                 transactions_quic_sockets,
                 keypair,
-                packet_sender,
+                packet_sender.clone(),
                 staked_nodes.clone(),
                 tpu_quic_server_config.quic_streamer_config,
                 tpu_quic_server_config.qos_config,
@@ -254,7 +250,7 @@ impl Tpu {
                 "quic_streamer_tpu_forwards",
                 transactions_forwards_quic_sockets,
                 keypair,
-                forwarded_packet_sender,
+                packet_sender.clone(),
                 staked_nodes.clone(),
                 tpu_fwd_quic_server_config.quic_streamer_config,
                 tpu_fwd_quic_server_config.qos_config,
