@@ -10,7 +10,7 @@ use {
 };
 
 // Helper to construct pairing batches by repeating the single-pair test vector
-fn build_pairing_input(count: usize, one_pair_vec: &[u8]) -> (Vec<PodG1Point>, Vec<PodG2Point>) {
+fn build_pairing_input<const N: usize>(one_pair_vec: &[u8]) -> ([PodG1Point; N], [PodG2Point; N]) {
     // ONE_PAIR vector is structured as [G1 (96) | G2 (192)]
     let g1_bytes = &one_pair_vec[0..96];
     let g2_bytes = &one_pair_vec[96..288];
@@ -18,10 +18,10 @@ fn build_pairing_input(count: usize, one_pair_vec: &[u8]) -> (Vec<PodG1Point>, V
     let p1: PodG1Point = pod_read_unaligned(g1_bytes);
     let p2: PodG2Point = pod_read_unaligned(g2_bytes);
 
-    let g1_vec = vec![p1; count];
-    let g2_vec = vec![p2; count];
+    let g1_arr = [p1; N];
+    let g2_arr = [p2; N];
 
-    (g1_vec, g2_vec)
+    (g1_arr, g2_arr)
 }
 
 fn bench_g1_ops(c: &mut Criterion) {
@@ -148,24 +148,31 @@ fn bench_g2_ops(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_pairing(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Pairing");
-    let pair_counts = [1, 2, 4, 8, 16];
-
-    for count in pair_counts {
+macro_rules! bench_pair_size {
+    ($group:expr, $N:expr) => {{
         // Construct inputs deterministically from the ONE_PAIR test vector
-        let (g1_be, g2_be) = build_pairing_input(count, INPUT_BE_PAIRING_WORST_CASE);
-        let (g1_le, g2_le) = build_pairing_input(count, INPUT_LE_PAIRING_WORST_CASE);
+        let (g1_be, g2_be) = build_pairing_input::<$N>(INPUT_BE_PAIRING_WORST_CASE);
+        let (g1_le, g2_le) = build_pairing_input::<$N>(INPUT_LE_PAIRING_WORST_CASE);
 
         // Bench BE
-        group.bench_with_input(BenchmarkId::new("BE", count), &count, |b, &_count| {
+        $group.bench_with_input(BenchmarkId::new("BE", $N), &$N, |b, &_count| {
             b.iter(|| bls12_381_pairing_map(Version::V0, &g1_be, &g2_be, Endianness::BE).unwrap())
         });
         // Bench LE
-        group.bench_with_input(BenchmarkId::new("LE", count), &count, |b, &_count| {
+        $group.bench_with_input(BenchmarkId::new("LE", $N), &$N, |b, &_count| {
             b.iter(|| bls12_381_pairing_map(Version::V0, &g1_le, &g2_le, Endianness::LE).unwrap())
         });
-    }
+    }};
+}
+
+fn bench_pairing(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Pairing");
+
+    bench_pair_size!(group, 1);
+    bench_pair_size!(group, 2);
+    bench_pair_size!(group, 4);
+    bench_pair_size!(group, 8);
+    bench_pair_size!(group, 16);
     group.finish();
 }
 
