@@ -5118,7 +5118,8 @@ impl AccountsDb {
         }
     }
 
-    /// Updates the accounts index with the given cached `accounts`.
+    /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Used for cached accounts only.
     fn update_index_cached_accounts<'a>(
         &self,
         infos: Vec<AccountInfo>,
@@ -5132,6 +5133,7 @@ impl AccountsDb {
             (start..end).for_each(|i| {
                 accounts.account(i, |account| {
                     let info = infos[i];
+                    debug_assert!(info.is_cached());
                     self.accounts_index.upsert(
                         target_slot,
                         target_slot,
@@ -5167,6 +5169,7 @@ impl AccountsDb {
     }
 
     /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Used when storing accounts to storage.
     /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
     /// The element of the returned vector is guaranteed to be non-empty.
     fn update_index_stored_accounts<'a>(
@@ -5192,7 +5195,8 @@ impl AccountsDb {
             let mut reclaims = ReclaimsSlotList::with_capacity((end - start) / 2);
 
             (start..end).for_each(|i| {
-                let info = infos[i];
+                let info: AccountInfo = infos[i];
+                debug_assert!(!info.is_cached());
                 accounts.account(i, |account| {
                     let old_slot = accounts.slot(i);
                     self.accounts_index.upsert(
