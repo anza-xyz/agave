@@ -71,9 +71,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
             let bin = self.start_bin;
             let map = &self.account_maps[bin];
             let mut items = map.keys();
-            if !(self.start_bound == Bound::Unbounded
-                && self.end_bound == Bound::Unbounded)
-            {
+            if !(self.start_bound == Bound::Unbounded && self.end_bound == Bound::Unbounded) {
                 items.retain(|k| range.contains(k));
             }
             if self.iter_order == AccountsIndexPubkeyIterOrder::Sorted {
