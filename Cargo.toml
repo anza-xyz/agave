@@ -28,7 +28,6 @@ members = [
     "connection-cache",
     "core",
     "cost-model",
-    "curves/curve25519",
     "download-utils",
     "entry",
     "faucet",
@@ -440,7 +439,7 @@ solana-connection-cache = { path = "connection-cache", version = "=4.0.0-alpha.0
 solana-core = { path = "core", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-cost-model = { path = "cost-model", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-cpi = "3.1.0"
-solana-curve25519 = { path = "curves/curve25519", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-curve25519 = "4.0.0"
 solana-define-syscall = "4.0.1"
 solana-derivation-path = "3.0.0"
 solana-download-utils = { path = "download-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -602,7 +601,6 @@ static_assertions = "1.1.0"
 stream-cancel = "0.8.2"
 strum = "0.27.2"
 strum_macros = "0.27.2"
-subtle = "2.6.1"
 symlink = "0.1.0"
 syn = "2.0"
 sys-info = "0.9.1"
@@ -669,35 +667,3 @@ opt-level = 3
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
-
-# We include the following crates as our dependencies above from crates.io:
-#
-#  * spl-associated-token-account-interface
-#  * spl-instruction-padding
-#  * spl-memo-interface
-#  * spl-pod
-#  * spl-token
-#  * spl-token-2022-interface
-#  * spl-token-metadata-interface
-#
-# They, in turn, depend on a number of crates that we also include directly
-# using `path` specifications.  For example, `spl-token` depends on
-# `solana-program`.  And we explicitly specify `solana-program` above as a local
-# path dependency:
-#
-#     solana-program = { path = "../../sdk/program", version = "=1.16.0" }
-#
-# Unfortunately, Cargo will try to resolve the `spl-token` `solana-program`
-# dependency only using what is available on crates.io.  Crates.io normally
-# contains a previous version of these crates, and we end up with two versions
-# of `solana-program` and all of their dependencies in our build tree.
-#
-# If you are developing downstream using non-crates-io solana-program (local or
-# forked repo, or from github rev, eg), duplicate the following patch statements
-# in your Cargo.toml. If you still hit duplicate-type errors with the patch
-# statements in place, run `cargo update -p solana-program` to remove extraneous
-# versions from your Cargo.lock file.
-#
-# There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
-# comments and the overrides in sync.
-solana-curve25519 = { path = "curves/curve25519" }

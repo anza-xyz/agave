@@ -126,7 +126,7 @@ solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.0.0-alpha.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.0.0-alpha.0" }
 solana-cpi = "=3.1.0"
-solana-curve25519 = { path = "../../curves/curve25519", version = "=4.0.0-alpha.0" }
+solana-curve25519 = "=4.0.0"
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=4.0.0-alpha.0" }
 solana-hash = { version = "=4.0.1", features = ["bytemuck", "serde", "std"] }
@@ -267,44 +267,3 @@ strip = true
 
 [[bench]]
 name = "bpf_loader"
-
-[patch.crates-io]
-# We include the following crates as our dependencies from crates.io:
-#
-#  * spl-associated-token-account-interface
-#  * spl-instruction-padding
-#  * spl-memo-interface
-#  * spl-pod
-#  * spl-token
-#  * spl-token-2022-interface
-#  * spl-token-metadata-interface
-#
-# They are included indirectly, for example, `account-decoder` depends on
-#
-#     solana-sdk = { workspace = true }
-#
-# and that is specified as
-#
-#     spl-token = "=3.5.0"
-#
-# in `../../Cargo.toml`.
-#
-# `spl-token`, in turn, depends on `solana-program`, which we explicitly specify
-# above as a local path dependency:
-#
-#     solana-program = { path = "../../sdk/program", version = "=1.16.0" }
-#
-# Unfortunately, Cargo will try to resolve the `spl-token` `solana-program`
-# dependency only using what is available on crates.io.  Crates.io normally
-# contains a previous version of these crates, and we end up with two versions
-# of `solana-program` and all of their dependencies in our build tree.
-#
-# If you are developing downstream using non-crates-io solana-program (local or
-# forked repo, or from github rev, eg), duplicate the following patch statements
-# in your Cargo.toml. If you still hit duplicate-type errors with the patch
-# statements in place, run `cargo update -p solana-program` to remove extraneous
-# versions from your Cargo.lock file.
-#
-# There is a similar override in `../../Cargo.toml`.  Please keep both
-# comments and the overrides in sync.
-solana-curve25519 = { path = "../../curves/curve25519" }

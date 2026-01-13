@@ -37,7 +37,7 @@ jobs:
           exempt-all-milestones: true # There are some projects in the repo, so possibly milestones are relevant.
           exempt-issue-labels: do-not-close,feature-gate
           exempt-pr-labels: do-not-close,feature-gate
-          operations-per-run: ${{ github.event_name == 'pull_request' && 1000 || 900}}
+          operations-per-run: ${{ github.event_name == 'pull_request' && 100 || 10 }}
           stale-issue-label: stale
           stale-issue-message: 'This issue is stale because it has been open 365 days with no activity. Remove stale label or comment or this will be closed in 7 days.'
           stale-pr-label: stale
