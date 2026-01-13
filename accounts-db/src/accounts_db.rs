@@ -4610,7 +4610,7 @@ impl AccountsDb {
                 // The unrootable slots will get purged later.
                 if old_slot > max_flushed_root {
                     if self.should_aggressively_flush_cache() {
-                        if let Some(stats) = self.flush_unrooted_cache_slot(old_slot) {
+                        if let Some(stats) = self.flush_unrooted_slot_cache(old_slot) {
                             flush_stats.accumulate(&stats);
                         }
                     }
@@ -4863,7 +4863,7 @@ impl AccountsDb {
 
     /// Flushes an unrooted slot from the write cache to storage to free up memory
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn flush_unrooted_cache_slot(&self, slot: Slot) -> Option<FlushStats> {
+    fn flush_unrooted_slot_cache(&self, slot: Slot) -> Option<FlushStats> {
         self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None)
     }
 

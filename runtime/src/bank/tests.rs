@@ -5489,7 +5489,7 @@ fn test_clean_nonrooted() {
     bank1
         .accounts()
         .accounts_db
-        .flush_unrooted_cache_slot(bank1.slot());
+        .flush_unrooted_slot_cache(bank1.slot());
 
     bank1.print_accounts_stats();
 
