@@ -118,7 +118,7 @@ impl ProgressTracker {
             }
 
             ProgressMessage {
-                leader_state: agave_scheduler_bindings::IS_LEADER,
+                leader_state: agave_scheduler_bindings::LEADER_READY,
                 current_slot: working_bank.slot(),
                 next_leader_slot: next_leader_range_start,
                 leader_range_end: next_leader_range_end,
@@ -131,8 +131,19 @@ impl ProgressTracker {
             }
         } else {
             let current_slot = slot_from_tick_height(tick_height, self.ticks_per_slot);
+
+            // We aren't ready to build a slot yet, however, it may already be our leader
+            // slot which is useful to tell the scheduler.
+            let leader_state = match leader_state
+                .leader_first_tick_height()
+                .is_some_and(|leader_height| tick_height >= leader_height)
+            {
+                true => agave_scheduler_bindings::LEADER_STARTING,
+                false => agave_scheduler_bindings::NOT_LEADER,
+            };
+
             ProgressMessage {
-                leader_state: agave_scheduler_bindings::IS_NOT_LEADER,
+                leader_state,
                 current_slot,
                 next_leader_slot: next_leader_range_start,
                 leader_range_end: next_leader_range_end,
@@ -188,10 +199,7 @@ mod tests {
 
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, 0);
-        assert_eq!(
-            message.leader_state,
-            agave_scheduler_bindings::IS_NOT_LEADER
-        );
+        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
         assert_eq!(message.current_slot, 0);
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.next_leader_slot, u64::MAX);
@@ -206,15 +214,13 @@ mod tests {
         )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, expected_tick_height);
-        assert_eq!(
-            message.leader_state,
-            agave_scheduler_bindings::IS_NOT_LEADER
-        );
+        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
         assert_eq!(message.current_slot, 2);
         assert_eq!(message.next_leader_slot, u64::MAX);
         assert_eq!(message.leader_range_end, u64::MAX);
         assert_eq!(message.current_slot_progress, 0);
 
+        // Next leader slot is in the future - should be NOT_LEADER.
         shared_leader_state.store(Arc::new(LeaderState::new(
             None,
             expected_tick_height,
@@ -223,14 +229,32 @@ mod tests {
         )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, expected_tick_height);
-        assert_eq!(
-            message.leader_state,
-            agave_scheduler_bindings::IS_NOT_LEADER
-        );
+        assert_eq!(message.leader_state, agave_scheduler_bindings::NOT_LEADER);
         assert_eq!(message.current_slot, 2);
         assert_eq!(message.next_leader_slot, 4);
         assert_eq!(message.leader_range_end, 7);
         assert_eq!(message.current_slot_progress, 0);
+
+        // In leader slot but no bank yet - should be LEADER_STARTING.
+        // leader_first_tick_height is at start of slot 4, and we're at tick_height
+        // that puts us in slot 4.
+        let leader_first_tick = 4 * ticks_per_slot + 1;
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            None,
+            leader_first_tick, // tick_height >= leader_first_tick_height
+            Some(leader_first_tick),
+            Some((4, 7)),
+        )));
+        let (message, tick_height) = progress_tracker.produce_progress_message();
+        assert_eq!(tick_height, leader_first_tick);
+        assert_eq!(
+            message.leader_state,
+            agave_scheduler_bindings::LEADER_STARTING
+        );
+        assert_eq!(message.current_slot, 4);
+        assert_eq!(message.next_leader_slot, 4);
+        assert_eq!(message.leader_range_end, 7);
+        assert_eq!(message.current_slot_progress, 1);
 
         let bank = Arc::new(Bank::new_for_tests(
             &solana_genesis_config::create_genesis_config(1).0,
@@ -242,10 +266,11 @@ mod tests {
             Some((4, 7)),
         )));
 
+        // With a working bank - should be LEADER_READY.
         assert!(!bank.is_complete());
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, bank.tick_height());
-        assert_eq!(message.leader_state, agave_scheduler_bindings::IS_LEADER);
+        assert_eq!(message.leader_state, agave_scheduler_bindings::LEADER_READY);
         assert_eq!(message.current_slot, bank.slot());
         assert_eq!(message.next_leader_slot, 4);
         assert_eq!(message.leader_range_end, 7);
@@ -261,7 +286,7 @@ mod tests {
         )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, bank.tick_height());
-        assert_eq!(message.leader_state, agave_scheduler_bindings::IS_LEADER);
+        assert_eq!(message.leader_state, agave_scheduler_bindings::LEADER_READY);
         assert_eq!(message.current_slot, bank.slot());
         assert_eq!(message.next_leader_slot, 4);
         assert_eq!(message.leader_range_end, 7);

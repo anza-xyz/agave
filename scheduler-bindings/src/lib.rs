@@ -167,10 +167,23 @@ pub mod tpu_message_flags {
     pub const FROM_STAKED_NODE: u8 = 1 << 2;
 }
 
-/// Indicates the node is not leader.
-pub const IS_NOT_LEADER: u8 = 0;
-/// Indicates the node is leader.
-pub const IS_LEADER: u8 = 1;
+/// The node is not currently in a leader slot.
+pub const NOT_LEADER: u8 = 0;
+/// The node is in a leader slot but the working bank is not yet ready.
+///
+/// Transactions cannot be processed in this state.
+pub const LEADER_STARTING: u8 = 1;
+/// The node is in a leader slot and has a working bank ready.
+///
+/// Transactions can be processed in this state.
+pub const LEADER_READY: u8 = 2;
+
+#[allow(deprecated)]
+#[deprecated(since = "3.1.0", note = "Use NOT_LEADER instead")]
+pub const IS_NOT_LEADER: u8 = NOT_LEADER;
+#[allow(deprecated)]
+#[deprecated(since = "3.1.0", note = "Use LEADER_READY instead")]
+pub const IS_LEADER: u8 = LEADER_READY;
 
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
@@ -180,17 +193,18 @@ pub const IS_LEADER: u8 = 1;
 )]
 #[repr(C)]
 pub struct ProgressMessage {
-    /// Indicates if node is currently leader or not.
-    /// [`IS_LEADER`] if the node is leader.
-    /// [`IS_NOT_LEADER`] if the node is not leader.
-    /// Other values should be considered invalid.
+    /// Indicates the current leader status of the node.
+    ///
+    /// - [`NOT_LEADER`]: Node is not in a leader slot.
+    /// - [`LEADER_STARTING`]: Node is in a leader slot but bank is not ready.
+    /// - [`LEADER_READY`]: Node is in a leader slot with bank ready for transactions.
+    ///
+    /// # Usage
+    ///
+    /// - To check if within a leader slot: `leader_state != NOT_LEADER`.
+    /// - To check if transactions can be processed: `leader_state == LEADER_READY`.
     pub leader_state: u8,
-    /// The current slot. This along with a leader schedule is not sufficient
-    /// for determining if the node is currently leader. There is a slight
-    /// delay between when a node is supposed to begin its' leader slot, and
-    /// when a bank is ready for processing transactions as leader.
-    /// Using [`Self::leader_state`] for determining if the node is leader
-    /// and has a bank available.
+    /// The current slot.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
     /// This will **not** include the current slot if leader.
