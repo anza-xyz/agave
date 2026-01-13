@@ -328,7 +328,7 @@ pub fn get_accounts_db_config(
 
     AccountsDbConfig {
         index: Some(accounts_index_config),
-        bank_hash_details_dir: Some(ledger_tool_ledger_path),
+        bank_hash_details_dir: ledger_tool_ledger_path,
         ancient_append_vec_offset: value_t!(arg_matches, "accounts_db_ancient_append_vecs", i64)
             .ok(),
         ancient_storage_ideal_size: value_t!(

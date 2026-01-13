@@ -1029,11 +1029,6 @@ impl AccountsDb {
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
-        let bank_hash_details_dir = accounts_db_config.bank_hash_details_dir.unwrap_or_else(|| {
-            warn!("bank hash details dir is unset");
-            PathBuf::new()
-        });
-
         let (paths, temp_paths) = if paths.is_empty() {
             // Create a temporary set of accounts directories, used primarily
             // for testing
@@ -1083,7 +1078,7 @@ impl AccountsDb {
         let new = Self {
             accounts_index,
             paths,
-            bank_hash_details_dir,
+            bank_hash_details_dir: accounts_db_config.bank_hash_details_dir,
             temp_paths,
             shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
