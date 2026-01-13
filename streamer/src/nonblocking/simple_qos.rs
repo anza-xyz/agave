@@ -105,32 +105,33 @@ impl SimpleQos {
             remote_addr,
         );
         let key = ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey);
-        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-            .try_add_connection(
-                key,
-                remote_addr.port(),
-                client_connection_tracker,
-                Some(connection.clone()),
-                conn_context.peer_type(),
-                conn_context.last_update.clone(),
-                self.config.max_connections_per_peer,
-                || {
-                    Arc::new(TokenBucket::new(
-                        self.config.max_streams_per_second,
-                        self.config.max_streams_per_second,
-                        self.config.max_streams_per_second as f64,
-                    ))
-                },
-            )
-        {
-            update_open_connections_stat(&self.stats, &connection_table_l);
-            drop(connection_table_l);
-            Ok((last_update, cancel_connection, stream_counter))
-        } else {
-            self.stats
-                .connection_add_failed
-                .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::ConnectionAddError)
+        match connection_table_l.try_add_connection(
+            key,
+            remote_addr.port(),
+            client_connection_tracker,
+            Some(connection.clone()),
+            conn_context.peer_type(),
+            conn_context.last_update.clone(),
+            self.config.max_connections_per_peer,
+            || {
+                Arc::new(TokenBucket::new(
+                    self.config.max_streams_per_second,
+                    self.config.max_streams_per_second,
+                    self.config.max_streams_per_second as f64,
+                ))
+            },
+        ) {
+            Some((last_update, cancel_connection, stream_counter)) => {
+                update_open_connections_stat(&self.stats, &connection_table_l);
+                drop(connection_table_l);
+                Ok((last_update, cancel_connection, stream_counter))
+            }
+            _ => {
+                self.stats
+                    .connection_add_failed
+                    .fetch_add(1, Ordering::Relaxed);
+                Err(ConnectionHandlerError::ConnectionAddError)
+            }
         }
     }
 }

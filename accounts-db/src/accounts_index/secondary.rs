@@ -227,10 +227,11 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
     }
 
     pub fn get(&self, key: &Pubkey) -> Vec<Pubkey> {
-        if let Some(inner_keys_map) = self.index.get(key) {
-            inner_keys_map.keys()
-        } else {
-            vec![]
+        match self.index.get(key) {
+            Some(inner_keys_map) => inner_keys_map.keys(),
+            _ => {
+                vec![]
+            }
         }
     }
 

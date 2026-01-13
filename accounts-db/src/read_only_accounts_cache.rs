@@ -135,10 +135,9 @@ impl ReadOnlyAccountsCache {
 
     /// true if pubkey is in cache at slot
     pub(crate) fn in_cache(&self, pubkey: &Pubkey, slot: Slot) -> bool {
-        if let Some(entry) = self.cache.get(pubkey) {
-            entry.slot == slot
-        } else {
-            false
+        match self.cache.get(pubkey) {
+            Some(entry) => entry.slot == slot,
+            _ => false,
         }
     }
 

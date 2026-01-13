@@ -61,19 +61,20 @@ impl AccessToken {
             CredentialType::Stringified(s) => load_stringified_credentials(s)?,
         };
 
-        if let Err(err) = credentials.rsa_key() {
-            Err(format!("Invalid rsa key: {err}"))
-        } else {
-            let token = RwLock::new(Self::get_token(&credentials, &scope).await?);
-            let access_token = Self {
-                inner: Arc::new(AccessTokenInner {
-                    credentials,
-                    scope,
-                    token,
-                    refresh_active: AtomicBool::new(false),
-                }),
-            };
-            Ok(access_token)
+        match credentials.rsa_key() {
+            Err(err) => Err(format!("Invalid rsa key: {err}")),
+            _ => {
+                let token = RwLock::new(Self::get_token(&credentials, &scope).await?);
+                let access_token = Self {
+                    inner: Arc::new(AccessTokenInner {
+                        credentials,
+                        scope,
+                        token,
+                        refresh_active: AtomicBool::new(false),
+                    }),
+                };
+                Ok(access_token)
+            }
         }
     }
 

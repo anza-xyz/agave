@@ -156,24 +156,24 @@ impl QuicNewConnection {
         let server_name = socket_addr_to_quic_server_name(addr);
         let connecting = endpoint.connect(addr, &server_name)?;
         stats.total_connections.fetch_add(1, Ordering::Relaxed);
-        if let Ok(connecting_result) = timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await
-        {
-            if connecting_result.is_err() {
-                stats.connection_errors.fetch_add(1, Ordering::Relaxed);
+        match timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await {
+            Ok(connecting_result) => {
+                if connecting_result.is_err() {
+                    stats.connection_errors.fetch_add(1, Ordering::Relaxed);
+                }
+                make_connection_measure.stop();
+                stats
+                    .make_connection_ms
+                    .fetch_add(make_connection_measure.as_ms(), Ordering::Relaxed);
+
+                let connection = connecting_result?;
+
+                Ok(Self {
+                    endpoint,
+                    connection: Arc::new(connection),
+                })
             }
-            make_connection_measure.stop();
-            stats
-                .make_connection_ms
-                .fetch_add(make_connection_measure.as_ms(), Ordering::Relaxed);
-
-            let connection = connecting_result?;
-
-            Ok(Self {
-                endpoint,
-                connection: Arc::new(connection),
-            })
-        } else {
-            Err(ConnectionError::TimedOut.into())
+            _ => Err(ConnectionError::TimedOut.into()),
         }
     }
 
@@ -208,12 +208,11 @@ impl QuicNewConnection {
             Err(connecting) => {
                 stats.connection_errors.fetch_add(1, Ordering::Relaxed);
 
-                if let Ok(connecting_result) =
-                    timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await
-                {
-                    connecting_result?
-                } else {
-                    return Err(ConnectionError::TimedOut.into());
+                match timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await {
+                    Ok(connecting_result) => connecting_result?,
+                    _ => {
+                        return Err(ConnectionError::TimedOut.into());
+                    }
                 }
             }
         };
