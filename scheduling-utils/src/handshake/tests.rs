@@ -30,7 +30,7 @@ fn message_passing_on_all_queues() {
         src_addr: [4; 16],
     };
     let progress_tracker = ProgressMessage {
-        leader_state: agave_scheduler_bindings::IS_LEADER,
+        leader_state: agave_scheduler_bindings::LEADER_READY,
         current_slot: 3,
         next_leader_slot: 12,
         leader_range_end: 16,
