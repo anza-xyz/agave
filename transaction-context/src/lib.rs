@@ -332,7 +332,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
         instruction_data: Cow<'ix_data, [u8]>,
-        parent_index: Option<u16>,
+        caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         let trace_len = self.instruction_trace.len();
@@ -344,12 +344,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .ok_or(InstructionError::CallDepth)?;
 
         // If we have a parent index, then we are dealing with a CPI.
-        if let Some(parent_index) = parent_index {
+        if let Some(caller_index) = caller_index {
             self.transaction_frame.number_of_instructions = self
                 .transaction_frame
                 .number_of_instructions
                 .saturating_add(1);
-            instruction.index_of_parent_instruction = parent_index;
+            instruction.index_of_caller_instruction = caller_index;
         }
 
         self.transaction_frame.cpi_scratchpad = VmSlice::new(
