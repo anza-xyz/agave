@@ -4182,4 +4182,34 @@ mod tests {
         assert_eq!(program2.deployment_slot, 2);
         assert_eq!(program2.tx_usage_counter.load(Ordering::Relaxed), 0);
     }
+
+    #[test]
+    fn test_bpf_loader_upgradeable_instruction_deserialization_with_trailing_bytes() {
+        // This test verifies that the BPF loader's use of `limited_deserialize`
+        // (which uses bincode with `.allow_trailing_bytes()`) permits trailing
+        // data in instruction deserialization for `DeployWithMaxDataLen` and
+        // `Upgrade`.
+        for instruction in [
+            UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len: 1000 },
+            UpgradeableLoaderInstruction::Upgrade,
+        ] {
+            let mut data = bincode::serialize(&instruction).unwrap();
+            let data_len_original = data.len();
+
+            // Add trailing bytes.
+            data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+            let data_len_with_trailing = data.len();
+
+            // Deserialize.
+            let result: UpgradeableLoaderInstruction =
+                limited_deserialize(&data, solana_packet::PACKET_DATA_SIZE as u64).unwrap();
+
+            assert_eq!(
+                result, instruction,
+                "Deserialized instruction should match original"
+            );
+
+            assert_eq!(data_len_with_trailing, data_len_original + 4,);
+        }
+    }
 }
