@@ -140,6 +140,7 @@ impl SnapshotStorageRebuilder {
     ) {
         thread_pool.spawn(move || {
             for file_info in rebuilder.file_receiver.iter() {
+                file_info.file.set_len(file_info.size).unwrap();
                 match rebuilder.process_append_vec_file(file_info) {
                     Ok(_) => {}
                     Err(err) => {

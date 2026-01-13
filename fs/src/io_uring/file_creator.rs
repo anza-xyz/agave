@@ -626,11 +626,6 @@ impl<'a> WriteOp {
             // This may happen only for the write at the end of the file, after which manual update of file
             // size is required.
             debug_assert!(direct_io_alignment.is_some());
-            // Note: io-uring supports `ftruncate` only from kernel 6.9, for compatibility use the syscall
-            // Safety: fd is an open file descriptor and we just wrote beyond offset + write_len
-            unsafe {
-                libc::ftruncate64(fd.0, *offset as libc::off_t + *write_len as libc::off_t);
-            }
             written = *write_len;
         }
 

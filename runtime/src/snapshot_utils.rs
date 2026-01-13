@@ -1146,6 +1146,7 @@ fn get_version_and_snapshot_files(
 
     loop {
         if let Ok(file_info) = file_receiver.recv() {
+            file_info.file.set_len(file_info.size)?;
             let filename = file_info.path.file_name().unwrap().to_str().unwrap();
             match get_snapshot_file_kind(filename) {
                 Some(SnapshotFileKind::Version) => {
