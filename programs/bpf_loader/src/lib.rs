@@ -716,9 +716,9 @@ fn process_loader_upgradeable_instruction(
             }
             let buffer_lamports = buffer.get_lamports();
             let buffer_data_offset = UpgradeableLoaderState::size_of_buffer_metadata();
-            let buffer_data_len = buffer.get_data().len().saturating_sub(buffer_data_offset);
+            let elf_len = buffer.get_data().len().saturating_sub(buffer_data_offset);
             if buffer.get_data().len() < UpgradeableLoaderState::size_of_buffer_metadata()
-                || buffer_data_len == 0
+                || elf_len == 0
             {
                 ic_logger_msg!(log_collector, "Buffer account too small");
                 return Err(InstructionError::InvalidAccountData);
@@ -729,11 +729,21 @@ fn process_loader_upgradeable_instruction(
 
             let programdata = instruction_context.try_borrow_instruction_account(0)?;
             let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-            let programdata_balance_required =
-                1.max(rent.minimum_balance(programdata.get_data().len()));
-            if programdata.get_data().len()
-                < UpgradeableLoaderState::size_of_programdata(buffer_data_len)
-            {
+
+            let set_program_data_to_elf_length = invoke_context
+                .get_feature_set()
+                .loader_v3_set_program_data_to_elf_length;
+
+            let programdata_len = programdata.get_data().len();
+            let new_programdata_len = UpgradeableLoaderState::size_of_programdata(elf_len);
+
+            let programdata_balance_required = if set_program_data_to_elf_length {
+                1.max(rent.minimum_balance(new_programdata_len))
+            } else {
+                1.max(rent.minimum_balance(programdata_len))
+            };
+
+            if programdata_len < new_programdata_len {
                 ic_logger_msg!(log_collector, "ProgramData account not large enough");
                 return Err(InstructionError::AccountDataTooSmall);
             }
@@ -771,16 +781,20 @@ fn process_loader_upgradeable_instruction(
                 ic_logger_msg!(log_collector, "Invalid ProgramData account");
                 return Err(InstructionError::InvalidAccountData);
             };
-            let programdata_len = programdata.get_data().len();
             drop(programdata);
 
             // Load and verify the program bits
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
+            let deploy_programdata_len = if set_program_data_to_elf_length {
+                new_programdata_len
+            } else {
+                programdata_len
+            };
             deploy_program!(
                 invoke_context,
                 &new_program_id,
                 program_id,
-                UpgradeableLoaderState::size_of_program().saturating_add(programdata_len),
+                UpgradeableLoaderState::size_of_program().saturating_add(deploy_programdata_len),
                 buffer
                     .get_data()
                     .get(buffer_data_offset..)
@@ -792,8 +806,7 @@ fn process_loader_upgradeable_instruction(
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
 
-            // Update the ProgramData account, record the upgraded data, and zero
-            // the rest
+            // Update the ProgramData account and record the upgraded data
             let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
             {
                 programdata.set_state(&UpgradeableLoaderState::ProgramData {
@@ -803,8 +816,7 @@ fn process_loader_upgradeable_instruction(
                 let dst_slice = programdata
                     .get_data_mut()?
                     .get_mut(
-                        programdata_data_offset
-                            ..programdata_data_offset.saturating_add(buffer_data_len),
+                        programdata_data_offset..programdata_data_offset.saturating_add(elf_len),
                     )
                     .ok_or(InstructionError::AccountDataTooSmall)?;
                 let buffer = instruction_context.try_borrow_instruction_account(2)?;
@@ -814,11 +826,17 @@ fn process_loader_upgradeable_instruction(
                     .ok_or(InstructionError::AccountDataTooSmall)?;
                 dst_slice.copy_from_slice(src_slice);
             }
-            programdata
-                .get_data_mut()?
-                .get_mut(programdata_data_offset.saturating_add(buffer_data_len)..)
-                .ok_or(InstructionError::AccountDataTooSmall)?
-                .fill(0);
+            if set_program_data_to_elf_length {
+                // Resize the programdata account to match the ELF length.
+                programdata.set_data_length(new_programdata_len)?;
+            } else {
+                // Zero out remaining space.
+                programdata
+                    .get_data_mut()?
+                    .get_mut(programdata_data_offset.saturating_add(elf_len)..)
+                    .ok_or(InstructionError::AccountDataTooSmall)?
+                    .fill(0);
+            }
 
             // Fund ProgramData to rent-exemption, spill the rest
             let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
@@ -1785,12 +1803,15 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{error::InstructionError, AccountMeta},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, with_mock_invoke_context,
+            invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::{system_program, sysvar},
+        solana_svm_feature_set::SVMFeatureSet,
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
+        test_case::test_case,
     };
 
     fn process_instruction(
@@ -2316,8 +2337,9 @@ mod tests {
         account.set_data(data);
     }
 
-    #[test]
-    fn test_bpf_loader_upgradeable_upgrade() {
+    #[test_case(false; "simd_0433_disabled")]
+    #[test_case(true; "simd_0433_enabled")]
+    fn test_bpf_loader_upgradeable_upgrade(simd_0433_enabled: bool) {
         let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf_orig = Vec::new();
         file.read_to_end(&mut elf_orig).unwrap();
@@ -2440,14 +2462,15 @@ mod tests {
             (transaction_accounts, instruction_accounts)
         }
 
-        fn process_instruction(
+        fn process_instruction_with_feature_set(
             transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
             instruction_accounts: Vec<AccountMeta>,
             expected_result: Result<(), InstructionError>,
+            feature_set: &SVMFeatureSet,
         ) -> Vec<AccountSharedData> {
             let instruction_data =
                 bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
-            mock_process_instruction(
+            mock_process_instruction_with_feature_set(
                 &bpf_loader_upgradeable::id(),
                 None,
                 &instruction_data,
@@ -2457,8 +2480,14 @@ mod tests {
                 Entrypoint::vm,
                 |_invoke_context| {},
                 |_invoke_context| {},
+                feature_set,
             )
         }
+
+        let feature_set = SVMFeatureSet {
+            loader_v3_set_program_data_to_elf_length: simd_0433_enabled,
+            ..SVMFeatureSet::all_enabled()
+        };
 
         // Case: Success
         let (transaction_accounts, instruction_accounts) = get_accounts(
@@ -2468,16 +2497,48 @@ mod tests {
             &elf_orig,
             &elf_new,
         );
-        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
-        let min_programdata_balance = Rent::default().minimum_balance(
+        let accounts = process_instruction_with_feature_set(
+            transaction_accounts,
+            instruction_accounts,
+            Ok(()),
+            &feature_set,
+        );
+        let original_programdata_balance = Rent::default().minimum_balance(
             UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
         );
-        assert_eq!(
-            min_programdata_balance,
-            accounts.first().unwrap().lamports()
-        );
-        assert_eq!(0, accounts.get(2).unwrap().lamports());
-        assert_eq!(1, accounts.get(3).unwrap().lamports());
+        if simd_0433_enabled {
+            // With SIMD-0433, programdata is resized to match ELF length.
+            let new_programdata_balance = Rent::default()
+                .minimum_balance(UpgradeableLoaderState::size_of_programdata(elf_new.len()));
+            assert_eq!(
+                new_programdata_balance,
+                accounts.first().unwrap().lamports()
+            );
+            assert_eq!(0, accounts.get(2).unwrap().lamports());
+            // Spill receives buffer lamports (1) plus rent surplus.
+            #[allow(clippy::arithmetic_side_effects)]
+            let expected_spill = 1 + (original_programdata_balance - new_programdata_balance);
+            assert_eq!(expected_spill, accounts.get(3).unwrap().lamports());
+            // Verify programdata account was resized.
+            assert_eq!(
+                accounts.first().unwrap().data().len(),
+                UpgradeableLoaderState::size_of_programdata(elf_new.len())
+            );
+        } else {
+            // Without SIMD-0433, programdata keeps original size.
+            assert_eq!(
+                original_programdata_balance,
+                accounts.first().unwrap().lamports()
+            );
+            assert_eq!(0, accounts.get(2).unwrap().lamports());
+            // Spill only receives buffer lamports (1).
+            assert_eq!(1, accounts.get(3).unwrap().lamports());
+            // Verify programdata account size unchanged.
+            assert_eq!(
+                accounts.first().unwrap().data().len(),
+                UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len()))
+            );
+        }
         let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
         assert_eq!(
             state,
@@ -2518,10 +2579,11 @@ mod tests {
                 upgrade_authority_address: None,
             })
             .unwrap();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::Immutable),
+            &feature_set,
         );
 
         // Case: wrong authority
@@ -2535,10 +2597,11 @@ mod tests {
         let invalid_upgrade_authority_address = Pubkey::new_unique();
         transaction_accounts.get_mut(6).unwrap().0 = invalid_upgrade_authority_address;
         instruction_accounts.get_mut(6).unwrap().pubkey = invalid_upgrade_authority_address;
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &feature_set,
         );
 
         // Case: authority did not sign
@@ -2550,10 +2613,11 @@ mod tests {
             &elf_new,
         );
         instruction_accounts.get_mut(6).unwrap().is_signer = false;
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::MissingRequiredSignature),
+            &feature_set,
         );
 
         // Case: Buffer account and spill account alias
@@ -2565,10 +2629,11 @@ mod tests {
             &elf_new,
         );
         *instruction_accounts.get_mut(3).unwrap() = instruction_accounts.get(2).unwrap().clone();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountBorrowFailed),
+            &feature_set,
         );
 
         // Case: Programdata account and spill account alias
@@ -2580,10 +2645,11 @@ mod tests {
             &elf_new,
         );
         *instruction_accounts.get_mut(3).unwrap() = instruction_accounts.first().unwrap().clone();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountBorrowFailed),
+            &feature_set,
         );
 
         // Case: Program account not a program
@@ -2610,10 +2676,11 @@ mod tests {
             },
             |_invoke_context| {},
         );
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::InvalidAccountData),
+            &feature_set,
         );
 
         // Case: Program account now owned by loader
@@ -2629,10 +2696,11 @@ mod tests {
             .unwrap()
             .1
             .set_owner(Pubkey::new_unique());
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectProgramId),
+            &feature_set,
         );
 
         // Case: Program account not writable
@@ -2644,10 +2712,11 @@ mod tests {
             &elf_new,
         );
         instruction_accounts.get_mut(1).unwrap().is_writable = false;
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
+            &feature_set,
         );
 
         // Case: Program account not initialized
@@ -2664,10 +2733,11 @@ mod tests {
             .1
             .set_state(&UpgradeableLoaderState::Uninitialized)
             .unwrap();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidAccountData),
+            &feature_set,
         );
 
         // Case: Program ProgramData account mismatch
@@ -2681,10 +2751,11 @@ mod tests {
         let invalid_programdata_address = Pubkey::new_unique();
         transaction_accounts.get_mut(0).unwrap().0 = invalid_programdata_address;
         instruction_accounts.get_mut(0).unwrap().pubkey = invalid_programdata_address;
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
+            &feature_set,
         );
 
         // Case: Buffer account not initialized
@@ -2701,10 +2772,11 @@ mod tests {
             .1
             .set_state(&UpgradeableLoaderState::Uninitialized)
             .unwrap();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
+            &feature_set,
         );
 
         // Case: Buffer account too big
@@ -2730,10 +2802,11 @@ mod tests {
                 authority_address: Some(upgrade_authority_address),
             })
             .unwrap();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountDataTooSmall),
+            &feature_set,
         );
 
         // Case: Buffer account too small
@@ -2753,10 +2826,11 @@ mod tests {
             })
             .unwrap();
         truncate_data(&mut transaction_accounts.get_mut(2).unwrap().1, 5);
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::InvalidAccountData),
+            &feature_set,
         );
 
         // Case: Mismatched buffer and program authority
@@ -2767,10 +2841,11 @@ mod tests {
             &elf_orig,
             &elf_new,
         );
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &feature_set,
         );
 
         // Case: No buffer authority
@@ -2789,10 +2864,11 @@ mod tests {
                 authority_address: None,
             })
             .unwrap();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &feature_set,
         );
 
         // Case: No buffer and program authority
@@ -2820,10 +2896,11 @@ mod tests {
                 authority_address: None,
             })
             .unwrap();
-        process_instruction(
+        process_instruction_with_feature_set(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
+            &feature_set,
         );
     }
 
