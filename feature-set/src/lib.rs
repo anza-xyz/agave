@@ -1199,6 +1199,21 @@ pub mod replace_spl_token_with_p_token {
         Pubkey::from_str_const("ptokNfvuU7terQ2r2452RzVXB3o4GT33yPWo1fUkkZ2");
 }
 
+<<<<<<< HEAD
+=======
+pub mod alt_bn128_little_endian {
+    solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+}
+
+pub mod bls_pubkey_management_in_vote_account {
+    solana_pubkey::declare_id!("2uxQgtKa2ECHGs67Zdj7dgmzn2w9HiqhdcedwCWfYzzq");
+}
+
+pub mod relax_programdata_account_check_migration {
+    solana_pubkey::declare_id!("rexav5eNTUSNT1K2N7cfRjnthwhcP5BC25v2tA4rW4h");
+}
+
+>>>>>>> 5390905a3 (runtime: Relax program data account check in migration (#9891))
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2150,6 +2165,21 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             replace_spl_token_with_p_token::id(),
             "SIMD-0266: Efficient Token program",
         ),
+<<<<<<< HEAD
+=======
+        (
+            alt_bn128_little_endian::id(),
+            "SIMD-0284: Add little-endian compatibility for alt_bn128",
+        ),
+        (
+            bls_pubkey_management_in_vote_account::id(),
+            "SIMD-0387: BLS Pubkey Management in Vote Account",
+        ),
+        (
+            relax_programdata_account_check_migration::id(),
+            "SIMD-0444: Relax program data account check in migration",
+        ),
+>>>>>>> 5390905a3 (runtime: Relax program data account check in migration (#9891))
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
