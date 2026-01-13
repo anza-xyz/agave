@@ -1199,6 +1199,17 @@ pub mod replace_spl_token_with_p_token {
         Pubkey::from_str_const("ptokNfvuU7terQ2r2452RzVXB3o4GT33yPWo1fUkkZ2");
 }
 
+<<<<<<< HEAD
+=======
+pub mod alt_bn128_little_endian {
+    solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+}
+
+pub mod bls_pubkey_management_in_vote_account {
+    solana_pubkey::declare_id!("2uxQgtKa2ECHGs67Zdj7dgmzn2w9HiqhdcedwCWfYzzq");
+}
+
+>>>>>>> 386c635a4 (Re-key SIMD-0387: BLS Pubkey Management in Vote Account (#9965))
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
