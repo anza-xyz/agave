@@ -303,7 +303,7 @@ pub(crate) mod tests {
                     iter::repeat_with(|| {
                         let authorized_voter = solana_pubkey::new_rand();
                         let bls_pubkey_compressed: BLSPubkeyCompressed =
-                            BLSKeypair::new().public.try_into().unwrap();
+                            BLSKeypair::new().public.into();
                         let bls_pubkey_compressed_serialized =
                             bincode::serialize(&bls_pubkey_compressed)
                                 .unwrap()
