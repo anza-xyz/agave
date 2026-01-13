@@ -520,28 +520,27 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             // can be deleted.
             //
             // If this is a valid LoaderV3 program...
-            if bpf_loader_upgradeable::check_id(account.owner()) {
-                if let Ok(UpgradeableLoaderState::Program {
+            if bpf_loader_upgradeable::check_id(account.owner())
+                && let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
                 }) = account.state()
+            {
+                // ...its programdata was not already counted and will not later be counted...
+                if !account_keys.iter().any(|key| programdata_address == *key)
+                    && !additional_loaded_accounts.contains(&programdata_address)
                 {
-                    // ...its programdata was not already counted and will not later be counted...
-                    if !account_keys.iter().any(|key| programdata_address == *key)
-                        && !additional_loaded_accounts.contains(&programdata_address)
+                    // ...and the programdata account exists (if it doesn't, it is *not* a load failure)...
+                    if let Some(programdata_account) =
+                        account_loader.load_account(&programdata_address)
                     {
-                        // ...and the programdata account exists (if it doesn't, it is *not* a load failure)...
-                        if let Some(programdata_account) =
-                            account_loader.load_account(&programdata_address)
-                        {
-                            // ...count programdata toward this transaction's total size.
-                            loaded_transaction_accounts.increase_calculated_data_size(
-                                TRANSACTION_ACCOUNT_BASE_SIZE
-                                    .saturating_add(programdata_account.data().len()),
-                                loaded_accounts_bytes_limit,
-                                error_metrics,
-                            )?;
-                            additional_loaded_accounts.insert(programdata_address);
-                        }
+                        // ...count programdata toward this transaction's total size.
+                        loaded_transaction_accounts.increase_calculated_data_size(
+                            TRANSACTION_ACCOUNT_BASE_SIZE
+                                .saturating_add(programdata_account.data().len()),
+                            loaded_accounts_bytes_limit,
+                            error_metrics,
+                        )?;
+                        additional_loaded_accounts.insert(programdata_address);
                     }
                 }
             }
@@ -2451,11 +2450,10 @@ mod tests {
 
                 if let Some((programdata_address, programdata_size)) =
                     programdata_tracker.get(pubkey)
+                    && counted_programdatas.get(programdata_address).is_none()
                 {
-                    if counted_programdatas.get(programdata_address).is_none() {
-                        expected_size += TRANSACTION_ACCOUNT_BASE_SIZE + programdata_size;
-                        counted_programdatas.insert(*programdata_address);
-                    }
+                    expected_size += TRANSACTION_ACCOUNT_BASE_SIZE + programdata_size;
+                    counted_programdatas.insert(*programdata_address);
                 }
             }
 

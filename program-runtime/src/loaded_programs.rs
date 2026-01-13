@@ -578,12 +578,13 @@ impl EpochBoundaryPreparation {
 
     /// Before rerooting the blockstore this concludes the epoch boundary preparation
     pub fn reroot(&mut self, epoch: Epoch) -> Option<ProgramRuntimeEnvironments> {
-        if epoch == self.upcoming_epoch {
-            if let Some(upcoming_environments) = self.upcoming_environments.take() {
-                self.programs_to_recompile.clear();
-                return Some(upcoming_environments);
-            }
+        if epoch == self.upcoming_epoch
+            && let Some(upcoming_environments) = self.upcoming_environments.take()
+        {
+            self.programs_to_recompile.clear();
+            return Some(upcoming_environments);
         }
+
         None
     }
 }
@@ -974,12 +975,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 // epoch that had a different environment (e.g. different feature set).
                                 // Once the root moves to the new/current epoch, the entry will get pruned.
                                 // But, until then the entry might still be getting used by an older slot.
-                                if let Some(entry_env) = entry.program.get_environment() {
-                                    if let Some(env) = first_ancestor_env {
-                                        if !Arc::ptr_eq(entry_env, env) {
-                                            return true;
-                                        }
-                                    }
+                                if let Some(entry_env) = entry.program.get_environment()
+                                    && let Some(env) = first_ancestor_env
+                                    && !Arc::ptr_eq(entry_env, env)
+                                {
+                                    return true;
                                 }
                                 self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
                                 false
@@ -990,13 +990,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         })
                         .filter(|entry| {
                             // Remove outdated environment of previous feature set
-                            if let Some(upcoming_environments) = upcoming_environments.as_ref() {
-                                if !Self::matches_environment(entry, upcoming_environments) {
-                                    self.stats
-                                        .prunes_environment
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    return false;
-                                }
+                            if let Some(upcoming_environments) = upcoming_environments.as_ref()
+                                && !Self::matches_environment(entry, upcoming_environments)
+                            {
+                                self.stats
+                                    .prunes_environment
+                                    .fetch_add(1, Ordering::Relaxed);
+                                return false;
                             }
                             true
                         })

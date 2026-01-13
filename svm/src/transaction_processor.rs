@@ -815,10 +815,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
             } else if let Some((account, last_modification_slot)) =
                 account_loader.get_account_shared_data(account_key)
+                && PROGRAM_OWNERS.contains(account.owner())
             {
-                if PROGRAM_OWNERS.contains(account.owner()) {
-                    program_accounts_set.insert(*account_key, last_modification_slot);
-                }
+                program_accounts_set.insert(*account_key, last_modification_slot);
             }
         }
         program_accounts_set
