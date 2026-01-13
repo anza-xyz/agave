@@ -342,7 +342,7 @@ fn create_memory_mapping<'a, C: ContextObject>(
         MemoryRegion::new_writable_gapped(
             stack,
             ebpf::MM_STACK_START,
-            if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
+            if !sbpf_version.manual_stack_frame_bump() && config.enable_stack_frame_gaps {
                 config.stack_frame_size as u64
             } else {
                 0
