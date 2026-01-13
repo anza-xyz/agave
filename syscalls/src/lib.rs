@@ -334,6 +334,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.stricter_abi_and_runtime_constraints,
+        allow_memory_region_zero: feature_set.enable_sbpf_v3_deployment_and_execution,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
@@ -539,6 +540,7 @@ pub fn create_program_runtime_environment_v2<'a, 'ix_data>(
         enabled_sbpf_versions: SBPFVersion::Reserved..=SBPFVersion::Reserved,
         optimize_rodata: true,
         aligned_memory_mapping: true,
+        allow_memory_region_zero: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     BuiltinProgram::new_loader(config)
