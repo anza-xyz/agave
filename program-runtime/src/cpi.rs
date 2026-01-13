@@ -247,7 +247,7 @@ pub struct CallerAccount<'a> {
 
 impl<'a> CallerAccount<'a> {
     pub fn get_serialized_data(
-        memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
+        memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
         vm_addr: u64,
         len: u64,
         stricter_abi_and_runtime_constraints: bool,
@@ -286,7 +286,7 @@ impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given an AccountInfo.
     pub fn from_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
+        memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
         check_aligned: bool,
         _vm_addr: u64,
         account_info: &solana_account_info::AccountInfo,
@@ -409,7 +409,7 @@ impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given a SolAccountInfo.
     fn from_sol_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
+        memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
         check_aligned: bool,
         vm_addr: u64,
         account_info: &SolAccountInfo,
@@ -513,7 +513,7 @@ pub trait SyscallInvokeSigned {
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        memory_mapping: &MemoryMapping<'_>,
+        memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error>;
@@ -592,7 +592,7 @@ pub fn translate_instruction_rust(
 pub fn translate_accounts_rust<'a>(
     account_infos_addr: u64,
     account_infos_len: u64,
-    memory_mapping: &MemoryMapping<'_>,
+    memory_mapping: &MemoryMapping,
     invoke_context: &mut InvokeContext,
     check_aligned: bool,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
@@ -730,7 +730,7 @@ pub fn translate_instruction_c(
 pub fn translate_accounts_c<'a>(
     account_infos_addr: u64,
     account_infos_len: u64,
-    memory_mapping: &MemoryMapping<'_>,
+    memory_mapping: &MemoryMapping,
     invoke_context: &mut InvokeContext,
     check_aligned: bool,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
@@ -1000,14 +1000,14 @@ fn translate_accounts_common<'a, T, F>(
     account_infos: &[T],
     account_infos_addr: u64,
     invoke_context: &mut InvokeContext,
-    memory_mapping: &MemoryMapping<'_>,
+    memory_mapping: &MemoryMapping,
     check_aligned: bool,
     do_translate: F,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error>
 where
     F: Fn(
         &InvokeContext,
-        &MemoryMapping<'_>,
+        &MemoryMapping,
         bool,
         u64,
         &T,
@@ -1265,7 +1265,7 @@ fn update_caller_account_region(
 // accounts (regardless of the current size of an account).
 fn update_caller_account(
     invoke_context: &InvokeContext,
-    memory_mapping: &MemoryMapping<'_>,
+    memory_mapping: &MemoryMapping,
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedInstructionAccount<'_, '_>,
