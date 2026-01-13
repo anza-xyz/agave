@@ -1566,7 +1566,6 @@ impl Validator {
             )
         });
 
-<<<<<<< HEAD
         // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
         let connection_cache_for_warmup =
             if json_rpc_service.is_some() && connection_cache.is_some() {
@@ -1574,26 +1573,6 @@ impl Validator {
             } else {
                 None
             };
-        let (xdp_retransmitter, xdp_sender) =
-            if let Some(xdp_config) = config.retransmit_xdp.clone() {
-                let src_port = node.sockets.retransmit_sockets[0]
-                    .local_addr()
-                    .expect("failed to get local address")
-                    .port();
-                let src_ip = match node.bind_ip_addrs.active() {
-                    IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                    IpAddr::V4(_unspecified) => xdp_config
-                        .interface
-                        .as_ref()
-                        .and_then(|iface| master_ip_if_bonded(iface)),
-                    _ => panic!("IPv6 not supported"),
-                };
-                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip)
-                    .expect("failed to create xdp retransmitter");
-                (Some(rtx), Some(sender))
-            } else {
-                (None, None)
-=======
         let (xdp_retransmitter, xdp_sender) = if let Some(xdp_config) =
             config.retransmit_xdp.clone()
         {
@@ -1608,7 +1587,6 @@ impl Validator {
                     .as_ref()
                     .and_then(|iface| master_ip_if_bonded(iface)),
                 _ => panic!("IPv6 not supported"),
->>>>>>> 0a497a53e (XDP: dynamic routing table lookups (#8236))
             };
             let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip, exit.clone())
                 .expect("failed to create xdp retransmitter");
