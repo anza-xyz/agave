@@ -1,5 +1,5 @@
 use {
-    criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
+    criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main},
     solana_account::AccountSharedData,
     solana_accounts_db::accounts_db::AccountsDb,
     solana_pubkey::Pubkey,

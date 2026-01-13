@@ -1,10 +1,10 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
-    rand::{rng, Rng},
+    criterion::{Criterion, criterion_group, criterion_main},
+    rand::{Rng, rng},
     rayon::ThreadPoolBuilder,
     solana_gossip::{
         crds::{Crds, GossipRoute},
-        crds_gossip_pull::{CrdsTimeouts, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS},
+        crds_gossip_pull::{CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsTimeouts},
         crds_value::CrdsValue,
     },
     solana_pubkey::Pubkey,

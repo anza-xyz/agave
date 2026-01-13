@@ -1,9 +1,9 @@
 use {
     crate::{
-        cli::thread_args::{new_thread_arg, ThreadArg},
+        cli::thread_args::{ThreadArg, new_thread_arg},
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, Arg, ArgMatches},
+    clap::{Arg, ArgMatches, value_t},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
     solana_ledger::blockstore_options::{
         AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
@@ -147,11 +147,11 @@ mod tests {
     use {
         super::*,
         crate::commands::run::args::{
+            RunArgs,
             tests::{
                 verify_args_struct_by_command_run_is_error_with_identity_setup,
                 verify_args_struct_by_command_run_with_identity_setup,
             },
-            RunArgs,
         },
         std::ops::RangeInclusive,
         test_case::test_case,

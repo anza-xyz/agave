@@ -1,6 +1,6 @@
 //! Contains utility functions to create server and client for test purposes.
 use {
-    super::quic::{SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
+    super::quic::{ALPN_TPU_PROTOCOL_ID, SpawnNonBlockingServerResult},
     crate::{
         nonblocking::{
             quic::spawn_server,
@@ -9,15 +9,15 @@ use {
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats},
         streamer::StakedNodes,
     },
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     quinn::{
-        crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
-        TokioRuntime, TransportConfig,
+        ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
+        crypto::rustls::QuicClientConfig,
     },
     solana_keypair::Keypair,
     solana_net_utils::sockets::{
-        bind_to_localhost_unique, localhost_port_range_for_tests, multi_bind_in_range_with_config,
-        SocketConfiguration as SocketConfig,
+        SocketConfiguration as SocketConfig, bind_to_localhost_unique,
+        localhost_port_range_for_tests, multi_bind_in_range_with_config,
     },
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},

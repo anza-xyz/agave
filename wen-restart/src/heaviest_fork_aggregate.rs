@@ -189,7 +189,7 @@ mod tests {
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
         },
         solana_signer::Signer,
@@ -610,17 +610,21 @@ mod tests {
 
         // Invalid pubkey.
         heaviest_fork_record.from = "invalid_pubkey".to_string();
-        assert!(test_state
-            .heaviest_fork_aggregate
-            .aggregate_from_record(&heaviest_fork_record,)
-            .is_err());
+        assert!(
+            test_state
+                .heaviest_fork_aggregate
+                .aggregate_from_record(&heaviest_fork_record,)
+                .is_err()
+        );
 
         // Invalid hash.
         heaviest_fork_record.from = from.to_string();
         heaviest_fork_record.bankhash.clear();
-        assert!(test_state
-            .heaviest_fork_aggregate
-            .aggregate_from_record(&heaviest_fork_record,)
-            .is_err());
+        assert!(
+            test_state
+                .heaviest_fork_aggregate
+                .aggregate_from_record(&heaviest_fork_record,)
+                .is_err()
+        );
     }
 }

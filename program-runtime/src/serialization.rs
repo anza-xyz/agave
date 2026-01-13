@@ -13,8 +13,8 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
-        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
-        IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION,
+        IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION, instruction::InstructionContext,
+        instruction_accounts::BorrowedInstructionAccount,
     },
     std::mem::{self, size_of},
 };
@@ -680,8 +680,8 @@ mod tests {
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
-            instruction_accounts::InstructionAccount, TransactionContext,
-            MAX_ACCOUNTS_PER_TRANSACTION,
+            MAX_ACCOUNTS_PER_TRANSACTION, TransactionContext,
+            instruction_accounts::InstructionAccount,
         },
         std::{
             borrow::Cow,
@@ -1545,19 +1545,23 @@ mod tests {
             .unwrap_err();
 
         // Writing to shared writable account makes it unique (CoW logic)
-        assert!(transaction_context
-            .accounts()
-            .try_borrow_mut(1)
-            .unwrap()
-            .is_shared());
+        assert!(
+            transaction_context
+                .accounts()
+                .try_borrow_mut(1)
+                .unwrap()
+                .is_shared()
+        );
         memory_mapping
             .store::<u32>(0, account_start_offsets[1])
             .unwrap();
-        assert!(!transaction_context
-            .accounts()
-            .try_borrow_mut(1)
-            .unwrap()
-            .is_shared());
+        assert!(
+            !transaction_context
+                .accounts()
+                .try_borrow_mut(1)
+                .unwrap()
+                .is_shared()
+        );
         assert_eq!(
             transaction_context
                 .accounts()

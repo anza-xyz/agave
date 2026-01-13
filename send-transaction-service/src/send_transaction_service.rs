@@ -21,10 +21,10 @@ use {
         net::SocketAddr,
         num::Saturating,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -214,92 +214,95 @@ impl SendTransactionService {
         debug!("Starting send-transaction-service::receive_txn_thread");
         Builder::new()
             .name("solStxReceive".to_string())
-            .spawn(move || loop {
-                let stats = &stats_report.stats;
-                let recv_result = receiver.recv_timeout(Duration::from_millis(batch_send_rate_ms));
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
-                match recv_result {
-                    Err(RecvTimeoutError::Disconnected) => {
-                        info!("Terminating send-transaction-service.");
-                        exit.store(true, Ordering::Relaxed);
+            .spawn(move || {
+                loop {
+                    let stats = &stats_report.stats;
+                    let recv_result =
+                        receiver.recv_timeout(Duration::from_millis(batch_send_rate_ms));
+                    if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Ok(transaction_info) => {
-                        stats.received_transactions.fetch_add(1, Ordering::Relaxed);
-                        let entry = transactions.entry(transaction_info.signature);
-                        let mut new_transaction = false;
-                        if let Entry::Vacant(_) = entry {
-                            if !retry_transactions
-                                .lock()
-                                .unwrap()
-                                .contains_key(&transaction_info.signature)
-                            {
-                                entry.or_insert(transaction_info);
-                                new_transaction = true;
-                            }
+                    match recv_result {
+                        Err(RecvTimeoutError::Disconnected) => {
+                            info!("Terminating send-transaction-service.");
+                            exit.store(true, Ordering::Relaxed);
+                            break;
                         }
-                        if !new_transaction {
-                            stats
-                                .received_duplicate_transactions
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                }
-
-                if (!transactions.is_empty()
-                    && last_batch_sent.elapsed().as_millis() as u64 >= batch_send_rate_ms)
-                    || transactions.len() >= batch_size
-                {
-                    stats
-                        .sent_transactions
-                        .fetch_add(transactions.len() as u64, Ordering::Relaxed);
-                    let wire_transactions = transactions
-                        .values()
-                        .map(|transaction_info| transaction_info.wire_transaction.clone())
-                        .collect::<Vec<Vec<u8>>>();
-                    client.send_transactions_in_batch(wire_transactions, stats);
-                    let last_sent_time = Instant::now();
-                    {
-                        // take a lock of retry_transactions and move the batch to the retry set.
-                        let mut retry_transactions = retry_transactions.lock().unwrap();
-                        let mut transactions_to_retry: usize = 0;
-                        let mut transactions_added_to_retry = Saturating::<usize>(0);
-                        for (signature, mut transaction_info) in transactions.drain() {
-                            // drop transactions with 0 max retries
-                            let max_retries = transaction_info
-                                .get_max_retries(default_max_retries, service_max_retries);
-                            if max_retries == Some(0) {
-                                continue;
-                            }
-                            transactions_to_retry += 1;
-
-                            let retry_len = retry_transactions.len();
-                            let entry = retry_transactions.entry(signature);
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Ok(transaction_info) => {
+                            stats.received_transactions.fetch_add(1, Ordering::Relaxed);
+                            let entry = transactions.entry(transaction_info.signature);
+                            let mut new_transaction = false;
                             if let Entry::Vacant(_) = entry {
-                                if retry_len >= retry_pool_max_size {
-                                    break;
-                                } else {
-                                    transaction_info.last_sent_time = Some(last_sent_time);
-                                    transactions_added_to_retry += 1;
+                                if !retry_transactions
+                                    .lock()
+                                    .unwrap()
+                                    .contains_key(&transaction_info.signature)
+                                {
                                     entry.or_insert(transaction_info);
+                                    new_transaction = true;
                                 }
                             }
+                            if !new_transaction {
+                                stats
+                                    .received_duplicate_transactions
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
                         }
-                        let Saturating(retry_queue_overflow) =
-                            Saturating(transactions_to_retry) - transactions_added_to_retry;
-                        stats
-                            .retry_queue_overflow
-                            .fetch_add(retry_queue_overflow as u64, Ordering::Relaxed);
-                        stats
-                            .retry_queue_size
-                            .store(retry_transactions.len() as u64, Ordering::Relaxed);
                     }
-                    last_batch_sent = Instant::now();
+
+                    if (!transactions.is_empty()
+                        && last_batch_sent.elapsed().as_millis() as u64 >= batch_send_rate_ms)
+                        || transactions.len() >= batch_size
+                    {
+                        stats
+                            .sent_transactions
+                            .fetch_add(transactions.len() as u64, Ordering::Relaxed);
+                        let wire_transactions = transactions
+                            .values()
+                            .map(|transaction_info| transaction_info.wire_transaction.clone())
+                            .collect::<Vec<Vec<u8>>>();
+                        client.send_transactions_in_batch(wire_transactions, stats);
+                        let last_sent_time = Instant::now();
+                        {
+                            // take a lock of retry_transactions and move the batch to the retry set.
+                            let mut retry_transactions = retry_transactions.lock().unwrap();
+                            let mut transactions_to_retry: usize = 0;
+                            let mut transactions_added_to_retry = Saturating::<usize>(0);
+                            for (signature, mut transaction_info) in transactions.drain() {
+                                // drop transactions with 0 max retries
+                                let max_retries = transaction_info
+                                    .get_max_retries(default_max_retries, service_max_retries);
+                                if max_retries == Some(0) {
+                                    continue;
+                                }
+                                transactions_to_retry += 1;
+
+                                let retry_len = retry_transactions.len();
+                                let entry = retry_transactions.entry(signature);
+                                if let Entry::Vacant(_) = entry {
+                                    if retry_len >= retry_pool_max_size {
+                                        break;
+                                    } else {
+                                        transaction_info.last_sent_time = Some(last_sent_time);
+                                        transactions_added_to_retry += 1;
+                                        entry.or_insert(transaction_info);
+                                    }
+                                }
+                            }
+                            let Saturating(retry_queue_overflow) =
+                                Saturating(transactions_to_retry) - transactions_added_to_retry;
+                            stats
+                                .retry_queue_overflow
+                                .fetch_add(retry_queue_overflow as u64, Ordering::Relaxed);
+                            stats
+                                .retry_queue_size
+                                .store(retry_transactions.len() as u64, Ordering::Relaxed);
+                        }
+                        last_batch_sent = Instant::now();
+                    }
+                    stats_report.report();
                 }
-                stats_report.report();
             })
             .unwrap()
     }
@@ -319,44 +322,46 @@ impl SendTransactionService {
         let mut retry_interval_ms = retry_interval_ms_default;
         Builder::new()
             .name("solStxRetry".to_string())
-            .spawn(move || loop {
-                sleep(Duration::from_millis(retry_interval_ms));
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
-                let mut transactions = retry_transactions.lock().unwrap();
-                if transactions.is_empty() {
-                    retry_interval_ms = retry_interval_ms_default;
-                } else {
-                    let stats = &stats_report.stats;
-                    stats
-                        .retry_queue_size
-                        .store(transactions.len() as u64, Ordering::Relaxed);
+            .spawn(move || {
+                loop {
+                    sleep(Duration::from_millis(retry_interval_ms));
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let mut transactions = retry_transactions.lock().unwrap();
+                    if transactions.is_empty() {
+                        retry_interval_ms = retry_interval_ms_default;
+                    } else {
+                        let stats = &stats_report.stats;
+                        stats
+                            .retry_queue_size
+                            .store(transactions.len() as u64, Ordering::Relaxed);
 
-                    let BankPair {
-                        root_bank,
-                        working_bank,
-                    } = sharable_banks.load();
-                    let result = Self::process_transactions(
-                        &working_bank,
-                        &root_bank,
-                        &mut transactions,
-                        &client,
-                        &config,
-                        stats,
-                    );
-                    stats_report.report();
+                        let BankPair {
+                            root_bank,
+                            working_bank,
+                        } = sharable_banks.load();
+                        let result = Self::process_transactions(
+                            &working_bank,
+                            &root_bank,
+                            &mut transactions,
+                            &client,
+                            &config,
+                            stats,
+                        );
+                        stats_report.report();
 
-                    // Adjust retry interval taking into account the time since the last send.
-                    retry_interval_ms = retry_interval_ms_default
-                        .checked_sub(
-                            result
-                                .last_sent_time
-                                .and_then(|last| Instant::now().checked_duration_since(last))
-                                .and_then(|interval| interval.as_millis().try_into().ok())
-                                .unwrap_or(0),
-                        )
-                        .unwrap_or(retry_interval_ms_default);
+                        // Adjust retry interval taking into account the time since the last send.
+                        retry_interval_ms = retry_interval_ms_default
+                            .checked_sub(
+                                result
+                                    .last_sent_time
+                                    .and_then(|last| Instant::now().checked_duration_since(last))
+                                    .and_then(|interval| interval.as_millis().try_into().ok())
+                                    .unwrap_or(0),
+                            )
+                            .unwrap_or(retry_interval_ms_default);
+                    }
                 }
             })
             .unwrap()

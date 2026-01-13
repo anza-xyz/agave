@@ -1,10 +1,9 @@
 use {
     crate::{
-        spawn,
+        Config, spawn,
         syscalls::SYSCALLS,
         toolchain::rust_target_triple,
         utils::{copy_file, create_directory, generate_keypair},
-        Config,
     },
     log::{debug, error, info, warn},
     regex::Regex,

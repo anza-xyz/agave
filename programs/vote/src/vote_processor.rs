@@ -307,22 +307,21 @@ mod tests {
         crate::{
             vote_error::VoteError,
             vote_instruction::{
-                authorize, authorize_checked, compact_update_vote_state,
-                compact_update_vote_state_switch, create_account_with_config, update_commission,
-                update_validator_identity, update_vote_state, update_vote_state_switch, vote,
-                vote_switch, withdraw, CreateVoteAccountConfig, VoteInstruction,
+                CreateVoteAccountConfig, VoteInstruction, authorize, authorize_checked,
+                compact_update_vote_state, compact_update_vote_state_switch,
+                create_account_with_config, update_commission, update_validator_identity,
+                update_vote_state, update_vote_state_switch, vote, vote_switch, withdraw,
             },
             vote_state::{
-                self, create_bls_pubkey_and_proof_of_possession,
-                handler::{VoteStateHandle, VoteStateHandler},
-                Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
+                self, Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
-                VoteStateV4, VoteStateVersions,
+                VoteStateV4, VoteStateVersions, create_bls_pubkey_and_proof_of_possession,
+                handler::{VoteStateHandle, VoteStateHandler},
             },
         },
         bincode::serialize,
         solana_account::{
-            self as account, state_traits::StateMut, Account, AccountSharedData, ReadableAccount,
+            self as account, Account, AccountSharedData, ReadableAccount, state_traits::StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
@@ -337,8 +336,8 @@ mod tests {
         solana_vote_interface::{
             instruction::{tower_sync, tower_sync_switch},
             state::{
-                VoterWithBLSArgs, BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE,
-                BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+                BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+                VoterWithBLSArgs,
             },
         },
         std::{collections::HashSet, str::FromStr},

@@ -88,7 +88,7 @@ impl TpuClient<QuicPool, QuicConnectionManager, QuicConfig> {
             ConnectionCache::Udp(_) => {
                 return Err(TpuSenderError::Custom(String::from(
                     "Invalid default connection cache",
-                )))
+                )));
             }
         };
         Self::new_with_connection_cache(rpc_client, websocket_url, config, connection_cache).await

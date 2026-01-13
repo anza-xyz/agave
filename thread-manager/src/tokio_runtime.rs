@@ -1,15 +1,15 @@
 use {
     crate::{
-        policy::{apply_policy, parse_policy, CoreAllocation},
         MAX_THREAD_NAME_CHARS,
+        policy::{CoreAllocation, apply_policy, parse_policy},
     },
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
     std::{
         ops::Deref,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         time::Duration,
     },

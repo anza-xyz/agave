@@ -1,5 +1,5 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     rand::{Rng, SeedableRng},
     rand_chacha::ChaChaRng,
     solana_gossip::weighted_shuffle::WeightedShuffle,

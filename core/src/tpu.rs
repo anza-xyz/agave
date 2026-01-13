@@ -6,8 +6,8 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_stage::{
-            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingControlMsg,
-            BankingStage, BankingStageHandle,
+            BankingControlMsg, BankingStage, BankingStageHandle,
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
@@ -16,7 +16,7 @@ use {
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
-            spawn_forwarding_stage, ForwardAddressGetter, SpawnForwardingStageResult,
+            ForwardAddressGetter, SpawnForwardingStageResult, spawn_forwarding_stage,
         },
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
@@ -25,7 +25,7 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
         vortexor_receiver_adapter::VortexorReceiverAdapter,
     },
-    crossbeam_channel::{bounded, unbounded, Receiver},
+    crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -50,8 +50,8 @@ use {
     },
     solana_streamer::{
         quic::{
-            spawn_simple_qos_server, spawn_stake_wighted_qos_server, SimpleQosQuicStreamerConfig,
-            SpawnServerResult, SwQosQuicStreamerConfig,
+            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
+            spawn_simple_qos_server, spawn_stake_wighted_qos_server,
         },
         streamer::StakedNodes,
     },
@@ -64,7 +64,7 @@ use {
         net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
         time::Duration,
     },

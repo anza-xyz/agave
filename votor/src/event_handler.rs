@@ -2,7 +2,7 @@
 //! notify block creation loop
 use {
     crate::{
-        commitment::{update_commitment_cache, CommitmentType},
+        commitment::{CommitmentType, update_commitment_cache},
         consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         event::{CompletedBlock, VotorEvent, VotorEventReceiver},
         event_handler::stats::EventHandlerStats,
@@ -10,7 +10,7 @@ use {
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
         voting_service::BLSOp,
-        voting_utils::{generate_vote_message, VoteError, VotingContext},
+        voting_utils::{VoteError, VotingContext, generate_vote_message},
         votor::{SharedContext, Votor},
     },
     agave_votor_messages::{consensus_message::Block, vote::Vote},
@@ -28,8 +28,8 @@ use {
     std::{
         collections::{BTreeMap, BTreeSet},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Condvar, Mutex,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -828,10 +828,10 @@ mod tests {
             votor::LeaderWindowNotifier,
         },
         agave_votor_messages::{
-            consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::{bounded, Receiver, TryRecvError},
+        crossbeam_channel::{Receiver, TryRecvError, bounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -847,7 +847,7 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
             installed_scheduler_pool::BankWithScheduler,
         },
@@ -1269,9 +1269,11 @@ mod tests {
             let saved_vote_history =
                 SavedVoteHistory::new(&VoteHistory::new(new_identity.pubkey(), 0), &new_identity)
                     .unwrap();
-            assert!(file_vote_history_storage
-                .store(&SavedVoteHistoryVersions::from(saved_vote_history),)
-                .is_ok());
+            assert!(
+                file_vote_history_storage
+                    .store(&SavedVoteHistoryVersions::from(saved_vote_history),)
+                    .is_ok()
+            );
             self.cluster_info
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
             self.send_set_identity_event();

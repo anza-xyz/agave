@@ -1,7 +1,7 @@
 use {
     crate::tiered_storage::{
-        file::TieredWritableFile, footer::TieredStorageFooter, mmap_utils::get_pod,
-        TieredStorageResult,
+        TieredStorageResult, file::TieredWritableFile, footer::TieredStorageFooter,
+        mmap_utils::get_pod,
     },
     bytemuck::{Pod, Zeroable},
     memmap2::Mmap,
@@ -148,7 +148,7 @@ mod tests {
         super::*,
         crate::tiered_storage::{
             file::TieredWritableFile,
-            hot::{HotAccountOffset, HOT_ACCOUNT_ALIGNMENT},
+            hot::{HOT_ACCOUNT_ALIGNMENT, HotAccountOffset},
         },
         memmap2::MmapOptions,
         rand::Rng,

@@ -6,6 +6,7 @@ use {
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::StoredAccountsInfo,
         tiered_storage::{
+            StorableAccounts, TieredStorageError, TieredStorageFormat, TieredStorageResult,
             byte_block,
             file::{TieredReadableFile, TieredWritableFile},
             footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter},
@@ -15,7 +16,6 @@ use {
             },
             mmap_utils::{get_pod, get_slice},
             owners::{OwnerOffset, OwnersBlockFormat, OwnersTable},
-            StorableAccounts, TieredStorageError, TieredStorageFormat, TieredStorageResult,
         },
     },
     bytemuck_derive::{Pod, Zeroable},
@@ -838,7 +838,7 @@ mod tests {
         crate::tiered_storage::{
             byte_block::ByteBlockWriter,
             file::{TieredStorageMagicNumber, TieredWritableFile},
-            footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_SIZE},
+            footer::{AccountBlockFormat, AccountMetaFormat, FOOTER_SIZE, TieredStorageFooter},
             hot::{HotAccountMeta, HotStorageReader},
             index::{AccountIndexWriterEntry, IndexBlockFormat, IndexOffset},
             meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},

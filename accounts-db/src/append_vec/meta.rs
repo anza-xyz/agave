@@ -184,7 +184,7 @@ impl IsZeroLamport for StoredAccountNoData<'_> {
 mod tests {
     use {
         super::*,
-        solana_account::{accounts_equal, Account},
+        solana_account::{Account, accounts_equal},
     };
 
     #[test]

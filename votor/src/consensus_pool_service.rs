@@ -3,10 +3,10 @@
 use {
     crate::{
         commitment::{
-            update_commitment_cache, CommitmentAggregationData, CommitmentError, CommitmentType,
+            CommitmentAggregationData, CommitmentError, CommitmentType, update_commitment_cache,
         },
         consensus_pool::{
-            parent_ready_tracker::BlockProductionParent, AddMessageError, ConsensusPool,
+            AddMessageError, ConsensusPool, parent_ready_tracker::BlockProductionParent,
         },
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
@@ -25,8 +25,8 @@ use {
     stats::Stats,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Condvar, Mutex,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -424,7 +424,7 @@ mod tests {
         super::*,
         crate::common::DELTA_STANDSTILL,
         agave_votor_messages::{
-            consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, CertificateType, VoteMessage},
             vote::Vote,
         },
         crossbeam_channel::Sender,
@@ -438,7 +438,7 @@ mod tests {
         solana_runtime::{
             bank_forks::{BankForks, SharableBanks},
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,

@@ -3,7 +3,7 @@
 //! cores.
 
 pub use solana_perf::sigverify::{
-    count_packets_in_batches, ed25519_verify, ed25519_verify_disabled, TxOffset,
+    TxOffset, count_packets_in_batches, ed25519_verify, ed25519_verify_disabled,
 };
 use {
     crate::{

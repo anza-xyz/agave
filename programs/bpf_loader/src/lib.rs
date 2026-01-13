@@ -16,7 +16,7 @@ use {
     cfg_if::cfg_if,
     solana_bincode::limited_deserialize,
     solana_clock::Slot,
-    solana_instruction::{error::InstructionError, AccountMeta},
+    solana_instruction::{AccountMeta, error::InstructionError},
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
@@ -25,8 +25,9 @@ use {
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
-            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, DELAY_VISIBILITY_SLOT_OFFSET,
+            DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
+            ProgramCacheEntryOwner, ProgramCacheEntryType, ProgramCacheForTxBatch,
+            ProgramRuntimeEnvironment,
         },
         mem_pool::VmMemoryPool,
         serialization, stable_log,
@@ -46,12 +47,12 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_svm_log_collector::{ic_logger_msg, ic_msg, LogCollector},
+    solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
-    solana_svm_type_overrides::sync::{atomic::Ordering, Arc},
-    solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
+    solana_svm_type_overrides::sync::{Arc, atomic::Ordering},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, instruction as system_instruction},
     solana_transaction_context::{
-        instruction::InstructionContext, IndexOfAccount, TransactionContext,
+        IndexOfAccount, TransactionContext, instruction::InstructionContext,
     },
     std::{cell::RefCell, mem, rc::Rc},
 };
@@ -1778,12 +1779,12 @@ mod tests {
         assert_matches::assert_matches,
         rand::Rng,
         solana_account::{
-            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
             AccountSharedData, ReadableAccount, WritableAccount,
+            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
-        solana_instruction::{error::InstructionError, AccountMeta},
+        solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },

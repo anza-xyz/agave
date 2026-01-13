@@ -1,6 +1,6 @@
 use {
     crate::leader_schedule::{LeaderSchedule, VoteKeyedLeaderSchedule},
-    solana_clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::{Epoch, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     std::collections::HashMap,

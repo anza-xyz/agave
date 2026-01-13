@@ -1,6 +1,6 @@
 use {
-    agave_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
-    ed25519_dalek::{ed25519::signature::Signature, Verifier},
+    agave_feature_set::{FeatureSet, ed25519_precompile_verify_strict},
+    ed25519_dalek::{Verifier, ed25519::signature::Signature},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
@@ -119,9 +119,9 @@ pub mod tests {
         bytemuck::bytes_of,
         ed25519_dalek::Signer as EdSigner,
         hex,
-        rand0_7::{thread_rng, Rng},
+        rand0_7::{Rng, thread_rng},
         solana_ed25519_program::{
-            new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction, DATA_START,
+            DATA_START, new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction,
         },
         solana_instruction::Instruction,
         std::vec,
@@ -347,13 +347,15 @@ pub mod tests {
             new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
 
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         let index = loop {
             let index = thread_rng().gen_range(0, instruction.data.len());
@@ -364,13 +366,15 @@ pub mod tests {
         };
 
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -416,13 +420,15 @@ pub mod tests {
 
         let feature_set = FeatureSet::all_enabled();
 
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         let index = loop {
             let index = thread_rng().gen_range(0, instruction.data.len());
@@ -433,13 +439,15 @@ pub mod tests {
         };
 
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -454,22 +462,26 @@ pub mod tests {
         let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         let feature_set = FeatureSet::all_enabled();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         // malleable sig: verify_strict does NOT pass
         // for example, test number 5:
@@ -483,22 +495,26 @@ pub mod tests {
         let instruction = new_ed25519_instruction_raw(pubkey, signature, message);
 
         let feature_set = FeatureSet::default();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         // verify_strict does NOT pass
         let feature_set = FeatureSet::all_enabled();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 }

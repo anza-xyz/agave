@@ -24,7 +24,7 @@ use {
     std::{
         path::PathBuf,
         result,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
     },
     thiserror::Error,
 };
@@ -330,12 +330,13 @@ fn bank_forks_from_snapshot(
             .accounts_db
             .set_latest_full_snapshot_slot(full_snapshot_archive_info.slot());
     } else {
-        assert!(bank
-            .rc
-            .accounts
-            .accounts_db
-            .latest_full_snapshot_slot()
-            .is_none());
+        assert!(
+            bank.rc
+                .accounts
+                .accounts_db
+                .latest_full_snapshot_slot()
+                .is_none()
+        );
     }
 
     let full_snapshot_hash = FullSnapshotHash((

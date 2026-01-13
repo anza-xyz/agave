@@ -15,8 +15,8 @@ use {
 };
 pub use {
     solana_account_decoder_client_types::token::{
-        real_number_string, real_number_string_trimmed, TokenAccountType, UiAccountState, UiMint,
-        UiMultisig, UiTokenAccount, UiTokenAmount,
+        TokenAccountType, UiAccountState, UiMint, UiMultisig, UiTokenAccount, UiTokenAmount,
+        real_number_string, real_number_string_trimmed,
     },
     spl_generic_token::{is_known_spl_token_id, spl_token_ids},
 };
@@ -177,10 +177,10 @@ mod test {
         solana_account_decoder_client_types::token::UiExtension,
         spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::extension::{
+            BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
             immutable_owner::ImmutableOwner, interest_bearing_mint::InterestBearingConfig,
             memo_transfer::MemoTransfer, mint_close_authority::MintCloseAuthority,
-            scaled_ui_amount::ScaledUiAmountConfig, BaseStateWithExtensionsMut, ExtensionType,
-            StateWithExtensionsMut,
+            scaled_ui_amount::ScaledUiAmountConfig,
         },
     };
 
@@ -384,14 +384,18 @@ mod test {
         const ONE: u64 = 1_000_000_000_000_000_000;
         const TEN: u64 = 10_000_000_000_000_000_000;
         let token_amount = token_amount_to_ui_amount_v3(ONE, &additional_data);
-        assert!(token_amount
-            .ui_amount_string
-            .starts_with("1.051271096376024117"));
+        assert!(
+            token_amount
+                .ui_amount_string
+                .starts_with("1.051271096376024117")
+        );
         assert!((token_amount.ui_amount.unwrap() - 1.0512710963760241f64).abs() < f64::EPSILON);
         let token_amount = token_amount_to_ui_amount_v3(TEN, &additional_data);
-        assert!(token_amount
-            .ui_amount_string
-            .starts_with("10.512710963760241611"));
+        assert!(
+            token_amount
+                .ui_amount_string
+                .starts_with("10.512710963760241611")
+        );
         assert!((token_amount.ui_amount.unwrap() - 10.512710963760242f64).abs() < f64::EPSILON);
 
         // huge case

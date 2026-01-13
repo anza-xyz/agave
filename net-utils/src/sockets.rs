@@ -340,11 +340,11 @@ mod tests {
     use {
         super::*,
         crate::{
-            bind_in_range, get_cluster_shred_version, get_public_ip_addr_with_binding,
-            ip_echo_client, ip_echo_server, parse_host,
+            DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_VERIFY_THREADS, bind_in_range,
+            get_cluster_shred_version, get_public_ip_addr_with_binding, ip_echo_client,
+            ip_echo_server, parse_host,
             sockets::{localhost_port_range_for_tests, unique_port_range_for_tests},
-            verify_all_reachable_tcp, verify_all_reachable_udp, DEFAULT_IP_ECHO_SERVER_THREADS,
-            MAX_PORT_VERIFY_THREADS,
+            verify_all_reachable_tcp, verify_all_reachable_udp,
         },
         itertools::Itertools,
         std::{net::Ipv4Addr, time::Duration},
@@ -448,14 +448,16 @@ mod tests {
         ) {
             assert!(port2 == port1 + offset);
         }
-        assert!(bind_two_in_range_with_offset_and_config(
-            ip_addr,
-            (port_range.start, port_range.start + 5),
-            offset,
-            config,
-            config
-        )
-        .is_err());
+        assert!(
+            bind_two_in_range_with_offset_and_config(
+                ip_addr,
+                (port_range.start, port_range.start + 5),
+                offset,
+                config,
+                config
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -5,20 +5,20 @@ use {
     crate::{
         blockstore_meta::ErasureConfig,
         shred::{
-            self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags,
-            ShredId, ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
+            self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, ShredFlags, ShredId, ShredType,
+            ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred,
         },
     },
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_perf::packet::{PacketRef, PacketRefMut},
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
 };
 #[cfg(test)]
 use {
-    rand::{prelude::IndexedMutRandom as _, Rng},
+    rand::{Rng, prelude::IndexedMutRandom as _},
     solana_perf::packet::Packet,
     std::collections::HashMap,
     std::ops::Range,
@@ -412,7 +412,7 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            tests::make_merkle_shreds_for_tests, traits::ShredData, SHREDS_PER_FEC_BLOCK,
+            SHREDS_PER_FEC_BLOCK, tests::make_merkle_shreds_for_tests, traits::ShredData,
         },
         assert_matches::assert_matches,
         rand::Rng,

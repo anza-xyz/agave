@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        common::{certificate_limits_and_votes, vote_to_certificate_ids, Stake},
+        common::{Stake, certificate_limits_and_votes, vote_to_certificate_ids},
         consensus_pool::{
             certificate_builder::{BuildError as CertificateBuilderError, CertificateBuilder},
             parent_ready_tracker::ParentReadyTracker,
@@ -541,10 +541,10 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::consensus_message::{VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+        agave_votor_messages::consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
         solana_bls_signatures::{
-            keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey, Signature as BLSSignature,
-            VerifiableSignature,
+            Pubkey as BLSPubkey, Signature as BLSSignature, VerifiableSignature,
+            keypair::Keypair as BLSKeypair,
         },
         solana_clock::Slot,
         solana_gossip::contact_info::ContactInfo,
@@ -555,7 +555,7 @@ mod tests {
             bank::{Bank, NewBankOptions},
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,
@@ -1027,9 +1027,11 @@ mod tests {
         }
         // Assert certs_to_send contains the expected certificate types
         for expected_cert_type in expected_cert_types {
-            assert!(certs_to_send
-                .iter()
-                .any(|cert| { cert.cert_type == expected_cert_type }));
+            assert!(
+                certs_to_send
+                    .iter()
+                    .any(|cert| { cert.cert_type == expected_cert_type })
+            );
         }
         assert_eq!(highest_slot_fn(&pool), slot);
         // Now add the same certificate again, this should silently exit.
@@ -1121,9 +1123,11 @@ mod tests {
                     &mut vec![],
                 )
                 .unwrap();
-            assert!(!certs_to_send
-                .iter()
-                .any(|cert| { cert.cert_type == cert_type }));
+            assert!(
+                !certs_to_send
+                    .iter()
+                    .any(|cert| { cert.cert_type == cert_type })
+            );
         }
     }
 
@@ -1734,8 +1738,8 @@ mod tests {
         assert!(!pool.is_finalized(2));
         // Send a vote on slot 1, it should be rejected
         let vote = Vote::new_skip_vote(1);
-        assert!(pool
-            .add_message(
+        assert!(
+            pool.add_message(
                 new_bank.epoch_schedule(),
                 new_bank.epoch_stakes_map(),
                 new_bank.slot(),
@@ -1743,7 +1747,8 @@ mod tests {
                 dummy_vote_message(&validator_keypairs, &vote, 0),
                 &mut vec![]
             )
-            .is_err());
+            .is_err()
+        );
 
         // Send a cert on slot 2, it should be rejected
         let cert_type = CertificateType::Notarize(2, Hash::new_unique());
@@ -1752,8 +1757,8 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         });
-        assert!(pool
-            .add_message(
+        assert!(
+            pool.add_message(
                 new_bank.epoch_schedule(),
                 new_bank.epoch_stakes_map(),
                 new_bank.slot(),
@@ -1761,7 +1766,8 @@ mod tests {
                 cert,
                 &mut vec![]
             )
-            .is_err());
+            .is_err()
+        );
     }
 
     #[test]
@@ -1948,10 +1954,10 @@ mod tests {
             && matches!(cert.cert_type, CertificateType::Finalize(_))));
         assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
             && matches!(cert.cert_type, CertificateType::Notarize(_, _))));
-        assert!(certs
-            .iter()
-            .any(|cert| cert.cert_type.slot() == 7
-                && matches!(cert.cert_type, CertificateType::Skip(_))));
+        assert!(
+            certs.iter().any(|cert| cert.cert_type.slot() == 7
+                && matches!(cert.cert_type, CertificateType::Skip(_)))
+        );
 
         // Add Finalize then Notarize cert on 8
         let cert_8_finalize = Certificate {
@@ -2018,12 +2024,14 @@ mod tests {
         }
         // events should now contain ParentReady for slot 4
         error!("Events: {events:?}");
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, VotorEvent::ParentReady {
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, VotorEvent::ParentReady {
                 slot: 4,
                 parent_block: (3, h)
-            } if h == &hash)));
+            } if h == &hash))
+        );
         events.clear();
 
         // Also works if we add FinalizeFast for slot 4 to 7
@@ -2045,12 +2053,14 @@ mod tests {
         }
         // events should now contain ParentReady for slot 8
         error!("Events: {events:?}");
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, VotorEvent::ParentReady {
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, VotorEvent::ParentReady {
                 slot: 8,
                 parent_block: (7, h)
-            } if h == &hash)));
+            } if h == &hash))
+        );
         events.clear();
 
         // NotarizeFallback on slot 8 to 10 and FinalizeFast on slot 11
@@ -2086,12 +2096,14 @@ mod tests {
         .unwrap();
         // events should now contain ParentReady for slot 12
         error!("Events: {events:?}");
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, VotorEvent::ParentReady {
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, VotorEvent::ParentReady {
             slot: 12,
             parent_block: (11, h)
-        } if h == &hash)));
+        } if h == &hash))
+        );
     }
 
     #[test]

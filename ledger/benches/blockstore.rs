@@ -6,10 +6,10 @@ extern crate test;
 use {
     rand::Rng,
     solana_clock::Slot,
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
     solana_ledger::{
-        blockstore::{entries_to_test_shreds, Blockstore},
+        blockstore::{Blockstore, entries_to_test_shreds},
         get_tmp_ledger_path_auto_delete,
     },
     solana_pubkey::Pubkey,

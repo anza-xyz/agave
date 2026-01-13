@@ -1,6 +1,6 @@
 use {
-    crate::consensus::{tower_vote_state::TowerVoteState, Stake},
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crate::consensus::{Stake, tower_vote_state::TowerVoteState},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
@@ -14,8 +14,8 @@ use {
         cmp::max,
         collections::HashMap,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -78,18 +78,20 @@ impl AggregateCommitmentService {
             Self {
                 t_commitment: Builder::new()
                     .name("solAggCommitSvc".to_string())
-                    .spawn(move || loop {
-                        if exit.load(Ordering::Relaxed) {
-                            break;
-                        }
+                    .spawn(move || {
+                        loop {
+                            if exit.load(Ordering::Relaxed) {
+                                break;
+                            }
 
-                        if let Err(RecvTimeoutError::Disconnected) = Self::run(
-                            &receiver,
-                            &block_commitment_cache,
-                            subscriptions.as_deref(),
-                            &exit,
-                        ) {
-                            break;
+                            if let Err(RecvTimeoutError::Disconnected) = Self::run(
+                                &receiver,
+                                &block_commitment_cache,
+                                subscriptions.as_deref(),
+                                &exit,
+                            ) {
+                                break;
+                            }
                         }
                     })
                     .unwrap(),
@@ -271,18 +273,18 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-        solana_account::{state_traits::StateMut, Account, ReadableAccount},
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_account::{Account, ReadableAccount, state_traits::StateMut},
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{
-            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
             stake_utils,
         },
         solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
-            self, process_slot_vote_unchecked, TowerSync, VoteStateV4, VoteStateVersions,
-            MAX_LOCKOUT_HISTORY,
+            self, MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions,
+            process_slot_vote_unchecked,
         },
     };
 

@@ -112,7 +112,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            packet::{to_packet_batches, Packet},
+            packet::{Packet, to_packet_batches},
             sigverify,
             test_tx::test_tx,
         },

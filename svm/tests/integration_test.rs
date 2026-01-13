@@ -3,11 +3,11 @@
 
 use {
     crate::mock_bank::{
+        EXECUTION_EPOCH, EXECUTION_SLOT, MockBankCallback, MockForkGraph, WALLCLOCK_TIME,
         create_custom_loader, deploy_program_with_upgrade_authority, load_program, program_address,
-        program_data_size, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
-        EXECUTION_SLOT, WALLCLOCK_TIME,
+        program_data_size, register_builtins,
     },
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
+    solana_account::{AccountSharedData, PROGRAM_OWNERS, ReadableAccount, WritableAccount},
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -23,7 +23,7 @@ use {
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
     solana_program_runtime::execution_budget::{
-        SVMTransactionExecutionAndFeeBudgetLimits, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, native_loader},
@@ -51,7 +51,7 @@ use {
     solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_system_transaction as system_transaction,
     solana_sysvar::rent::Rent,
-    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::TransactionError,
     std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
@@ -423,10 +423,11 @@ impl SvmTestEntry {
     // inserts it into both account maps, assuming it lives unchanged (except for svm fixing rent epoch)
     // rent-paying accounts must be added by hand because svm will not set rent epoch to u64::MAX
     pub fn add_initial_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
-        assert!(self
-            .initial_accounts
-            .insert(pubkey, account.clone())
-            .is_none());
+        assert!(
+            self.initial_accounts
+                .insert(pubkey, account.clone())
+                .is_none()
+        );
 
         self.create_expected_account(pubkey, account);
     }
@@ -456,10 +457,11 @@ impl SvmTestEntry {
 
     // indicate that an existing account is expected to be deallocated
     pub fn drop_expected_account(&mut self, pubkey: Pubkey) {
-        assert!(self
-            .final_accounts
-            .insert(pubkey, AccountSharedData::default())
-            .is_some());
+        assert!(
+            self.final_accounts
+                .insert(pubkey, AccountSharedData::default())
+                .is_some()
+        );
     }
 
     // add lamports to an existing expected final account state
@@ -2540,10 +2542,12 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
 
     // Set the final expected destination state.
     if statuses.iter().any(|success| *success) {
-        assert!(test_entry
-            .final_accounts
-            .insert(destination, destination_data)
-            .is_none());
+        assert!(
+            test_entry
+                .final_accounts
+                .insert(destination, destination_data)
+                .is_none()
+        );
     }
 
     vec![test_entry]

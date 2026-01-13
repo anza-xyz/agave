@@ -1,15 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{Bencher, benchmark_group, benchmark_main},
     rand::Rng,
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred, max_ticks_per_n_shreds,
-        recover, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
-        CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
+        CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats,
+        ReedSolomonCache, Shred, Shredder, get_data_shred_bytes_per_batch_typical,
+        max_entries_per_n_shred, max_ticks_per_n_shreds, recover,
     },
     solana_perf::test_tx,
     std::hint::black_box,

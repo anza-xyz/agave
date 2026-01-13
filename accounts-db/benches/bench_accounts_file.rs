@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
+    criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         accounts_file::StorageAccess,
