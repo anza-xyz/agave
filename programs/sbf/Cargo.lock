@@ -4900,7 +4900,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls 0.23.36",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -5250,7 +5250,7 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-rustls 0.26.2",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tower-http",
  "tower-service",
  "url 2.5.8",
@@ -5417,7 +5417,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10929,7 +10929,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.61.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11365,9 +11365,9 @@ dependencies = [
 
 [[package]]
 name = "tower"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
+checksum = "ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4"
 dependencies = [
  "futures-core",
  "futures-util",
@@ -11396,7 +11396,7 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tokio-util 0.7.18",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tower-layer",
  "tower-service",
 ]
