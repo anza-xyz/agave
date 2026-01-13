@@ -1145,6 +1145,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let (candidates_to_flush, candidates_to_evict) =
             self.flush_scan(current_age, flush_guard, ages_flushing_now);
 
+        // Capture map metrics before flush
+        let (map_len_before, map_capacity_before, total_entries_before) = {
+            let map_guard = self.map_internal.read().unwrap();
+            (
+                map_guard.len(),
+                map_guard.capacity(),
+                map_guard.len() * self.storage.bins,
+            )
+        };
+
         // write to disk outside in-mem map read lock
         let disk = self.bucket.as_ref().unwrap();
         let mut flush_stats = DiskFlushStats::new();
@@ -1152,6 +1162,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // Process each candidate to flush
         // For each entry: lock map briefly, get entry, calculate disk value, release lock, then write to disk
         let flush_update_measure = Measure::start("flush_update");
+        let mut num_flushed = 0;
         for key in candidates_to_flush.0 {
             // Entry was dirty at scan time, need to write to disk
             let lock_measure = Measure::start("flush_read_lock");
@@ -1205,6 +1216,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     }
                 }
             }
+            num_flushed += 1;
         }
         flush_stats.flush_update_us = flush_update_measure.end_as_us();
         flush_stats.update_to_stats(self.stats());
@@ -1212,6 +1224,27 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let m = Measure::start("flush_evict");
         self.evict_from_cache(&candidates_to_evict.0, current_age, ages_flushing_now);
         Self::update_time_stat(&self.stats().flush_evict_us, m);
+
+        // Log and update stats for flush metrics
+        let (map_len_after, map_capacity_after) = {
+            let map_guard = self.map_internal.read().unwrap();
+            (map_guard.len(), map_guard.capacity())
+        };
+        let total_entries_after = map_len_after * self.storage.bins;
+        let evicted = map_len_before.saturating_sub(map_len_after);
+
+        // Update stats with max values for 10s datapoint
+        let stats = self.stats();
+        stats.update_flush_stats_max(
+            total_entries_before,
+            num_flushed,
+            map_len_before,
+            map_capacity_before,
+            map_len_after,
+            map_capacity_after,
+            evicted,
+            total_entries_after,
+        );
 
         if iterate_for_age {
             // completed iteration of the buckets at the current age

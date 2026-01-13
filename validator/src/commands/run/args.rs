@@ -1116,6 +1116,20 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("accounts_index_limit_bytes")
+            .long("accounts-index-limit-bytes")
+            .value_name("BYTES")
+            .takes_value(true)
+            .requires("enable_accounts_disk_index")
+            .help("Flush accounts index to disk when memory usage exceeds this limit in bytes")
+            .long_help(
+                "Sets a memory size threshold for the in-memory accounts index. When the memory \
+                 usage of the index exceeds this limit (in bytes), it will flush to disk. This \
+                 provides a middle ground between pure in-memory (default) and always-on-disk \
+                 (--enable-accounts-disk-index) modes. Requires --enable-accounts-disk-index.",
+            ),
+    )
+    .arg(
         Arg::with_name("accounts_shrink_optimize_total_space")
             .long("accounts-shrink-optimize-total-space")
             .takes_value(true)
