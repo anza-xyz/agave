@@ -56,6 +56,7 @@ use {
     crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
+    merkle_tree::fec_set_root::FecSetRoot,
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -87,7 +88,7 @@ use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer
 
 mod common;
 pub mod merkle;
-mod merkle_tree;
+pub mod merkle_tree;
 mod payload;
 mod shred_code;
 pub(crate) mod shred_data;
@@ -401,7 +402,7 @@ impl Shred {
     dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
-    dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(pub fn merkle_root(&self) -> Result<FecSetRoot, Error>);
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
