@@ -499,6 +499,29 @@ fn process_loader_upgradeable_instruction(
             )?;
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
+            // Parse optional close_buffer flag from trailing byte (SIMD-0430).
+            // Only check for trailing byte when feature is active.
+            // * close_buffer=true (byte=1):
+            //   * Authority must match buffer authority
+            //   * Drain buffer (legacy behavior)
+            // * close_buffer=false (byte=0):
+            //   * Authority not checked
+            //   * Preserve buffer
+            // No trailing byte or feature inactive: default to true.
+            const DEPLOY_INSTRUCTION_SIZE: usize = 12; // 4 byte discriminant + 8 bytes usize
+            let close_buffer = if invoke_context
+                .get_feature_set()
+                .loader_v3_relax_program_buffer_constraints
+            {
+                instruction_data
+                    .get(DEPLOY_INSTRUCTION_SIZE)
+                    .copied()
+                    .unwrap_or(1)
+                    == 1
+            } else {
+                true
+            };
+
             instruction_context.check_number_of_instruction_accounts(4)?;
             let payer_key = *instruction_context.get_key_of_instruction_account(0)?;
             let programdata_key = *instruction_context.get_key_of_instruction_account(1)?;
@@ -531,11 +554,7 @@ fn process_loader_upgradeable_instruction(
 
             let buffer = instruction_context.try_borrow_instruction_account(3)?;
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
-                if !invoke_context
-                    .get_feature_set()
-                    .loader_v3_relax_program_buffer_constraints
-                    && authority_address != authority_key
-                {
+                if close_buffer && authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
                     return Err(InstructionError::IncorrectAuthority);
                 }
@@ -579,8 +598,9 @@ fn process_loader_upgradeable_instruction(
                 return Err(InstructionError::InvalidArgument);
             }
 
-            // Drain the Buffer account to payer before paying for programdata account
-            {
+            if close_buffer {
+                // Drain the Buffer account to payer before paying for
+                // programdata account.
                 let mut buffer = instruction_context.try_borrow_instruction_account(3)?;
                 let mut payer = instruction_context.try_borrow_instruction_account(0)?;
                 payer.checked_add_lamports(buffer.get_lamports())?;
@@ -653,7 +673,9 @@ fn process_loader_upgradeable_instruction(
                     .get(buffer_data_offset..)
                     .ok_or(InstructionError::AccountDataTooSmall)?;
                 dst_slice.copy_from_slice(src_slice);
-                buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+                if close_buffer {
+                    buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+                }
             }
 
             // Update the Program account
@@ -667,6 +689,29 @@ fn process_loader_upgradeable_instruction(
             ic_logger_msg!(log_collector, "Deployed program {:?}", new_program_id);
         }
         UpgradeableLoaderInstruction::Upgrade => {
+            // Parse optional close_buffer flag from trailing byte (SIMD-0430).
+            // Only check for trailing byte when feature is active.
+            // * close_buffer=true (byte=1):
+            //   * Authority must match buffer authority
+            //   * Drain buffer (legacy behavior)
+            // * close_buffer=false (byte=0):
+            //   * Authority not checked
+            //   * Preserve buffer
+            // No trailing byte or feature inactive: default to true.
+            const UPGRADE_INSTRUCTION_SIZE: usize = 4; // 4 byte discriminant only
+            let close_buffer = if invoke_context
+                .get_feature_set()
+                .loader_v3_relax_program_buffer_constraints
+            {
+                instruction_data
+                    .get(UPGRADE_INSTRUCTION_SIZE)
+                    .copied()
+                    .unwrap_or(1)
+                    == 1
+            } else {
+                true
+            };
+
             instruction_context.check_number_of_instruction_accounts(3)?;
             let programdata_key = *instruction_context.get_key_of_instruction_account(0)?;
             let rent =
@@ -706,11 +751,7 @@ fn process_loader_upgradeable_instruction(
 
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
-                if !invoke_context
-                    .get_feature_set()
-                    .loader_v3_relax_program_buffer_constraints
-                    && authority_address != authority_key
-                {
+                if close_buffer && authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
                     return Err(InstructionError::IncorrectAuthority);
                 }
@@ -829,17 +870,28 @@ fn process_loader_upgradeable_instruction(
                 .fill(0);
 
             // Fund ProgramData to rent-exemption, spill the rest
-            let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
-            let mut spill = instruction_context.try_borrow_instruction_account(3)?;
-            spill.checked_add_lamports(
-                programdata
-                    .get_lamports()
-                    .saturating_add(buffer_lamports)
-                    .saturating_sub(programdata_balance_required),
-            )?;
-            buffer.set_lamports(0)?;
-            programdata.set_lamports(programdata_balance_required)?;
-            buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+            if close_buffer {
+                let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
+                let mut spill = instruction_context.try_borrow_instruction_account(3)?;
+                spill.checked_add_lamports(
+                    programdata
+                        .get_lamports()
+                        .saturating_add(buffer_lamports)
+                        .saturating_sub(programdata_balance_required),
+                )?;
+                buffer.set_lamports(0)?;
+                programdata.set_lamports(programdata_balance_required)?;
+                buffer.set_data_length(UpgradeableLoaderState::size_of_buffer(0))?;
+            } else {
+                // When not closing buffer, spill account pays.
+                let mut spill = instruction_context.try_borrow_instruction_account(3)?;
+                spill.checked_add_lamports(
+                    programdata
+                        .get_lamports()
+                        .saturating_sub(programdata_balance_required),
+                )?;
+                programdata.set_lamports(programdata_balance_required)?;
+            }
 
             ic_logger_msg!(log_collector, "Upgraded program {:?}", new_program_id);
         }
@@ -2456,8 +2508,27 @@ mod tests {
             expected_result: Result<(), InstructionError>,
             feature_set: &SVMFeatureSet,
         ) -> Vec<AccountSharedData> {
-            let instruction_data =
+            process_instruction_with_close_buffer(
+                transaction_accounts,
+                instruction_accounts,
+                expected_result,
+                feature_set,
+                None,
+            )
+        }
+
+        fn process_instruction_with_close_buffer(
+            transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+            instruction_accounts: Vec<AccountMeta>,
+            expected_result: Result<(), InstructionError>,
+            feature_set: &SVMFeatureSet,
+            close_buffer: Option<bool>,
+        ) -> Vec<AccountSharedData> {
+            let mut instruction_data =
                 bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+            if let Some(close) = close_buffer {
+                instruction_data.push(u8::from(close));
+            }
             mock_process_instruction_with_feature_set(
                 &bpf_loader_upgradeable::id(),
                 None,
@@ -2814,7 +2885,8 @@ mod tests {
         );
 
         // Case: Mismatched buffer and program authority with feature
-        // loader_v3_relax_program_buffer_constraints ENABLED.
+        // loader_v3_relax_program_buffer_constraints ENABLED and
+        // close_buffer=false.
         // Should succeed.
         let (transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
@@ -2823,11 +2895,48 @@ mod tests {
             &elf_orig,
             &elf_new,
         );
-        process_instruction(
+        process_instruction_with_close_buffer(
             transaction_accounts,
             instruction_accounts,
             Ok(()),
             &all_features,
+            Some(false),
+        );
+
+        // Case: Mismatched buffer and program authority with feature
+        // loader_v3_relax_program_buffer_constraints ENABLED and close_buffer=true.
+        // Should fail with `IncorrectAuthority`.
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        process_instruction_with_close_buffer(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::IncorrectAuthority),
+            &all_features,
+            Some(true),
+        );
+
+        // Case: Mismatched buffer and program authority with feature
+        // loader_v3_relax_program_buffer_constraints ENABLED and no trailing byte.
+        // Should fail with `IncorrectAuthority` (default to close_buffer=true).
+        let (transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        process_instruction_with_close_buffer(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::IncorrectAuthority),
+            &all_features,
+            None,
         );
 
         // Case: No buffer authority with feature
@@ -2856,7 +2965,8 @@ mod tests {
         );
 
         // Case: No buffer authority with feature
-        // loader_v3_relax_program_buffer_constraints ENABLED.
+        // loader_v3_relax_program_buffer_constraints ENABLED and
+        // close_buffer=false.
         // Should succeed.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
@@ -2873,11 +2983,12 @@ mod tests {
                 authority_address: None,
             })
             .unwrap();
-        process_instruction(
+        process_instruction_with_close_buffer(
             transaction_accounts,
             instruction_accounts,
             Ok(()),
             &all_features,
+            Some(false),
         );
 
         // Case: No buffer and program authority with feature
@@ -2915,7 +3026,8 @@ mod tests {
         );
 
         // Case: No buffer and program authority with feature
-        // loader_v3_relax_program_buffer_constraints ENABLED.
+        // loader_v3_relax_program_buffer_constraints ENABLED and
+        // close_buffer=false.
         // Should fail with `Immutable` (program has no upgrade authority).
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
@@ -2941,11 +3053,12 @@ mod tests {
                 authority_address: None,
             })
             .unwrap();
-        process_instruction(
+        process_instruction_with_close_buffer(
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::Immutable),
             &all_features,
+            Some(false),
         );
     }
 
