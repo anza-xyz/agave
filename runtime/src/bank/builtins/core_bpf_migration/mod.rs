@@ -15,8 +15,9 @@ use {
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{LoadProgramMetrics, ProgramCacheForTxBatch},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -184,8 +185,10 @@ impl Bank {
                 compute_budget.to_cost(),
             );
 
-            let load_program_metrics = solana_bpf_loader_program::deploy_program(
+            let mut load_program_metrics = LoadProgramMetrics::default();
+            deploy_program(
                 dummy_invoke_context.get_log_collector(),
+                &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 program_runtime_environments.program_runtime_v1.clone(),
                 program_id,
