@@ -178,6 +178,8 @@ impl FeatureSet {
             create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
             bls_pubkey_management_in_vote_account: self
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
+            loader_v3_relax_program_buffer_constraints: self
+                .is_active(&loader_v3_relax_program_buffer_constraints::id()),
         }
     }
 }
@@ -1220,6 +1222,10 @@ pub mod bls_pubkey_management_in_vote_account {
     solana_pubkey::declare_id!("2uxQgtKa2ECHGs67Zdj7dgmzn2w9HiqhdcedwCWfYzzq");
 }
 
+pub mod loader_v3_relax_program_buffer_constraints {
+    solana_pubkey::declare_id!("H5AgGhTzvHp2GH9SVGZYBpjeQPy1V9bqYQ4MmTtiCWr9");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2186,6 +2192,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             bls_pubkey_management_in_vote_account::id(),
             "SIMD-0387: BLS Pubkey Management in Vote Account",
+        ),
+        (
+            loader_v3_relax_program_buffer_constraints::id(),
+            "SIMD-0430: Loader V3: Relax Program Buffer Constraints",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
