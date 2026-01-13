@@ -66,7 +66,7 @@ impl PodG1Point {
 
     /// Deserializes to an affine point with full validation.
     ///
-    /// Checks: Field validity, Curve equation, Subgroup membership.
+    /// Checks: Field validity, Curve equation (`y^2 = x^3 + 4`), Subgroup membership.
     pub fn to_affine(&self, endianness: Endianness) -> Option<G1Affine> {
         match endianness {
             Endianness::BE => G1Affine::from_uncompressed(&self.0).into_option(),
@@ -115,7 +115,7 @@ impl PodG2Point {
 
     /// Deserializes to an affine point with full validation.
     ///
-    /// Checks: Field validity, Curve equation, Subgroup membership.
+    /// Checks: Field validity, Curve equation (`y^2 = x^3 + 4(1+u)^{-1}`), Subgroup membership.
     pub fn to_affine(&self, endianness: Endianness) -> Option<G2Affine> {
         match endianness {
             Endianness::BE => G2Affine::from_uncompressed(&self.0).into_option(),
