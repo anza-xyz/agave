@@ -11,11 +11,7 @@ use {
     handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
-    solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair, ProofOfPossession as BLSProofOfPossession,
-        ProofOfPossessionCompressed as BLSProofOfPossessionCompressed, Pubkey as BLSPubkey,
-        PubkeyCompressed as BLSPubkeyCompressed, VerifiableProofOfPossession,
-    },
+    solana_bls_signatures::{keypair::Keypair as BLSKeypair, VerifiableProofOfPossession},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -920,26 +916,15 @@ pub(crate) fn generate_pop_message(
     message
 }
 
-// TODO(sam): use custom payload for PoP once solana-bls-signatures v2.0.0 is published.
 pub fn verify_bls_proof_of_possession(
     vote_account_pubkey: &Pubkey,
     bls_pubkey_compressed_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
     bls_proof_of_possession_compressed_bytes: &[u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
 ) -> Result<(), InstructionError> {
-    let bls_pubkey_compressed = BLSPubkeyCompressed(*bls_pubkey_compressed_bytes);
-    let bls_pubkey = BLSPubkey::try_from(bls_pubkey_compressed)
-        .map_err(|_| InstructionError::InvalidArgument)?;
-    let bls_proof_of_possession_compressed =
-        BLSProofOfPossessionCompressed(*bls_proof_of_possession_compressed_bytes);
-    let bls_proof_of_possession =
-        BLSProofOfPossession::try_from(bls_proof_of_possession_compressed)
-            .map_err(|_| InstructionError::InvalidArgument)?;
     let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
-    if Ok(true) == bls_proof_of_possession.verify(&bls_pubkey, Some(&message)) {
-        Ok(())
-    } else {
-        Err(InstructionError::InvalidArgument)
-    }
+    bls_proof_of_possession_compressed_bytes
+        .verify(bls_pubkey_compressed_bytes, Some(&message))
+        .map_err(|_| InstructionError::InvalidArgument)
 }
 
 /// Withdraw funds from the vote account
@@ -1266,13 +1251,13 @@ pub fn create_bls_proof_of_possession(
     [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
     [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
 ) {
-    let bls_pubkey_compressed: BLSPubkeyCompressed = bls_keypair.public.try_into().unwrap();
-    let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_compressed.0);
+    let bls_pubkey_bytes = bls_keypair.public.to_bytes_compressed();
+    let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_bytes);
+
     let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
-    let proof_of_possession: BLSProofOfPossession = proof_of_possession.into();
-    let proof_of_possession_compressed: BLSProofOfPossessionCompressed =
-        proof_of_possession.try_into().unwrap();
-    (bls_pubkey_compressed.0, proof_of_possession_compressed.0)
+    let proof_of_possession_bytes = proof_of_possession.to_bytes_compressed();
+
+    (bls_pubkey_bytes, proof_of_possession_bytes)
 }
 
 #[allow(clippy::arithmetic_side_effects)]
