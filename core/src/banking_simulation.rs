@@ -818,7 +818,6 @@ impl BankingSimulator {
             &genesis_config.hash(),
             Some(&bank_forks.read().unwrap().root_bank().hard_forks()),
         );
-        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
 
         // Create a completely-dummy ClusterInfo for the broadcast stage.
         // We only need it to write shreds into the blockstore and it seems given ClusterInfo is
@@ -846,7 +845,6 @@ impl BankingSimulator {
             blockstore.clone(),
             bank_forks.clone(),
             shred_version,
-            sender,
             None,
         );
 

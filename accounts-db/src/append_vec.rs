@@ -27,7 +27,7 @@ use {
             RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
-        FileInfo,
+        FileInfo, FileSize,
     },
     log::*,
     memmap2::MmapMut,
@@ -62,25 +62,6 @@ const _: () = assert!(
             + mem::size_of::<AccountMeta>()
             + mem::size_of::<ObsoleteAccountHash>()
 );
-
-/// Returns the size this item will take to store plus possible alignment padding bytes before the next entry.
-/// fixed-size portion of per-account data written
-/// plus 'data_len', aligned to next boundary
-pub fn aligned_stored_size(data_len: usize) -> usize {
-    u64_align!(STORE_META_OVERHEAD + data_len)
-}
-
-/// Checked variant of [`aligned_stored_size`].
-#[inline(always)]
-fn aligned_stored_size_checked(data_len: usize) -> Option<usize> {
-    Some(u64_align!(stored_size_checked(data_len)?))
-}
-
-/// Compute the (unaligned) stored size of an account.
-#[inline(always)]
-fn stored_size_checked(data_len: usize) -> Option<usize> {
-    STORE_META_OVERHEAD.checked_add(data_len)
-}
 
 pub const MAXIMUM_APPEND_VEC_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB
 
@@ -343,7 +324,7 @@ impl AppendVec {
     }
 
     pub fn dead_bytes_due_to_zero_lamport_single_ref(&self, count: usize) -> usize {
-        aligned_stored_size(0) * count
+        Self::calculate_stored_size(0) * count
     }
 
     /// Flushes contents to disk
@@ -721,10 +702,11 @@ impl AppendVec {
                 // 4096 was just picked to be a single page size
                 let mut buf = [MaybeUninit::<u8>::uninit(); PAGE_SIZE];
                 // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-                let bytes_read = read_into_buffer(file, self.len(), offset, unsafe {
-                    slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
-                })
-                .ok()?;
+                let bytes_read =
+                    read_into_buffer(file, self.len() as FileSize, offset as FileSize, unsafe {
+                        slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
+                    })
+                    .ok()?;
                 // SAFETY: we only read the initialized portion.
                 let valid_bytes = ValidSlice(unsafe {
                     slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
@@ -753,9 +735,17 @@ impl AppendVec {
                     // instead, we could piece together what we already read here. Maybe we just needed 1 more byte.
                     // Note here `next` is a 0-based offset from the beginning of this account.
                     // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-                    let bytes_read = read_into_buffer(file, self.len(), offset + next, unsafe {
-                        slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, data_len as usize)
-                    })
+                    let bytes_read = read_into_buffer(
+                        file,
+                        self.len() as FileSize,
+                        (offset + next) as FileSize,
+                        unsafe {
+                            slice::from_raw_parts_mut(
+                                data.as_mut_ptr() as *mut u8,
+                                data_len as usize,
+                            )
+                        },
+                    )
                     .ok()?;
                     if bytes_read < data_len as usize {
                         // eof or otherwise couldn't read all the data
@@ -763,7 +753,7 @@ impl AppendVec {
                     }
                     // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
                     let data = unsafe { data.assume_init() };
-                    let stored_size = aligned_stored_size(data_len as usize);
+                    let stored_size = Self::calculate_stored_size(data_len as usize);
                     let account = StoredAccountMeta {
                         meta,
                         account_meta,
@@ -789,7 +779,7 @@ impl AppendVec {
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 let (meta, next) = Self::get_type::<StoredMeta>(slice, offset)?;
                 let (account_meta, _) = Self::get_type::<AccountMeta>(slice, next)?;
-                let stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
+                let stored_size = Self::calculate_stored_size_checked(meta.data_len as usize)?;
 
                 Some(callback(StoredAccountNoData {
                     meta,
@@ -801,17 +791,18 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 let mut buf = [MaybeUninit::<u8>::uninit(); STORE_META_OVERHEAD];
                 // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-                let bytes_read = read_into_buffer(file, self.len(), offset, unsafe {
-                    slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
-                })
-                .ok()?;
+                let bytes_read =
+                    read_into_buffer(file, self.len() as FileSize, offset as FileSize, unsafe {
+                        slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
+                    })
+                    .ok()?;
                 // SAFETY: we only read the initialized portion.
                 let valid_bytes = ValidSlice(unsafe {
                     slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
                 });
                 let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
                 let (account_meta, _) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
-                let stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
+                let stored_size = Self::calculate_stored_size_checked(meta.data_len as usize)?;
 
                 Some(callback(StoredAccountNoData {
                     meta,
@@ -835,8 +826,10 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 let mut buf = MaybeUninit::<[u8; PAGE_SIZE]>::uninit();
                 let bytes_read =
-                    read_into_buffer(file, self.len(), offset, unsafe { &mut *buf.as_mut_ptr() })
-                        .ok()?;
+                    read_into_buffer(file, self.len() as FileSize, offset as FileSize, unsafe {
+                        &mut *buf.as_mut_ptr()
+                    })
+                    .ok()?;
                 // SAFETY: we only read the initialized portion.
                 let valid_bytes = ValidSlice(unsafe {
                     slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
@@ -866,9 +859,17 @@ impl AppendVec {
                     let slice = data.spare_capacity_mut();
                     // Note here `next` is a 0-based offset from the beginning of this account.
                     // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-                    let bytes_read = read_into_buffer(file, self.len(), offset + next, unsafe {
-                        slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len as usize)
-                    })
+                    let bytes_read = read_into_buffer(
+                        file,
+                        self.len() as FileSize,
+                        (offset + next) as FileSize,
+                        unsafe {
+                            slice::from_raw_parts_mut(
+                                slice.as_mut_ptr() as *mut u8,
+                                data_len as usize,
+                            )
+                        },
+                    )
                     .ok()?;
                     if bytes_read < data_len as usize {
                         // eof or otherwise couldn't read all the data
@@ -1020,11 +1021,11 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                reader.set_file(file, self.len())?;
+                reader.set_file(file, self.len() as FileSize)?;
 
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {
-                    let offset = reader.get_file_offset();
+                    let offset = reader.get_file_offset() as usize;
                     let bytes = match reader.fill_buf_required(min_buf_len) {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
@@ -1044,7 +1045,7 @@ impl AppendVec {
                     if leftover >= data_len {
                         // we already read enough data to load this account
                         let data = &bytes.0[next..(next + data_len)];
-                        let stored_size = aligned_stored_size(data_len);
+                        let stored_size = Self::calculate_stored_size(data_len);
                         let account = StoredAccountMeta {
                             meta,
                             account_meta,
@@ -1079,10 +1080,26 @@ impl AppendVec {
         self.scan_accounts_stored_meta(&mut reader, callback)
     }
 
-    /// Calculate the amount of storage required for an account with the passed
-    /// in data_len
-    pub(crate) fn calculate_stored_size(data_len: usize) -> usize {
-        aligned_stored_size(data_len)
+    /// Returns the number of bytes required to store an account with the passed in `data_len`.
+    ///
+    /// This includes:
+    /// - the fixed-size per-account metadata
+    /// - possible alignment padding bytes before the next account
+    #[inline(always)]
+    pub fn calculate_stored_size(data_len: usize) -> usize {
+        u64_align!(STORE_META_OVERHEAD + data_len)
+    }
+
+    /// Checked variant of [`calculate_stored_size`].
+    #[inline(always)]
+    fn calculate_stored_size_checked(data_len: usize) -> Option<usize> {
+        Self::calculate_unaligned_stored_size_checked(data_len).map(|size| u64_align!(size))
+    }
+
+    /// Unaligned variant of [`calculate_stored_size_checked`].
+    #[inline(always)]
+    fn calculate_unaligned_stored_size_checked(data_len: usize) -> Option<usize> {
+        STORE_META_OVERHEAD.checked_add(data_len)
     }
 
     /// for each offset in `sorted_offsets`, get the the amount of data stored in the account.
@@ -1109,13 +1126,15 @@ impl AppendVec {
                 let mut buffer = [MaybeUninit::<u8>::uninit(); mem::size_of::<StoredMeta>()];
                 for &offset in sorted_offsets {
                     // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-                    let Some(bytes_read) = read_into_buffer(file, self_len, offset, unsafe {
-                        slice::from_raw_parts_mut(
-                            buffer.as_mut_ptr() as *mut u8,
-                            mem::size_of::<StoredMeta>(),
-                        )
-                    })
-                    .ok() else {
+                    let Some(bytes_read) =
+                        read_into_buffer(file, self_len as FileSize, offset as FileSize, unsafe {
+                            slice::from_raw_parts_mut(
+                                buffer.as_mut_ptr() as *mut u8,
+                                mem::size_of::<StoredMeta>(),
+                            )
+                        })
+                        .ok()
+                    else {
                         break;
                     };
                     // SAFETY: we only read the initialized portion.
@@ -1168,14 +1187,15 @@ impl AppendVec {
                         // we passed the last useful account
                         break;
                     }
-                    let Some(stored_size) = stored_size_checked(stored_meta.data_len as usize)
-                    else {
+                    let Some(unaligned_stored_size) = Self::calculate_unaligned_stored_size_checked(
+                        stored_meta.data_len as usize,
+                    ) else {
                         break;
                     };
-                    if offset + stored_size > self_len {
+                    if offset + unaligned_stored_size > self_len {
                         break;
                     }
-                    let stored_size = u64_align!(stored_size);
+                    let stored_size = u64_align!(unaligned_stored_size);
                     callback(StoredAccountNoData {
                         meta: stored_meta,
                         account_meta,
@@ -1188,11 +1208,12 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader = BufferedReader::<BUFFER_SIZE>::new().with_file(file, self_len);
+                let mut reader =
+                    BufferedReader::<BUFFER_SIZE>::new().with_file(file, self_len as FileSize);
                 const REQUIRED_READ_LEN: usize =
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
-                    let offset = reader.get_file_offset();
+                    let offset = reader.get_file_offset() as usize;
                     let bytes = match reader.fill_buf_required(REQUIRED_READ_LEN) {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
@@ -1205,14 +1226,15 @@ impl AppendVec {
                         // we passed the last useful account
                         break;
                     }
-                    let Some(stored_size) = stored_size_checked(stored_meta.data_len as usize)
-                    else {
+                    let Some(unaligned_stored_size) = Self::calculate_unaligned_stored_size_checked(
+                        stored_meta.data_len as usize,
+                    ) else {
                         break;
                     };
-                    if offset + stored_size > self_len {
+                    if offset + unaligned_stored_size > self_len {
                         break;
                     }
-                    let stored_size = u64_align!(stored_size);
+                    let stored_size = u64_align!(unaligned_stored_size);
                     callback(StoredAccountNoData {
                         meta: stored_meta,
                         account_meta,
@@ -1596,7 +1618,7 @@ mod tests {
                 x => x % 256,
             };
             let account = create_account(data_len);
-            let size = aligned_stored_size(account.1.data().len());
+            let size = AppendVec::calculate_stored_size(account.1.data().len());
             file_size += size;
             test_accounts.push(account);
         }
@@ -1749,7 +1771,7 @@ mod tests {
             // sample + 1 is so sample = 0 won't be used.
             // sample = 0 produces default account with default pubkey
             let account = create_test_account(sample + 1);
-            sizes.push(aligned_stored_size(account.1.data().len()));
+            sizes.push(AppendVec::calculate_stored_size(account.1.data().len()));
             let pos = av.append_account_test(&account).unwrap();
             assert_eq!(av.get_account_test(pos).unwrap(), account);
             indexes.push(pos);
@@ -2063,7 +2085,7 @@ mod tests {
             let av = ManuallyDrop::new(AppendVec::new(
                 path,
                 true,
-                aligned_stored_size(data_len),
+                AppendVec::calculate_stored_size(data_len),
                 storage_access,
             ));
             av.append_account_test(&account).unwrap();
@@ -2104,7 +2126,7 @@ mod tests {
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
             let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
             accounts.push(account);
-            stored_sizes.push(aligned_stored_size(data_len));
+            stored_sizes.push(AppendVec::calculate_stored_size(data_len));
         }
         let accounts = accounts;
         let stored_sizes = stored_sizes;
@@ -2160,7 +2182,7 @@ mod tests {
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
             let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
             accounts.push(account);
-            total_stored_size += aligned_stored_size(data_len);
+            total_stored_size += AppendVec::calculate_stored_size(data_len);
         }
         let accounts = accounts;
         let total_stored_size = total_stored_size;
@@ -2303,7 +2325,7 @@ mod tests {
 
                         assert_eq!(
                             stored_account.stored_size,
-                            aligned_stored_size(account.data().len()),
+                            AppendVec::calculate_stored_size(account.data().len()),
                         );
                         assert_eq!(stored_account.offset(), *offset);
                         assert_eq!(stored_account.pubkey(), pubkey);

@@ -33,6 +33,7 @@ use {
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
+        resource_limits,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         tpu::MAX_VOTES_PER_SECOND,
@@ -63,7 +64,6 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
         xdp::{set_cpu_affinity, XdpConfig},
@@ -262,13 +262,6 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
-    let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
-        warn!("Submission of TPU transactions via UDP is deprecated.");
-        true
-    } else {
-        DEFAULT_TPU_ENABLE_UDP
-    };
-
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
@@ -304,8 +297,32 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
+    let accounts_index_limit =
+        value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
+    let index_limit = match accounts_index_limit.as_str() {
+        "minimal" => IndexLimit::Minimal,
+        "25GB" => IndexLimit::Threshold(25_000_000_000),
+        "50GB" => IndexLimit::Threshold(50_000_000_000),
+        "100GB" => IndexLimit::Threshold(100_000_000_000),
+        "200GB" => IndexLimit::Threshold(200_000_000_000),
+        "400GB" => IndexLimit::Threshold(400_000_000_000),
+        "800GB" => IndexLimit::Threshold(800_000_000_000),
+        "unlimited" => IndexLimit::InMemOnly,
+        x => {
+            // clap will enforce only the above values are possible
+            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+        }
+    };
+    // Note: need to still handle --enable-accounts-disk-index until it is removed
+    let index_limit = if matches.is_present("enable_accounts_disk_index") {
+        IndexLimit::Minimal
+    } else {
+        index_limit
+    };
+
     let mut accounts_index_config = AccountsIndexConfig {
         num_flush_threads: Some(accounts_index_flush_threads),
+        index_limit,
         ..AccountsIndexConfig::default()
     };
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
@@ -316,12 +333,6 @@ pub fn execute(
     {
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
-
-    accounts_index_config.index_limit = if !matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::InMemOnly
-    } else {
-        IndexLimit::Minimal
-    };
 
     {
         let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
@@ -421,7 +432,7 @@ pub fn execute(
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
-        base_working_path: Some(ledger_path.clone()),
+        bank_hash_details_dir: Some(ledger_path.clone()),
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
@@ -442,7 +453,9 @@ pub fn execute(
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         mark_obsolete_accounts,
-        memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
+        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        ),
         ..AccountsDbConfig::default()
     };
 
@@ -1012,7 +1025,6 @@ pub fn execute(
         ValidatorTpuConfig {
             vote_use_quic,
             tpu_connection_pool_size,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,

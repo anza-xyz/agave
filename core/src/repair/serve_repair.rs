@@ -233,7 +233,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "fFcqrZWZX4WcorTUxfMCVWeh2QcwamXKdLTzsDj58Kn")
+    frozen_abi(digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -1919,7 +1919,6 @@ mod tests {
         );
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
         nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
-        nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr).unwrap();

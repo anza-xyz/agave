@@ -1189,8 +1189,7 @@ fn do_process_tower_sync(
     )
 }
 
-#[cfg(test)]
-pub fn create_account_with_authorized(
+pub fn create_v3_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
     authorized_withdrawer: &Pubkey,
@@ -1413,6 +1412,7 @@ mod tests {
             rent.clone(),
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -1584,6 +1584,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -3944,6 +3945,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -4030,6 +4032,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(

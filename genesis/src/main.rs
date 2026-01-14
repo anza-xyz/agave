@@ -2,7 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::FEATURE_NAMES,
+    agave_feature_set::{vote_state_v4, FEATURE_NAMES},
     base64::{prelude::BASE64_STANDARD, Engine},
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
@@ -48,7 +48,7 @@ use {
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_vote_program::vote_state::{self, VoteStateV4},
+    solana_vote_program::vote_state::{self, VoteStateV3, VoteStateV4},
     std::{
         collections::HashMap,
         error,
@@ -131,6 +131,7 @@ pub fn load_validator_accounts(
     commission: u8,
     rent: &Rent,
     genesis_config: &mut GenesisConfig,
+    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
@@ -179,6 +180,7 @@ pub fn load_validator_accounts(
             commission,
             rent,
             None,
+            vote_state_v4_enabled,
         )?;
     }
 
@@ -258,6 +260,7 @@ fn add_validator_accounts(
     commission: u8,
     rent: &Rent,
     authorized_pubkey: Option<&Pubkey>,
+    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     rent_exempt_check(
         stake_lamports,
@@ -277,14 +280,24 @@ fn add_validator_accounts(
         );
 
         let bls_pubkey_compressed_bytes = bls_pubkeys_iter.next().map(|bls_pubkey| bls_pubkey.0);
-        let vote_account = vote_state::create_v4_account_with_authorized(
-            identity_pubkey,
-            identity_pubkey,
-            identity_pubkey,
-            bls_pubkey_compressed_bytes,
-            u16::from(commission) * 100,
-            rent.minimum_balance(VoteStateV4::size_of()).max(1),
-        );
+        let vote_account = if vote_state_v4_enabled {
+            vote_state::create_v4_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                identity_pubkey,
+                bls_pubkey_compressed_bytes,
+                u16::from(commission) * 100,
+                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+            )
+        } else {
+            vote_state::create_v3_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                identity_pubkey,
+                commission,
+                rent.minimum_balance(VoteStateV3::size_of()).max(1),
+            )
+        };
 
         genesis_config.add_account(
             *stake_pubkey,
@@ -727,6 +740,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             std::process::exit(1);
         });
 
+    // Determine if vote_state_v4 will be active at genesis
+    let vote_state_v4_enabled = !features_to_deactivate.contains(&vote_state_v4::id());
+
     match matches.value_of("hashes_per_tick").unwrap() {
         "auto" => match cluster_type {
             ClusterType::Development => {
@@ -796,6 +812,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         commission,
         &rent,
         bootstrap_stake_authorized_pubkey.as_ref(),
+        vote_state_v4_enabled,
     )?;
 
     if let Some(creation_time) = unix_timestamp_from_rfc3339_datetime(&matches, "creation_time") {
@@ -833,7 +850,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     if let Some(files) = matches.values_of("validator_accounts_file") {
         for file in files {
-            load_validator_accounts(file, commission, &rent, &mut genesis_config)?;
+            load_validator_accounts(
+                file,
+                commission,
+                &rent,
+                &mut genesis_config,
+                vote_state_v4_enabled,
+            )?;
         }
     }
 
@@ -1325,6 +1348,7 @@ mod tests {
             100,
             &Rent::default(),
             &mut GenesisConfig::default(),
+            true, // vote_state_v4_enabled
         )
         .is_err());
 
@@ -1387,8 +1411,14 @@ mod tests {
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
-        load_validator_accounts(&filename, 100, &Rent::default(), &mut genesis_config)
-            .expect("Failed to load validator accounts");
+        load_validator_accounts(
+            &filename,
+            100,
+            &Rent::default(),
+            &mut genesis_config,
+            true, // vote_state_v4_enabled
+        )
+        .expect("Failed to load validator accounts");
 
         remove_file(path).unwrap();
 

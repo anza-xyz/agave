@@ -213,6 +213,16 @@ impl VoteStorage {
             {
                 continue;
             }
+
+            if self
+                .cached_epoch_stakes
+                .epoch_authorized_voters()
+                .get(&vote.vote_pubkey())
+                .is_none_or(|authorized| authorized != &vote.authorized_voter_pubkey())
+            {
+                continue;
+            }
+
             if let Some(vote) = self.update_latest_vote(vote, should_replenish_taken_votes) {
                 match vote.source() {
                     VoteSource::Gossip => num_dropped_gossip += 1,
@@ -340,13 +350,12 @@ pub(crate) mod tests {
         solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
-        solana_keypair::Keypair,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils::{self, ValidatorVoteKeypairs},
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::{error::Error, sync::Arc},
+        std::sync::Arc,
     };
 
     pub(crate) fn packet_from_slots(
@@ -389,27 +398,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_reinsert_packets() -> Result<(), Box<dyn Error>> {
-        let node_keypair = Keypair::new();
+    fn test_reinsert_packets() {
+        let keypair = ValidatorVoteKeypairs::new_rand();
         let genesis_config =
-            genesis_utils::create_genesis_config_with_leader(100, &node_keypair.pubkey(), 200)
+            genesis_utils::create_genesis_config_with_vote_accounts(100, &[&keypair], vec![200])
                 .genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let vote_keypair = Keypair::new();
-        let mut vote = BytesPacket::from_data(
-            None,
-            new_tower_sync_transaction(
-                TowerSync::default(),
-                Hash::new_unique(),
-                &node_keypair,
-                &vote_keypair,
-                &vote_keypair,
-                None,
-            ),
-        )?;
-        vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
 
-        let mut vote_storage = VoteStorage::new_for_tests(&[vote_keypair.pubkey()]);
+        let vote = packet_from_slots(vec![(0, 1)], &keypair, None);
+        let mut vote_storage = VoteStorage::new(&bank);
         vote_storage.insert_batch(VoteSource::Tpu, std::iter::once(to_sanitized_view(vote)));
         assert_eq!(1, vote_storage.len());
 
@@ -419,7 +416,6 @@ pub(crate) mod tests {
 
         // All packets should remain in the transaction storage
         assert_eq!(1, vote_storage.len());
-        Ok(())
     }
 
     #[test]

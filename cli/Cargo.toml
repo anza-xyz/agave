@@ -47,7 +47,7 @@ reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-solana-account = "=3.2.0"
+solana-account = "=3.3.0"
 solana-account-decoder = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-borsh = "=3.0.0"
@@ -66,7 +66,7 @@ solana-feature-gate-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-fee-calculator = "=3.0.0"
 solana-fee-structure = "=3.0.0"
 solana-hash = "=3.1.0"
-solana-instruction = { workspace = true }
+solana-instruction = "=3.1.0"
 solana-keypair = "=3.1.0"
 solana-loader-v3-interface = { version = "=6.1.0", features = ["bincode"] }
 solana-loader-v4-interface = "=3.1.0"
@@ -86,7 +86,7 @@ solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
 solana-sbpf = { workspace = true, features = ["jit"] }
-solana-sdk-ids = "=3.0.0"
+solana-sdk-ids = "=3.1.0"
 solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
 solana-slot-history = "=3.0.0"

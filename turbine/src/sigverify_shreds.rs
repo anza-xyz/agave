@@ -1,6 +1,6 @@
 use {
     crate::{
-        cluster_nodes::{self, check_feature_activation, ClusterNodesCache},
+        cluster_nodes::{check_feature_activation, ClusterNodesCache, DATA_PLANE_FANOUT},
         retransmit_stage::RetransmitStage,
     },
     agave_feature_set as feature_set,
@@ -358,8 +358,7 @@ fn verify_retransmitter_signature(
     };
     let cluster_nodes =
         cluster_nodes_cache.get(shred.slot(), root_bank, working_bank, cluster_info);
-    let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), root_bank);
-    let parent = match cluster_nodes.get_retransmit_parent(&leader, &shred, data_plane_fanout) {
+    let parent = match cluster_nodes.get_retransmit_parent(&leader, &shred, DATA_PLANE_FANOUT) {
         Ok(Some(parent)) => parent,
         Ok(None) => {
             stats

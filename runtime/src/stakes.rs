@@ -8,7 +8,7 @@ use {
     log::error,
     num_derive::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
-    serde::{Deserialize, Serialize},
+    serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
@@ -28,8 +28,9 @@ use {
 };
 
 mod serde_stakes;
-pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
-pub use serde_stakes::SerdeStakesToStakeFormat;
+pub(crate) use serde_stakes::{
+    serialize_stake_accounts_to_delegation_format, DeserializableStakes, SerdeStakesToStakeFormat,
+};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -161,7 +162,7 @@ impl StakesCache {
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Default, Clone, PartialEq, Debug, Deserialize, Serialize)]
+#[derive(Default, Clone, PartialEq, Debug, Serialize)]
 pub struct Stakes<T: Clone> {
     /// vote accounts
     vote_accounts: VoteAccounts,
@@ -189,28 +190,40 @@ impl<T: Clone> Stakes<T> {
     }
 }
 
+impl<T: Clone> Stakes<T> {
+    /// Convert deserialized stakes into runtime stakes representation
+    pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
+        Self {
+            vote_accounts: stakes.vote_accounts,
+            stake_delegations: ImHashMap::from_iter(stakes.stake_delegations),
+            unused: stakes.unused,
+            epoch: stakes.epoch,
+            stake_history: stakes.stake_history,
+        }
+    }
+}
+
 impl Stakes<StakeAccount> {
-    /// Creates a Stake<StakeAccount> from Stake<Delegation> by loading the
+    /// Creates a Stake<StakeAccount> from DeserializableStakes<Delegation> by loading the
     /// full account state for respective stake pubkeys. get_account function
     /// should return the account at the respective slot where stakes where
     /// cached.
-    pub(crate) fn new<F>(stakes: &Stakes<Delegation>, get_account: F) -> Result<Self, Error>
+    pub(crate) fn load_from_deserialized_delegations<F>(
+        stakes: DeserializableStakes<Delegation>,
+        get_account: F,
+    ) -> Result<Self, Error>
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
         let stake_delegations = stakes
             .stake_delegations
-            .iter()
-            // im::HashMap doesn't support rayon so we manually build a temporary vector. Note this is
-            // what std HashMap::par_iter() does internally too.
-            .collect::<Vec<_>>()
             .into_par_iter()
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
             // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
             // but it does it in background threads, so effectively it's faster.
             .try_fold(ImHashMap::new, |mut map, (pubkey, delegation)| {
-                let Some(stake_account) = get_account(pubkey) else {
-                    return Err(Error::StakeAccountNotFound(*pubkey));
+                let Some(stake_account) = get_account(&pubkey) else {
+                    return Err(Error::StakeAccountNotFound(pubkey));
                 };
 
                 // Assert that all valid vote-accounts referenced in stake delegations are already
@@ -230,11 +243,11 @@ impl Stakes<StakeAccount> {
                 let stake_account = StakeAccount::try_from(stake_account)?;
                 // Sanity check that the delegation is consistent with what is
                 // stored in the account.
-                if stake_account.delegation() == delegation {
-                    map.insert(*pubkey, stake_account);
+                if stake_account.delegation() == &delegation {
+                    map.insert(pubkey, stake_account);
                     Ok(map)
                 } else {
-                    Err(Error::InvalidDelegation(*pubkey))
+                    Err(Error::InvalidDelegation(pubkey))
                 }
             })
             .try_reduce(ImHashMap::new, |a, b| Ok(a.union(b)))?;

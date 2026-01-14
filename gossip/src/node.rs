@@ -128,10 +128,6 @@ impl Node {
         );
         let tvu_addresses = Self::get_socket_addrs(&tvu_sockets);
 
-        let (tvu_quic_port, tvu_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-                .expect("tvu_quic bind");
-
         let (tpu_port, tpu_socket) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("tpu_socket primary bind");
@@ -294,7 +290,6 @@ impl Node {
             public_tvu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tvu_port)),
         )
         .unwrap();
-        info.set_tvu(QUIC, (advertised_ip, tvu_quic_port)).unwrap();
         info.set_tpu(UDP, (advertised_ip, tpu_port)).unwrap();
         info.set_tpu(
             QUIC,
@@ -341,7 +336,6 @@ impl Node {
             alpenglow: Some(alpenglow),
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
-            tvu_quic,
             tpu: tpu_sockets,
             tpu_forwards: tpu_forwards_sockets,
             tpu_vote: tpu_vote_sockets,

@@ -2,10 +2,10 @@
 
 use {
     super::{
-        memory::{FixedIoBuffer, LargeBuffer},
+        memory::{IoBufferChunk, PageAlignedMemory},
         IO_PRIO_BE_HIGHEST,
     },
-    crate::io_uring::sqpoll,
+    crate::{io_uring::sqpoll, FileSize, IoSize},
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -23,14 +23,14 @@ use {
 // Based on transfers seen with `dd bs=SIZE` for NVME drives: values >=64KiB are fine,
 // but peak at 1MiB. Also compare with particular NVME parameters, e.g.
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
-const DEFAULT_READ_SIZE: usize = 1024 * 1024;
+const DEFAULT_READ_SIZE: IoSize = 1024 * 1024;
 // For large file we don't really use workers as few regularly submitted requests get handled
 // within sqpoll thread. Allow some workers just in case, but limit them.
 const DEFAULT_MAX_IOWQ_WORKERS: u32 = 2;
 
 /// Utility for building `SequentialFileReader` with specified tuning options.
 pub struct SequentialFileReaderBuilder<'sp> {
-    read_capacity: usize,
+    read_capacity: IoSize,
     max_iowq_workers: u32,
     ring_squeue_size: Option<u32>,
     shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
@@ -45,7 +45,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             max_iowq_workers: DEFAULT_MAX_IOWQ_WORKERS,
             ring_squeue_size: None,
             shared_sqpoll_fd: None,
-            register_buffer: true,
+            register_buffer: false,
         }
     }
 
@@ -53,8 +53,16 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     ///
     /// This influences the concurrency, since buffer is divided into chunks of this size.
     #[cfg(test)]
-    pub fn read_capacity(mut self, read_capacity: usize) -> Self {
+    pub fn read_capacity(mut self, read_capacity: IoSize) -> Self {
         self.read_capacity = read_capacity;
+        self
+    }
+
+    /// Set whether to register buffer with `io_uring` for improved performance.
+    ///
+    /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
+    pub fn use_registered_buffers(mut self, register_buffers: bool) -> Self {
+        self.register_buffer = register_buffers;
         self
     }
 
@@ -74,9 +82,9 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         self,
         path: impl AsRef<Path>,
         buf_capacity: usize,
-    ) -> io::Result<SequentialFileReader<LargeBuffer>> {
-        let buf_capacity = buf_capacity.max(self.read_capacity);
-        let buffer = LargeBuffer::new(buf_capacity);
+    ) -> io::Result<SequentialFileReader> {
+        let buf_capacity = buf_capacity.max(self.read_capacity as usize);
+        let buffer = PageAlignedMemory::new(buf_capacity)?;
         self.build_with_buffer(path, buffer)
     }
 
@@ -86,17 +94,30 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     ///
     /// Initially the reader is idle and starts reading after the first file is added.
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
-    pub fn build_with_buffer<B: AsMut<[u8]>>(
+    fn build_with_buffer(
         self,
         path: impl AsRef<Path>,
-        mut buffer: B,
-    ) -> io::Result<SequentialFileReader<B>> {
+        mut buffer: PageAlignedMemory,
+    ) -> io::Result<SequentialFileReader> {
         // Align buffer capacity to read capacity, so we always read equally sized chunks
-        let buf_capacity = buffer.as_mut().len() / self.read_capacity * self.read_capacity;
+        let buf_capacity =
+            buffer.as_mut().len() / self.read_capacity as usize * self.read_capacity as usize;
         assert_ne!(buf_capacity, 0, "read size aligned buffer is too small");
         let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
 
-        let state = SequentialFileReaderState::new(path, buf_slice_mut, self.read_capacity)?;
+        // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
+        // dropped before `backing_buffer` in `SequentialFileReader` is dropped.
+        let buffers = unsafe {
+            IoBufferChunk::split_buffer_chunks(
+                buf_slice_mut,
+                self.read_capacity,
+                self.register_buffer,
+            )
+        }
+        .map(ReadBufState::Uninit)
+        .collect();
+
+        let state = SequentialFileReaderState::new(path, buffers, self.read_capacity)?;
 
         let io_uring = self.create_io_uring(buf_capacity)?;
         let ring = Ring::new(io_uring, state);
@@ -104,7 +125,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         if self.register_buffer {
             // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
             // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
-            unsafe { FixedIoBuffer::register(buf_slice_mut, &ring)? };
+            unsafe { IoBufferChunk::register(buf_slice_mut, &ring)? };
         }
 
         let mut reader = SequentialFileReader {
@@ -117,7 +138,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 
     fn create_io_uring(&self, buf_capacity: usize) -> io::Result<IoUring> {
         // Let all buffers be submitted for reading at any time
-        let max_inflight_ops = (buf_capacity / self.read_capacity) as u32;
+        let max_inflight_ops = (buf_capacity / self.read_capacity as usize) as u32;
 
         // Completions arrive in bursts (batching done by the disk controller and the kernel).
         // By submitting smaller chunks we decrease the likelihood that we stall on a full completion queue.
@@ -143,15 +164,15 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 /// Reader for non-seekable files.
 ///
 /// Implements read-ahead using io_uring.
-pub struct SequentialFileReader<B> {
+pub struct SequentialFileReader {
     // Note: state is tied to `backing_buffer` and contains unsafe pointer references to it
     inner: Ring<SequentialFileReaderState, ReadOp>,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
-    _backing_buffer: B,
+    _backing_buffer: PageAlignedMemory,
 }
 
-impl<B: AsMut<[u8]>> SequentialFileReader<B> {
+impl SequentialFileReader {
     fn start_reading(&mut self) -> io::Result<()> {
         for i in 0..self.inner.context().buffers.len() {
             self.start_reading_buf(i)?;
@@ -190,7 +211,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
 
                 // We always advance by `read_capacity`. If we get a short read, we submit a new
                 // read for the remaining data. See ReadOp::complete().
-                *offset += *read_capacity;
+                *offset += *read_capacity as FileSize;
 
                 // Safety:
                 // The op points to a buffer which is guaranteed to be valid for
@@ -204,7 +225,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
 }
 
 // BufRead requires Read, but we never really use the Read interface.
-impl<B: AsMut<[u8]>> Read for SequentialFileReader<B> {
+impl Read for SequentialFileReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let available = self.fill_buf()?;
         if available.is_empty() {
@@ -218,7 +239,7 @@ impl<B: AsMut<[u8]>> Read for SequentialFileReader<B> {
     }
 }
 
-impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
+impl BufRead for SequentialFileReader {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         let _have_data = loop {
             let state = self.inner.context_mut();
@@ -241,7 +262,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
                         state.current_buf = (state.current_buf + 1) % num_buffers;
                     } else {
                         // we have finished consuming this buffer, queue the next read
-                        let cursor = mem::replace(cursor, Cursor::new(FixedIoBuffer::empty()));
+                        let cursor = mem::replace(cursor, Cursor::new(IoBufferChunk::empty()));
                         let buf = cursor.into_inner();
 
                         // The very last read when we hit EOF could return less than `read_capacity`, in
@@ -300,24 +321,23 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
 /// Holds the state of the reader.
 struct SequentialFileReaderState {
     file: File,
-    read_capacity: usize,
-    offset: usize,
+    read_capacity: IoSize,
+    offset: FileSize,
     eof_buf_index: Option<usize>,
     buffers: Vec<ReadBufState>,
     current_buf: usize,
 }
 
 impl SequentialFileReaderState {
-    fn new(path: impl AsRef<Path>, buffer: &mut [u8], read_capacity: usize) -> io::Result<Self> {
+    fn new(
+        path: impl AsRef<Path>,
+        buffers: Vec<ReadBufState>,
+        read_capacity: IoSize,
+    ) -> io::Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOATIME)
             .open(path)?;
-        // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
-        // dropped before `backing_buffer` in `SequentialFileReader` is dropped.
-        let buffers = unsafe { FixedIoBuffer::split_buffer_chunks(buffer, read_capacity) }
-            .map(ReadBufState::Uninit)
-            .collect();
         Ok(Self {
             file,
             read_capacity,
@@ -332,12 +352,12 @@ impl SequentialFileReaderState {
 enum ReadBufState {
     /// The buffer is pending submission to read queue (on initialization and
     /// in transition from `Full` to `Reading`).
-    Uninit(FixedIoBuffer),
+    Uninit(IoBufferChunk),
     /// The buffer is currently being read and there's a corresponding ReadOp in
     /// the ring.
     Reading,
     /// The buffer is filled and ready to be consumed.
-    Full(Cursor<FixedIoBuffer>),
+    Full(Cursor<IoBufferChunk>),
 }
 
 impl std::fmt::Debug for ReadBufState {
@@ -358,16 +378,16 @@ impl std::fmt::Debug for ReadBufState {
 
 struct ReadOp {
     fd: RawFd,
-    buf: FixedIoBuffer,
+    buf: IoBufferChunk,
     /// This is the offset inside the buffer. It's typically 0, but can be non-zero if a previous
     /// read returned less data than requested (because of EINTR or whatever) and we submitted a new
     /// read for the remaining data.
-    buf_off: usize,
+    buf_off: IoSize,
     /// The offset in the file.
-    file_off: usize,
+    file_off: FileSize,
     /// The length of the read. This is typically `read_capacity` but can be less if a previous read
     /// returned less data than requested.
-    read_len: usize,
+    read_len: IoSize,
     /// This is the index of the buffer in the reader's state. It's used to update the state once the
     /// read completes.
     reader_buf_index: usize,
@@ -397,18 +417,23 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             reader_buf_index: _,
         } = self;
         debug_assert!(*buf_off + *read_len <= buf.len());
-        opcode::ReadFixed::new(
-            types::Fd(*fd),
-            // Safety: we assert that the buffer is large enough to hold the read.
-            unsafe { buf.as_mut_ptr().byte_add(*buf_off) },
-            *read_len as u32,
-            buf.io_buf_index()
-                .expect("should have a valid fixed buffer"),
-        )
-        .offset(*file_off as u64)
-        .ioprio(IO_PRIO_BE_HIGHEST)
-        .build()
-        .flags(squeue::Flags::ASYNC)
+        // Safety: we assert that the buffer is large enough to hold the read.
+        let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_off as usize) };
+
+        let fd = types::Fd(*fd);
+        let offset = *file_off;
+
+        let entry = match buf.io_buf_index() {
+            Some(io_buf_index) => opcode::ReadFixed::new(fd, buf_ptr, *read_len, io_buf_index)
+                .offset(offset)
+                .ioprio(IO_PRIO_BE_HIGHEST)
+                .build(),
+            None => opcode::Read::new(fd, buf_ptr, *read_len)
+                .offset(offset)
+                .ioprio(IO_PRIO_BE_HIGHEST)
+                .build(),
+        };
+        entry.flags(squeue::Flags::ASYNC)
     }
 
     fn complete(
@@ -426,13 +451,13 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
         } = self;
         let reader_state = completion.context_mut();
 
-        let last_read_len = res? as usize;
+        let last_read_len = res? as IoSize;
         if last_read_len == 0 {
             reader_state.eof_buf_index = Some(*reader_buf_index);
         }
 
         let total_read_len = *buf_off + last_read_len;
-        let buf = mem::replace(buf, FixedIoBuffer::empty());
+        let buf = mem::replace(buf, IoBufferChunk::empty());
 
         if last_read_len > 0 && last_read_len < *read_len {
             // Partial read, retry the op with updated offsets
@@ -440,7 +465,7 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
                 fd: *fd,
                 buf,
                 buf_off: total_read_len,
-                file_off: *file_off + last_read_len,
+                file_off: *file_off + last_read_len as FileSize,
                 read_len: *read_len - last_read_len,
                 reader_buf_index: *reader_buf_index,
             };
@@ -461,17 +486,21 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
 mod tests {
     use {super::*, tempfile::NamedTempFile};
 
-    fn check_reading_file(file_size: usize, backing_buffer_size: usize, read_capacity: usize) {
+    fn check_reading_file(file_size: FileSize, backing_buffer_size: usize, read_capacity: IoSize) {
         let pattern: Vec<u8> = (0..251).collect();
 
         // Create a temp file and write the pattern to it repeatedly
         let mut temp_file = NamedTempFile::new().unwrap();
-        for _ in 0..file_size / pattern.len() {
+        for _ in 0..file_size as usize / pattern.len() {
             io::Write::write_all(&mut temp_file, &pattern).unwrap();
         }
-        io::Write::write_all(&mut temp_file, &pattern[..file_size % pattern.len()]).unwrap();
+        io::Write::write_all(
+            &mut temp_file,
+            &pattern[..file_size as usize % pattern.len()],
+        )
+        .unwrap();
 
-        let buf = vec![0; backing_buffer_size];
+        let buf = PageAlignedMemory::new(backing_buffer_size).unwrap();
         let mut reader = SequentialFileReaderBuilder::new()
             .read_capacity(read_capacity)
             .build_with_buffer(temp_file.path(), buf)
@@ -480,7 +509,7 @@ mod tests {
         // Read contents from the reader and verify length
         let mut all_read_data = Vec::new();
         reader.read_to_end(&mut all_read_data).unwrap();
-        assert_eq!(all_read_data.len(), file_size);
+        assert_eq!(all_read_data.len() as FileSize, file_size);
 
         // Verify the contents
         for (i, byte) in all_read_data.iter().enumerate() {
@@ -513,5 +542,24 @@ mod tests {
         check_reading_file(250_000, 4096, 1024);
         check_reading_file(250_000, 4096, 2048);
         check_reading_file(250_000, 4096, 4096);
+    }
+
+    #[test]
+    fn test_non_registered_buffer_read() {
+        let file_size = 64 * 1024;
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        let data = (0..).take(file_size).map(|v| v as u8).collect::<Vec<_>>();
+        io::Write::write_all(temp_file.as_file_mut(), &data).unwrap();
+
+        let mut reader = SequentialFileReaderBuilder::new()
+            .read_capacity(4 * 1024)
+            .use_registered_buffers(false)
+            .build(temp_file.path(), 16 * 1024)
+            .unwrap();
+
+        let mut all_read_data = Vec::new();
+        reader.read_to_end(&mut all_read_data).unwrap();
+        assert_eq!(all_read_data.len(), file_size);
+        assert_eq!(all_read_data, data);
     }
 }

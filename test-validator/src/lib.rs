@@ -56,14 +56,12 @@ use {
         client_error::Error as RpcClientError, request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_runtime::{
-        bank_forks::BankForks,
-        genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
+        bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig,
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_transaction::{Transaction, TransactionError},
     solana_validator_exit::Exit,
     std::{
@@ -145,7 +143,6 @@ pub struct TestValidatorGenesis {
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
-    pub tpu_enable_udp: bool,
     pub geyser_plugin_manager: Arc<RwLock<GeyserPluginManager>>,
     admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
@@ -181,7 +178,6 @@ impl Default for TestValidatorGenesis {
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
-            tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
             geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::default())),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
@@ -246,11 +242,6 @@ impl TestValidatorGenesis {
     /// Check if a given TestValidator ledger has already been initialized
     pub fn ledger_exists(ledger_path: &Path) -> bool {
         ledger_path.join("vote-account-keypair.json").exists()
-    }
-
-    pub fn tpu_enable_udp(&mut self, tpu_enable_udp: bool) -> &mut Self {
-        self.tpu_enable_udp = tpu_enable_udp;
-        self
     }
 
     pub fn fee_rate_governor(&mut self, fee_rate_governor: FeeRateGovernor) -> &mut Self {
@@ -819,11 +810,9 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
         target_lamports_per_signature: u64,
-        tpu_enable_udp: bool,
         wait_for_fees: bool,
     ) -> Self {
         let test_validator = TestValidatorGenesis::default()
-            .tpu_enable_udp(tpu_enable_udp)
             .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
                 lamports_per_byte_year: 1,
@@ -874,23 +863,7 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        Self::start_with_config(
-            mint_address,
-            faucet_addr,
-            socket_addr_space,
-            0,
-            false,
-            false,
-        )
-    }
-
-    /// Create a test validator using udp for TPU.
-    pub fn with_no_fees_udp(
-        mint_address: Pubkey,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, true, false)
+        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, false)
     }
 
     /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
@@ -908,7 +881,6 @@ impl TestValidator {
             faucet_addr,
             socket_addr_space,
             target_lamports_per_signature,
-            false,
             true,
         )
     }
@@ -962,10 +934,13 @@ impl TestValidator {
         let mint_lamports = 500_000_000 * LAMPORTS_PER_SOL;
 
         // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive().clone();
+        let mut feature_set = FeatureSet::all_enabled();
+        // TODO: remove after cli change for bls_pubkey_management_in_vote_account is checked in
+        feature_set.deactivate(&agave_feature_set::bls_pubkey_management_in_vote_account::id());
         for feature in &config.deactivate_feature_set {
-            if feature_set.remove(feature) {
-                info!("Feature for {feature:?} deactivated")
+            if FEATURE_NAMES.contains_key(feature) {
+                feature_set.deactivate(feature);
+                info!("Feature for {feature:?} deactivated");
             } else {
                 warn!("Feature {feature:?} set for deactivation is not a known Feature public key",)
             }
@@ -977,7 +952,7 @@ impl TestValidator {
         }
         for (address, account) in
             solana_program_binaries::core_bpf_programs(&config.rent, |feature_id| {
-                feature_set.contains(feature_id)
+                feature_set.is_active(feature_id)
             })
         {
             accounts.entry(address).or_insert(account);
@@ -1021,7 +996,7 @@ impl TestValidator {
             );
         }
 
-        let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+        let mut genesis_config = create_genesis_config_with_leader_ex(
             mint_lamports,
             &mint_address,
             &validator_identity.pubkey(),
@@ -1033,6 +1008,7 @@ impl TestValidator {
             config.fee_rate_governor.clone(),
             config.rent.clone(),
             solana_cluster_type::ClusterType::Development,
+            &feature_set,
             accounts.into_iter().collect(),
         );
         genesis_config.epoch_schedule = config
@@ -1047,13 +1023,6 @@ impl TestValidator {
 
         if let Some(inflation) = config.inflation {
             genesis_config.inflation = inflation;
-        }
-
-        for feature in feature_set {
-            // TODO: remove after cli change for bls_pubkey_management_in_vote_account is checked in
-            if feature != agave_feature_set::bls_pubkey_management_in_vote_account::id() {
-                genesis_utils::activate_feature(&mut genesis_config, feature);
-            }
         }
 
         let ledger_path = match &config.ledger_path {
@@ -1256,7 +1225,7 @@ impl TestValidator {
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,
-            ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
+            ValidatorTpuConfig::new_for_tests(),
             config.admin_rpc_service_post_init.clone(),
         )?);
 

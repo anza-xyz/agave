@@ -1,7 +1,6 @@
 use {
     super::{
         AccountShrinkThreshold, MarkObsoleteAccounts, DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
-        MEMLOCK_BUDGET_SIZE_FOR_TESTS,
     },
     crate::{
         accounts_file::StorageAccess,
@@ -20,8 +19,11 @@ use {
 pub struct AccountsDbConfig {
     pub index: Option<AccountsIndexConfig>,
     pub account_indexes: Option<AccountSecondaryIndexes>,
-    /// Base directory for various necessary files
-    pub base_working_path: Option<PathBuf>,
+    // We need the Option wrapper until we're on Rust 1.91 or newer,
+    // because PathBuf::new() is non-const until then.
+    // For now, the only way for ACCOUNTS_DB_CONFIG_FOR_TESTING/BENCHMARKS
+    // to indicate they do not use bank_hash_details_dir is to use None.
+    pub bank_hash_details_dir: Option<PathBuf>,
     pub shrink_paths: Option<Vec<PathBuf>>,
     pub shrink_ratio: AccountShrinkThreshold,
     /// The low and high watermark sizes for the read cache, in bytes.
@@ -46,16 +48,16 @@ pub struct AccountsDbConfig {
     pub num_background_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool_foreground`)
     pub num_foreground_threads: Option<NonZeroUsize>,
-    /// Amount of memory (in bytes) that is allowed to be locked during db operations.
-    /// On linux it's verified on start-up with the kernel limits, such that during runtime
-    /// parts of it can be utilized without panicking.
-    pub memlock_budget_size: usize,
+    /// Whether to register buffers as *fixed* in io_uring
+    ///
+    /// Requires memlock ulimit higher than sum of buffer sizes registered at the same time.
+    pub use_registered_io_uring_buffers: bool,
 }
 
 pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
     account_indexes: None,
-    base_working_path: None,
+    bank_hash_details_dir: None, // tests don't use bank hash details
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
@@ -72,13 +74,13 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
+    use_registered_io_uring_buffers: true,
 };
 
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
     account_indexes: None,
-    base_working_path: None,
+    bank_hash_details_dir: None, // benches don't use bank hash details
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
@@ -95,5 +97,5 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
+    use_registered_io_uring_buffers: true,
 };

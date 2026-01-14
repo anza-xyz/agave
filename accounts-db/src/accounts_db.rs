@@ -35,12 +35,13 @@ use {
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
             AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
         },
+        account_storage_entry::AccountStorageEntry,
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, ObsoleteAccountsStats, PurgeStats,
             ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
         },
-        accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider, StorageAccess},
+        accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
@@ -50,10 +51,9 @@ use {
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        append_vec::{self, aligned_stored_size, STORE_META_OVERHEAD},
+        append_vec::{self, AppendVec, STORE_META_OVERHEAD},
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
-        obsolete_accounts::ObsoleteAccounts,
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
@@ -86,7 +86,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
-            Arc, Condvar, Mutex, RwLock, RwLockReadGuard,
+            Arc, Condvar, Mutex, RwLock,
         },
         thread::{self, sleep},
         time::{Duration, Instant},
@@ -101,15 +101,12 @@ const SCAN_SLOT_PAR_ITER_THRESHOLD: usize = 4000;
 
 const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 
-const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 const DEFAULT_NUM_DIRS: u32 = 4;
 
 // This value reflects recommended memory lock limit documented in the validator's
 // setup instructions at docs/src/operations/guides/validator-start.md allowing use of
 // several io_uring instances with fixed buffers for large disk IO operations.
-pub const DEFAULT_MEMLOCK_BUDGET_SIZE: usize = 2_000_000_000;
-// Linux distributions often have some small memory lock limit (e.g. 8MB) that we can tap into.
-const MEMLOCK_BUDGET_SIZE_FOR_TESTS: usize = 4_000_000;
+pub const TOTAL_IO_URING_BUFFERS_SIZE_LIMIT: usize = 2_000_000_000;
 
 // When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
 // This allows us to split up accounts index accesses across multiple threads.
@@ -317,7 +314,7 @@ impl AccountFromStorage {
         &self.pubkey
     }
     pub fn stored_size(&self) -> usize {
-        aligned_stored_size(self.data_len as usize)
+        AppendVec::calculate_stored_size(self.data_len as usize)
     }
     pub fn data_len(&self) -> usize {
         self.data_len as usize
@@ -799,236 +796,6 @@ struct CleanKeyTimings {
     dirty_ancient_stores: usize,
 }
 
-/// Persistent storage structure holding the accounts
-#[derive(Debug)]
-pub struct AccountStorageEntry {
-    pub(crate) id: AccountsFileId,
-
-    pub(crate) slot: Slot,
-
-    /// storage holding the accounts
-    pub accounts: AccountsFile,
-
-    /// The number of alive accounts in this storage
-    count: AtomicUsize,
-
-    alive_bytes: AtomicUsize,
-
-    /// offsets to accounts that are zero lamport single ref stored in this
-    /// storage. These are still alive. But, shrink will be able to remove them.
-    ///
-    /// NOTE: It's possible that one of these zero lamport single ref accounts
-    /// could be written in a new transaction (and later rooted & flushed) and a
-    /// later clean runs and marks this account dead before this storage gets a
-    /// chance to be shrunk, thus making the account dead in both "alive_bytes"
-    /// and as a zero lamport single ref. If this happens, we will count this
-    /// account as "dead" twice. However, this should be fine. It just makes
-    /// shrink more likely to visit this storage.
-    zero_lamport_single_ref_offsets: RwLock<IntSet<Offset>>,
-
-    /// Obsolete Accounts. These are accounts that are still present in the storage
-    /// but should be ignored during rebuild. They have been removed
-    /// from the accounts index, so they will not be picked up by scan.
-    /// Slot is the slot at which the account is no longer needed.
-    /// Two scenarios cause an account entry to be marked obsolete
-    /// 1. The account was rewritten to a newer slot
-    /// 2. The account was set to zero lamports and is older than the last
-    ///    full snapshot. In this case, slot is set to the snapshot slot
-    obsolete_accounts: RwLock<ObsoleteAccounts>,
-}
-
-impl AccountStorageEntry {
-    pub fn new(
-        path: &Path,
-        slot: Slot,
-        id: AccountsFileId,
-        file_size: u64,
-        provider: AccountsFileProvider,
-        storage_access: StorageAccess,
-    ) -> Self {
-        let tail = AccountsFile::file_name(slot, id);
-        let path = Path::new(path).join(tail);
-        let accounts = provider.new_writable(path, file_size, storage_access);
-
-        Self {
-            id,
-            slot,
-            accounts,
-            count: AtomicUsize::new(0),
-            alive_bytes: AtomicUsize::new(0),
-            zero_lamport_single_ref_offsets: RwLock::default(),
-            obsolete_accounts: RwLock::default(),
-        }
-    }
-
-    /// open a new instance of the storage that is readonly
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn reopen_as_readonly(&self, storage_access: StorageAccess) -> Option<Self> {
-        if storage_access != StorageAccess::File {
-            // if we are only using mmap, then no reason to re-open
-            return None;
-        }
-
-        self.accounts.reopen_as_readonly().map(|accounts| Self {
-            id: self.id,
-            slot: self.slot,
-            count: AtomicUsize::new(self.count()),
-            alive_bytes: AtomicUsize::new(self.alive_bytes()),
-            accounts,
-            zero_lamport_single_ref_offsets: RwLock::new(
-                self.zero_lamport_single_ref_offsets.read().unwrap().clone(),
-            ),
-            obsolete_accounts: RwLock::new(self.obsolete_accounts.read().unwrap().clone()),
-        })
-    }
-
-    pub fn new_existing(
-        slot: Slot,
-        id: AccountsFileId,
-        accounts: AccountsFile,
-        obsolete_accounts: ObsoleteAccounts,
-    ) -> Self {
-        Self {
-            id,
-            slot,
-            accounts,
-            count: AtomicUsize::new(0),
-            alive_bytes: AtomicUsize::new(0),
-            zero_lamport_single_ref_offsets: RwLock::default(),
-            obsolete_accounts: RwLock::new(obsolete_accounts),
-        }
-    }
-
-    /// Returns the number of alive accounts in this storage
-    pub fn count(&self) -> usize {
-        self.count.load(Ordering::Acquire)
-    }
-
-    pub fn alive_bytes(&self) -> usize {
-        self.alive_bytes.load(Ordering::Acquire)
-    }
-
-    /// Returns the accounts that were marked obsolete as of the passed in slot
-    /// or earlier. Returned data includes the slots that the accounts were marked
-    /// obsolete at
-    pub fn obsolete_accounts_for_snapshots(&self, slot: Slot) -> ObsoleteAccounts {
-        self.obsolete_accounts_read_lock()
-            .obsolete_accounts_for_snapshots(slot)
-    }
-
-    /// Locks obsolete accounts with a read lock and returns the the accounts with the guard
-    pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<'_, ObsoleteAccounts> {
-        self.obsolete_accounts.read().unwrap()
-    }
-
-    /// Returns the number of bytes that were marked obsolete as of the passed
-    /// in slot or earlier. If slot is None, then slot will be assumed to be the
-    /// max root, and all obsolete bytes will be returned.
-    pub fn get_obsolete_bytes(&self, slot: Option<Slot>) -> usize {
-        let obsolete_bytes: usize = self
-            .obsolete_accounts_read_lock()
-            .filter_obsolete_accounts(slot)
-            .map(|(offset, data_len)| {
-                self.accounts
-                    .calculate_stored_size(data_len)
-                    .min(self.accounts.len() - offset)
-            })
-            .sum();
-        obsolete_bytes
-    }
-
-    /// Return true if offset is "new" and inserted successfully. Otherwise,
-    /// return false if the offset exists already.
-    fn insert_zero_lamport_single_ref_account_offset(&self, offset: usize) -> bool {
-        let mut zero_lamport_single_ref_offsets =
-            self.zero_lamport_single_ref_offsets.write().unwrap();
-        zero_lamport_single_ref_offsets.insert(offset)
-    }
-
-    /// Insert offsets into the zero lamport single ref account offset set.
-    /// Return the number of new offsets that were inserted.
-    fn batch_insert_zero_lamport_single_ref_account_offsets(&self, offsets: &[Offset]) -> u64 {
-        let mut zero_lamport_single_ref_offsets =
-            self.zero_lamport_single_ref_offsets.write().unwrap();
-        let mut count = 0;
-        for offset in offsets {
-            if zero_lamport_single_ref_offsets.insert(*offset) {
-                count += 1;
-            }
-        }
-        count
-    }
-
-    /// Return the number of zero_lamport_single_ref accounts in the storage.
-    fn num_zero_lamport_single_ref_accounts(&self) -> usize {
-        self.zero_lamport_single_ref_offsets.read().unwrap().len()
-    }
-
-    /// Return the "alive_bytes" minus "zero_lamport_single_ref_accounts bytes".
-    fn alive_bytes_exclude_zero_lamport_single_ref_accounts(&self) -> usize {
-        let zero_lamport_dead_bytes = self
-            .accounts
-            .dead_bytes_due_to_zero_lamport_single_ref(self.num_zero_lamport_single_ref_accounts());
-        self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
-    }
-
-    /// Returns the number of bytes used in this storage
-    pub fn written_bytes(&self) -> u64 {
-        self.accounts.len() as u64
-    }
-
-    /// Returns the number of bytes, not accounts, this storage can hold
-    pub fn capacity(&self) -> u64 {
-        self.accounts.capacity()
-    }
-
-    pub fn has_accounts(&self) -> bool {
-        self.count() > 0
-    }
-
-    pub fn slot(&self) -> Slot {
-        self.slot
-    }
-
-    pub fn id(&self) -> AccountsFileId {
-        self.id
-    }
-
-    pub fn flush(&self) -> Result<(), AccountsFileError> {
-        self.accounts.flush()
-    }
-
-    fn add_accounts(&self, num_accounts: usize, num_bytes: usize) {
-        self.count.fetch_add(num_accounts, Ordering::Release);
-        self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
-    }
-
-    /// Removes `num_bytes` and `num_accounts` from the storage,
-    /// and returns the remaining number of accounts.
-    fn remove_accounts(&self, num_bytes: usize, num_accounts: usize) -> usize {
-        let prev_alive_bytes = self.alive_bytes.fetch_sub(num_bytes, Ordering::Release);
-        let prev_count = self.count.fetch_sub(num_accounts, Ordering::Release);
-
-        // enforce invariant that we're not removing too many bytes or accounts
-        assert!(
-            num_bytes <= prev_alive_bytes && num_accounts <= prev_count,
-            "Too many bytes or accounts removed from storage! slot: {}, id: {}, initial alive \
-             bytes: {prev_alive_bytes}, initial num accounts: {prev_count}, num bytes removed: \
-             {num_bytes}, num accounts removed: {num_accounts}",
-            self.slot,
-            self.id,
-        );
-
-        // SAFETY: subtraction is safe since we just asserted num_accounts <= prev_num_accounts
-        prev_count - num_accounts
-    }
-
-    /// Returns the path to the underlying accounts storage file
-    pub fn path(&self) -> &Path {
-        self.accounts.path()
-    }
-}
-
 pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<PathBuf>)> {
     let temp_dirs: io::Result<Vec<TempDir>> = (0..count).map(|_| TempDir::new()).collect();
     let temp_dirs = temp_dirs?;
@@ -1116,20 +883,14 @@ pub struct AccountsDb {
     /// Set of storage paths to pick from
     pub paths: Vec<PathBuf>,
 
-    /// Base directory for various necessary files
-    base_working_path: PathBuf,
-    // used by tests - held until we are dropped
-    #[allow(dead_code)]
-    base_working_temp_dir: Option<TempDir>,
+    /// directory for bank hash details files
+    bank_hash_details_dir: PathBuf,
 
     shrink_paths: Vec<PathBuf>,
 
     /// Directory of paths this accounts_db needs to hold/remove
     #[allow(dead_code)]
     pub temp_paths: Option<Vec<TempDir>>,
-
-    /// Starting file size of appendvecs
-    file_size: u64,
 
     /// Thread pool for foreground tasks, e.g. transaction processing
     pub thread_pool_foreground: ThreadPool,
@@ -1268,15 +1029,10 @@ impl AccountsDb {
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
-        let base_working_path = accounts_db_config.base_working_path.clone();
-        let (base_working_path, base_working_temp_dir) =
-            if let Some(base_working_path) = base_working_path {
-                (base_working_path, None)
-            } else {
-                let base_working_temp_dir = TempDir::new().unwrap();
-                let base_working_path = base_working_temp_dir.path().to_path_buf();
-                (base_working_path, Some(base_working_temp_dir))
-            };
+        let bank_hash_details_dir = accounts_db_config.bank_hash_details_dir.unwrap_or_else(|| {
+            warn!("bank hash details dir is unset");
+            PathBuf::new()
+        });
 
         let (paths, temp_paths) = if paths.is_empty() {
             // Create a temporary set of accounts directories, used primarily
@@ -1327,8 +1083,7 @@ impl AccountsDb {
         let new = Self {
             accounts_index,
             paths,
-            base_working_path,
-            base_working_temp_dir,
+            bank_hash_details_dir,
             temp_paths,
             shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
@@ -1363,7 +1118,6 @@ impl AccountsDb {
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
-            file_size: DEFAULT_FILE_SIZE,
             external_purge_slots_stats: PurgeStats::default(),
             clean_accounts_stats: CleanAccountsStats::default(),
             shrink_stats: ShrinkStats::default(),
@@ -1392,13 +1146,8 @@ impl AccountsDb {
         new
     }
 
-    pub fn file_size(&self) -> u64 {
-        self.file_size
-    }
-
-    /// Get the base working directory
-    pub fn get_base_working_path(&self) -> PathBuf {
-        self.base_working_path.clone()
+    pub fn bank_hash_details_dir(&self) -> &Path {
+        &self.bank_hash_details_dir
     }
 
     /// Returns true if there is an accounts update notifier.
@@ -5024,7 +4773,7 @@ impl AccountsDb {
                     .unwrap_or(true);
                 if should_flush {
                     flush_stats.num_bytes_flushed +=
-                        aligned_stored_size(account.data().len()) as u64;
+                        AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_flushed += 1;
                     Some((key, account))
                 } else {
@@ -5032,7 +4781,7 @@ impl AccountsDb {
                     // index, since it's equivalent to purging
                     pubkeys.push(*key);
                     flush_stats.num_bytes_purged +=
-                        aligned_stored_size(account.data().len()) as u64;
+                        AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_purged += 1;
                     None
                 }
@@ -5835,7 +5584,7 @@ impl AccountsDb {
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
         self.stats
-            .store_num_accounts
+            .num_store_accounts_to_cache
             .fetch_add(accounts.len() as u64, Ordering::Relaxed);
         self.report_store_timings();
     }
@@ -5910,7 +5659,7 @@ impl AccountsDb {
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
         self.stats
-            .store_num_accounts
+            .num_store_accounts_to_storage
             .fetch_add(accounts.len() as u64, Ordering::Relaxed);
 
         // If there are any reclaims then they should be handled. Reclaims affect
@@ -6033,8 +5782,7 @@ impl AccountsDb {
                         infos.len(),
                         accounts_and_meta_to_store.len()
                     );
-                    let special_store_size = std::cmp::max(data_len * 2, self.file_size);
-                    self.create_and_insert_store(slot, special_store_size, "large create");
+                    self.create_and_insert_store(slot, data_len * 2, "large create");
                 }
                 continue;
             };
@@ -6145,8 +5893,17 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "num_accounts",
-                    self.stats.store_num_accounts.swap(0, Ordering::Relaxed),
+                    "num_store_accounts_to_cache",
+                    self.stats
+                        .num_store_accounts_to_cache
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_store_accounts_to_storage",
+                    self.stats
+                        .num_store_accounts_to_storage
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -7182,14 +6939,6 @@ impl AccountStorageEntry {
             })
             .expect("must scan accounts storage");
         count
-    }
-}
-
-#[cfg(test)]
-impl AccountStorageEntry {
-    // Function to modify the list in the account storage entry directly. Only intended for use in testing
-    pub(crate) fn obsolete_accounts(&self) -> &RwLock<ObsoleteAccounts> {
-        &self.obsolete_accounts
     }
 }
 

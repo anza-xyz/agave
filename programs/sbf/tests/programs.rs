@@ -1951,6 +1951,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
+        &FeatureSet::all_enabled(),
         vec![],
     );
     genesis_config.creation_time = Duration::ZERO.as_secs() as UnixTimestamp;

@@ -6,10 +6,9 @@ use {
         crypto::rustls::QuicClientConfig, default_runtime, ClientConfig, Connection, Endpoint,
         EndpointConfig, IdleTimeout, TransportConfig,
     },
-    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
     solana_tls_utils::tls_client_config_builder,
-    std::sync::Arc,
+    std::{sync::Arc, time::Duration},
 };
 
 pub mod error;
@@ -18,6 +17,14 @@ pub use {
     error::{IoErrorWithPartialEq, QuicError},
     solana_tls_utils::QuicClientCertificate,
 };
+
+/// QUIC connection idle timeout. The value is negotiated between client and server.
+pub const QUIC_MAX_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// QUIC_KEEP_ALIVE controls how often to send PING frames to keep the connection alive. This value
+/// is set conservatively to 1sec because on the mnb many validators use legacy value of 2sec
+/// connection timeout.
+pub const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(1);
 
 pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -> ClientConfig {
     let mut crypto = tls_client_config_builder()
@@ -35,7 +42,13 @@ pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -
         let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
         res.max_idle_timeout(Some(timeout));
         res.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
-        res.send_fairness(QUIC_SEND_FAIRNESS);
+        // Disable Quic send fairness.
+        // When set to false, streams are still scheduled based on priority,
+        // but once a chunk of a stream has been written out, quinn tries to complete
+        // the stream instead of trying to round-robin balance it among the streams
+        // with the same priority.
+        // See https://github.com/quinn-rs/quinn/pull/2002.
+        res.send_fairness(false);
 
         res
     };

@@ -23,6 +23,7 @@ pub enum VoteSource {
 pub struct LatestValidatorVote {
     vote_source: VoteSource,
     vote_pubkey: Pubkey,
+    authorized_voter_pubkey: Pubkey,
     vote: Option<SanitizedTransactionView<SharedBytes>>,
     slot: Slot,
     hash: Hash,
@@ -55,16 +56,28 @@ impl LatestValidatorVote {
             Ok(vote_state_update_instruction)
                 if instruction_filter(&vote_state_update_instruction) =>
             {
-                let vote_account_index = instruction
-                    .accounts
-                    .first()
-                    .copied()
-                    .ok_or(DeserializedPacketError::VoteTransaction)?;
-                let vote_pubkey = vote
-                    .static_account_keys()
-                    .get(vote_account_index as usize)
-                    .copied()
-                    .ok_or(DeserializedPacketError::VoteTransaction)?;
+                let ix_key = |offset| {
+                    let index = instruction
+                        .accounts
+                        .get(offset)
+                        .copied()
+                        .ok_or(DeserializedPacketError::VoteTransaction)?;
+                    let pubkey = vote
+                        .static_account_keys()
+                        .get(index as usize)
+                        .copied()
+                        .ok_or(DeserializedPacketError::VoteTransaction)?;
+                    let signed = index < vote.num_required_signatures();
+
+                    Ok((pubkey, signed))
+                };
+
+                let (vote_pubkey, _) = ix_key(0)?;
+                let (authorized_voter_pubkey, authorized_voter_signed) = ix_key(1)?;
+                if !authorized_voter_signed {
+                    return Err(DeserializedPacketError::VoteTransaction);
+                }
+
                 let slot = vote_state_update_instruction.last_voted_slot().unwrap_or(0);
                 let hash = vote_state_update_instruction.hash();
                 let timestamp = vote_state_update_instruction.timestamp();
@@ -74,6 +87,7 @@ impl LatestValidatorVote {
                     slot,
                     hash,
                     vote_pubkey,
+                    authorized_voter_pubkey,
                     vote_source,
                     timestamp,
                 })
@@ -103,6 +117,10 @@ impl LatestValidatorVote {
 
     pub fn vote_pubkey(&self) -> Pubkey {
         self.vote_pubkey
+    }
+
+    pub fn authorized_voter_pubkey(&self) -> Pubkey {
+        self.authorized_voter_pubkey
     }
 
     pub fn slot(&self) -> Slot {

@@ -442,7 +442,6 @@ impl ContactInfo {
         let mut node = Self::new(*pubkey, wallclock, /*shred_version:*/ 0u16);
         node.set_gossip((Ipv4Addr::LOCALHOST, 8000)).unwrap();
         node.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 8001)).unwrap();
-        node.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 8002)).unwrap();
         node.set_tpu(UDP, (Ipv4Addr::LOCALHOST, 8003)).unwrap();
         node.set_tpu(QUIC, (Ipv4Addr::LOCALHOST, 8009)).unwrap();
         node.set_tpu_forwards(UDP, (Ipv4Addr::LOCALHOST, 8004))

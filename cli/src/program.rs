@@ -1784,8 +1784,8 @@ async fn process_write_buffer(
     } else {
         program_data.len()
     };
-    let min_rent_exempt_program_data_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+    let min_rent_exempt_program_buffer_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(
             buffer_data_max_len,
         ))
         .await?;
@@ -1795,7 +1795,7 @@ async fn process_write_buffer(
         config,
         &program_data,
         program_data.len(),
-        min_rent_exempt_program_data_balance,
+        min_rent_exempt_program_buffer_balance,
         fee_payer_signer,
         buffer_signer,
         &buffer_pubkey,
@@ -2827,7 +2827,7 @@ async fn do_process_write_buffer(
     config: &CliConfig<'_>,
     program_data: &[u8], // can be empty, hence we have program_len
     program_len: usize,
-    min_rent_exempt_program_data_balance: u64,
+    min_rent_exempt_program_buffer_balance: u64,
     fee_payer_signer: &dyn Signer,
     buffer_signer: Option<&dyn Signer>,
     buffer_pubkey: &Pubkey,
@@ -2850,10 +2850,10 @@ async fn do_process_write_buffer(
                     &fee_payer_signer.pubkey(),
                     buffer_pubkey,
                     &buffer_authority_signer.pubkey(),
-                    min_rent_exempt_program_data_balance,
+                    min_rent_exempt_program_buffer_balance,
                     program_len,
                 )?,
-                min_rent_exempt_program_data_balance,
+                min_rent_exempt_program_buffer_balance,
                 vec![0; program_len],
             )
         };

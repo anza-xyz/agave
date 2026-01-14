@@ -228,9 +228,8 @@ impl Stats {
         let capacity_in_mem = self.capacity_in_mem.load(Ordering::Relaxed);
 
         // sum of elapsed time in each thread
-        let mut thread_time_elapsed_ms = elapsed_ms * storage.threads as u64;
+        let thread_time_elapsed_ms = elapsed_ms * storage.threads as u64;
         let datapoint_name = if startup || was_startup {
-            thread_time_elapsed_ms *= 2; // more threads are allocated during startup
             "accounts_index_startup"
         } else {
             "accounts_index"
@@ -478,30 +477,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "disk_index_index_file_size",
+                    "disk_index_file_size",
                     disk.map(|disk| disk.stats.index.total_file_size.load(Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "index_exceptional_entry",
-                    disk.map(|disk| disk
-                        .stats
-                        .index
-                        .index_uses_uncommon_slot_list_len_or_refcount
-                        .load(Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "disk_index_data_file_size",
-                    disk.map(|disk| disk.stats.data.total_file_size.load(Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "disk_index_data_file_count",
-                    disk.map(|disk| disk.stats.data.file_count.load(Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64
                 ),
@@ -518,6 +495,28 @@ impl Stats {
                 (
                     "disk_index_flush_mmap_us",
                     disk.map(|disk| disk.stats.index.mmap_us.swap(0, Ordering::Relaxed))
+                        .unwrap_or_default(),
+                    i64
+                ),
+                (
+                    "index_exceptional_entry",
+                    disk.map(|disk| disk
+                        .stats
+                        .index
+                        .index_uses_uncommon_slot_list_len_or_refcount
+                        .load(Ordering::Relaxed))
+                        .unwrap_or_default(),
+                    i64
+                ),
+                (
+                    "disk_data_file_size",
+                    disk.map(|disk| disk.stats.data.total_file_size.load(Ordering::Relaxed))
+                        .unwrap_or_default(),
+                    i64
+                ),
+                (
+                    "disk_data_file_count",
+                    disk.map(|disk| disk.stats.data.file_count.load(Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64
                 ),

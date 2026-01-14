@@ -21,37 +21,6 @@ ERROR: cargo hack failed.
 EOF
 fi
 
-echo --- build environment
-(
-  set -x
-
-  rustup run "$rust_stable" rustc --version --verbose
-  rustup run "$rust_nightly" rustc --version --verbose
-
-  cargo --version --verbose
-  $cargoNightly --version --verbose
-
-  cargo clippy --version --verbose
-  $cargoNightly clippy --version --verbose
-
-  # miri is only available with nightly
-  $cargoNightly miri --version --verbose
-
-  $cargoNightly hack --version --verbose
-
-  # audit is done only with "$cargo stable"
-  cargo audit --version
-
-  grcov --version
-
-  sccache --version
-
-  wasm-pack --version
-
-  cargo nextest --version --verbose
-  $cargoNightly nextest --version --verbose
-)
-
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
 

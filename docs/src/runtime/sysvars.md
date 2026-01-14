@@ -35,9 +35,12 @@ let clock_sysvar_info = next_account_info(account_info_iter)?;
 let clock = Clock::from_account_info(&clock_sysvar_info)?;
 ```
 
-The first method is more efficient and does not require that the sysvar account
-be passed to the program, or specified in the `Instruction` the program is
-processing.
+The first method incurs a base cost of 100 CU plus the size of the sysvar in
+bytes (e.g., ~140 CU for Clock), but does not require passing the sysvar account
+in the instruction. The second method avoids this syscall overhead and can be
+more efficient for programs that read the same sysvar multiple times, since the
+data is already in program memory — however, it requires including the sysvar
+account in the transaction.
 
 ## Clock
 

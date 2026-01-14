@@ -5,7 +5,7 @@ use {
         snapshot_hash::StartingSnapshotHashes, SnapshotKind,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
-    solana_accounts_db::accounts_db::AccountStorageEntry,
+    solana_accounts_db::account_storage_entry::AccountStorageEntry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::{meas_dur, measure::Measure, measure_us},
@@ -84,6 +84,8 @@ impl SnapshotPackagerService {
                     let snapshot_kind = snapshot_package.snapshot_kind;
                     let snapshot_slot = snapshot_package.slot;
                     let snapshot_hash = snapshot_package.hash;
+
+                    snapshot_controller.set_latest_bank_snapshot_slot(snapshot_slot);
 
                     if exit_backpressure.is_some() {
                         // With exit backpressure, we will delay flushing snapshot storages

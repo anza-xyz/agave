@@ -13,7 +13,7 @@ use {
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
-    agave_fs::{buffered_writer::large_file_buf_writer, FileInfo},
+    agave_fs::{buffered_writer::large_file_buf_writer, io_setup::IoSetupState, FileInfo},
     agave_snapshots::{
         archive_snapshot,
         error::{
@@ -36,7 +36,8 @@ use {
     semver::Version,
     solana_accounts_db::{
         account_storage::AccountStorageMap,
-        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
+        account_storage_entry::AccountStorageEntry,
+        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_file::{AccountsFile, StorageAccess},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
@@ -203,7 +204,7 @@ pub struct UnarchivedSnapshot {
     unpack_dir: TempDir,
     pub storage: AccountStorageMap,
     pub bank_fields: BankFieldsToDeserialize,
-    pub accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
+    pub(crate) accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
     pub unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion,
     pub measure_untar: Measure,
 }
@@ -494,7 +495,6 @@ pub fn serialize_snapshot(
         mut bank_fields,
         bank_hash_stats,
         status_cache_slot_deltas,
-        write_version,
     } = bank_snapshot_package;
     let status_cache_slot_deltas = status_cache_slot_deltas.as_slice();
     let slot = bank_fields.slot;
@@ -534,9 +534,8 @@ pub fn serialize_snapshot(
                 stream,
                 bank_fields,
                 bank_hash_stats,
-                &get_storages_to_serialize(snapshot_storages),
+                snapshot_storages,
                 extra_fields,
-                write_version,
             )?;
             Ok(())
         };
@@ -1014,17 +1013,6 @@ pub fn hard_link_storages_to_snapshot(
     Ok(())
 }
 
-/// serializing needs Vec<Vec<Arc<AccountStorageEntry>>>, but data structure at runtime is Vec<Arc<AccountStorageEntry>>
-/// translates to what we need
-pub(crate) fn get_storages_to_serialize(
-    snapshot_storages: &[Arc<AccountStorageEntry>],
-) -> Vec<Vec<Arc<AccountStorageEntry>>> {
-    snapshot_storages
-        .iter()
-        .map(|storage| vec![Arc::clone(storage)])
-        .collect::<Vec<_>>()
-}
-
 /// Unarchives the given full and incremental snapshot archives, as long as they are compatible.
 pub fn verify_and_unarchive_snapshots(
     bank_snapshots_dir: impl AsRef<Path>,
@@ -1054,6 +1042,7 @@ pub fn verify_and_unarchive_snapshots(
         account_paths,
         full_snapshot_archive_info.archive_format(),
         next_append_vec_id.clone(),
+        None,
         accounts_db_config,
     )?;
 
@@ -1080,6 +1069,7 @@ pub fn verify_and_unarchive_snapshots(
             account_paths,
             incremental_snapshot_archive_info.archive_format(),
             next_append_vec_id.clone(),
+            Some(incremental_snapshot_archive_info.base_slot()),
             accounts_db_config,
         )?;
         (
@@ -1270,12 +1260,17 @@ fn unarchive_snapshot(
     account_paths: &[PathBuf],
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
+    base_slot: Option<Slot>,
     accounts_db_config: &AccountsDbConfig,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
         .tempdir_in(bank_snapshots_dir)?;
     let unpacked_snapshots_dir = unpack_dir.path().join(snapshot_paths::BANK_SNAPSHOTS_DIR);
+
+    let io_setup = IoSetupState::default()
+        .with_shared_sqpoll()?
+        .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
     let unarchive_handle = streaming_unarchive_snapshot(
@@ -1284,7 +1279,7 @@ fn unarchive_snapshot(
         unpack_dir.path().to_path_buf(),
         snapshot_archive_path.as_ref().to_path_buf(),
         archive_format,
-        accounts_db_config.memlock_budget_size,
+        io_setup,
     );
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
@@ -1296,9 +1291,11 @@ fn unarchive_snapshot(
              append_vec_files,
              ..
          }| {
+            let snapshot_storage_lengths =
+                accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
             let (storage, measure_untar) = measure_time!(
-                SnapshotStorageRebuilder::rebuild_storage(
-                    &accounts_db_fields,
+                SnapshotStorageRebuilder::spawn_rebuilder_threads(
+                    snapshot_storage_lengths,
                     append_vec_files,
                     file_receiver,
                     num_rebuilder_threads,
@@ -1368,7 +1365,7 @@ fn spawn_streaming_snapshot_dir_files(
 ///
 /// Handles reading the snapshot file and version file,
 /// then returning those fields plus the rebuilt storages.
-pub fn rebuild_storages_from_snapshot_dir(
+pub(crate) fn rebuild_storages_from_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
     next_append_vec_id: Arc<AtomicAccountsFileId>,
@@ -1467,8 +1464,11 @@ pub fn rebuild_storages_from_snapshot_dir(
     } = snapshot_fields_from_files(&file_receiver)?;
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
-    let storage = SnapshotStorageRebuilder::rebuild_storage(
-        &accounts_db_fields,
+
+    let snapshot_storage_lengths =
+        accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
+    let storage = SnapshotStorageRebuilder::spawn_rebuilder_threads(
+        snapshot_storage_lengths,
         append_vec_files,
         file_receiver,
         num_rebuilder_threads,

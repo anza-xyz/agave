@@ -27,8 +27,6 @@ use {
 fn broadcast_shreds_bench(b: &mut Bencher) {
     agave_logger::setup();
     let leader_keypair = Arc::new(Keypair::new());
-    let (quic_endpoint_sender, _quic_endpoint_receiver) =
-        tokio::sync::mpsc::channel(/*capacity:*/ 128);
     let leader_info = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
     let cluster_info = ClusterInfo::new(
         leader_info.info,
@@ -91,7 +89,6 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
             &cluster_info,
             &bank_forks,
             &SocketAddrSpace::Unspecified,
-            &quic_endpoint_sender,
         )
         .unwrap();
     });

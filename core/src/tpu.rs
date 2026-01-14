@@ -25,7 +25,6 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
         vortexor_receiver_adapter::VortexorReceiverAdapter,
     },
-    bytes::Bytes,
     crossbeam_channel::{bounded, unbounded, Receiver},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -62,20 +61,18 @@ use {
     },
     std::{
         collections::HashMap,
-        net::{SocketAddr, UdpSocket},
+        net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
     },
-    tokio::sync::{mpsc, mpsc::Sender as AsyncSender},
+    tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
 };
 
 pub struct TpuSockets {
-    pub transactions: Vec<UdpSocket>,
-    pub transaction_forwards: Vec<UdpSocket>,
     pub vote: Vec<UdpSocket>,
     pub broadcast: Vec<UdpSocket>,
     pub transactions_quic: Vec<UdpSocket>,
@@ -146,14 +143,12 @@ impl Tpu {
         bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
         client: ForwardingClientOption,
-        turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
         shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
         banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
-        tpu_enable_udp: bool,
         tpu_quic_server_config: SwQosQuicStreamerConfig,
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
@@ -169,8 +164,6 @@ impl Tpu {
         cancel: CancellationToken,
     ) -> Self {
         let TpuSockets {
-            transactions: transactions_sockets,
-            transaction_forwards: tpu_forwards_sockets,
             vote: tpu_vote_sockets,
             broadcast: broadcast_sockets,
             transactions_quic: transactions_quic_sockets,
@@ -184,18 +177,13 @@ impl Tpu {
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
-            transactions_sockets,
-            tpu_forwards_sockets,
             tpu_vote_sockets,
             exit.clone(),
             &packet_sender,
             &vote_packet_sender,
-            &forwarded_packet_sender,
             forwarded_packet_receiver,
             poh_recorder,
             None, // coalesce
-            Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
-            tpu_enable_udp,
         );
 
         let staked_nodes_updater_service = StakedNodesUpdaterService::new(
@@ -391,7 +379,6 @@ impl Tpu {
             blockstore,
             bank_forks,
             shred_version,
-            turbine_quic_endpoint_sender,
             xdp_sender,
         );
 

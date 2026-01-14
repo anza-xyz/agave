@@ -32,6 +32,10 @@ Release channels have their own copy of this changelog:
   * `--wait-for-exit` (`exit` subcommand)
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+* The `--enable-accounts-disk-index` flag is now deprecated. Use `--accounts-index-limit` instead. To retain the same behavior, use `--accounts-index-limit minimal`.
+#### Changes
+* `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
+* Added `--accounts-index-limit` to specify the memory limit of the accounts index.
 ### CLI
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`
@@ -41,7 +45,7 @@ Release channels have their own copy of this changelog:
 * `cargo-build-sbf --debug` places all debug related objects inside `target/deploy/debug`.
 ### Geyser
 #### Changes
-* Account update notifications have their fields populated from the original account. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc zeroed out.
+* Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program *does* zero out any fields itself, those will remain zeroed out in the notification.
 
 
 ## 3.1.0
