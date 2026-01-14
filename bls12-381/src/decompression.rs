@@ -21,7 +21,9 @@ pub fn bls12_381_g1_decompress(
             let mut bytes = input.0;
             swap_fq_endianness(&mut bytes);
             // After reversal, the flag byte (originally at end) is now at index 0.
-            // This matches the Zcash BE format expected by G1Affine::from_compressed.
+            // This matches the
+            // [Zcash BE format](https://github.com/zkcrypto/pairing/blob/34aa52b0f7bef705917252ea63e5a13fa01af551/src/bls12_381/README.md#serialization)
+            // expected by G1Affine::from_compressed.
             G1Affine::from_compressed(&bytes).into_option()?
         }
     };
