@@ -197,8 +197,10 @@ pub struct ProgressMessage {
     /// - [`LEADER_STARTING`]: Node is in a leader slot but bank is not ready.
     /// - [`LEADER_READY`]: Node is in a leader slot with bank ready for transactions.
     ///
-    /// To check if within a leader slot: `leader_state != NOT_LEADER`
-    /// To check if transactions can be processed: `leader_state == LEADER_READY`
+    /// # Usage
+    ///
+    /// - To check if within a leader slot: `leader_state != NOT_LEADER`.
+    /// - To check if transactions can be processed: `leader_state == LEADER_READY`.
     pub leader_state: u8,
     /// The current slot.
     pub current_slot: u64,
