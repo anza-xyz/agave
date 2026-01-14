@@ -16,7 +16,8 @@ pub fn bls12_381_g1_decompress(
     endianness: Endianness,
 ) -> Option<PodG1Point> {
     let p1 = match endianness {
-        Endianness::BE => G1Affine::from_compressed(&input.0).into_option()?,
+        // `G1Affine::from_compressed_unchecked` performs field and on-curve checks
+        Endianness::BE => G1Affine::from_compressed_unchecked(&input.0).into_option()?,
         Endianness::LE => {
             let mut bytes = input.0;
             swap_fq_endianness(&mut bytes);
@@ -24,9 +25,14 @@ pub fn bls12_381_g1_decompress(
             // This matches the
             // [Zcash BE format](https://github.com/zkcrypto/pairing/blob/34aa52b0f7bef705917252ea63e5a13fa01af551/src/bls12_381/README.md#serialization)
             // expected by G1Affine::from_compressed.
-            G1Affine::from_compressed(&bytes).into_option()?
+            G1Affine::from_compressed_unchecked(&bytes).into_option()?
         }
     };
+
+    // field and on-curve checks are already performed, so just check subgroup
+    if !bool::from(p1.is_torsion_free()) {
+        return None;
+    }
 
     let mut result = PodG1Point(p1.to_uncompressed());
     if matches!(endianness, Endianness::LE) {
@@ -42,14 +48,20 @@ pub fn bls12_381_g2_decompress(
     endianness: Endianness,
 ) -> Option<PodG2Point> {
     let p2 = match endianness {
-        Endianness::BE => G2Affine::from_compressed(&input.0).into_option()?,
+        // `G1Affine::from_compressed_unchecked` performs field and on-curve checks
+        Endianness::BE => G2Affine::from_compressed_unchecked(&input.0).into_option()?,
         Endianness::LE => {
             let mut bytes = input.0;
             swap_fq_endianness(&mut bytes);
             swap_g2_c0_c1(&mut bytes); // Swap c0/c1 for G2
-            G2Affine::from_compressed(&bytes).into_option()?
+            G2Affine::from_compressed_unchecked(&bytes).into_option()?
         }
     };
+
+    // field and on-curve checks are already performed, so just check subgroup
+    if !bool::from(p2.is_torsion_free()) {
+        return None;
+    }
 
     let mut result = PodG2Point(p2.to_uncompressed());
     if matches!(endianness, Endianness::LE) {
