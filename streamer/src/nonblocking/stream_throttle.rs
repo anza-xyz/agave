@@ -1,570 +1,438 @@
+//! This module implements the stake-weighted read throttling logic:
+//! * Each connected client is assigned a fraction of total TPS budget R
+//!   in proportion to its stake.
+//! * All unused capacity gets added to R for the next round of allocation
+//! * Unstaked nodes get granted fake stake as if they were staked
+//!
+//! To better utilize the bandwidth, the effective usage rate is
+//! estimated based on how much they have consumed last round, and refill
+//! proportion is based on the total usage rate, not true stake.
+//! This allows to efficiently reassign underutilized bandwidth to other
+//! users, as their effective stake in the overall allocation grows.
+
 use {
     crate::{
-        nonblocking::{qos::OpaqueStreamerCounter, quic::ConnectionPeerType},
+        nonblocking::{qos::OpaqueStreamerCounter, quic::ConnectionTable},
         quic::StreamerStats,
     },
-    percentage::Percentage,
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_pubkey::Pubkey,
+    static_assertions::const_assert,
     std::{
         cmp,
         sync::{
             atomic::{AtomicU64, Ordering},
-            Arc, RwLock,
+            Arc,
         },
-        time::{Duration, Instant},
+        time::Duration,
     },
-    tokio::time::sleep,
+    tokio::{sync::Mutex, time::sleep},
+    tokio_util::sync::CancellationToken,
 };
 
-/// Max TPS allowed for unstaked connection
-const MAX_UNSTAKED_TPS: u64 = 200;
-/// Expected % of max TPS to be consumed by unstaked connections
-const EXPECTED_UNSTAKED_STREAMS_PERCENT: u64 = 20;
+/// This will be added to the true stake amount in the
+/// calculations to ensure that unstaked nodes have non-zero throughput
+pub const BASE_STAKE_SOL: u64 = 1000;
 
-pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
-pub const STREAM_THROTTLING_INTERVAL: Duration =
-    Duration::from_millis(STREAM_THROTTLING_INTERVAL_MS);
-const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
-const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 10;
-const EMA_WINDOW_MS: u64 = STREAM_LOAD_EMA_INTERVAL_MS * STREAM_LOAD_EMA_INTERVAL_COUNT;
+/// This is a divisor that defines how much stake can a connection
+/// "lose" due to inactivity. The higher it is, the more unused
+/// bandwidth will get redistributed to other connections.
+const STAKE_LOSS_MAX_FRACTION: u64 = 50;
 
-pub(crate) struct StakedStreamLoadEMA {
-    current_load_ema: AtomicU64,
-    load_in_recent_interval: AtomicU64,
-    last_update: RwLock<Instant>,
-    stats: Arc<StreamerStats>,
-    // Maximum number of streams for a staked connection in EMA window
-    // Note: EMA window can be different than stream throttling window. EMA is being calculated
-    //       specifically for staked connections. Unstaked connections have fixed limit on
-    //       stream load, which is tracked by `max_unstaked_load_in_throttling_window` field.
-    max_staked_load_in_ema_window: u64,
-    // Maximum number of streams for an unstaked connection in stream throttling window
-    max_unstaked_load_in_throttling_window: u64,
-    max_streams_per_ms: u64,
-}
+// Stake loss fraction must be low enough to ensure everyone has non-zero
+// stake as maximal loss is applied
+const_assert!(BASE_STAKE_SOL / STAKE_LOSS_MAX_FRACTION > 0);
 
-impl StakedStreamLoadEMA {
-    pub(crate) fn new(
-        stats: Arc<StreamerStats>,
-        max_unstaked_connections: usize,
-        max_streams_per_ms: u64,
-    ) -> Self {
-        let allow_unstaked_streams = max_unstaked_connections > 0;
-        let max_staked_load_in_ema_window = if allow_unstaked_streams {
-            (max_streams_per_ms
-                - Percentage::from(EXPECTED_UNSTAKED_STREAMS_PERCENT).apply_to(max_streams_per_ms))
-                * EMA_WINDOW_MS
-        } else {
-            max_streams_per_ms * EMA_WINDOW_MS
-        };
+/// Interval of refills for the QoS token buckets
+pub const REFILL_INTERVAL: Duration = Duration::from_millis(20);
 
-        let max_unstaked_load_in_throttling_window = if allow_unstaked_streams {
-            MAX_UNSTAKED_TPS * STREAM_THROTTLING_INTERVAL_MS / 1000
-        } else {
-            0
-        };
+/// How many [`REFILL_INTERVAL`] worth of token refill rate do we accumulate
+/// for idle connections (to handle bursts of arrivals).
+///
+/// For example, given `REFILL_INTERVAL = 100ms` and `MAX_BURST = 3`  we can
+///  * sustain 4x rate for 100ms or
+///  * sustain 2x rate for 200ms
+///
+/// `MAX_BURST = 1` disables the feature
+const MAX_BURST: u64 = 2;
 
-        Self {
-            current_load_ema: AtomicU64::default(),
-            load_in_recent_interval: AtomicU64::default(),
-            last_update: RwLock::new(Instant::now()),
-            stats,
-            max_staked_load_in_ema_window,
-            max_unstaked_load_in_throttling_window,
-            max_streams_per_ms,
-        }
-    }
-
-    fn ema_function(current_ema: u128, recent_load: u128) -> u128 {
-        // Using the EMA multiplier helps in avoiding the floating point math during EMA related calculations
-        const STREAM_LOAD_EMA_MULTIPLIER: u128 = 1024;
-        let multiplied_smoothing_factor: u128 =
-            2 * STREAM_LOAD_EMA_MULTIPLIER / (u128::from(STREAM_LOAD_EMA_INTERVAL_COUNT) + 1);
-
-        // The formula is
-        //    updated_ema = recent_load * smoothing_factor + current_ema * (1 - smoothing_factor)
-        // To avoid floating point math, we are using STREAM_LOAD_EMA_MULTIPLIER
-        //    updated_ema = (recent_load * multiplied_smoothing_factor
-        //                   + current_ema * (multiplier - multiplied_smoothing_factor)) / multiplier
-        (recent_load * multiplied_smoothing_factor
-            + current_ema * (STREAM_LOAD_EMA_MULTIPLIER - multiplied_smoothing_factor))
-            / STREAM_LOAD_EMA_MULTIPLIER
-    }
-
-    fn update_ema(&self, time_since_last_update_ms: u128) {
-        // if time_since_last_update_ms > STREAM_LOAD_EMA_INTERVAL_MS, there might be intervals where ema was not updated.
-        // count how many updates (1 + missed intervals) are needed.
-        let num_extra_updates =
-            time_since_last_update_ms.saturating_sub(1) / u128::from(STREAM_LOAD_EMA_INTERVAL_MS);
-
-        let load_in_recent_interval =
-            u128::from(self.load_in_recent_interval.swap(0, Ordering::Relaxed));
-
-        let mut updated_load_ema = Self::ema_function(
-            u128::from(self.current_load_ema.load(Ordering::Relaxed)),
-            load_in_recent_interval,
-        );
-
-        for _ in 0..num_extra_updates {
-            updated_load_ema = Self::ema_function(updated_load_ema, load_in_recent_interval);
-        }
-
-        let Ok(updated_load_ema) = u64::try_from(updated_load_ema) else {
-            error!("Failed to convert EMA {updated_load_ema} to a u64. Not updating the load EMA");
-            self.stats
-                .stream_load_ema_overflow
-                .fetch_add(1, Ordering::Relaxed);
-            return;
-        };
-
-        self.current_load_ema
-            .store(updated_load_ema, Ordering::Relaxed);
-        self.stats
-            .stream_load_ema
-            .store(updated_load_ema as usize, Ordering::Relaxed);
-    }
-
-    pub(crate) fn update_ema_if_needed(&self) {
-        const EMA_DURATION: Duration = Duration::from_millis(STREAM_LOAD_EMA_INTERVAL_MS);
-        // Read lock enables multiple connection handlers to run in parallel if interval is not expired
-        if Instant::now().duration_since(*self.last_update.read().unwrap()) >= EMA_DURATION {
-            let mut last_update_w = self.last_update.write().unwrap();
-            // Recheck as some other thread might have updated the ema since this thread tried to acquire the write lock.
-            let since_last_update = Instant::now().duration_since(*last_update_w);
-            if since_last_update >= EMA_DURATION {
-                *last_update_w = Instant::now();
-                self.update_ema(since_last_update.as_millis());
-            }
-        }
-    }
-
-    pub(crate) fn increment_load(&self, peer_type: ConnectionPeerType) {
-        if peer_type.is_staked() {
-            self.load_in_recent_interval.fetch_add(1, Ordering::Relaxed);
-        }
-        self.update_ema_if_needed();
-    }
-
-    pub(crate) fn available_load_capacity_in_throttling_duration(
-        &self,
-        peer_type: ConnectionPeerType,
-        total_stake: u64,
-    ) -> u64 {
-        match peer_type {
-            ConnectionPeerType::Unstaked => self.max_unstaked_load_in_throttling_window,
-            ConnectionPeerType::Staked(stake) => {
-                // If the current load is low, cap it to 25% of max_load.
-                let current_load = u128::from(cmp::max(
-                    self.current_load_ema.load(Ordering::Relaxed),
-                    self.max_staked_load_in_ema_window / 4,
-                ));
-
-                // Formula is (max_load ^ 2 / current_load) * (stake / total_stake)
-                let capacity_in_ema_window = (u128::from(self.max_staked_load_in_ema_window)
-                    * u128::from(self.max_staked_load_in_ema_window)
-                    * u128::from(stake))
-                    / (current_load * u128::from(total_stake));
-
-                let calculated_capacity = capacity_in_ema_window
-                    * u128::from(STREAM_THROTTLING_INTERVAL_MS)
-                    / u128::from(EMA_WINDOW_MS);
-                let calculated_capacity = u64::try_from(calculated_capacity).unwrap_or_else(|_| {
-                    error!(
-                        "Failed to convert stream capacity {calculated_capacity} to u64. Using \
-                         minimum load capacity"
-                    );
-                    self.stats
-                        .stream_load_capacity_overflow
-                        .fetch_add(1, Ordering::Relaxed);
-                    self.max_unstaked_load_in_throttling_window
-                        .saturating_add(1)
-                });
-
-                // 1 is added to `max_unstaked_load_in_throttling_window` to guarantee that staked
-                // clients get at least 1 more number of streams than unstaked connections.
-                cmp::max(
-                    calculated_capacity,
-                    self.max_unstaked_load_in_throttling_window
-                        .saturating_add(1),
-                )
-            }
-        }
-    }
-
-    pub(crate) fn max_streams_per_ms(&self) -> u64 {
-        self.max_streams_per_ms
-    }
-}
+/// Minimal size of the token bucket
+const MIN_BUCKET_SIZE: u64 = 2;
+const MAX_BUCKET_SIZE: u64 = 2000;
 
 #[derive(Debug)]
-pub struct ConnectionStreamCounter {
-    pub(crate) stream_count: AtomicU64,
-    last_throttling_instant: RwLock<tokio::time::Instant>,
+pub struct StreamRateLimiter {
+    pub true_stake_sol: u64,
+    pub effective_stake_sol: AtomicU64,
+    pub number_of_times_throttled: AtomicU64,
+    pub address: Pubkey,
+    pub tokens: AtomicU64,
+    pub consumed_tokens: AtomicU64,
+    pub last_refill: AtomicU64,
 }
+impl OpaqueStreamerCounter for StreamRateLimiter {}
 
-impl OpaqueStreamerCounter for ConnectionStreamCounter {}
+impl Ord for StreamRateLimiter {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        // high stake comes first
+        other.true_stake_sol.cmp(&self.true_stake_sol)
+    }
+}
+impl PartialOrd for StreamRateLimiter {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl PartialEq for StreamRateLimiter {
+    fn eq(&self, other: &Self) -> bool {
+        self.true_stake_sol == other.true_stake_sol
+    }
+}
+impl Eq for StreamRateLimiter {}
 
-impl ConnectionStreamCounter {
-    pub fn new() -> Self {
+impl StreamRateLimiter {
+    pub fn new(address: Pubkey, stake_lamports: u64) -> Self {
+        let stake_sol = stake_lamports / LAMPORTS_PER_SOL + BASE_STAKE_SOL;
         Self {
-            stream_count: AtomicU64::default(),
-            last_throttling_instant: RwLock::new(tokio::time::Instant::now()),
+            true_stake_sol: stake_sol,
+            effective_stake_sol: AtomicU64::new(stake_sol),
+            tokens: AtomicU64::new(0),
+            consumed_tokens: AtomicU64::new(0),
+            last_refill: AtomicU64::new(0),
+            address,
+            number_of_times_throttled: AtomicU64::new(0),
         }
     }
 
-    /// Reset the counter and last throttling instant and
-    /// return last_throttling_instant regardless it is reset or not.
-    pub(crate) fn reset_throttling_params_if_needed(&self) -> tokio::time::Instant {
-        let last_throttling_instant = *self.last_throttling_instant.read().unwrap();
-        if tokio::time::Instant::now().duration_since(last_throttling_instant)
-            > STREAM_THROTTLING_INTERVAL
+    pub fn new_unstaked() -> Self {
+        Self::new(Pubkey::new_unique(), 0)
+    }
+
+    #[cfg(test)]
+    fn tokens(&self) -> u64 {
+        self.tokens.load(Ordering::Relaxed)
+    }
+
+    /// try to consume a token from the throttler, if it can not it will block.
+    pub async fn wait_for_token(&self, stats: &StreamerStats) {
+        while self
+            .tokens
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                if v == 0 {
+                    None
+                } else {
+                    Some(v - 1)
+                }
+            })
+            .is_err()
         {
-            let mut last_throttling_instant = self.last_throttling_instant.write().unwrap();
-            // Recheck as some other thread might have done throttling since this thread tried to acquire the write lock.
-            if tokio::time::Instant::now().duration_since(*last_throttling_instant)
-                > STREAM_THROTTLING_INTERVAL
-            {
-                *last_throttling_instant = tokio::time::Instant::now();
-                self.stream_count.store(0, Ordering::Relaxed);
+            debug!(
+                "Throttling connection from {} for {REFILL_INTERVAL:?}",
+                self.address
+            );
+            self.number_of_times_throttled
+                .fetch_add(1, Ordering::Relaxed);
+            stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
+            if self.true_stake_sol == 0 {
+                stats
+                    .throttled_unstaked_streams
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                stats
+                    .throttled_staked_streams
+                    .fetch_add(1, Ordering::Relaxed);
             }
-            *last_throttling_instant
-        } else {
-            last_throttling_instant
+
+            sleep(REFILL_INTERVAL / 2).await;
         }
+        self.consumed_tokens.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn drain(&self) {
+        let old = self.tokens.swap(0, Ordering::Relaxed);
+        self.consumed_tokens.store(old, Ordering::Relaxed);
+    }
+
+    /// Refill the token bucket. Updates the effective stake internally
+    /// and returns the new value.
+    pub fn refill(&self, refill_amount: u64, my_max_tokens: u64) -> u64 {
+        let consumed = self.consumed_tokens.swap(0, Ordering::Relaxed);
+        let last_refill = self.last_refill.swap(refill_amount, Ordering::Relaxed);
+        let current = self.tokens.load(Ordering::Relaxed);
+        let _previous = self.tokens.fetch_max(
+            my_max_tokens.min(current + refill_amount),
+            Ordering::Relaxed,
+        );
+
+        // compute effective stake based on the utiliation of last refill
+        let effective_stake = if last_refill > 0 {
+            self.true_stake_sol * consumed / last_refill
+        } else {
+            self.true_stake_sol
+        }
+        .clamp(
+            self.true_stake_sol / STAKE_LOSS_MAX_FRACTION,
+            self.true_stake_sol,
+        );
+
+        debug_assert!(effective_stake > 0, "effective_stake should not be zero");
+        self.effective_stake_sol
+            .store(effective_stake, Ordering::Relaxed);
+        effective_stake
+    }
+
+    #[inline]
+    fn effective_stake(&self) -> u64 {
+        self.effective_stake_sol.load(Ordering::Relaxed)
     }
 }
 
-pub(crate) async fn throttle_stream(
-    stats: &StreamerStats,
-    peer_type: ConnectionPeerType,
-    remote_addr: std::net::SocketAddr,
-    stream_counter: &Arc<ConnectionStreamCounter>,
-    max_streams_per_throttling_interval: u64,
-) {
-    let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
-    let streams_read_in_throttle_interval = stream_counter.stream_count.load(Ordering::Relaxed);
-    if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
-        // The peer is sending faster than we're willing to read. Sleep for what's
-        // left of this read interval so the peer backs off.
-        let throttle_duration =
-            STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
+const fn token_fill_per_interval(max_tps: u64) -> u64 {
+    max_tps * REFILL_INTERVAL.as_millis() as u64 / 1000
+}
 
-        if !throttle_duration.is_zero() {
-            debug!(
-                "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, \
-                 max_streams_per_interval: {max_streams_per_throttling_interval}, \
-                 read_interval_streams: {streams_read_in_throttle_interval} throttle_duration: \
-                 {throttle_duration:?}"
-            );
-            stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-            match peer_type {
-                ConnectionPeerType::Unstaked => {
-                    stats
-                        .throttled_unstaked_streams
-                        .fetch_add(1, Ordering::Relaxed);
-                }
-                ConnectionPeerType::Staked(_) => {
-                    stats
-                        .throttled_staked_streams
-                        .fetch_add(1, Ordering::Relaxed);
-                }
+#[allow(clippy::arithmetic_side_effects)]
+pub async fn refill_task(
+    staked_connection_table: Arc<Mutex<ConnectionTable<StreamRateLimiter>>>,
+    unstaked_connection_table: Arc<Mutex<ConnectionTable<StreamRateLimiter>>>,
+    max_tps: u64,
+    cancel: CancellationToken,
+) {
+    debug!("Spawning refill task with {max_tps} TPS");
+    let mut last_iter_total_stake = {
+        // initialize effective stake of unstaked connections based on their number
+        let guard = unstaked_connection_table.lock().await;
+        guard.table_size() as u64 * BASE_STAKE_SOL
+    } + {
+        // and for staked use actual stake
+        let guard = staked_connection_table.lock().await;
+        guard.connected_stake() / LAMPORTS_PER_SOL
+    };
+    let mut last_iter_effective_stake = last_iter_total_stake;
+
+    let mut interval = tokio::time::interval(REFILL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+    let token_fill_per_interval = token_fill_per_interval(max_tps);
+    while !cancel.is_cancelled() {
+        interval.tick().await; // first tick completes instantly
+
+        // retrieve stats from last iteration, make sure we do not get zero in
+        // the total counters to avoid division by zero.
+        let total_effective_stake = last_iter_effective_stake.max(BASE_STAKE_SOL);
+        last_iter_effective_stake = 0;
+        let total_stake = last_iter_total_stake.max(BASE_STAKE_SOL);
+        last_iter_total_stake = 0;
+
+        // count allocated tokens for debugging
+        let mut allocated_tokens = 0;
+
+        // actually fill all the buckets
+        for conn_table in [&staked_connection_table, &unstaked_connection_table] {
+            let guard = conn_table.lock().await;
+            for (_key, connection_entry_vec) in guard.iter() {
+                let Some(connection_entry) = connection_entry_vec.first() else {
+                    continue;
+                };
+                let entry = connection_entry.stream_counter.as_ref();
+                let entry_effective_stake = entry.effective_stake();
+
+                // minimal amount this bucket should be able to hold (proportional to stake)
+                let my_min_tokens = (token_fill_per_interval * MAX_BURST * entry.true_stake_sol
+                    / total_stake)
+                    .clamp(MIN_BUCKET_SIZE, MAX_BUCKET_SIZE);
+                // share of total amount to deposit in this token bucket
+                let my_token_share =
+                    token_fill_per_interval * entry_effective_stake / total_effective_stake;
+                // maximal amount this bucket should be able to hold (proportional to consumption)
+                let my_max_tokens =
+                    (my_token_share * MAX_BURST).clamp(my_min_tokens, MAX_BUCKET_SIZE);
+                trace!(
+                    "Grant {my_token_share} (max {my_max_tokens}) TXs to {} based on \
+                     {}/{total_effective_stake} sol of stake.",
+                    entry.address,
+                    entry.effective_stake()
+                );
+                allocated_tokens += my_token_share;
+                // fill the bucket with all available tokens
+                // record effective stake of the entry after refill
+                last_iter_effective_stake += entry.refill(my_token_share, my_max_tokens);
+                last_iter_total_stake += entry.true_stake_sol;
             }
-            sleep(throttle_duration).await;
         }
+        debug!(
+            "Allocated {allocated_tokens} tokens out of {token_fill_per_interval} to users. \
+             total_effective_stake={total_effective_stake}, total_stake={total_stake}"
+        );
     }
 }
 
 #[cfg(test)]
 pub mod test {
     use {
-        super::*,
         crate::{
-            nonblocking::stream_throttle::STREAM_LOAD_EMA_INTERVAL_MS,
-            quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS},
+            nonblocking::{
+                quic::{
+                    ClientConnectionTracker, ConnectionPeerType, ConnectionTable,
+                    ConnectionTableKey, ConnectionTableType,
+                },
+                stream_throttle::{
+                    refill_task, token_fill_per_interval, StreamRateLimiter, BASE_STAKE_SOL,
+                    MAX_BUCKET_SIZE, REFILL_INTERVAL, STAKE_LOSS_MAX_FRACTION,
+                },
+            },
+            quic::StreamerStats,
         },
         std::{
-            sync::{atomic::Ordering, Arc},
-            time::{Duration, Instant},
+            net::{IpAddr, Ipv4Addr, SocketAddr},
+            sync::{atomic::AtomicU64, Arc},
+            time::Instant,
         },
+        tokio::sync::Mutex,
+        tokio_util::sync::CancellationToken,
     };
 
-    #[test]
-    fn test_max_streams_for_unstaked_connection() {
-        let load_ema = Arc::new(StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        ));
-        // 50K packets per ms * 20% / 500 max unstaked connections
+    #[tokio::test]
+    async fn test_stream_rate_limiter() {
+        let max_tokens = 100;
+        let entry = StreamRateLimiter::new_unstaked();
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Unstaked,
-                10000,
-            ),
-            20
+            entry.effective_stake(),
+            BASE_STAKE_SOL,
+            "Unstaked nodes should be given BASE_STAKE_SOL worth of stake"
         );
+        assert_eq!(
+            entry.refill(max_tokens, max_tokens),
+            BASE_STAKE_SOL,
+            "Should have full stake applied"
+        );
+        assert_eq!(
+            entry.refill(max_tokens, max_tokens),
+            BASE_STAKE_SOL / STAKE_LOSS_MAX_FRACTION,
+            "Should have lost all possible stake due to no usage"
+        );
+
+        let stats = StreamerStats::default();
+        entry.drain();
+        assert_eq!(
+            entry.refill(max_tokens, max_tokens),
+            BASE_STAKE_SOL,
+            "Should have full stake reapplied"
+        );
+        let t0 = Instant::now();
+        for _ in 0..100 {
+            entry.wait_for_token(&stats).await;
+        }
+        assert!(t0.elapsed() < REFILL_INTERVAL, "should not be blocked");
+        let to = tokio::time::timeout(REFILL_INTERVAL, entry.wait_for_token(&stats)).await;
+        assert!(to.is_err(), "Must block waiting on token arrival");
     }
 
-    #[test]
-    fn test_max_streams_for_staked_connection() {
-        let load_ema = Arc::new(StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        ));
+    #[tokio::test]
+    async fn test_refiller() {
+        agave_logger::setup();
+        let cancel = CancellationToken::new();
 
-        // EMA load is used for staked connections to calculate max number of allowed streams.
-        // EMA window = 5ms interval * 10 intervals = 50ms
-        // max streams per window = 500K streams/sec * 80% = 400K/sec = 20K per 50ms
-        // max_streams in 50ms = ((20K * 20K) / ema_load) * stake / total_stake
-        //
-        // Stream throttling window is 100ms. So it'll double the amount of max streams.
-        // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / ema_load) * stake / total_stake
+        let unstaked_connection_table: Arc<Mutex<ConnectionTable<StreamRateLimiter>>> =
+            Arc::new(Mutex::new(ConnectionTable::new(
+                ConnectionTableType::Unstaked,
+                cancel.clone(),
+            )));
+        let staked_connection_table: Arc<Mutex<ConnectionTable<StreamRateLimiter>>> =
+            Arc::new(Mutex::new(ConnectionTable::new(
+                ConnectionTableType::Staked,
+                cancel.clone(),
+            )));
+        const MAX_TPS: u64 = 1000000;
+        const NUM_CLIENTS: u32 = 1000;
+        const TOKEN_FILL_PER_INTERVAL: u64 = token_fill_per_interval(MAX_TPS);
+        let max_connections_per_peer = 1;
+        let sockets: Vec<_> = (0..NUM_CLIENTS)
+            .map(|i| SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(i)), 0))
+            .collect();
+        let stats = Arc::new(StreamerStats::default());
+        let rate_limiters: Vec<_> = sockets
+            .iter()
+            .map(|_| Arc::new(StreamRateLimiter::new_unstaked()))
+            .collect();
 
-        load_ema.current_load_ema.store(20000, Ordering::Relaxed);
-        // ema_load = 20K, stake = 15, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 20K) * 15 / 10K  = 60
+        for (socket, limiter) in sockets.iter().zip(rate_limiters.iter().cloned()) {
+            unstaked_connection_table
+                .lock()
+                .await
+                .try_add_connection(
+                    ConnectionTableKey::IP(socket.ip()),
+                    socket.port(),
+                    ClientConnectionTracker::new(stats.clone(), NUM_CLIENTS as usize).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(10)),
+                    max_connections_per_peer,
+                    || limiter,
+                )
+                .unwrap();
+        }
+
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(15),
-                10000,
-            ),
-            60
-        );
-
-        // ema_load = 20K, stake = 1K, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 20K) * 1K / 10K  = 4K
-        assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1000),
-                10000,
-            ),
-            4000
-        );
-
-        load_ema.current_load_ema.store(5000, Ordering::Relaxed);
-        // ema_load = 5K, stake = 15, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 5K) * 15 / 10K  = 240
-        assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(15),
-                10000,
-            ),
-            240
-        );
-
-        // ema_load = 5K, stake = 1K, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((20K * 20K) / 5K) * 1K / 10K  = 16000
-        assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1000),
-                10000,
-            ),
-            16000
-        );
-
-        // At 4000, the load is less than 25% of max_load (20K).
-        // Test that we cap it to 25%, yielding the same result as if load was 5000.
-        load_ema.current_load_ema.store(4000, Ordering::Relaxed);
-        // function = ((20K * 20K) / 25% of 20K) * stake / total_stake
-        assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(15),
-                10000,
-            ),
-            240
-        );
-
-        // function = ((20K * 20K) / 25% of 20K) * stake / total_stake
-        assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1000),
-                10000,
-            ),
-            16000
-        );
-
-        // At 1/40000 stake weight, and minimum load, it should still allow
-        // max_unstaked_load_in_throttling_window + 1 streams.
-        assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1),
-                40000,
-            ),
-            load_ema
-                .max_unstaked_load_in_throttling_window
-                .saturating_add(1)
-        );
-    }
-
-    #[test]
-    fn test_max_streams_for_staked_connection_with_no_unstaked_connections() {
-        let load_ema = Arc::new(StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
+            rate_limiters[0].tokens(),
             0,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        ));
-
-        // EMA load is used for staked connections to calculate max number of allowed streams.
-        // EMA window = 5ms interval * 10 intervals = 50ms
-        // max streams per window = 500K streams/sec = 25K per 50ms
-        // max_streams in 50ms = ((25K * 25K) / ema_load) * stake / total_stake
-        //
-        // Stream throttling window is 100ms. So it'll double the amount of max streams.
-        // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / ema_load) * stake / total_stake
-
-        load_ema.current_load_ema.store(20000, Ordering::Relaxed);
-        // ema_load = 20K, stake = 15, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 20K) * 15 / 10K  = 93.75
-        // Loss of precision occurs here because max streams is computed for 50ms window and then doubled.
-        assert!(
-            (92u64..=94).contains(&load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(15),
-                10000
-            ))
+            "Should have no initial tokens"
         );
 
-        // ema_load = 20K, stake = 1K, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 20K) * 1K / 10K  = 6250
-        assert!((6249u64..=6250).contains(
-            &load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1000),
-                10000
-            )
+        let refiller = tokio::spawn(refill_task(
+            staked_connection_table,
+            unstaked_connection_table,
+            MAX_TPS,
+            cancel.clone(),
         ));
-
-        load_ema.current_load_ema.store(10000, Ordering::Relaxed);
-        // ema_load = 10K, stake = 15, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 10K) * 15 / 10K  = 187.5
-        // Loss of precision occurs here because max streams is computed for 50ms window and then doubled.
-        assert!(
-            (186u64..=188).contains(&load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(15),
-                10000
-            ))
-        );
-
-        // ema_load = 10K, stake = 1K, total_stake = 10K
-        // max_streams in 100ms (throttling window) = 2 * ((25K * 25K) / 10K) * 1K / 10K  = 12500
-        assert!((12499u64..=12500).contains(
-            &load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1000),
-                10000
-            )
-        ));
-
-        // At 4000, the load is less than 25% of max_load (25K).
-        // Test that we cap it to 25%, yielding the same result as if load was 25K/4.
-        load_ema.current_load_ema.store(4000, Ordering::Relaxed);
-        // function = ((20K * 20K) / 25% of 25K) * stake / total_stake
+        rate_limiters[0].wait_for_token(&stats).await;
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(15),
-                10000
-            ),
-            300
+            rate_limiters[0].tokens(),
+            (TOKEN_FILL_PER_INTERVAL / NUM_CLIENTS as u64 - 1),
+            "Should have spent 1 transaction for the one we just consumed"
         );
-
-        // function = ((25K * 25K) / 25% of 25K) * stake / total_stake
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1000),
-                10000
-            ),
-            20000
+            rate_limiters[0].effective_stake(),
+            BASE_STAKE_SOL,
+            "Should have all stake applied"
         );
-
-        // At 1/400000 stake weight, and minimum load, it should still allow
-        // max_unstaked_load_in_throttling_window + 1 streams.
+        tokio::time::sleep(REFILL_INTERVAL * 2).await;
         assert_eq!(
-            load_ema.available_load_capacity_in_throttling_duration(
-                ConnectionPeerType::Staked(1),
-                400000
-            ),
-            load_ema
-                .max_unstaked_load_in_throttling_window
-                .saturating_add(1)
+            rate_limiters[0].effective_stake(),
+            BASE_STAKE_SOL / STAKE_LOSS_MAX_FRACTION,
+            "Should have all stake retracted due to no use during last refill"
         );
-    }
+        info!("drain one bucket");
+        rate_limiters[0].drain();
+        rate_limiters[0].wait_for_token(&stats).await;
+        info!("wait for buckets to fill up again");
+        rate_limiters[0].drain();
+        rate_limiters[0].wait_for_token(&stats).await;
 
-    #[test]
-    fn test_update_ema() {
-        let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        ));
-        stream_load_ema
-            .load_in_recent_interval
-            .store(2500, Ordering::Relaxed);
-        stream_load_ema
-            .current_load_ema
-            .store(2000, Ordering::Relaxed);
-
-        stream_load_ema.update_ema(5);
-
-        let updated_ema = stream_load_ema.current_load_ema.load(Ordering::Relaxed);
-        assert_eq!(updated_ema, 2090);
-
-        stream_load_ema
-            .load_in_recent_interval
-            .store(2500, Ordering::Relaxed);
-
-        stream_load_ema.update_ema(5);
-
-        let updated_ema = stream_load_ema.current_load_ema.load(Ordering::Relaxed);
-        assert_eq!(updated_ema, 2164);
-    }
-
-    #[test]
-    fn test_update_ema_missing_interval() {
-        let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        ));
-        stream_load_ema
-            .load_in_recent_interval
-            .store(2500, Ordering::Relaxed);
-        stream_load_ema
-            .current_load_ema
-            .store(2000, Ordering::Relaxed);
-
-        stream_load_ema.update_ema(8);
-
-        let updated_ema = stream_load_ema.current_load_ema.load(Ordering::Relaxed);
-        assert_eq!(updated_ema, 2164);
-    }
-
-    #[test]
-    fn test_update_ema_if_needed() {
-        let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-            Arc::new(StreamerStats::default()),
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        ));
-        stream_load_ema
-            .load_in_recent_interval
-            .store(2500, Ordering::Relaxed);
-        stream_load_ema
-            .current_load_ema
-            .store(2000, Ordering::Relaxed);
-
-        stream_load_ema.update_ema_if_needed();
-
-        let updated_ema = stream_load_ema.current_load_ema.load(Ordering::Relaxed);
-        assert_eq!(updated_ema, 2000);
-
-        let ema_interval = Duration::from_millis(STREAM_LOAD_EMA_INTERVAL_MS);
-        *stream_load_ema.last_update.write().unwrap() =
-            Instant::now().checked_sub(ema_interval).unwrap();
-
-        stream_load_ema.update_ema_if_needed();
-        assert!(
-            Instant::now().duration_since(*stream_load_ema.last_update.read().unwrap())
-                < ema_interval
+        let effective_stake =
+            (NUM_CLIENTS as u64 - 1) * BASE_STAKE_SOL / STAKE_LOSS_MAX_FRACTION + BASE_STAKE_SOL;
+        let expected_tokens = TOKEN_FILL_PER_INTERVAL * BASE_STAKE_SOL / effective_stake;
+        assert_eq!(
+            rate_limiters[0].tokens(),
+            expected_tokens - 1,
+            "Bucket should be filled now -1 transaction we just used"
         );
-
-        let updated_ema = stream_load_ema.current_load_ema.load(Ordering::Relaxed);
-        assert_eq!(updated_ema, 2090);
+        tokio::time::sleep(REFILL_INTERVAL * 2).await;
+        assert_eq!(
+            rate_limiters[0].effective_stake(),
+            BASE_STAKE_SOL / STAKE_LOSS_MAX_FRACTION,
+            "Should have stake reduced due to lack of consumption"
+        );
+        info!("drain a single bucket consistently");
+        for _ in 0..MAX_BUCKET_SIZE {
+            rate_limiters[0].wait_for_token(&stats).await;
+        }
+        assert_eq!(
+            rate_limiters[0].effective_stake(),
+            BASE_STAKE_SOL,
+            "Should have full stake due to full consumption"
+        );
+        cancel.cancel();
+        refiller.await.unwrap();
     }
 }
