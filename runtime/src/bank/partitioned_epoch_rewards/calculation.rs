@@ -832,9 +832,7 @@ mod tests {
                     reward_type: RewardType::Voting,
                     lamports: vote_reward_info.vote_rewards as i64,
                     post_balance: vote_reward_info.vote_rewards,
-                    // TODO: Update RewardInfo in solana-reward-info crate to support
-                    // commission_bps: Option<u16>, then pass bps here without loss.
-                    commission: Some((vote_reward_info.commission_bps / 100).min(100) as u8),
+                    commission_bps: Some(vote_reward_info.commission_bps),
                 };
                 vote_rewards_account.accounts_with_rewards.push((
                     *vote_key,
@@ -1165,10 +1163,10 @@ mod tests {
             if let Some(expected_commission) = &expected_commission {
                 let reward_lamports = vote_balance - prev_vote_balance;
                 let expected_vote_reward = RewardInfo {
-                    commission: Some(*expected_commission),
                     reward_type: RewardType::Voting,
                     lamports: reward_lamports as i64,
                     post_balance: vote_balance,
+                    commission_bps: Some(*expected_commission as u16 * 100),
                 };
 
                 assert_eq!(
@@ -1532,9 +1530,7 @@ mod tests {
                 reward_type: RewardType::Voting,
                 lamports: vote_rewards as i64,
                 post_balance: vote_account.lamports(),
-                // TODO: Update RewardInfo in solana-reward-info crate to support
-                // commission_bps: Option<u16>, then pass bps here without loss.
-                commission: Some((commission_bps / 100) as u8),
+                commission_bps: Some(commission_bps),
             }
         );
         assert_eq!(vote_pubkey_from_result, vote_pubkey);

@@ -16,7 +16,7 @@ pub struct StakeRewardInfo {
     pub reward_type: RewardType,
     pub lamports: i64,
     pub post_balance: u64,
-    pub commission: Option<u8>,
+    pub commission_bps: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,8 +121,8 @@ impl StakeReward {
             stake_reward_info: StakeRewardInfo {
                 reward_type: solana_reward_info::RewardType::Staking,
                 lamports: reward_lamports,
-                post_balance: 0,     /* unused atm */
-                commission: Some(0), /* unused but tests require some value */
+                post_balance: 0,         /* unused atm */
+                commission_bps: Some(0), /* unused but tests require some value */
             },
 
             stake_account: validator_stake_account,
