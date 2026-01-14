@@ -135,7 +135,6 @@ solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-quic-client = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc = { workspace = true }

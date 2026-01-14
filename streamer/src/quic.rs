@@ -18,8 +18,7 @@ use {
     solana_keypair::Keypair,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
-    solana_quic_definitions::{NotifyKeyUpdate, QUIC_MAX_TIMEOUT},
-    solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder},
+    solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder, NotifyKeyUpdate},
     std::{
         net::UdpSocket,
         num::NonZeroUsize,
@@ -33,6 +32,10 @@ use {
     tokio::runtime::Runtime,
     tokio_util::sync::CancellationToken,
 };
+
+/// QUIC connection idle timeout. The connection will be closed if
+/// there are no activities on it within the timeout window.
+pub const QUIC_MAX_TIMEOUT: Duration = Duration::from_secs(60);
 
 // allow multiple connections for NAT and any open/close overlap
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER: usize = 8;

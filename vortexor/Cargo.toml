@@ -57,9 +57,9 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-tls-utils = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
 solana-version = { workspace = true }
 thiserror = { workspace = true }

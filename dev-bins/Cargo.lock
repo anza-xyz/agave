@@ -6701,7 +6701,6 @@ dependencies = [
  "solana-pubkey 4.0.0",
  "solana-pubsub-client",
  "solana-quic-client",
- "solana-quic-definitions",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-rpc-client-nonce-utils",
@@ -6709,6 +6708,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-time-utils",
+ "solana-tls-utils",
  "solana-tpu-client",
  "solana-transaction",
  "solana-transaction-error",
@@ -6951,7 +6951,6 @@ dependencies = [
  "solana-poh-config",
  "solana-pubkey 4.0.0",
  "solana-quic-client",
- "solana-quic-definitions",
  "solana-rayon-threadlimit",
  "solana-rent",
  "solana-rpc",
@@ -7502,7 +7501,6 @@ dependencies = [
  "solana-packet 4.0.0",
  "solana-perf",
  "solana-pubkey 4.0.0",
- "solana-quic-definitions",
  "solana-rayon-threadlimit",
  "solana-rpc-client",
  "solana-runtime",
@@ -8380,7 +8378,6 @@ dependencies = [
  "solana-metrics",
  "solana-net-utils",
  "solana-pubkey 4.0.0",
- "solana-quic-definitions",
  "solana-rpc-client-api",
  "solana-signer",
  "solana-streamer",
@@ -8388,15 +8385,6 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.17",
  "tokio",
-]
-
-[[package]]
-name = "solana-quic-definitions"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15319accf7d3afd845817aeffa6edd8cc185f135cefbc6b985df29cfd8c09609"
-dependencies = [
- "solana-keypair",
 ]
 
 [[package]]
@@ -8502,7 +8490,6 @@ dependencies = [
  "solana-poh-config",
  "solana-program-pack",
  "solana-pubkey 4.0.0",
- "solana-quic-definitions",
  "solana-rayon-threadlimit",
  "solana-rpc-client-api",
  "solana-runtime",
@@ -8517,6 +8504,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-sysvar",
  "solana-time-utils",
+ "solana-tls-utils",
  "solana-tpu-client",
  "solana-transaction",
  "solana-transaction-context",
@@ -8907,10 +8895,10 @@ dependencies = [
  "solana-metrics",
  "solana-nonce-account",
  "solana-pubkey 4.0.0",
- "solana-quic-definitions",
  "solana-runtime",
  "solana-signature",
  "solana-time-utils",
+ "solana-tls-utils",
  "solana-tpu-client-next",
  "tokio",
  "tokio-util 0.7.18",
@@ -9163,7 +9151,6 @@ dependencies = [
  "solana-packet 4.0.0",
  "solana-perf",
  "solana-pubkey 4.0.0",
- "solana-quic-definitions",
  "solana-signature",
  "solana-signer",
  "solana-time-utils",
