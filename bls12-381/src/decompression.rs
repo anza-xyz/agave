@@ -55,6 +55,7 @@ pub fn bls12_381_g2_decompress(
             let mut bytes = input.0;
             swap_fq_endianness(&mut bytes);
             swap_g2_c0_c1(&mut bytes); // Swap c0/c1 for G2
+
             // After reversal, the flag byte (originally at end) is now at index 0.
             // This matches the [Zcash BE format][zcash-be-format] expected by
             // `G2Affine::from_compressed_unchecked`.
