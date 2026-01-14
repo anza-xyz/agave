@@ -1029,11 +1029,6 @@ impl AccountsDb {
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
-        let bank_hash_details_dir = accounts_db_config.bank_hash_details_dir.unwrap_or_else(|| {
-            warn!("bank hash details dir is unset");
-            PathBuf::new()
-        });
-
         let (paths, temp_paths) = if paths.is_empty() {
             // Create a temporary set of accounts directories, used primarily
             // for testing
@@ -1083,7 +1078,7 @@ impl AccountsDb {
         let new = Self {
             accounts_index,
             paths,
-            bank_hash_details_dir,
+            bank_hash_details_dir: accounts_db_config.bank_hash_details_dir,
             temp_paths,
             shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
@@ -3674,7 +3669,7 @@ impl AccountsDb {
         //          |                           |
         //          V                           |
         // F3 store_accounts_frozen()/          | index
-        //        update_index()                | (replaces existing store_id, offset in caches)
+        //        update_index_stored_accounts()| (replaces existing store_id, offset in caches)
         //          |                           |
         //          V                           |
         // F4 accounts_cache.remove_slot()      | map of caches (removes old entry)
@@ -3694,7 +3689,7 @@ impl AccountsDb {
         //          |                           |
         //          V                           |
         // S3 store_accounts_frozen()/          | index
-        //        update_index()                | (replaces existing store_id, offset in stores)
+        //        update_index_stored_accounts()| (replaces existing store_id, offset in stores)
         //          |                           |
         //          V                           |
         // S4 do_shrink_slot_store()/           | map of stores (removes old entry)
@@ -5119,9 +5114,60 @@ impl AccountsDb {
     }
 
     /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Used for cached accounts only.
+    fn update_index_cached_accounts<'a>(
+        &self,
+        infos: Vec<AccountInfo>,
+        accounts: &impl StorableAccounts<'a>,
+        update_index_thread_selection: UpdateIndexThreadSelection,
+    ) {
+        let target_slot = accounts.target_slot();
+        let len = std::cmp::min(accounts.len(), infos.len());
+
+        let update = |start, end| {
+            (start..end).for_each(|i| {
+                accounts.account(i, |account| {
+                    let info = infos[i];
+                    debug_assert!(info.is_cached());
+                    self.accounts_index.upsert(
+                        target_slot,
+                        target_slot,
+                        account.pubkey(),
+                        &account,
+                        &self.account_indexes,
+                        info,
+                        ReclaimsSlotList::default().as_mut(),
+                        UpsertReclaim::PreviousSlotEntryWasCached,
+                    );
+                });
+            });
+        };
+
+        let threshold = 1;
+        if matches!(
+            update_index_thread_selection,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        ) && len > threshold
+        {
+            let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
+            let batches = 1 + len / chunk_size;
+            self.thread_pool_foreground.install(|| {
+                (0..batches).into_par_iter().for_each(|batch| {
+                    let start = batch * chunk_size;
+                    let end = std::cmp::min(start + chunk_size, len);
+                    update(start, end)
+                })
+            });
+        } else {
+            update(0, len);
+        }
+    }
+
+    /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Used when storing accounts to storage.
     /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
     /// The element of the returned vector is guaranteed to be non-empty.
-    fn update_index<'a>(
+    fn update_index_stored_accounts<'a>(
         &self,
         infos: Vec<AccountInfo>,
         accounts: &impl StorableAccounts<'a>,
@@ -5144,7 +5190,8 @@ impl AccountsDb {
             let mut reclaims = ReclaimsSlotList::with_capacity((end - start) / 2);
 
             (start..end).for_each(|i| {
-                let info = infos[i];
+                let info: AccountInfo = infos[i];
+                debug_assert!(!info.is_cached());
                 accounts.account(i, |account| {
                     let old_slot = accounts.slot(i);
                     self.accounts_index.upsert(
@@ -5571,13 +5618,7 @@ impl AccountsDb {
         // Update the index
         let mut update_index_time = Measure::start("update_index");
 
-        self.update_index(
-            infos,
-            &accounts,
-            UpsertReclaim::PreviousSlotEntryWasCached,
-            update_index_thread_selection,
-            &self.thread_pool_foreground,
-        );
+        self.update_index_cached_accounts(infos, &accounts, update_index_thread_selection);
 
         update_index_time.stop();
         self.stats
@@ -5646,7 +5687,7 @@ impl AccountsDb {
         // after the account are stored by the above `store_accounts_to`
         // call and all the accounts are stored, all reads after this point
         // will know to not check the cache anymore
-        let reclaims = self.update_index(
+        let reclaims = self.update_index_stored_accounts(
             infos,
             &accounts,
             reclaim_handling,

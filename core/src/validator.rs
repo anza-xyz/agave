@@ -2871,6 +2871,12 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
                 );
             }
         }
+        datapoint_info!(
+            "wfsm_gossip",
+            ("online_stake", online_stake, i64),
+            ("offline_stake", offline_stake, i64),
+            ("total_activated_stake", total_activated_stake, i64),
+        );
     }
 
     online_stake_percentage as u64

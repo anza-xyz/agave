@@ -128,12 +128,12 @@ pub struct VotingContext {
     pub consensus_metrics_sender: ConsensusMetricsEventSender,
 }
 
-fn get_bls_keypair(
-    context: &mut VotingContext,
+fn get_or_insert_bls_keypair(
+    derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
     authorized_voter_keypair: &Arc<Keypair>,
 ) -> Result<Arc<BLSKeypair>, BlsError> {
     let pubkey = authorized_voter_keypair.pubkey();
-    if let Some(existing) = context.derived_bls_keypairs.get(&pubkey) {
+    if let Some(existing) = derived_bls_keypairs.get(&pubkey) {
         return Ok(existing.clone());
     }
 
@@ -142,23 +142,28 @@ fn get_bls_keypair(
         BLS_KEYPAIR_DERIVE_SEED,
     )?);
 
-    context
-        .derived_bls_keypairs
-        .insert(pubkey, bls_keypair.clone());
+    derived_bls_keypairs.insert(pubkey, bls_keypair.clone());
 
     Ok(bls_keypair)
 }
 
-fn generate_vote_tx(vote: &Vote, bank: &Bank, context: &mut VotingContext) -> GenerateVoteTxResult {
-    let vote_account_pubkey = context.vote_account_pubkey;
+fn generate_vote_tx(
+    vote: &Vote,
+    bank: &Bank,
+    vote_account_pubkey: Pubkey,
+    identity_keypair: &Arc<Keypair>,
+    authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
+    wait_to_vote_slot: Option<u64>,
+    derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
+) -> GenerateVoteTxResult {
     let authorized_voter_keypair;
     let bls_pubkey_in_vote_account;
     {
-        let authorized_voter_keypairs = context.authorized_voter_keypairs.read().unwrap();
+        let authorized_voter_keypairs = authorized_voter_keypairs.read().unwrap();
         if authorized_voter_keypairs.is_empty() {
             return GenerateVoteTxResult::NonVoting;
         }
-        if let Some(slot) = context.wait_to_vote_slot {
+        if let Some(slot) = wait_to_vote_slot {
             if vote.slot() < slot {
                 return GenerateVoteTxResult::WaitToVoteSlot(slot);
             }
@@ -167,18 +172,18 @@ fn generate_vote_tx(vote: &Vote, bank: &Bank, context: &mut VotingContext) -> Ge
             return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
         };
         let vote_state_view = vote_account.vote_state_view();
-        if vote_state_view.node_pubkey() != &context.identity_keypair.pubkey() {
+        if vote_state_view.node_pubkey() != &identity_keypair.pubkey() {
             info!(
                 "Vote account node_pubkey mismatch: {} (expected: {}).  Unable to vote",
                 vote_state_view.node_pubkey(),
-                context.identity_keypair.pubkey()
+                identity_keypair.pubkey()
             );
             return GenerateVoteTxResult::HotSpare;
         }
         let Some(bls_pubkey_serialized) = vote_state_view.bls_pubkey_compressed() else {
             panic!(
                 "No BLS pubkey in vote account {}",
-                context.identity_keypair.pubkey()
+                identity_keypair.pubkey()
             );
         };
         bls_pubkey_in_vote_account =
@@ -187,7 +192,7 @@ fn generate_vote_tx(vote: &Vote, bank: &Bank, context: &mut VotingContext) -> Ge
                 .unwrap_or_else(|_| {
                     panic!(
                         "Failed to decompress BLS pubkey in vote account {}",
-                        context.identity_keypair.pubkey()
+                        identity_keypair.pubkey()
                     );
                 });
         let Some(authorized_voter_pubkey) = vote_state_view.get_authorized_voter(bank.epoch())
@@ -209,7 +214,7 @@ fn generate_vote_tx(vote: &Vote, bank: &Bank, context: &mut VotingContext) -> Ge
         authorized_voter_keypair = keypair.clone();
     }
 
-    let bls_keypair = get_bls_keypair(context, &authorized_voter_keypair)
+    let bls_keypair = get_or_insert_bls_keypair(derived_bls_keypairs, &authorized_voter_keypair)
         .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e:?}"));
     let my_bls_pubkey: BLSPubkey = bls_keypair.public;
     if my_bls_pubkey != bls_pubkey_in_vote_account {
@@ -263,7 +268,15 @@ fn insert_vote_and_create_bls_message(
     }
 
     let bank = context.sharable_banks.root();
-    let message = match generate_vote_tx(&vote, &bank, context) {
+    let message = match generate_vote_tx(
+        &vote,
+        &bank,
+        context.vote_account_pubkey,
+        &context.identity_keypair,
+        &context.authorized_voter_keypairs,
+        context.wait_to_vote_slot,
+        &mut context.derived_bls_keypairs,
+    ) {
         GenerateVoteTxResult::ConsensusMessage(m) => m,
         e => {
             if e.is_transient_error() {
@@ -360,9 +373,9 @@ mod tests {
 
         let my_keys = &validator_keypairs[my_index];
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (bls_sender, _bls_receiver) = unbounded();
-        let (commitment_sender, _commitment_receiver) = unbounded();
-        let (consensus_metrics_sender, _consensus_metrics_receiver) = unbounded();
+        let bls_sender = unbounded().0;
+        let commitment_sender = unbounded().0;
+        let consensus_metrics_sender = unbounded().0;
         VotingContext {
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
