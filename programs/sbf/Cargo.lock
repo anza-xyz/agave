@@ -10034,7 +10034,6 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-pubkey 4.0.0",
- "solana-quic-definitions",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-streamer",
