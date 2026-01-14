@@ -881,7 +881,6 @@ mod tests {
 
     impl EventHandlerTestContext {
         fn setup() -> EventHandlerTestContext {
-            // For tests, we just make each queue bounded at 100, should be enough.
             let (bls_sender, bls_receiver) = bounded(100);
             let (commitment_sender, commitment_receiver) = bounded(100);
             let (own_vote_sender, own_vote_receiver) = bounded(100);

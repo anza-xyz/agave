@@ -69,10 +69,10 @@ impl TimerManager {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::event::VotorEvent, crossbeam_channel::unbounded, std::time::Duration};
+    use {super::*, crate::event::VotorEvent, crossbeam_channel::bounded, std::time::Duration};
     #[test]
     fn test_timer_manager() {
-        let (event_sender, event_receiver) = unbounded();
+        let (event_sender, event_receiver) = bounded(100);
         let exit = Arc::new(AtomicBool::new(false));
         let timer_manager = TimerManager::new(event_sender, exit.clone());
         let slot = 52;

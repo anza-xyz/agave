@@ -459,10 +459,11 @@ mod tests {
     }
 
     fn setup(delta_standstill: Option<Duration>) -> ConsensusPoolServiceTestComponents {
-        let (consensus_message_sender, consensus_message_receiver) = crossbeam_channel::unbounded();
-        let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
-        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
-        let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
+        let (consensus_message_sender, consensus_message_receiver) =
+            crossbeam_channel::bounded(100);
+        let (bls_sender, bls_receiver) = crossbeam_channel::bounded(100);
+        let (event_sender, event_receiver) = crossbeam_channel::bounded(100);
+        let (commitment_sender, commitment_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())

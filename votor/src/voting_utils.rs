@@ -317,7 +317,7 @@ pub fn generate_vote_message(
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_runtime::{
             bank::Bank,
@@ -360,9 +360,9 @@ mod tests {
 
         let my_keys = &validator_keypairs[my_index];
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (bls_sender, _bls_receiver) = unbounded();
-        let (commitment_sender, _commitment_receiver) = unbounded();
-        let (consensus_metrics_sender, _consensus_metrics_receiver) = unbounded();
+        let (bls_sender, _bls_receiver) = bounded(100);
+        let (commitment_sender, _commitment_receiver) = bounded(100);
+        let (consensus_metrics_sender, _consensus_metrics_receiver) = bounded(100);
         VotingContext {
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_generate_own_vote_message() {
-        let (own_vote_sender, own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_wait_to_vote_slot() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_non_voting_node() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_wrong_identity_keypair() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_wrong_vote_account_pubkey() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -540,7 +540,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Vote account bls_pubkey mismatch")]
     fn test_wrong_bls_pubkey() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -563,7 +563,7 @@ mod tests {
     #[should_panic(expected = "The bank 0 doesn't have its own epoch_stakes for")]
     fn test_panic_on_future_slot() {
         agave_logger::setup();
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn test_zero_staked_validator_fails_voting() {
         agave_logger::setup();
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))

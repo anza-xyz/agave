@@ -172,7 +172,7 @@ impl Timers {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crossbeam_channel::unbounded};
+    use {super::*, crossbeam_channel::bounded};
 
     #[test]
     fn timer_state_machine() {
@@ -220,7 +220,7 @@ mod tests {
     fn timers_progress() {
         let one_micro = Duration::from_micros(1);
         let mut now = Instant::now();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(100);
         let mut timers = Timers::new(one_micro, one_micro, sender);
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
