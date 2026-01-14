@@ -5127,7 +5127,7 @@ impl AccountsDb {
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         let target_slot = accounts.target_slot();
-        let len: usize = std::cmp::min(accounts.len(), infos.len());
+        let len = std::cmp::min(accounts.len(), infos.len());
 
         let update = |start, end| {
             (start..end).for_each(|i| {
