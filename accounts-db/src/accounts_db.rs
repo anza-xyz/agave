@@ -7012,7 +7012,7 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
-        self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None)
+        self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache
