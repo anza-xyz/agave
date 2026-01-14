@@ -7053,6 +7053,15 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
+        assert!(
+            self.accounts_index
+                .roots_tracker
+                .read()
+                .unwrap()
+                .alive_roots
+                .contains(&slot),
+            "slot: {slot}"
+        );
         self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None);
     }
 
