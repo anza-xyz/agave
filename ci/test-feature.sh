@@ -23,7 +23,6 @@ exclude_features=(
 )
 
 cargo +"$rust_nightly" hack check \
-	--keep-going \
 	--each-feature \
 	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
 	--exclude-all-features \
