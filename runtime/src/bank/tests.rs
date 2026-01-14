@@ -808,7 +808,7 @@ where
                 reward_type: RewardType::Voting,
                 lamports: 0,
                 post_balance: bank1.get_balance(&vote_id),
-                commission: Some(0),
+                commission_bps: Some(0),
             }
         ),]
     );
@@ -856,7 +856,7 @@ where
                 reward_type: RewardType::Staking,
                 lamports: validator_rewards_lamports as i64,
                 post_balance: bank2.get_balance(&stake_id),
-                commission: Some(0),
+                commission_bps: Some(0),
             }
         )]
     );
@@ -1468,7 +1468,7 @@ fn test_bank_tx_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + expected_fee_collected,
-                commission: None,
+                commission_bps: None,
             }
         )]
     );
@@ -1503,7 +1503,7 @@ fn test_bank_tx_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + 2 * expected_fee_collected,
-                commission: None,
+                commission_bps: None,
             }
         )]
     );
@@ -1578,7 +1578,7 @@ fn test_bank_tx_compute_unit_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + expected_fee_collected,
-                commission: None,
+                commission_bps: None,
             }
         )]
     );
@@ -1613,7 +1613,7 @@ fn test_bank_tx_compute_unit_fee() {
                 reward_type: RewardType::Fee,
                 lamports: expected_fee_collected as i64,
                 post_balance: initial_balance + 2 * expected_fee_collected,
-                commission: None,
+                commission_bps: None,
             }
         )]
     );
@@ -11214,10 +11214,6 @@ fn test_system_instruction_unsigned_transaction() {
 fn test_calc_vote_accounts_to_store_empty() {
     let vote_account_rewards = HashMap::default();
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(
-        result.accounts_with_rewards.len(),
-        result.accounts_with_rewards.len()
-    );
     assert!(result.accounts_with_rewards.is_empty());
 }
 
@@ -11236,10 +11232,6 @@ fn test_calc_vote_accounts_to_store_overflow() {
         },
     );
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(
-        result.accounts_with_rewards.len(),
-        result.accounts_with_rewards.len()
-    );
     assert!(result.accounts_with_rewards.is_empty());
 }
 
@@ -11260,25 +11252,18 @@ fn test_calc_vote_accounts_to_store_normal() {
                 },
             );
             let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-            assert_eq!(
-                result.accounts_with_rewards.len(),
-                result.accounts_with_rewards.len()
-            );
             assert_eq!(result.accounts_with_rewards.len(), 1);
             let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
             _ = vote_account.checked_add_lamports(vote_rewards);
             assert!(accounts_equal(account, &vote_account));
-            assert_eq!(
-                *rewards,
-                RewardInfo {
-                    reward_type: RewardType::Voting,
-                    lamports: vote_rewards as i64,
-                    post_balance: vote_account.lamports(),
-                    // TODO: Update RewardInfo in solana-reward-info crate to support
-                    // commission_bps: Option<u16>, then pass bps here without loss.
-                    commission: Some((commission_bps / 100) as u8),
-                }
-            );
+
+            let expected_reward_info = RewardInfo {
+                reward_type: RewardType::Voting,
+                lamports: vote_rewards as i64,
+                post_balance: vote_account.lamports(),
+                commission_bps: Some(commission_bps),
+            };
+            assert_eq!(*rewards, expected_reward_info);
             assert_eq!(*pubkey_result, pubkey);
         }
     }

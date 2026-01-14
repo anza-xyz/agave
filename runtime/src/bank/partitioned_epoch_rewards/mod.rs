@@ -449,9 +449,7 @@ mod tests {
                     stake_pubkey: stake_reward.stake_pubkey,
                     stake,
                     stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                    // TODO: Update RewardInfo in solana-reward-info crate to support
-                    // commission_bps: Option<u16>, then use that here directly.
-                    commission_bps: stake_reward.stake_reward_info.commission.unwrap() as u16 * 100,
+                    commission_bps: stake_reward.stake_reward_info.commission_bps.unwrap(),
                 })
             } else {
                 None
@@ -1187,7 +1185,7 @@ mod tests {
             reward_type: RewardType::Voting,
             lamports: 55,
             post_balance: 5555,
-            commission: Some(5),
+            commission_bps: Some(500),
         };
 
         let rewards_and_partitions = KeyedRewardsAndNumPartitions {

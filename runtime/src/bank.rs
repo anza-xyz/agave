@@ -2451,9 +2451,7 @@ impl Bank {
                     reward_type: RewardType::Voting,
                     lamports: vote_rewards as i64,
                     post_balance: vote_account.lamports(),
-                    // TODO: Update RewardInfo in solana-reward-info crate to support
-                    // commission_bps: Option<u16>, then pass bps here without loss.
-                    commission: Some((commission_bps / 100).min(100) as u8),
+                    commission_bps: Some(commission_bps),
                 },
                 vote_account,
             ));
