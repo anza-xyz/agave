@@ -4861,9 +4861,24 @@ impl AccountsDb {
         flush_stats
     }
 
+    /// flush all accounts in this slot
+    fn flush_slot_cache(&self, slot: Slot) -> Option<FlushStats> {
+        self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None)
+    }
+
     /// Flushes an unrooted slot from the write cache to storage to free up memory
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn flush_unrooted_slot_cache(&self, slot: Slot) -> Option<FlushStats> {
+        assert!(
+            !self
+                .accounts_index
+                .roots_tracker
+                .read()
+                .unwrap()
+                .alive_roots
+                .contains(&slot),
+            "slot: {slot}"
+        );
         self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None)
     }
 
@@ -7002,16 +7017,7 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
-        assert!(
-            self.accounts_index
-                .roots_tracker
-                .read()
-                .unwrap()
-                .alive_roots
-                .contains(&slot),
-            "slot: {slot}"
-        );
-        self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None);
+        self.flush_slot_cache(slot);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache
