@@ -228,7 +228,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey 4.0.0",
- "solana-sbpf",
+ "solana-sbpf 0.14.0",
  "solana-sdk-ids",
  "solana-secp256k1-recover",
  "solana-sha256-hasher",
@@ -6340,7 +6340,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey 4.0.0",
- "solana-sbpf",
+ "solana-sbpf 0.14.0",
  "solana-sdk-ids",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
@@ -7573,7 +7573,7 @@ dependencies = [
  "solana-packet 4.0.0",
  "solana-program-runtime",
  "solana-pubkey 4.0.0",
- "solana-sbpf",
+ "solana-sbpf 0.14.0",
  "solana-sdk-ids",
  "solana-svm-log-collector",
  "solana-svm-measure",
@@ -7966,7 +7966,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-pubkey 4.0.0",
  "solana-rent",
- "solana-sbpf",
+ "solana-sbpf 0.14.0",
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-stable-layout",
@@ -8028,7 +8028,7 @@ dependencies = [
  "solana-pubkey 4.0.0",
  "solana-rent",
  "solana-runtime",
- "solana-sbpf",
+ "solana-sbpf 0.14.0",
  "solana-sdk-ids",
  "solana-signer",
  "solana-stable-layout",
@@ -8575,7 +8575,7 @@ dependencies = [
  "solana-sbf-rust-invoke-dep",
  "solana-sbf-rust-realloc-dep",
  "solana-sbf-rust-realloc-invoke-dep",
- "solana-sbpf",
+ "solana-sbpf 0.13.1",
  "solana-sdk-ids",
  "solana-signer",
  "solana-stake-interface",
@@ -9292,6 +9292,23 @@ name = "solana-sbpf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15b079e08471a9dbfe1e48b2c7439c85aa2a055cbd54eddd8bd257b0a7dbb29"
+dependencies = [
+ "byteorder",
+ "combine 3.8.1",
+ "hash32",
+ "libc",
+ "log",
+ "rand 0.8.5",
+ "rustc-demangle",
+ "thiserror 2.0.17",
+ "winapi",
+]
+
+[[package]]
+name = "solana-sbpf"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "022455679ce40fd8e342ecf7abc53f182f934a72270df9eb546de66e49f24f7a"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
@@ -10078,7 +10095,7 @@ dependencies = [
  "solana-instructions-sysvar",
  "solana-pubkey 4.0.0",
  "solana-rent",
- "solana-sbpf",
+ "solana-sbpf 0.14.0",
  "solana-sdk-ids",
 ]
 
