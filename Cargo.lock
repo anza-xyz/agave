@@ -6916,6 +6916,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "shuttle"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ab17edba38d63047f46780cf7360acf7467fec2c048928689a5c1dd1c2b4e31"
+dependencies = [
+ "assoc",
+ "bitvec",
+ "cfg-if 1.0.4",
+ "generator",
+ "hex",
+ "owo-colors",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "rand_pcg",
+ "scoped-tls",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
 name = "signal-hook"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9466,7 +9486,7 @@ dependencies = [
  "pcap-file",
  "rand 0.9.2",
  "serde",
- "shuttle",
+ "shuttle 0.8.1",
  "socket2 0.6.1",
  "solana-net-utils",
  "solana-serde",
@@ -9623,7 +9643,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.9.2",
- "shuttle",
+ "shuttle 0.8.1",
  "solana-clock",
  "solana-entry",
  "solana-hash 3.1.0",
@@ -10398,7 +10418,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "shuttle",
+ "shuttle 0.8.1",
  "smallvec",
  "solana-account",
  "solana-account-info",
@@ -10549,7 +10569,7 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "rustc-demangle",
- "shuttle",
+ "shuttle 0.7.1",
  "thiserror 2.0.17",
  "winapi",
 ]
@@ -10996,7 +11016,7 @@ dependencies = [
  "qualifier_attr",
  "rand 0.7.3",
  "serde",
- "shuttle",
+ "shuttle 0.8.1",
  "solana-account",
  "solana-bpf-loader-program",
  "solana-clock",
@@ -11172,7 +11192,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "futures 0.3.31",
  "rand 0.9.2",
- "shuttle",
+ "shuttle 0.8.1",
 ]
 
 [[package]]
