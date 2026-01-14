@@ -151,6 +151,9 @@ command_step() {
   cat >> "$output_file" <<EOF
   - name: "$1"
     command: "$2"
+    retry:
+      manual:
+        permit_on_passed: true
     timeout_in_minutes: $3
     artifact_paths: "log-*.txt"
     agents:
