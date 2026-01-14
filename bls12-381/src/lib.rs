@@ -24,12 +24,13 @@
 //! # Encoding and Endianness
 //!
 //! The operations support two encoding formats defined in [`Endianness`]:
-//! 1. **Big-Endian (BE)**: Follows the
-//!    [Zcash BLS12-381 specification](https://github.com/zkcrypto/pairing/tree/master/src/bls12_381#serialization)
-//!    and
-//!    [IETF draft](https://www.ietf.org/archive/id/draft-irtf-cfrg-pairing-friendly-curves-11.html#name-bls-curves-for-the-128-bit-).
+//! 1. **Big-Endian (BE)**: Follows the [Zcash BLS12-381 specification][zcash] and
+//!    [IETF draft][ietf].
 //! 2. **Little-Endian (LE)**: This mirrors the Zcash structure but utilizes little-endian
 //!    byte ordering for base field elements.
+//!
+//! [zcash]: https://github.com/zkcrypto/pairing/tree/master/src/bls12_381#serialization
+//! [ietf]: https://www.ietf.org/archive/id/draft-irtf-cfrg-pairing-friendly-curves-11.html#name-bls-curves-for-the-128-bit-
 
 pub use crate::{
     addition::{bls12_381_g1_addition, bls12_381_g2_addition},

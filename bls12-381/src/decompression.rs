@@ -22,9 +22,10 @@ pub fn bls12_381_g1_decompress(
             let mut bytes = input.0;
             swap_fq_endianness(&mut bytes);
             // After reversal, the flag byte (originally at end) is now at index 0.
-            // This matches the
-            // [Zcash BE format](https://github.com/zkcrypto/pairing/blob/34aa52b0f7bef705917252ea63e5a13fa01af551/src/bls12_381/README.md#serialization)
-            // expected by `G1Affine::from_compressed_unchecked`.
+            // This matches the [Zcash BE format][zcash-be-format] expected by
+            // `G1Affine::from_compressed_unchecked`.
+            //
+            // [zcash-be-format]: https://github.com/zkcrypto/pairing/blob/34aa52b0f7bef705917252ea63e5a13fa01af551/src/bls12_381/README.md#serialization
             G1Affine::from_compressed_unchecked(&bytes).into_option()?
         }
     };
@@ -55,9 +56,10 @@ pub fn bls12_381_g2_decompress(
             swap_fq_endianness(&mut bytes);
             swap_g2_c0_c1(&mut bytes); // Swap c0/c1 for G2
             // After reversal, the flag byte (originally at end) is now at index 0.
-            // This matches the
-            // [Zcash BE format](https://github.com/zkcrypto/pairing/blob/34aa52b0f7bef705917252ea63e5a13fa01af551/src/bls12_381/README.md#serialization)
-            // expected by `G2Affine::from_compressed_unchecked`.
+            // This matches the [Zcash BE format][zcash-be-format] expected by
+            // `G2Affine::from_compressed_unchecked`.
+            //
+            // [zcash-be-format]: https://github.com/zkcrypto/pairing/blob/34aa52b0f7bef705917252ea63e5a13fa01af551/src/bls12_381/README.md#serialization
             G2Affine::from_compressed_unchecked(&bytes).into_option()?
         }
     };

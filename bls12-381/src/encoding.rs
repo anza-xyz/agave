@@ -137,11 +137,11 @@ pub struct PodGtElement(pub [u8; GT_SIZE]);
 /// Specifies the byte ordering for BLS12-381 field elements.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Endianness {
-    /// Canonical Big-Endian encoding, following the
-    /// [Zcash](https://github.com/zkcrypto/pairing/tree/master/src/bls12_381#serialization)
-    /// and
-    /// [IETF](https://www.ietf.org/archive/id/draft-irtf-cfrg-pairing-friendly-curves-11.html#name-bls-curves-for-the-128-bit-)
+    /// Canonical Big-Endian encoding, following the [Zcash][zcash] and [IETF][ietf]
     /// standards.
+    ///
+    /// [zcash]: https://github.com/zkcrypto/pairing/tree/master/src/bls12_381#serialization
+    /// [ieff]: https://www.ietf.org/archive/id/draft-irtf-cfrg-pairing-friendly-curves-11.html#name-bls-curves-for-the-128-bit-
     BE,
     /// Little-Endian encoding.
     /// Base field elements (`Fq`) are reversed compared to BE.
