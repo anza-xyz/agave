@@ -169,6 +169,7 @@ impl Counter {
     pub fn inc(&self, level: log::Level, events: usize) {
         let now = solana_time_utils::timestamp();
         let counts = self.counts.fetch_add(events, Ordering::Relaxed);
+        let new_counts = counts + events;
         let times = self.times.fetch_add(1, Ordering::Relaxed);
         let lograte = self.lograte.load(Ordering::Relaxed);
         let metricsrate = self.metricsrate.load(Ordering::Relaxed);
@@ -187,12 +188,12 @@ impl Counter {
         #[allow(deprecated)]
         let prev = self
             .lastlog
-            .compare_and_swap(lastlog, counts, Ordering::Relaxed);
+            .compare_and_swap(lastlog, new_counts, Ordering::Relaxed);
         if prev == lastlog {
             let bucket = now / metricsrate;
             let counter = CounterPoint {
                 name: self.name,
-                count: counts as i64 - lastlog as i64,
+                count: new_counts as i64 - lastlog as i64,
                 timestamp: SystemTime::now(),
             };
             submit_counter(counter, level, bucket);
@@ -243,14 +244,14 @@ mod tests {
         assert_eq!(counter.counts.load(Ordering::Relaxed), 1);
         assert_eq!(counter.times.load(Ordering::Relaxed), 1);
         assert_eq!(counter.lograte.load(Ordering::Relaxed), 1000);
-        assert_eq!(counter.lastlog.load(Ordering::Relaxed), 0);
+        assert_eq!(counter.lastlog.load(Ordering::Relaxed), 1);
         assert_eq!(counter.name, "test");
         for _ in 0..199 {
             counter.inc(Level::Info, 2);
         }
-        assert_eq!(counter.lastlog.load(Ordering::Relaxed), 397);
-        counter.inc(Level::Info, 2);
         assert_eq!(counter.lastlog.load(Ordering::Relaxed), 399);
+        counter.inc(Level::Info, 2);
+        assert_eq!(counter.lastlog.load(Ordering::Relaxed), 401);
     }
 
     #[test]
