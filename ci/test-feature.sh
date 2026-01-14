@@ -16,8 +16,15 @@ source "$here"/rust-version.sh nightly
 
 partition="${1:-1/1}"
 
+exclude_features=(
+	# [agave-xdp-ebpf]
+	#     it needs aya-ebpf which is only available when target_arch = "bpf"
+	ebpf
+)
+
 cargo +"$rust_nightly" hack check \
 	--keep-going \
 	--each-feature \
+	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
 	--exclude-all-features \
 	--partition "$partition"
