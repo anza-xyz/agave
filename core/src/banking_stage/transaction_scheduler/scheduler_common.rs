@@ -240,16 +240,16 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                 // Assumption - retryable indexes are in order (sorted by workers).
                 let mut retryable_iter = retryable_indexes.iter().peekable();
                 for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
-                    if let Some(&retryable_index) = retryable_iter.peek() {
-                        if retryable_index.index == index {
-                            container.retry_transaction(
-                                id,
-                                transaction,
-                                retryable_index.immediately_retryable,
-                            );
-                            retryable_iter.next();
-                            continue;
-                        }
+                    if let Some(&retryable_index) = retryable_iter.peek()
+                        && retryable_index.index == index
+                    {
+                        container.retry_transaction(
+                            id,
+                            transaction,
+                            retryable_index.immediately_retryable,
+                        );
+                        retryable_iter.next();
+                        continue;
                     }
                     container.remove_by_id(id);
                 }

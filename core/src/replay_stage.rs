@@ -1205,8 +1205,9 @@ impl ReplayStage {
                     // may add a bank that will not included in either of these maps.
                     drop(ancestors);
                     drop(descendants);
-                    if !tpu_has_bank && !poh_controller.has_pending_message() {
-                        if let Some(poh_slot) = Self::maybe_start_leader(
+                    if !tpu_has_bank
+                        && !poh_controller.has_pending_message()
+                        && let Some(poh_slot) = Self::maybe_start_leader(
                             &my_pubkey,
                             &bank_forks,
                             &poh_recorder,
@@ -1221,14 +1222,14 @@ impl ReplayStage {
                             has_new_vote_been_rooted,
                             &first_alpenglow_slot,
                             &mut is_alpenglow_migration_complete,
-                        ) {
-                            Self::log_leader_change(
-                                &my_pubkey,
-                                poh_slot,
-                                &mut current_leader,
-                                &my_pubkey,
-                            );
-                        }
+                        )
+                    {
+                        Self::log_leader_change(
+                            &my_pubkey,
+                            poh_slot,
+                            &mut current_leader,
+                            &my_pubkey,
+                        );
                     }
                     start_leader_time.stop();
 
@@ -1372,30 +1373,29 @@ impl ReplayStage {
 
         for slot in first_leader_group_slot..=latest_leader_slot {
             let is_propagated = progress.is_propagated(slot);
-            if let Some(retransmit_info) = progress.get_retransmit_info_mut(slot) {
-                if !is_propagated.expect(
+            if let Some(retransmit_info) = progress.get_retransmit_info_mut(slot)
+                && !is_propagated.expect(
                     "presence of retransmit_info ensures that propagation status is present",
-                ) {
-                    if retransmit_info.reached_retransmit_threshold() {
-                        info!(
-                            "Retrying retransmit: latest_leader_slot={} slot={} \
-                             retransmit_info={:?}",
-                            latest_leader_slot, slot, &retransmit_info,
-                        );
-                        datapoint_info!(
-                            metric_name,
-                            ("latest_leader_slot", latest_leader_slot, i64),
-                            ("slot", slot, i64),
-                            ("retry_iteration", retransmit_info.retry_iteration, i64),
-                        );
-                        let _ = retransmit_slots_sender.send(slot);
-                        retransmit_info.increment_retry_iteration();
-                    } else {
-                        debug!(
-                            "Bypass retransmit of slot={} retransmit_info={:?}",
-                            slot, &retransmit_info
-                        );
-                    }
+                )
+            {
+                if retransmit_info.reached_retransmit_threshold() {
+                    info!(
+                        "Retrying retransmit: latest_leader_slot={} slot={} retransmit_info={:?}",
+                        latest_leader_slot, slot, &retransmit_info,
+                    );
+                    datapoint_info!(
+                        metric_name,
+                        ("latest_leader_slot", latest_leader_slot, i64),
+                        ("slot", slot, i64),
+                        ("retry_iteration", retransmit_info.retry_iteration, i64),
+                    );
+                    let _ = retransmit_slots_sender.send(slot);
+                    retransmit_info.increment_retry_iteration();
+                } else {
+                    debug!(
+                        "Bypass retransmit of slot={} retransmit_info={:?}",
+                        slot, &retransmit_info
+                    );
                 }
             }
         }
@@ -2050,17 +2050,17 @@ impl ReplayStage {
         current_leader: &mut Option<Pubkey>,
         new_leader: &Pubkey,
     ) {
-        if let Some(current_leader) = current_leader.as_ref() {
-            if current_leader != new_leader {
-                let msg = if current_leader == my_pubkey {
-                    ". I am no longer the leader"
-                } else if new_leader == my_pubkey {
-                    ". I am now the leader"
-                } else {
-                    ""
-                };
-                info!("LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}");
-            }
+        if let Some(current_leader) = current_leader.as_ref()
+            && current_leader != new_leader
+        {
+            let msg = if current_leader == my_pubkey {
+                ". I am no longer the leader"
+            } else if new_leader == my_pubkey {
+                ". I am now the leader"
+            } else {
+                ""
+            };
+            info!("LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}");
         }
         current_leader.replace(new_leader.to_owned());
     }
@@ -2165,21 +2165,17 @@ impl ReplayStage {
         };
 
         // Check if migration is necessary
-        if let Some(first_alpenglow_slot) = first_alpenglow_slot {
-            if !(*is_alpenglow_migration_complete) && poh_slot >= *first_alpenglow_slot {
-                // Initiate migration
-                // TODO: need to keep the ticks around for parent slots in previous epoch
-                // because reset below will delete those ticks
-                info!(
-                    "initiating alpenglow migration from maybe_start_leader() for slot {poh_slot}",
-                );
-                Self::maybe_initiate_alpenglow_migration(
-                    poh_recorder,
-                    is_alpenglow_migration_complete,
-                );
-                // Votor will handle leader blocks from now on
-                return None;
-            }
+        if let Some(first_alpenglow_slot) = first_alpenglow_slot
+            && !(*is_alpenglow_migration_complete)
+            && poh_slot >= *first_alpenglow_slot
+        {
+            // Initiate migration
+            // TODO: need to keep the ticks around for parent slots in previous epoch
+            // because reset below will delete those ticks
+            info!("initiating alpenglow migration from maybe_start_leader() for slot {poh_slot}",);
+            Self::maybe_initiate_alpenglow_migration(poh_recorder, is_alpenglow_migration_complete);
+            // Votor will handle leader blocks from now on
+            return None;
         }
 
         trace!("{my_pubkey} reached_leader_slot");
@@ -2477,19 +2473,18 @@ impl ReplayStage {
         let new_root = tower.record_bank_vote(bank);
 
         if let Some(new_root) = new_root {
-            if first_alpenglow_slot.is_none() {
-                if let Some(activation_slot) = bank_forks
+            if first_alpenglow_slot.is_none()
+                && let Some(activation_slot) = bank_forks
                     .read()
                     .unwrap()
                     .root_bank()
                     .compute_pending_activation_slot(&agave_feature_set::alpenglow::id())
-                {
-                    *first_alpenglow_slot = Some(activation_slot);
-                    info!(
-                        "alpenglow feature detected in root bank {new_root}, to be enabled on \
-                         slot {activation_slot}",
-                    );
-                }
+            {
+                *first_alpenglow_slot = Some(activation_slot);
+                info!(
+                    "alpenglow feature detected in root bank {new_root}, to be enabled on slot \
+                     {activation_slot}",
+                );
             }
             let highest_super_majority_root = Some(
                 block_commitment_cache
@@ -2573,10 +2568,10 @@ impl ReplayStage {
         if authorized_voter_keypairs.is_empty() {
             return GenerateVoteTxResult::NonVoting;
         }
-        if let Some(slot) = wait_to_vote_slot {
-            if bank.slot() < slot {
-                return GenerateVoteTxResult::Failed;
-            }
+        if let Some(slot) = wait_to_vote_slot
+            && bank.slot() < slot
+        {
+            return GenerateVoteTxResult::Failed;
         }
         let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) else {
             warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
@@ -3206,17 +3201,18 @@ impl ReplayStage {
 
             assert_eq!(bank_slot, bank.slot());
             if bank.is_complete() {
-                if let Some(first_alpenglow_slot) = first_alpenglow_slot {
-                    if !*is_alpenglow_migration_complete && bank.slot() >= first_alpenglow_slot {
-                        info!(
-                            "initiating alpenglow migration from replaying bank {}",
-                            bank.slot()
-                        );
-                        Self::maybe_initiate_alpenglow_migration(
-                            poh_recorder,
-                            is_alpenglow_migration_complete,
-                        );
-                    }
+                if let Some(first_alpenglow_slot) = first_alpenglow_slot
+                    && !*is_alpenglow_migration_complete
+                    && bank.slot() >= first_alpenglow_slot
+                {
+                    info!(
+                        "initiating alpenglow migration from replaying bank {}",
+                        bank.slot()
+                    );
+                    Self::maybe_initiate_alpenglow_migration(
+                        poh_recorder,
+                        is_alpenglow_migration_complete,
+                    );
                 }
                 let mut bank_complete_time = Measure::start("bank_complete_time");
                 let bank_progress = progress
@@ -3702,36 +3698,35 @@ impl ReplayStage {
             tower.vote_state.root_slot
         );
 
-        if let Some(local_root) = tower.vote_state.root_slot {
-            if bank_vote_state
+        if let Some(local_root) = tower.vote_state.root_slot
+            && bank_vote_state
                 .root_slot
                 .map(|bank_root| local_root > bank_root)
                 .unwrap_or(true)
-            {
-                // If the local root is larger than this on chain vote state
-                // root (possible due to supermajority roots being set on
-                // startup), then we need to adjust the tower
-                bank_vote_state.root_slot = Some(local_root);
-                bank_vote_state
-                    .votes
-                    .retain(|lockout| lockout.slot() > local_root);
-                info!(
-                    "Local root is larger than on chain root, overwrote bank root {:?} and \
-                     updated votes {:?}",
-                    bank_vote_state.root_slot, bank_vote_state.votes
-                );
+        {
+            // If the local root is larger than this on chain vote state
+            // root (possible due to supermajority roots being set on
+            // startup), then we need to adjust the tower
+            bank_vote_state.root_slot = Some(local_root);
+            bank_vote_state
+                .votes
+                .retain(|lockout| lockout.slot() > local_root);
+            info!(
+                "Local root is larger than on chain root, overwrote bank root {:?} and updated \
+                 votes {:?}",
+                bank_vote_state.root_slot, bank_vote_state.votes
+            );
 
-                if let Some(first_vote) = bank_vote_state.votes.front() {
-                    assert!(
-                        ancestors
-                            .get(&first_vote.slot())
-                            .expect(
-                                "Ancestors map must contain an entry for all slots on this fork \
-                                 greater than `local_root` and less than `bank_slot`"
-                            )
-                            .contains(&local_root)
-                    );
-                }
+            if let Some(first_vote) = bank_vote_state.votes.front() {
+                assert!(
+                    ancestors
+                        .get(&first_vote.slot())
+                        .expect(
+                            "Ancestors map must contain an entry for all slots on this fork \
+                             greater than `local_root` and less than `bank_slot`"
+                        )
+                        .contains(&local_root)
+                );
             }
         }
 

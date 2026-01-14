@@ -1204,15 +1204,14 @@ impl ClusterInfo {
                     return Either::Left(pulls);
                 }
                 entrypoint.set_wallclock(now);
-                if let Some(entrypoint_gossip) = entrypoint.gossip() {
-                    if self
+                if let Some(entrypoint_gossip) = entrypoint.gossip()
+                    && self
                         .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
                         .get_nodes_contact_info()
                         .any(|node| node.gossip() == Some(entrypoint_gossip))
-                    {
-                        // Found the entrypoint, no need to pull from it.
-                        return Either::Left(pulls);
-                    }
+                {
+                    // Found the entrypoint, no need to pull from it.
+                    return Either::Left(pulls);
                 }
             }
             let Some(entrypoint) = entrypoint.gossip() else {
@@ -1377,12 +1376,12 @@ impl ClusterInfo {
         )
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
-        if !packet_batch.is_empty() {
-            if let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch.into()) {
-                self.stats
-                    .gossip_transmit_packets_dropped_count
-                    .add_relaxed(packet_batch.len() as u64);
-            }
+        if !packet_batch.is_empty()
+            && let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch.into())
+        {
+            self.stats
+                .gossip_transmit_packets_dropped_count
+                .add_relaxed(packet_batch.len() as u64);
         }
         self.stats
             .gossip_transmit_loop_iterations_since_last_report
@@ -1609,13 +1608,12 @@ impl ClusterInfo {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_requests_time);
         if !requests.is_empty() {
             let response = self.handle_pull_requests(thread_pool, recycler, requests, stakes);
-            if !response.is_empty() {
-                if let Err(TrySendError::Full(response)) = response_sender.try_send(response.into())
-                {
-                    self.stats
-                        .gossip_packets_dropped_count
-                        .add_relaxed(response.len() as u64);
-                }
+            if !response.is_empty()
+                && let Err(TrySendError::Full(response)) = response_sender.try_send(response.into())
+            {
+                self.stats
+                    .gossip_packets_dropped_count
+                    .add_relaxed(response.len() as u64);
             }
         }
     }
@@ -1891,14 +1889,13 @@ impl ClusterInfo {
         self.new_push_requests(stakes)
             .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
             .for_each(|pkt| packet_batch.push(pkt));
-        if !packet_batch.is_empty() {
-            if let Err(TrySendError::Full(packet_batch)) =
+        if !packet_batch.is_empty()
+            && let Err(TrySendError::Full(packet_batch)) =
                 response_sender.try_send(packet_batch.into())
-            {
-                self.stats
-                    .gossip_packets_dropped_count
-                    .add_relaxed(packet_batch.len() as u64);
-            }
+        {
+            self.stats
+                .gossip_packets_dropped_count
+                .add_relaxed(packet_batch.len() as u64);
         }
     }
 

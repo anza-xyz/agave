@@ -558,17 +558,16 @@ impl RepairWeight {
                     epoch_stakes,
                     epoch_schedule,
                 );
-                if let Some(new_orphan_root) = new_orphan_root {
-                    if new_orphan_root != self.root {
-                        if let Some(repair_request) = RepairService::request_repair_if_needed(
-                            outstanding_repairs,
-                            ShredRepairType::Orphan(new_orphan_root),
-                        ) {
-                            repairs.push(repair_request);
-                            processed_slots.insert(new_orphan_root);
-                            new_best_orphan_requests += 1;
-                        }
-                    }
+                if let Some(new_orphan_root) = new_orphan_root
+                    && new_orphan_root != self.root
+                    && let Some(repair_request) = RepairService::request_repair_if_needed(
+                        outstanding_repairs,
+                        ShredRepairType::Orphan(new_orphan_root),
+                    )
+                {
+                    repairs.push(repair_request);
+                    processed_slots.insert(new_orphan_root);
+                    new_best_orphan_requests += 1;
                 }
             }
         }

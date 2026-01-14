@@ -59,17 +59,17 @@ pub fn get_unknown_last_index(
         let slot_meta = slot_meta_cache
             .entry(slot)
             .or_insert_with(|| blockstore.meta(slot).unwrap());
-        if let Some(slot_meta) = slot_meta {
-            if slot_meta.last_index.is_none() {
-                let shred_index = blockstore.get_index(slot).unwrap();
-                let num_processed_shreds = if let Some(shred_index) = shred_index {
-                    shred_index.data().num_shreds() as u64
-                } else {
-                    slot_meta.consumed
-                };
-                unknown_last.push((slot, slot_meta.received, num_processed_shreds));
-                processed_slots.insert(slot);
-            }
+        if let Some(slot_meta) = slot_meta
+            && slot_meta.last_index.is_none()
+        {
+            let shred_index = blockstore.get_index(slot).unwrap();
+            let num_processed_shreds = if let Some(shred_index) = shred_index {
+                shred_index.data().num_shreds() as u64
+            } else {
+                slot_meta.consumed
+            };
+            unknown_last.push((slot, slot_meta.received, num_processed_shreds));
+            processed_slots.insert(slot);
         }
     }
     // prioritize slots with more received shreds
@@ -100,12 +100,12 @@ fn get_unrepaired_path(
         let slot_meta = slot_meta_cache
             .entry(slot)
             .or_insert_with(|| blockstore.meta(slot).unwrap());
-        if let Some(slot_meta) = slot_meta {
-            if !slot_meta.is_full() {
-                path.push(slot);
-                if let Some(parent_slot) = slot_meta.parent_slot {
-                    slot = parent_slot
-                }
+        if let Some(slot_meta) = slot_meta
+            && !slot_meta.is_full()
+        {
+            path.push(slot);
+            if let Some(parent_slot) = slot_meta.parent_slot {
+                slot = parent_slot
             }
         }
     }

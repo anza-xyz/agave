@@ -296,26 +296,26 @@ impl SimulatorLoopLogger {
 
     fn log_jitter(&self, bank: &Bank) {
         let old_slot = bank.slot();
-        if let Some(event_time) = self.freeze_time_by_slot.get(&old_slot) {
-            if log_enabled!(log::Level::Info) {
-                let current_simulation_time = SystemTime::now();
-                let elapsed_simulation_time = current_simulation_time
-                    .duration_since(self.base_simulation_time)
-                    .unwrap();
-                let elapsed_event_time = event_time.duration_since(self.base_event_time).unwrap();
-                info!(
-                    "jitter(parent_slot: {}): {}{:?} (sim: {:?} event: {:?})",
-                    old_slot,
-                    if elapsed_simulation_time > elapsed_event_time {
-                        "+"
-                    } else {
-                        "-"
-                    },
-                    elapsed_simulation_time.abs_diff(elapsed_event_time),
-                    elapsed_simulation_time,
-                    elapsed_event_time,
-                );
-            }
+        if let Some(event_time) = self.freeze_time_by_slot.get(&old_slot)
+            && log_enabled!(log::Level::Info)
+        {
+            let current_simulation_time = SystemTime::now();
+            let elapsed_simulation_time = current_simulation_time
+                .duration_since(self.base_simulation_time)
+                .unwrap();
+            let elapsed_event_time = event_time.duration_since(self.base_event_time).unwrap();
+            info!(
+                "jitter(parent_slot: {}): {}{:?} (sim: {:?} event: {:?})",
+                old_slot,
+                if elapsed_simulation_time > elapsed_event_time {
+                    "+"
+                } else {
+                    "-"
+                },
+                elapsed_simulation_time.abs_diff(elapsed_event_time),
+                elapsed_simulation_time,
+                elapsed_event_time,
+            );
         }
     }
 

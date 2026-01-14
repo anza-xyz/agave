@@ -535,10 +535,10 @@ impl ClusterInfoVoteListener {
                     let _ = gossip_verified_vote_hash_sender.send((*vote_pubkey, slot, hash));
                 }
 
-                if reached_threshold_results[0] {
-                    if let Some(sender) = duplicate_confirmed_slot_sender {
-                        let _ = sender.send(vec![(slot, hash)]);
-                    }
+                if reached_threshold_results[0]
+                    && let Some(sender) = duplicate_confirmed_slot_sender
+                {
+                    let _ = sender.send(vec![(slot, hash)]);
                 }
                 if reached_threshold_results[1] {
                     new_optimistic_confirmed_slots.push((slot, hash));

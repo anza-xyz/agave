@@ -560,13 +560,13 @@ impl ServeRepair {
             return Err(Error::from(RepairVerifyError::Malformed));
         }
         Self::verify_signed_packet(my_id, &remote_request.bytes, &request)?;
-        if let Some(remote_pubkey) = remote_request.remote_pubkey {
-            if Some(&remote_pubkey) != request.sender() {
-                error!(
-                    "remote pubkey {remote_pubkey} != request sender {:?}",
-                    request.sender()
-                );
-            }
+        if let Some(remote_pubkey) = remote_request.remote_pubkey
+            && Some(&remote_pubkey) != request.sender()
+        {
+            error!(
+                "remote pubkey {remote_pubkey} != request sender {:?}",
+                request.sender()
+            );
         }
         if request.sender() == Some(my_id) {
             error!("self repair: from_addr={from_addr} my_id={my_id} request={request:?}");

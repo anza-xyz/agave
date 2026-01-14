@@ -481,14 +481,14 @@ fn retransmit_shred(
     let num_nodes = match socket {
         RetransmitSocket::Xdp(sender) => {
             let mut sent = num_addrs;
-            if num_addrs > 0 {
-                if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
-                    log::warn!("xdp channel full: {e:?}");
-                    stats
-                        .num_shreds_dropped_xdp_full
-                        .fetch_add(num_addrs, Ordering::Relaxed);
-                    sent = 0;
-                }
+            if num_addrs > 0
+                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred)
+            {
+                log::warn!("xdp channel full: {e:?}");
+                stats
+                    .num_shreds_dropped_xdp_full
+                    .fetch_add(num_addrs, Ordering::Relaxed);
+                sent = 0;
             }
             sent
         }
@@ -883,13 +883,13 @@ fn notify_subscribers(
             .unwrap()
             .notify_first_shred_received(slot);
     }
-    if let Some(votor_event_sender) = votor_event_sender {
-        if let Err(err) = votor_event_sender.send(VotorEvent::FirstShred(slot)) {
-            warn!(
-                "Sending {:?} failed as channel became disconnected.  Ignoring.",
-                err.into_inner()
-            );
-        }
+    if let Some(votor_event_sender) = votor_event_sender
+        && let Err(err) = votor_event_sender.send(VotorEvent::FirstShred(slot))
+    {
+        warn!(
+            "Sending {:?} failed as channel became disconnected.  Ignoring.",
+            err.into_inner()
+        );
     }
 }
 

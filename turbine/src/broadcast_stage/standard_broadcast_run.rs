@@ -278,16 +278,16 @@ impl StandardBroadcastRun {
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L132-L142
         // By contrast Self::insert skips the 1st data shred with index zero:
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L367-L373
-        if let Some(shred) = shreds.iter().find(|shred| shred.is_data()) {
-            if shred.index() == 0 {
-                blockstore
-                    .insert_cow_shreds(
-                        [Cow::Borrowed(shred)],
-                        None, // leader_schedule
-                        true, // is_trusted
-                    )
-                    .expect("Failed to insert shreds in blockstore");
-            }
+        if let Some(shred) = shreds.iter().find(|shred| shred.is_data())
+            && shred.index() == 0
+        {
+            blockstore
+                .insert_cow_shreds(
+                    [Cow::Borrowed(shred)],
+                    None, // leader_schedule
+                    true, // is_trusted
+                )
+                .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
 

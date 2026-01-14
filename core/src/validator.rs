@@ -571,10 +571,10 @@ impl BlockstoreRootScan {
     }
 
     fn join(self) {
-        if let Some(blockstore_root_scan) = self.thread {
-            if let Err(err) = blockstore_root_scan.join() {
-                warn!("blockstore_root_scan failed to join {err:?}");
-            }
+        if let Some(blockstore_root_scan) = self.thread
+            && let Err(err) = blockstore_root_scan.join()
+        {
+            warn!("blockstore_root_scan failed to join {err:?}");
         }
     }
 }
@@ -920,14 +920,14 @@ impl Validator {
         let shred_version = compute_shred_version(&genesis_config.hash(), Some(&hard_forks));
         info!("shred version: {shred_version}, hard forks: {hard_forks:?}");
 
-        if let Some(expected_shred_version) = config.expected_shred_version {
-            if expected_shred_version != shred_version {
-                return Err(ValidatorError::ShredVersionMismatch {
-                    actual: shred_version,
-                    expected: expected_shred_version,
-                }
-                .into());
+        if let Some(expected_shred_version) = config.expected_shred_version
+            && expected_shred_version != shred_version
+        {
+            return Err(ValidatorError::ShredVersionMismatch {
+                actual: shred_version,
+                expected: expected_shred_version,
             }
+            .into());
         }
 
         if let Some(start_slot) = should_cleanup_blockstore_incorrect_shred_versions(
@@ -1987,10 +1987,10 @@ impl Validator {
 }
 
 fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> bool {
-    if let Some(account) = &bank.get_account(vote_account) {
-        if let Ok(vote_state) = VoteStateV4::deserialize(account.data(), vote_account) {
-            return !vote_state.votes.is_empty();
-        }
+    if let Some(account) = &bank.get_account(vote_account)
+        && let Ok(vote_state) = VoteStateV4::deserialize(account.data(), vote_account)
+    {
+        return !vote_state.votes.is_empty();
     }
     false
 }
@@ -2028,10 +2028,10 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
 
 fn maybe_cluster_restart_with_hard_fork(config: &ValidatorConfig, root_slot: Slot) -> Option<Slot> {
     // detect cluster restart (hard fork) indirectly via wait_for_supermajority...
-    if let Some(wait_slot_for_supermajority) = config.wait_for_supermajority {
-        if wait_slot_for_supermajority == root_slot {
-            return Some(wait_slot_for_supermajority);
-        }
+    if let Some(wait_slot_for_supermajority) = config.wait_for_supermajority
+        && wait_slot_for_supermajority == root_slot
+    {
+        return Some(wait_slot_for_supermajority);
     }
 
     None
@@ -2136,13 +2136,13 @@ fn load_genesis(
     let genesis_hash = genesis_config.hash();
     info!("genesis hash: {genesis_hash}");
 
-    if let Some(expected_genesis_hash) = config.expected_genesis_hash {
-        if genesis_hash != expected_genesis_hash {
-            return Err(ValidatorError::GenesisHashMismatch(
-                genesis_hash,
-                expected_genesis_hash,
-            ));
-        }
+    if let Some(expected_genesis_hash) = config.expected_genesis_hash
+        && genesis_hash != expected_genesis_hash
+    {
+        return Err(ValidatorError::GenesisHashMismatch(
+            genesis_hash,
+            expected_genesis_hash,
+        ));
     }
 
     Ok(genesis_config)
@@ -2736,13 +2736,13 @@ fn wait_for_supermajority(
                 _ => {}
             }
 
-            if let Some(expected_bank_hash) = config.expected_bank_hash {
-                if bank.hash() != expected_bank_hash {
-                    return Err(ValidatorError::BankHashMismatch(
-                        bank.hash(),
-                        expected_bank_hash,
-                    ));
-                }
+            if let Some(expected_bank_hash) = config.expected_bank_hash
+                && bank.hash() != expected_bank_hash
+            {
+                return Err(ValidatorError::BankHashMismatch(
+                    bank.hash(),
+                    expected_bank_hash,
+                ));
             }
 
             for i in 1.. {

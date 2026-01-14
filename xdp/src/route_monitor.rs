@@ -104,17 +104,17 @@ impl RouteMonitor {
                     }
                 }
                 RTM_NEWNEIGH => {
-                    if let Some(n) = parse_rtm_newneigh(m, None) {
-                        if let Some(IpAddr::V4(_)) = n.destination {
-                            dirty |= router.upsert_neighbor(n);
-                        }
+                    if let Some(n) = parse_rtm_newneigh(m, None)
+                        && let Some(IpAddr::V4(_)) = n.destination
+                    {
+                        dirty |= router.upsert_neighbor(n);
                     }
                 }
                 RTM_DELNEIGH => {
-                    if let Some(n) = parse_rtm_newneigh(m, None) {
-                        if let Some(IpAddr::V4(ip)) = n.destination {
-                            dirty |= router.remove_neighbor(ip, n.ifindex as u32);
-                        }
+                    if let Some(n) = parse_rtm_newneigh(m, None)
+                        && let Some(IpAddr::V4(ip)) = n.destination
+                    {
+                        dirty |= router.remove_neighbor(ip, n.ifindex as u32);
                     }
                 }
                 _ => {}

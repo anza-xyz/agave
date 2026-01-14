@@ -566,10 +566,10 @@ async fn handle_connection<T>(
         }
     }
     drop_connection(remote_pubkey, &connection, &cache).await;
-    if let Entry::Occupied(entry) = router.write().await.entry(remote_address) {
-        if entry.get().is_closed() {
-            entry.remove();
-        }
+    if let Entry::Occupied(entry) = router.write().await.entry(remote_address)
+        && entry.get().is_closed()
+    {
+        entry.remove();
     }
 }
 
@@ -744,10 +744,10 @@ async fn drop_connection(
         CONNECTION_CLOSE_ERROR_CODE_DROPPED,
         CONNECTION_CLOSE_REASON_DROPPED,
     );
-    if let Entry::Occupied(entry) = cache.lock().await.entry(remote_pubkey) {
-        if entry.get().stable_id() == connection.stable_id() {
-            entry.remove();
-        }
+    if let Entry::Occupied(entry) = cache.lock().await.entry(remote_pubkey)
+        && entry.get().stable_id() == connection.stable_id()
+    {
+        entry.remove();
     }
 }
 

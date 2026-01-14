@@ -569,15 +569,15 @@ impl MockAlpenglowConsensus {
             }
         }
 
-        if let Some(slot_sender) = self.slot_sender.as_ref() {
-            if slot_sender.try_send(slot).is_err() {
-                error!("Can not initiate mock voting, worker is busy");
-                datapoint_info!(
-                    "mock_alpenglow",
-                    ("runner_stuck", 1, i64),
-                    ("slot", slot, i64)
-                );
-            }
+        if let Some(slot_sender) = self.slot_sender.as_ref()
+            && slot_sender.try_send(slot).is_err()
+        {
+            error!("Can not initiate mock voting, worker is busy");
+            datapoint_info!(
+                "mock_alpenglow",
+                ("runner_stuck", 1, i64),
+                ("slot", slot, i64)
+            );
         }
     }
 

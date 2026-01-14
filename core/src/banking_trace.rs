@@ -272,12 +272,12 @@ impl BankingTracer {
     }
 
     fn trace_event(&self, on_trace: impl Fn() -> TimedTracedEvent) {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                trace_sender
-                    .send(on_trace())
-                    .expect("active tracer thread unless exited");
-            }
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            trace_sender
+                .send(on_trace())
+                .expect("active tracer thread unless exited");
         }
     }
 
@@ -482,18 +482,18 @@ impl TracedSender {
     }
 
     pub fn send(&self, batch: BankingPacketBatch) -> Result<(), SendError<BankingPacketBatch>> {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                trace_sender
-                    .send(TimedTracedEvent(
-                        SystemTime::now(),
-                        TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
-                    ))
-                    .map_err(|err| {
-                        error!("unexpected error when tracing a banking event...: {err:?}");
-                        SendError(BankingPacketBatch::clone(&batch))
-                    })?;
-            }
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            trace_sender
+                .send(TimedTracedEvent(
+                    SystemTime::now(),
+                    TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
+                ))
+                .map_err(|err| {
+                    error!("unexpected error when tracing a banking event...: {err:?}");
+                    SendError(BankingPacketBatch::clone(&batch))
+                })?;
         }
         self.current_sender().send(batch)
     }

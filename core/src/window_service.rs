@@ -356,10 +356,9 @@ impl WindowService {
                         &duplicate_receiver,
                         &duplicate_slots_sender,
                         &bank_forks,
-                    ) {
-                        if Self::should_exit_on_error(e, &handle_error) {
-                            break;
-                        }
+                    ) && Self::should_exit_on_error(e, &handle_error)
+                    {
+                        break;
                     }
                 }
             })
