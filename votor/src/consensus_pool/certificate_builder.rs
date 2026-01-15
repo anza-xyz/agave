@@ -522,13 +522,9 @@ mod tests {
         let aggregate_pubkey = BLSPubkeyProjective::aggregate(keypairs.iter().map(|kp| &kp.public))
             .expect("Failed to aggregate public keys");
 
-        let verification_result =
-            aggregate_pubkey.verify_signature(&certificate_message.signature, &serialized_vote);
-
-        assert!(
-            verification_result.unwrap_or(false),
-            "BLS aggregate signature verification failed for base2 encoded certificate"
-        );
+        aggregate_pubkey
+            .verify_signature(&certificate_message.signature, &serialized_vote)
+            .expect("BLS aggregate signature verification failed for base2 encoded certificate");
     }
 
     #[test]

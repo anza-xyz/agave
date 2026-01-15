@@ -155,7 +155,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             BLS_KEYPAIR_DERIVE_SEED,
         )
         .unwrap();
-        Some(bls_pubkey_to_compressed_bytes(&bls_keypair.public))
+        Some(bls_keypair.public.to_bytes_compressed())
     } else {
         None
     };
@@ -195,7 +195,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
                 BLS_KEYPAIR_DERIVE_SEED,
             )
             .unwrap();
-            Some(bls_pubkey_to_compressed_bytes(&bls_keypair.public))
+            Some(bls_keypair.public.to_bytes_compressed())
         } else {
             None
         };

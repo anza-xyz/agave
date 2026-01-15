@@ -438,8 +438,8 @@ mod tests {
 
     #[test]
     fn test_bls_pubkeys_of() {
-        let bls_pubkey1: BLSPubkey = BLSKeypair::new().public;
-        let bls_pubkey2: BLSPubkey = BLSKeypair::new().public;
+        let bls_pubkey1: BLSPubkey = BLSKeypair::new().public.into();
+        let bls_pubkey2: BLSPubkey = BLSKeypair::new().public.into();
         let bls_pubkey1_compressed: BLSPubkeyCompressed = bls_pubkey1.try_into().unwrap();
         let bls_pubkey2_compressed: BLSPubkeyCompressed = bls_pubkey2.try_into().unwrap();
         let matches = app().get_matches_from(vec![

@@ -4496,7 +4496,7 @@ fn test_cache_flush_delayed_remove_unrooted_race() {
                 if flush_trial_start_receiver.recv().is_err() {
                     return;
                 }
-                db.flush_slot_cache(10);
+                db.flush_unrooted_slot_cache(10);
                 flush_done_sender.send(()).unwrap();
             })
             .unwrap()
@@ -4558,7 +4558,7 @@ fn test_cache_flush_remove_unrooted_race_multiple_slots() {
                     return;
                 }
                 for slot in 0..num_cached_slots {
-                    db.flush_slot_cache(slot);
+                    db.flush_unrooted_slot_cache(slot);
                 }
                 flush_done_sender.send(()).unwrap();
             })

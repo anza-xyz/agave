@@ -2299,7 +2299,7 @@ mod tests {
         let bls_keypair =
             BLSKeypair::derive_from_signer(validator_vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
-        let bls_pubkey: BLSPubkey = bls_keypair.public;
+        let bls_pubkey: BLSPubkey = bls_keypair.public.into();
 
         let signed_message = bincode::serialize(&vote).unwrap();
 

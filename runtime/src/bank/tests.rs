@@ -5486,7 +5486,10 @@ fn test_clean_nonrooted() {
     test_utils::deposit(&bank1, &pubkey0, some_lamports).unwrap();
     goto_end_of_slot(bank1.clone());
     bank1.freeze();
-    bank1.flush_accounts_cache_slot_for_tests();
+    bank1
+        .accounts()
+        .accounts_db
+        .flush_unrooted_slot_cache(bank1.slot());
 
     bank1.print_accounts_stats();
 
