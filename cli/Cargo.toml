@@ -91,7 +91,7 @@ solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
 solana-slot-history = "=3.0.0"
 solana-stake-interface = "=2.0.2"
-solana-system-interface = { version = "=2.0", features = ["bincode"] }
+solana-system-interface = { version = "=3.0", features = ["bincode"] }
 solana-sysvar = "=3.1.1"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
