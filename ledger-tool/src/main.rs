@@ -2175,6 +2175,15 @@ fn main() {
                             exit(1);
                         });
 
+                    // If we are creating an incremental snapshot, it must be based on a full snapshot
+                    if is_incremental {
+                        assert!(bank
+                            .accounts()
+                            .accounts_db
+                            .latest_full_snapshot_slot()
+                            .is_some());
+                    }
+
                     // Snapshot creation will implicitly perform AccountsDb
                     // flush and clean operations. These operations cannot be
                     // run concurrently, so ensure ABS is stopped to avoid that

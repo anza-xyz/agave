@@ -408,11 +408,19 @@ pub fn load_and_process_ledger(
     };
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-    let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender,
-        SnapshotConfig::new_load_only(),
-        bank_forks.read().unwrap().root(),
-    ));
+    let snapshot_controller = if arg_matches.is_present("snapshot_slot") {
+        Arc::new(SnapshotController::new(
+            snapshot_request_sender,
+            SnapshotConfig::new_generate_snapshots_externally(),
+            bank_forks.read().unwrap().root(),
+        ))
+    } else {
+        Arc::new(SnapshotController::new(
+            snapshot_request_sender,
+            SnapshotConfig::new_load_only(),
+            bank_forks.read().unwrap().root(),
+        ))
+    };
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_controller: snapshot_controller.clone(),
