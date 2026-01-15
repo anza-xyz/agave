@@ -10,6 +10,9 @@ use {
     pairing::{MillerLoopResult, MultiMillerLoop},
 };
 
+/// Maximum number of pairs allowed in a single pairing operation.
+const MAX_PAIRING_LENGTH: usize = 8;
+
 /// Computes the product of pairings for a batch of G1 and G2 points.
 ///
 /// Mathematically, this computes:
@@ -21,6 +24,10 @@ pub fn bls12_381_pairing_map(
     endianness: Endianness,
 ) -> Option<PodGtElement> {
     if g1_points.len() != g2_points.len() {
+        return None;
+    }
+
+    if g1_points.len() > MAX_PAIRING_LENGTH {
         return None;
     }
 
@@ -154,6 +161,30 @@ mod tests {
             OUTPUT_BE_PAIRING_BILINEARITY_IDENTITY,
             INPUT_LE_PAIRING_BILINEARITY_IDENTITY,
             OUTPUT_LE_PAIRING_BILINEARITY_IDENTITY,
+        );
+    }
+
+    #[test]
+    fn test_pairing_length_limits() {
+        let (g1_bytes, g2_bytes) = INPUT_BE_PAIRING_ONE_PAIR.split_at(96);
+        let p1: PodG1Point = cast_slice::<u8, PodG1Point>(g1_bytes)[0];
+        let p2: PodG2Point = cast_slice::<u8, PodG2Point>(g2_bytes)[0];
+
+        let count_ok = MAX_PAIRING_LENGTH;
+        let g1_vec_ok = vec![p1; count_ok];
+        let g2_vec_ok = vec![p2; count_ok];
+        assert!(
+            bls12_381_pairing_map(Version::V0, &g1_vec_ok, &g2_vec_ok, Endianness::BE).is_some(),
+            "Pairing with 8 pairs should succeed"
+        );
+
+        let count_fail = MAX_PAIRING_LENGTH + 1;
+        let g1_vec_fail = vec![p1; count_fail];
+        let g2_vec_fail = vec![p2; count_fail];
+        assert_eq!(
+            bls12_381_pairing_map(Version::V0, &g1_vec_fail, &g2_vec_fail, Endianness::BE),
+            None,
+            "Pairing with 9 pairs should fail"
         );
     }
 }
