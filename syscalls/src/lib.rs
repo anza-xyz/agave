@@ -1602,6 +1602,19 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidAttribute.into());
         }
 
+        // SIMD-0302: Block G2 ops if the feature is not active.
+        if !invoke_context.get_feature_set().enable_alt_bn128_g2_syscalls &&
+            matches!(
+                group_op,
+                ALT_BN128_G2_ADD_BE
+                    | ALT_BN128_G2_ADD_LE
+                    | ALT_BN128_G2_MUL_BE
+                    | ALT_BN128_G2_MUL_LE
+            )
+        {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
+
         let execution_cost = invoke_context.get_execution_cost();
         let (cost, output): (u64, usize) = match group_op {
             ALT_BN128_G1_ADD_BE | ALT_BN128_G1_ADD_LE => (
