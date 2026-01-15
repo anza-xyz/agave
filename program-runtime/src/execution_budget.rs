@@ -153,10 +153,14 @@ pub struct SVMTransactionExecutionCost {
     pub heap_cost: u64,
     /// Memory operation syscall base cost
     pub mem_op_base_cost: u64,
-    /// Number of compute units consumed to call alt_bn128_addition
-    pub alt_bn128_addition_cost: u64,
-    /// Number of compute units consumed to call alt_bn128_multiplication.
-    pub alt_bn128_multiplication_cost: u64,
+    /// Number of compute units consumed to call alt_bn128_g1_addition
+    pub alt_bn128_g1_addition_cost: u64,
+    /// Number of compute units consumed to call alt_bn128_g2_addition
+    pub alt_bn128_g2_addition_cost: u64,
+    /// Number of compute units consumed to call alt_bn128_g1_multiplication.
+    pub alt_bn128_g1_multiplication_cost: u64,
+    /// Number of compute units consumed to call alt_bn128_g2_multiplication.
+    pub alt_bn128_g2_multiplication_cost: u64,
     /// Total cost will be alt_bn128_pairing_one_pair_cost_first
     /// + alt_bn128_pairing_one_pair_cost_other * (num_elems - 1)
     pub alt_bn128_pairing_one_pair_cost_first: u64,
@@ -220,8 +224,10 @@ impl SVMTransactionExecutionCost {
             curve25519_ristretto_msm_incremental_cost: 788,
             heap_cost: DEFAULT_HEAP_COST,
             mem_op_base_cost: 10,
-            alt_bn128_addition_cost: 334,
-            alt_bn128_multiplication_cost: 3_840,
+            alt_bn128_g1_addition_cost: 334,
+            alt_bn128_g2_addition_cost: 535,
+            alt_bn128_g1_multiplication_cost: 3_840,
+            alt_bn128_g2_multiplication_cost: 15_670,
             alt_bn128_pairing_one_pair_cost_first: 36_364,
             alt_bn128_pairing_one_pair_cost_other: 12_121,
             big_modular_exponentiation_base_cost: 190,
