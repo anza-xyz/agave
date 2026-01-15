@@ -7113,7 +7113,7 @@ impl AccountsDb {
     pub fn store_for_tests<'a>(&self, accounts: impl StorableAccounts<'a>) {
         let slot = accounts.target_slot();
 
-        let placeholder = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+        let placeholder = AccountSharedData::new(1, 0, &Pubkey::default());
 
         // Build a list of zero-lamport accounts not present in the index
         let mut pre_populate_zero_lamport = Vec::new();
