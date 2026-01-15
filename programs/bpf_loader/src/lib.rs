@@ -1211,21 +1211,23 @@ fn process_loader_upgradeable_instruction(
                     &[],
                 )?;
 
-                if upgrade_authority_address.is_none() {
+                if let Some(upgrade_authority_address) = upgrade_authority_address {
+                    if migration_authority::check_id(&provided_authority_address) {
+                        invoke_context.native_invoke(
+                            solana_loader_v4_interface::instruction::transfer_authority(
+                                &program_address,
+                                &provided_authority_address,
+                                &upgrade_authority_address,
+                            ),
+                            &[],
+                        )?;
+                    }
+                } else {
                     invoke_context.native_invoke(
                         solana_loader_v4_interface::instruction::finalize(
                             &program_address,
                             &provided_authority_address,
                             &program_address,
-                        ),
-                        &[],
-                    )?;
-                } else if migration_authority::check_id(&provided_authority_address) {
-                    invoke_context.native_invoke(
-                        solana_loader_v4_interface::instruction::transfer_authority(
-                            &program_address,
-                            &provided_authority_address,
-                            &upgrade_authority_address.unwrap(),
                         ),
                         &[],
                     )?;
