@@ -181,8 +181,8 @@ mod tests {
             .collect();
 
         let epoch = rand::random::<Epoch>();
-        let len = num_keys * 10;
         let repeat = 8;
+        let len = num_keys * repeat;
         let leader_schedule = LeaderSchedule::new(&vote_accounts_map, epoch, len, repeat);
         assert_eq!(leader_schedule.num_slots() as u64, len);
         let mut leader_node = Pubkey::default();
