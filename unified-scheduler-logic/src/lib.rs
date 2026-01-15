@@ -1078,6 +1078,7 @@ pub struct SchedulingStateMachine {
     count_token: BlockedUsageCountToken,
     usage_queue_token: UsageQueueToken,
 }
+const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 128);
 
 impl SchedulingStateMachine {
     pub fn has_no_running_task(&self) -> bool {
