@@ -217,7 +217,7 @@ pub mod test {
         crate::repair::repair_service::sleep_shred_deferment_period,
         solana_hash::Hash,
         solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
-        trees::{tr, Tree, TreeWalk},
+        trees::{Tree, TreeWalk, tr},
     };
 
     #[test]

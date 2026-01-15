@@ -266,16 +266,20 @@ mod tests {
         }));
         assert!(mask.iter().all(|&x| x));
         // Assert that the random shuffle is weighted.
-        assert!(shuffle
-            .chunks(shuffle.len() / 10)
-            .map(|chunk| chunk.iter().map(|&i| weights[i]).sum::<u64>())
-            .tuple_windows()
-            .all(|(a, b)| a > b));
+        assert!(
+            shuffle
+                .chunks(shuffle.len() / 10)
+                .map(|chunk| chunk.iter().map(|&i| weights[i]).sum::<u64>())
+                .tuple_windows()
+                .all(|(a, b)| a > b)
+        );
         // Assert that zero weights only appear at the end of the shuffle.
-        assert!(shuffle
-            .iter()
-            .tuple_windows()
-            .all(|(&i, &j)| weights[i] != 0 || weights[j] == 0));
+        assert!(
+            shuffle
+                .iter()
+                .tuple_windows()
+                .all(|(&i, &j)| weights[i] != 0 || weights[j] == 0)
+        );
     }
 
     fn weighted_shuffle_slow<R>(rng: &mut R, mut weights: Vec<u64>) -> Vec<usize>
@@ -445,7 +449,9 @@ mod tests {
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [10, 3, 14, 18, 0, 9, 19, 6, 2, 1, 17, 7, 13, 15, 20, 12, 4, 8, 5, 16, 11]
+            [
+                10, 3, 14, 18, 0, 9, 19, 6, 2, 1, 17, 7, 13, 15, 20, 12, 4, 8, 5, 16, 11
+            ]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(10));
@@ -465,7 +471,9 @@ mod tests {
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [3, 15, 10, 6, 19, 17, 2, 0, 9, 20, 1, 14, 7, 8, 12, 18, 4, 13, 5, 11, 16]
+            [
+                3, 15, 10, 6, 19, 17, 2, 0, 9, 20, 1, 14, 7, 8, 12, 18, 4, 13, 5, 11, 16
+            ]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(3));

@@ -6,7 +6,7 @@ use {
     serde_big_array::BigArray,
     siphasher::sip::SipHasher24,
     solana_hash::Hash,
-    solana_keypair::{signable::Signable, Keypair},
+    solana_keypair::{Keypair, signable::Signable},
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,

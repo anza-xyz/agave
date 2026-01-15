@@ -3,7 +3,7 @@ use {
     agave_feature_set::{self as feature_set},
     itertools::Either,
     lazy_lru::LruCache,
-    rand::{seq::SliceRandom, Rng, RngCore, SeedableRng},
+    rand::{Rng, RngCore, SeedableRng, seq::SliceRandom},
     rand_chacha::{ChaCha8Rng, ChaChaRng},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,

@@ -1,6 +1,6 @@
 use {
     crate::netlink::{
-        netlink_get_neighbors, netlink_get_routes, MacAddress, NeighborEntry, RouteEntry,
+        MacAddress, NeighborEntry, RouteEntry, netlink_get_neighbors, netlink_get_routes,
     },
     libc::{AF_INET, AF_INET6},
     std::{
@@ -313,13 +313,17 @@ mod tests {
     #[test]
     fn test_ipv6_match() {
         assert!(is_ipv6_match(
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789),
+            Ipv6Addr::new(
+                0x2001, 0xdb8, 0x1234, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789
+            ),
             Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0, 0, 0, 0),
             64
         ));
 
         assert!(!is_ipv6_match(
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1235, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789),
+            Ipv6Addr::new(
+                0x2001, 0xdb8, 0x1235, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789
+            ),
             Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0, 0, 0, 0),
             64
         ));
