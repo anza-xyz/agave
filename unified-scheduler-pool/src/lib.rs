@@ -94,8 +94,8 @@ use crate::sleepless_testing::BuilderTracked;
 #[derive(Debug)]
 enum CheckPoint<'a> {
     NewTask(OrderedTaskId),
-    NewBufferedTask(OrderedTaskId),
-    BufferedTask(OrderedTaskId),
+    NewBufferedOrDroppedTask(OrderedTaskId),
+    BufferedOrDroppedTask(OrderedTaskId),
     TaskHandled(OrderedTaskId),
     TaskAccumulated(OrderedTaskId, &'a Result<()>),
     SessionEnding,
@@ -2299,7 +2299,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
                                             runnable_task_sender.send_aux_payload(task).unwrap();
                                         } else {
-                                            sleepless_testing::at(CheckPoint::BufferedTask(task_id));
+                                            sleepless_testing::at(CheckPoint::BufferedOrDroppedTask(task_id));
                                         }
                                     }
                                     Ok(NewTaskPayload::CloseSubchannel) => {
@@ -2403,7 +2403,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
-                                sleepless_testing::at(CheckPoint::NewBufferedTask(task.task_id()));
+                                sleepless_testing::at(CheckPoint::NewBufferedOrDroppedTask(
+                                    task.task_id(),
+                                ));
                                 assert_matches!(scheduling_mode, BlockProduction);
                                 state_machine.buffer_task(task);
                             }
@@ -4050,7 +4052,7 @@ mod tests {
         const BLOCKED_TRANSACTION_INDEX: OrderedTaskId = 1;
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::BufferedTask(BLOCKED_TRANSACTION_INDEX),
+            &CheckPoint::BufferedOrDroppedTask(BLOCKED_TRANSACTION_INDEX),
             &TestCheckPoint::AfterBufferedTask,
             &CheckPoint::SessionEnding,
             &TestCheckPoint::AfterSessionEnding,
@@ -4871,7 +4873,7 @@ mod tests {
         agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(17),
+            &CheckPoint::NewBufferedOrDroppedTask(17),
             &TestCheckPoint::AfterNewBufferedTask,
         ]);
 
@@ -4933,7 +4935,7 @@ mod tests {
         agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(18),
+            &CheckPoint::NewBufferedOrDroppedTask(18),
             &TestCheckPoint::AfterNewBufferedTask,
         ]);
 
@@ -5245,7 +5247,7 @@ mod tests {
 
         const DISCARDED_TASK_COUNT: OrderedTaskId = 3;
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
+            &CheckPoint::NewBufferedOrDroppedTask(DISCARDED_TASK_COUNT - 1),
             &TestCheckPoint::BeforeDiscardRequested,
             &CheckPoint::DiscardRequested,
             &CheckPoint::Discarded(DISCARDED_TASK_COUNT.try_into().unwrap()),
