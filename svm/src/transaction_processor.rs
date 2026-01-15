@@ -3,7 +3,7 @@ use {
         account_loader::{
             AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
             TransactionLoadResult, ValidatedTransactionDetails, load_transaction,
-            update_rent_exempt_status_for_account, validate_fee_payer,
+            validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
@@ -467,7 +467,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 tx,
                 validate_result,
                 &mut error_metrics,
-                &environment.rent,
             ));
             load_us = load_us.saturating_add(single_load_us);
 
@@ -715,9 +714,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             return Err(TransactionError::AccountNotFound);
         };
 
-        let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
-        update_rent_exempt_status_for_account(rent, &mut loaded_fee_payer.account);
-
         let fee_payer_index = 0;
         validate_fee_payer(
             fee_payer_address,
@@ -734,7 +730,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             nonce_info,
             *fee_payer_address,
             loaded_fee_payer.account.clone(),
-            fee_payer_loaded_rent_epoch,
         );
 
         Ok(ValidatedTransactionDetails {
@@ -1187,7 +1182,6 @@ mod tests {
                 ValidatedTransactionDetails,
             },
             nonce_info::NonceInfo,
-            rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
         solana_account::{WritableAccount, create_account_shared_data_for_test},
@@ -2017,7 +2011,6 @@ mod tests {
             &Hash::new_unique(),
         ));
         let fee_payer_address = message.fee_payer();
-        let current_epoch = 42;
         let rent = Rent::default();
         let min_balance = rent.minimum_balance(nonce::state::State::size());
         let transaction_fee = lamports_per_signature;
@@ -2029,13 +2022,7 @@ mod tests {
              starting balance is more than the min balance"
         );
 
-        let fee_payer_rent_epoch = current_epoch;
-        let fee_payer_account = AccountSharedData::new_rent_epoch(
-            starting_balance,
-            0,
-            &Pubkey::default(),
-            fee_payer_rent_epoch,
-        );
+        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
         let mock_bank = MockBankCallback {
@@ -2066,7 +2053,6 @@ mod tests {
 
         let post_validation_fee_payer_account = {
             let mut account = fee_payer_account.clone();
-            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
             account.set_lamports(0);
             account
         };
@@ -2078,7 +2064,6 @@ mod tests {
                     None, // nonce
                     *fee_payer_address,
                     post_validation_fee_payer_account.clone(),
-                    fee_payer_rent_epoch
                 ),
                 compute_budget: compute_budget_and_limits.budget,
                 loaded_accounts_bytes_limit: compute_budget_and_limits
@@ -2429,7 +2414,6 @@ mod tests {
 
             let post_validation_fee_payer_account = {
                 let mut account = fee_payer_account.clone();
-                account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 account.set_lamports(min_balance);
                 account
             };
@@ -2441,7 +2425,6 @@ mod tests {
                         Some(future_nonce),
                         *fee_payer_address,
                         post_validation_fee_payer_account.clone(),
-                        0, // fee_payer_rent_epoch
                     ),
                     compute_budget: compute_budget_and_limits.budget,
                     loaded_accounts_bytes_limit: compute_budget_and_limits
@@ -2498,12 +2481,7 @@ mod tests {
     fn test_inspect_account_fee_payer() {
         let lamports_per_signature = 5000;
         let fee_payer_address = Pubkey::new_unique();
-        let fee_payer_account = AccountSharedData::new_rent_epoch(
-            123_000_000_000,
-            0,
-            &Pubkey::default(),
-            RENT_EXEMPT_RENT_EPOCH,
-        );
+        let fee_payer_account = AccountSharedData::new(123_000_000_000, 0, &Pubkey::default());
         let mock_bank = MockBankCallback::default();
         mock_bank
             .account_shared_data

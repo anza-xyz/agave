@@ -1,7 +1,6 @@
 use {
     crate::nonce_info::NonceInfo,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_clock::Epoch,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
 };
@@ -66,14 +65,13 @@ impl RollbackAccounts {
         nonce: Option<NonceInfo>,
         fee_payer_address: Pubkey,
         mut fee_payer_account: AccountSharedData,
-        fee_payer_loaded_rent_epoch: Epoch,
     ) -> Self {
         if let Some(nonce) = nonce {
             if &fee_payer_address == nonce.address() {
                 // `nonce` contains an AccountSharedData which has already been advanced to the current DurableNonce
                 // `fee_payer_account` is an AccountSharedData as it currently exists on-chain
                 // thus if the nonce account is being used as the fee payer, we need to update that data here
-                // so we capture both the data change for the nonce and the lamports/rent epoch change for the fee payer
+                // so we capture both the data change for the nonce and the lamports change for the fee payer
                 fee_payer_account.set_data_from_slice(nonce.account().data());
 
                 RollbackAccounts::SameNonceAndFeePayer {
@@ -86,13 +84,6 @@ impl RollbackAccounts {
                 }
             }
         } else {
-            // When rolling back failed transactions which don't use nonces, the
-            // runtime should not update the fee payer's rent epoch so reset the
-            // rollback fee payer account's rent epoch to its originally loaded
-            // rent epoch value. In the future, a feature gate could be used to
-            // alter this behavior such that rent epoch updates are handled the
-            // same for both nonce and non-nonce failed transactions.
-            fee_payer_account.set_rent_epoch(fee_payer_loaded_rent_epoch);
             RollbackAccounts::FeePayerOnly {
                 fee_payer: (fee_payer_address, fee_payer_account),
             }
@@ -162,21 +153,9 @@ mod tests {
     fn test_new_fee_payer_only() {
         let fee_payer_address = Pubkey::new_unique();
         let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
-        let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
 
-        let rent_epoch_updated_fee_payer_account = {
-            let mut account = fee_payer_account.clone();
-            account.set_lamports(fee_payer_account.lamports());
-            account.set_rent_epoch(fee_payer_rent_epoch + 1);
-            account
-        };
-
-        let rollback_accounts = RollbackAccounts::new(
-            None,
-            fee_payer_address,
-            rent_epoch_updated_fee_payer_account,
-            fee_payer_rent_epoch,
-        );
+        let rollback_accounts =
+            RollbackAccounts::new(None, fee_payer_address, fee_payer_account.clone());
 
         let expected_fee_payer = (fee_payer_address, fee_payer_account);
         match rollback_accounts {
@@ -214,7 +193,6 @@ mod tests {
             Some(nonce),
             nonce_address,
             rent_epoch_updated_fee_payer_account,
-            u64::MAX, // ignored
         );
 
         let expected_rollback_accounts = RollbackAccounts::SameNonceAndFeePayer {
@@ -254,7 +232,6 @@ mod tests {
             Some(nonce),
             fee_payer_address,
             rent_epoch_updated_fee_payer_account.clone(),
-            u64::MAX, // ignored
         );
 
         let expected_nonce = (nonce_address, nonce_account);
