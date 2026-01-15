@@ -10,9 +10,9 @@ use {
         find_available_ports_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{
-            bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
-            bind_to_with_config, localhost_port_range_for_tests, multi_bind_in_range_with_config,
-            SocketConfiguration as SocketConfig,
+            SocketConfiguration as SocketConfig, bind_gossip_port_in_range,
+            bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
+            localhost_port_range_for_tests, multi_bind_in_range_with_config,
         },
     },
     solana_pubkey::Pubkey,

@@ -19,7 +19,7 @@ use {
     std::{
         error::Error,
         net::{Ipv4Addr, SocketAddr},
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
         thread,
     },
 };

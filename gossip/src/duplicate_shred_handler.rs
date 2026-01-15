@@ -238,7 +238,7 @@ mod tests {
         itertools::Itertools,
         solana_keypair::Keypair,
         solana_ledger::{
-            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             get_tmp_ledger_path_auto_delete,
             shred::Shredder,
         },

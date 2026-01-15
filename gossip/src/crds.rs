@@ -37,17 +37,17 @@ use {
     },
     assert_matches::debug_assert_matches,
     indexmap::{
-        map::{rayon::ParValues, Entry, IndexMap},
+        map::{Entry, IndexMap, rayon::ParValues},
         set::IndexSet,
     },
     lru::LruCache,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
-        collections::{hash_map, BTreeMap, HashMap, VecDeque},
+        collections::{BTreeMap, HashMap, VecDeque, hash_map},
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
@@ -781,8 +781,8 @@ impl CrdsStats {
 mod tests {
     use {
         super::*,
-        crate::crds_data::{new_rand_timestamp, AccountsHashes},
-        rand::{rng, Rng},
+        crate::crds_data::{AccountsHashes, new_rand_timestamp},
+        rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_keypair::Keypair,
         solana_signer::Signer,
