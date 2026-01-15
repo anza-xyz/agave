@@ -1137,6 +1137,9 @@ impl SchedulingStateMachine {
     /// Returns `Some(task)` if it's immediately scheduled. Otherwise, returns `None`,
     /// indicating the scheduled task is blocked currently.
     ///
+    /// Alternatively, the task might be silently ignored instead (= dropped), when
+    /// [`SchedulingStateMachine`] is capped with max_unique_active_task_count, returning `None`.
+    ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
     #[cfg(any(test, doc))]
     #[must_use]
@@ -1153,12 +1156,18 @@ impl SchedulingStateMachine {
     /// task is blocked or not. Eventually, the buffered task will be returned by one of later
     /// invocations [`schedule_next_unblocked_task()`](Self::schedule_next_unblocked_task).
     ///
+    /// Alternatively, the task might be silently ignored instead (= dropped), when
+    /// [`SchedulingStateMachine`] is capped with max_unique_active_task_count.
+    ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
     pub fn buffer_task(&mut self, task: Task) {
         self.schedule_or_buffer_task(task, true).unwrap_none();
     }
 
     /// Schedules or buffers given `task`, returning successful one unless buffering is forced.
+    ///
+    /// Alternatively, the task might be silently ignored instead (= dropped), when
+    /// [`SchedulingStateMachine`] is capped with max_unique_active_task_count.
     ///
     /// Refer to [`schedule_task()`](Self::schedule_task) and
     /// [`buffer_task()`](Self::buffer_task) for the difference between _scheduling_ and
