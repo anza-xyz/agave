@@ -33,9 +33,9 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// QUIC connection idle timeout. The connection will be closed if
-/// there are no activities on it within the timeout window.
-pub const QUIC_MAX_TIMEOUT: Duration = Duration::from_secs(60);
+/// QUIC connection idle timeout. The connection will be closed if there are no activities on it
+/// within the timeout window. The chosen value is default for quinn.
+pub const QUIC_MAX_TIMEOUT: Duration = Duration::from_secs(30);
 
 // allow multiple connections for NAT and any open/close overlap
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER: usize = 8;
