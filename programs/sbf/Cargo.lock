@@ -7071,7 +7071,7 @@ dependencies = [
  "solana-packet 4.0.0",
  "solana-pubkey 4.0.0",
  "solana-signer",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
  "solana-system-transaction",
  "solana-transaction",
  "solana-version",
