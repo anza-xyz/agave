@@ -128,7 +128,7 @@ dependencies = [
  "csv",
  "dashmap",
  "futures 0.3.31",
- "histogram",
+ "histogram 0.6.9",
  "itertools 0.14.0",
  "log",
  "num_cpus",
@@ -378,7 +378,7 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "dashmap",
- "histogram",
+ "histogram 0.11.4",
  "itertools 0.14.0",
  "log",
  "lru",
@@ -2995,6 +2995,15 @@ name = "histogram"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12cb882ccb290b8646e554b157ab0b71e64e8d5bef775cd66b6531e52d302669"
+
+[[package]]
+name = "histogram"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7e05f6bebaf5e4ae9ffac23c348518ceda3775c3b5edabdd95c3c0abee0c040"
+dependencies = [
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "hmac"
@@ -6891,7 +6900,7 @@ dependencies = [
  "dashmap",
  "derive_more 2.1.1",
  "futures 0.3.31",
- "histogram",
+ "histogram 0.11.4",
  "itertools 0.14.0",
  "libc",
  "log",
@@ -9133,7 +9142,7 @@ dependencies = [
  "dashmap",
  "futures 0.3.31",
  "futures-util",
- "histogram",
+ "histogram 0.11.4",
  "indexmap 2.13.0",
  "itertools 0.14.0",
  "libc",
