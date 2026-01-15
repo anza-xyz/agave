@@ -25,7 +25,14 @@ pub fn bls12_381_g2_point_validation(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::test_vectors::*, bytemuck::pod_read_unaligned};
+    use {
+        super::*,
+        crate::{
+            encoding::{swap_fq_endianness, swap_g2_c0_c1},
+            test_vectors::*,
+        },
+        bytemuck::pod_read_unaligned,
+    };
 
     fn to_pod_g1(bytes: &[u8]) -> PodG1Point {
         pod_read_unaligned(bytes)
@@ -43,12 +50,25 @@ mod tests {
             "G1 {op_name} BE Validation Failed. Expected {expected_valid}, got {result_be}",
         );
 
+        if expected_valid {
+            let point = input_be_pod.to_affine(Endianness::BE).unwrap();
+            let bytes = point.to_uncompressed();
+            assert_eq!(bytes, input_be_pod.0, "G1 {op_name} BE Round Trip Failed");
+        }
+
         let input_le_pod = to_pod_g1(input_le);
         let result_le = bls12_381_g1_point_validation(Version::V0, &input_le_pod, Endianness::LE);
         assert_eq!(
             result_le, expected_valid,
             "G1 {op_name} LE Validation Failed. Expected {expected_valid}, got {result_le}",
         );
+
+        if expected_valid {
+            let point = input_le_pod.to_affine(Endianness::LE).unwrap();
+            let mut bytes = point.to_uncompressed(); // Returns Zcash BE
+            swap_fq_endianness(&mut bytes); // Convert to LE
+            assert_eq!(bytes, input_le_pod.0, "G1 {op_name} LE Round Trip Failed");
+        }
     }
 
     fn run_g2_test(op_name: &str, input_be: &[u8], expected_valid: bool, input_le: &[u8]) {
@@ -59,12 +79,26 @@ mod tests {
             "G2 {op_name} BE Validation Failed. Expected {expected_valid}, got {result_be}",
         );
 
+        if expected_valid {
+            let point = input_be_pod.to_affine(Endianness::BE).unwrap();
+            let bytes = point.to_uncompressed();
+            assert_eq!(bytes, input_be_pod.0, "G2 {op_name} BE Round Trip Failed");
+        }
+
         let input_le_pod = to_pod_g2(input_le);
         let result_le = bls12_381_g2_point_validation(Version::V0, &input_le_pod, Endianness::LE);
         assert_eq!(
             result_le, expected_valid,
             "G2 {op_name} LE Validation Failed. Expected {expected_valid}, got {result_le}",
         );
+
+        if expected_valid {
+            let point = input_le_pod.to_affine(Endianness::LE).unwrap();
+            let mut bytes = point.to_uncompressed(); // Returns Zcash BE (c1, c0)
+            swap_fq_endianness(&mut bytes); // Convert elements to LE
+            swap_g2_c0_c1(&mut bytes); // Convert to (c0, c1) layout
+            assert_eq!(bytes, input_le_pod.0, "G2 {op_name} LE Round Trip Failed");
+        }
     }
 
     #[test]
