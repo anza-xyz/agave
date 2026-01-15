@@ -1679,11 +1679,7 @@ declare_builtin_function!(
                 alt_bn128_versioned_g2_addition(VersionedG2Addition::V0, input, Endianness::BE)
             }
             ALT_BN128_G2_ADD_LE => {
-                if invoke_context.get_feature_set().alt_bn128_little_endian {
-                    alt_bn128_versioned_g2_addition(VersionedG2Addition::V0, input, Endianness::LE)
-                } else {
-                    return Err(SyscallError::InvalidAttribute.into());
-                }
+                alt_bn128_versioned_g2_addition(VersionedG2Addition::V0, input, Endianness::LE)
             }
             ALT_BN128_G1_MUL_BE => {
                 alt_bn128_versioned_g1_multiplication(
@@ -1707,15 +1703,11 @@ declare_builtin_function!(
                 )
             }
             ALT_BN128_G2_MUL_LE => {
-                if invoke_context.get_feature_set().alt_bn128_little_endian {
-                    alt_bn128_versioned_g2_multiplication(
-                        VersionedG2Multiplication::V0,
-                        input,
-                        Endianness::LE
-                    )
-                } else {
-                    return Err(SyscallError::InvalidAttribute.into());
-                }
+                alt_bn128_versioned_g2_multiplication(
+                    VersionedG2Multiplication::V0,
+                    input,
+                    Endianness::LE
+                )
             }
             ALT_BN128_PAIRING_BE => {
                 let version = if invoke_context
