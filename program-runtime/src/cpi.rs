@@ -225,6 +225,7 @@ fn check_authorized_program(
 ///
 /// At the start of a CPI, this can be different from the data stored in the
 /// corresponding BorrowedAccount, and needs to be synched.
+#[derive(Debug)]
 pub struct CallerAccount<'a> {
     pub lamports: &'a mut u64,
     pub owner: &'a mut Pubkey,
@@ -1988,6 +1989,40 @@ mod tests {
         let caller_account = &accounts[0].caller_account;
         assert_eq!(caller_account.serialized_data, account.data());
         assert_eq!(caller_account.original_data_len, original_data_len);
+    }
+
+    #[test]
+    fn test_get_serialized_data() {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foo".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+
+        assert_matches!(
+            CallerAccount::get_serialized_data(
+                &memory_mapping,
+                true, // check_aligned
+                MM_INPUT_START,
+                account.data().len(),
+                account.data().len().saturating_add(MAX_PERMITTED_DATA_INCREASE).saturating_add(1),
+                true, // stricter_abi_and_runtime_constraints
+                false, // account_data_direct_mapping
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
+        );
     }
 
     #[test]
