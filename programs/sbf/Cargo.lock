@@ -6953,6 +6953,7 @@ dependencies = [
 name = "solana-entry"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-votor-messages",
  "bincode",
  "crossbeam-channel",
  "dlopen2",
@@ -6961,6 +6962,8 @@ dependencies = [
  "rayon",
  "serde",
  "solana-address 2.0.0",
+ "solana-bls-signatures",
+ "solana-clock",
  "solana-hash 3.1.0",
  "solana-measure",
  "solana-merkle-tree",
@@ -6974,6 +6977,7 @@ dependencies = [
  "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
+ "thiserror 2.0.17",
  "wincode",
 ]
 
