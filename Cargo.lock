@@ -10305,6 +10305,7 @@ dependencies = [
  "solana-inflation",
  "solana-pubkey 4.0.0",
  "solana-reward-info",
+ "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status-client-types",

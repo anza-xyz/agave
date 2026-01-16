@@ -634,4 +634,27 @@ pub mod tests {
 
         assert_eq!(actual, expected);
     }
+
+    #[test]
+    fn test_rpc_confirmed_transaction_status_with_signature_from() {
+        let signature = solana_signature::Signature::from([1u8; 64]);
+        let input = ConfirmedTransactionStatusWithSignature {
+            signature,
+            slot: 123,
+            err: None,
+            memo: Some("test memo".to_string()),
+            block_time: Some(1234567890),
+            index: 42,
+        };
+
+        let result: RpcConfirmedTransactionStatusWithSignature = input.into();
+
+        assert_eq!(result.signature, signature.to_string());
+        assert_eq!(result.slot, 123);
+        assert_eq!(result.err, None);
+        assert_eq!(result.memo, Some("test memo".to_string()));
+        assert_eq!(result.block_time, Some(1234567890));
+        assert_eq!(result.confirmation_status, None);
+        assert_eq!(result.transaction_index, 42);
+    }
 }
