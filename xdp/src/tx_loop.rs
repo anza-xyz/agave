@@ -218,6 +218,11 @@ pub fn tx_loop<
                     // Handle GRE tunnel encapsulation if needed
                     if interface_info.is_gre() {
                         let Some(gre) = interface_info.gre_tunnel.as_ref() else {
+                            log::warn!(
+                                "dropping packet: GRE interface missing tunnel configuration"
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
                             continue;
                         };
 
