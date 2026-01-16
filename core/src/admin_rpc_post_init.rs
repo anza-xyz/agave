@@ -6,8 +6,8 @@ use {
     },
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
     solana_pubkey::Pubkey,
-    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
+    solana_tls_utils::NotifyKeyUpdate,
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,

@@ -1,4 +1,4 @@
-use rustls::{crypto::CryptoProvider, NamedGroup};
+use rustls::{NamedGroup, crypto::CryptoProvider};
 
 pub fn crypto_provider() -> CryptoProvider {
     let mut provider = rustls::crypto::ring::default_provider();

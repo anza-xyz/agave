@@ -11,7 +11,7 @@ use {
     solana_transaction_error::TransactionError,
     solana_zk_sdk::{
         encryption::{
-            elgamal::{ElGamalKeypair, ElGamalSecretKey},
+            elgamal::{ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey},
             grouped_elgamal::GroupedElGamal,
             pedersen::{Pedersen, PedersenOpening},
         },
@@ -43,12 +43,12 @@ async fn test_zero_balance() {
     let success_proof_data =
         ZeroCiphertextProofData::new(&elgamal_keypair, &zero_ciphertext).unwrap();
 
-    let incorrect_pubkey = elgamal_keypair.pubkey();
-    let incorrect_secret = ElGamalSecretKey::new_rand();
-    let incorrect_keypair = ElGamalKeypair::new_for_tests(*incorrect_pubkey, incorrect_secret);
-
-    let fail_proof_data =
-        ZeroCiphertextProofData::new(&incorrect_keypair, &zero_ciphertext).unwrap();
+    let mut fail_proof_context = success_proof_data.context;
+    fail_proof_context.pubkey = ElGamalPubkey::default().into();
+    let fail_proof_data = ZeroCiphertextProofData {
+        context: fail_proof_context,
+        proof: success_proof_data.proof,
+    };
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyZeroCiphertext,
@@ -104,19 +104,12 @@ async fn test_ciphertext_ciphertext_equality() {
     )
     .unwrap();
 
-    let incorrect_pubkey = source_keypair.pubkey();
-    let incorrect_secret = ElGamalSecretKey::new_rand();
-    let incorrect_keypair = ElGamalKeypair::new_for_tests(*incorrect_pubkey, incorrect_secret);
-
-    let fail_proof_data = CiphertextCiphertextEqualityProofData::new(
-        &incorrect_keypair,
-        destination_keypair.pubkey(),
-        &source_ciphertext,
-        &destination_ciphertext,
-        &destination_opening,
-        amount,
-    )
-    .unwrap();
+    let mut fail_proof_context = success_proof_data.context;
+    fail_proof_context.first_pubkey = ElGamalPubkey::default().into();
+    let fail_proof_data = CiphertextCiphertextEqualityProofData {
+        context: fail_proof_context,
+        proof: success_proof_data.proof,
+    };
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyCiphertextCiphertextEquality,
@@ -379,18 +372,12 @@ async fn test_ciphertext_commitment_equality() {
     )
     .unwrap();
 
-    let incorrect_pubkey = keypair.pubkey();
-    let incorrect_secret = ElGamalSecretKey::new_rand();
-    let incorrect_keypair = ElGamalKeypair::new_for_tests(*incorrect_pubkey, incorrect_secret);
-
-    let fail_proof_data = CiphertextCommitmentEqualityProofData::new(
-        &incorrect_keypair,
-        &ciphertext,
-        &commitment,
-        &opening,
-        amount,
-    )
-    .unwrap();
+    let mut fail_proof_context = success_proof_data.context;
+    fail_proof_context.pubkey = ElGamalPubkey::default().into();
+    let fail_proof_data = CiphertextCommitmentEqualityProofData {
+        context: fail_proof_context,
+        proof: success_proof_data.proof,
+    };
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyCiphertextCommitmentEquality,
@@ -445,15 +432,12 @@ async fn test_grouped_ciphertext_2_handles_validity() {
     )
     .unwrap();
 
-    let incorrect_opening = PedersenOpening::new_rand();
-    let fail_proof_data = GroupedCiphertext2HandlesValidityProofData::new(
-        destination_pubkey,
-        auditor_pubkey,
-        &grouped_ciphertext,
-        amount,
-        &incorrect_opening,
-    )
-    .unwrap();
+    let mut fail_proof_context = success_proof_data.context;
+    fail_proof_context.first_pubkey = ElGamalPubkey::default().into();
+    let fail_proof_data = GroupedCiphertext2HandlesValidityProofData {
+        context: fail_proof_context,
+        proof: success_proof_data.proof,
+    };
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyGroupedCiphertext2HandlesValidity,
@@ -517,18 +501,12 @@ async fn test_batched_grouped_ciphertext_2_handles_validity() {
     )
     .unwrap();
 
-    let incorrect_opening = PedersenOpening::new_rand();
-    let fail_proof_data = BatchedGroupedCiphertext2HandlesValidityProofData::new(
-        destination_pubkey,
-        auditor_pubkey,
-        &grouped_ciphertext_lo,
-        &grouped_ciphertext_hi,
-        amount_lo,
-        amount_hi,
-        &incorrect_opening,
-        &opening_hi,
-    )
-    .unwrap();
+    let mut fail_proof_context = success_proof_data.context;
+    fail_proof_context.first_pubkey = ElGamalPubkey::default().into();
+    let fail_proof_data = BatchedGroupedCiphertext2HandlesValidityProofData {
+        context: fail_proof_context,
+        proof: success_proof_data.proof,
+    };
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyBatchedGroupedCiphertext2HandlesValidity,
@@ -590,16 +568,12 @@ async fn test_grouped_ciphertext_3_handles_validity() {
     )
     .unwrap();
 
-    let incorrect_opening = PedersenOpening::new_rand();
-    let fail_proof_data = GroupedCiphertext3HandlesValidityProofData::new(
-        source_pubkey,
-        destination_pubkey,
-        auditor_pubkey,
-        &grouped_ciphertext,
-        amount,
-        &incorrect_opening,
-    )
-    .unwrap();
+    let mut fail_proof_context = success_proof_data.context;
+    fail_proof_context.first_pubkey = ElGamalPubkey::default().into();
+    let fail_proof_data = GroupedCiphertext3HandlesValidityProofData {
+        context: fail_proof_context,
+        proof: success_proof_data.proof,
+    };
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyGroupedCiphertext3HandlesValidity,
@@ -665,19 +639,12 @@ async fn test_batched_grouped_ciphertext_3_handles_validity() {
     )
     .unwrap();
 
-    let incorrect_opening = PedersenOpening::new_rand();
-    let fail_proof_data = BatchedGroupedCiphertext3HandlesValidityProofData::new(
-        source_pubkey,
-        destination_pubkey,
-        auditor_pubkey,
-        &grouped_ciphertext_lo,
-        &grouped_ciphertext_hi,
-        amount_lo,
-        amount_hi,
-        &incorrect_opening,
-        &opening_hi,
-    )
-    .unwrap();
+    let mut fail_proof_context = success_proof_data.context;
+    fail_proof_context.first_pubkey = ElGamalPubkey::default().into();
+    let fail_proof_data = BatchedGroupedCiphertext3HandlesValidityProofData {
+        context: fail_proof_context,
+        proof: success_proof_data.proof,
+    };
 
     test_verify_proof_without_context(
         ProofInstruction::VerifyBatchedGroupedCiphertext3HandlesValidity,

@@ -7053,6 +7053,15 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
+        assert!(
+            self.accounts_index
+                .roots_tracker
+                .read()
+                .unwrap()
+                .alive_roots
+                .contains(&slot),
+            "slot: {slot}"
+        );
         self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None);
     }
 
@@ -7107,8 +7116,37 @@ impl AccountsDb {
         }
     }
 
-    /// callers used to call store_uncached. But, this is not allowed anymore.
+    // Store accounts for tests. For zero-lamport accounts, first store a single-lamport
+    // placeholder, then store the actual account. This is to ensure that an index entry is created
+    // for zero-lamport accounts.
     pub fn store_for_tests<'a>(&self, accounts: impl StorableAccounts<'a>) {
+        let slot = accounts.target_slot();
+
+        let placeholder = AccountSharedData::new(1, 0, &Pubkey::default());
+
+        // Build a list of zero-lamport accounts not present in the index
+        let mut pre_populate_zero_lamport = Vec::new();
+        for i in 0..accounts.len() {
+            if accounts.is_zero_lamport(i) {
+                let key = *accounts.pubkey(i);
+                if self
+                    .accounts_index
+                    .get_and_then(&key, |account| (true, account.is_none()))
+                {
+                    // Account is not in the index, need to pre-populate with placeholder
+                    pre_populate_zero_lamport.push((key, placeholder.clone()));
+                }
+            }
+        }
+
+        // Pre-populate new zero-lamport accounts with single-lamport placeholders.
+        self.store_accounts_unfrozen(
+            (slot, pre_populate_zero_lamport.as_slice()),
+            None,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        );
+
+        // Then store the actual accounts provided by the caller.
         self.store_accounts_unfrozen(
             accounts,
             None,

@@ -18,13 +18,13 @@ use {
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
-        crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes, Vote, MAX_VOTES},
-        crds_filter::{should_retain_crds_value, GossipFilterDirection},
+        crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
+        crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
-            get_max_bloom_filter_bytes, CrdsFilter, CrdsTimeouts, ProcessPullStats, PullRequest,
-            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+            CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsFilter, CrdsTimeouts, ProcessPullStats,
+            PullRequest, get_max_bloom_filter_bytes,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
@@ -33,10 +33,10 @@ use {
         gossip_error::GossipError,
         ping_pong::Pong,
         protocol::{
-            split_gossip_messages, Ping, PingCache, Protocol, PruneData,
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
             MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
-            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
+            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
+            Protocol, PruneData, split_gossip_messages,
         },
         restart_crds_values::{
             RestartHeaviestFork, RestartLastVotedForkSlots, RestartLastVotedForkSlotsError,
@@ -46,17 +46,16 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, TrySendError},
     itertools::{Either, Itertools},
-    rand::{prelude::IndexedMutRandom, CryptoRng, Rng},
-    rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH},
+    rand::{CryptoRng, Rng, prelude::IndexedMutRandom},
+    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
+    solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_hash::Hash,
-    solana_keypair::{signable::Signable, Keypair},
+    solana_keypair::{Keypair, signable::Signable},
     solana_ledger::shred::Shred,
     solana_net_utils::{
-        bind_in_range,
+        PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
-        PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -89,10 +88,10 @@ use {
         rc::Rc,
         result::Result,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock, RwLockReadGuard,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -1205,15 +1204,14 @@ impl ClusterInfo {
                     return Either::Left(pulls);
                 }
                 entrypoint.set_wallclock(now);
-                if let Some(entrypoint_gossip) = entrypoint.gossip() {
-                    if self
+                if let Some(entrypoint_gossip) = entrypoint.gossip()
+                    && self
                         .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
                         .get_nodes_contact_info()
                         .any(|node| node.gossip() == Some(entrypoint_gossip))
-                    {
-                        // Found the entrypoint, no need to pull from it.
-                        return Either::Left(pulls);
-                    }
+                {
+                    // Found the entrypoint, no need to pull from it.
+                    return Either::Left(pulls);
                 }
             }
             let Some(entrypoint) = entrypoint.gossip() else {
@@ -1378,12 +1376,12 @@ impl ClusterInfo {
         )
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
-        if !packet_batch.is_empty() {
-            if let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch.into()) {
-                self.stats
-                    .gossip_transmit_packets_dropped_count
-                    .add_relaxed(packet_batch.len() as u64);
-            }
+        if !packet_batch.is_empty()
+            && let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch.into())
+        {
+            self.stats
+                .gossip_transmit_packets_dropped_count
+                .add_relaxed(packet_batch.len() as u64);
         }
         self.stats
             .gossip_transmit_loop_iterations_since_last_report
@@ -1610,13 +1608,12 @@ impl ClusterInfo {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_requests_time);
         if !requests.is_empty() {
             let response = self.handle_pull_requests(thread_pool, recycler, requests, stakes);
-            if !response.is_empty() {
-                if let Err(TrySendError::Full(response)) = response_sender.try_send(response.into())
-                {
-                    self.stats
-                        .gossip_packets_dropped_count
-                        .add_relaxed(response.len() as u64);
-                }
+            if !response.is_empty()
+                && let Err(TrySendError::Full(response)) = response_sender.try_send(response.into())
+            {
+                self.stats
+                    .gossip_packets_dropped_count
+                    .add_relaxed(response.len() as u64);
             }
         }
     }
@@ -1892,14 +1889,13 @@ impl ClusterInfo {
         self.new_push_requests(stakes)
             .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
             .for_each(|pkt| packet_batch.push(pkt));
-        if !packet_batch.is_empty() {
-            if let Err(TrySendError::Full(packet_batch)) =
+        if !packet_batch.is_empty()
+            && let Err(TrySendError::Full(packet_batch)) =
                 response_sender.try_send(packet_batch.into())
-            {
-                self.stats
-                    .gossip_packets_dropped_count
-                    .add_relaxed(packet_batch.len() as u64);
-            }
+        {
+            self.stats
+                .gossip_packets_dropped_count
+                .add_relaxed(packet_batch.len() as u64);
         }
     }
 
@@ -2471,7 +2467,7 @@ fn discard_different_shred_version(
         Protocol::PullRequest(..) => return,
         // No CRDS values in Prune, Ping and Pong messages.
         Protocol::PruneMessage(_, _) | Protocol::PingMessage(_) | Protocol::PongMessage(_) => {
-            return
+            return;
         }
     };
     let num_values = values.len();
@@ -2593,7 +2589,7 @@ mod tests {
         solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
         solana_vote_program::{
             vote_instruction,
-            vote_state::{Vote, MAX_LOCKOUT_HISTORY},
+            vote_state::{MAX_LOCKOUT_HISTORY, Vote},
         },
         std::{
             iter::repeat_with,
@@ -3236,12 +3232,14 @@ mod tests {
         tower.clear();
         tower.extend(0..=slot);
         let vote = new_vote_transaction(vec![slot]);
-        assert!(panic::catch_unwind(|| cluster_info.push_vote(&tower, vote))
-            .err()
-            .and_then(|a| a
-                .downcast_ref::<String>()
-                .map(|s| { s.starts_with("Submitting old vote") }))
-            .unwrap_or_default());
+        assert!(
+            panic::catch_unwind(|| cluster_info.push_vote(&tower, vote))
+                .err()
+                .and_then(|a| a
+                    .downcast_ref::<String>()
+                    .map(|s| { s.starts_with("Submitting old vote") }))
+                .unwrap_or_default()
+        );
     }
 
     #[test]
@@ -3273,9 +3271,11 @@ mod tests {
         {
             let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
             for entry in entries {
-                assert!(gossip_crds
-                    .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                    .is_ok());
+                assert!(
+                    gossip_crds
+                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
+                        .is_ok()
+                );
             }
         }
         // Should exclude other node's epoch-slot because of different
@@ -3410,9 +3410,11 @@ mod tests {
         let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert!(pings.is_empty());
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
-        assert!(pulls
-            .into_iter()
-            .all(|(addr, _)| addr == other_node.gossip().unwrap()));
+        assert!(
+            pulls
+                .into_iter()
+                .all(|(addr, _)| addr == other_node.gossip().unwrap())
+        );
 
         // Pull request 2: pretend it's been a while since we've pulled from `entrypoint`.  There should
         // now be two pull requests
@@ -3434,9 +3436,11 @@ mod tests {
         let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert!(pings.is_empty());
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
-        assert!(pulls
-            .into_iter()
-            .all(|(addr, _)| addr == other_node.gossip().unwrap()));
+        assert!(
+            pulls
+                .into_iter()
+                .all(|(addr, _)| addr == other_node.gossip().unwrap())
+        );
     }
 
     #[test]
@@ -3591,9 +3595,11 @@ mod tests {
         let leader = Arc::new(Keypair::new());
         let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         let shred2 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(cluster_info
-            .push_duplicate_shred(&shred1, shred2.payload())
-            .is_ok());
+        assert!(
+            cluster_info
+                .push_duplicate_shred(&shred1, shred2.payload())
+                .is_ok()
+        );
         cluster_info.flush_push_queue();
         let entries = cluster_info.get_duplicate_shreds(&mut cursor);
         // One duplicate shred proof is split into 3 chunks.
@@ -3609,9 +3615,11 @@ mod tests {
         let next_shred_index = 354;
         let shred3 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
         let shred4 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(cluster_info
-            .push_duplicate_shred(&shred3, shred4.payload())
-            .is_ok());
+        assert!(
+            cluster_info
+                .push_duplicate_shred(&shred3, shred4.payload())
+                .is_ok()
+        );
         cluster_info.flush_push_queue();
         let entries1 = cluster_info.get_duplicate_shreds(&mut cursor);
         // One duplicate shred proof is split into 3 chunks.
@@ -3636,9 +3644,11 @@ mod tests {
                 update.push(i * 1050 + j);
             }
         }
-        assert!(cluster_info
-            .push_restart_last_voted_fork_slots(&update, Hash::default())
-            .is_ok());
+        assert!(
+            cluster_info
+                .push_restart_last_voted_fork_slots(&update, Hash::default())
+                .is_ok()
+        );
         cluster_info.flush_push_queue();
 
         let mut cursor = Cursor::default();
@@ -3665,9 +3675,11 @@ mod tests {
         {
             let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
             for entry in entries {
-                assert!(gossip_crds
-                    .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                    .is_ok());
+                assert!(
+                    gossip_crds
+                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
+                        .is_ok()
+                );
             }
         }
         // Should exclude other node's last-voted-fork-slot because of different
@@ -3681,9 +3693,11 @@ mod tests {
             let mut node = cluster_info.my_contact_info.write().unwrap();
             node.set_shred_version(42);
         }
-        assert!(cluster_info
-            .push_restart_last_voted_fork_slots(&update, Hash::default())
-            .is_ok());
+        assert!(
+            cluster_info
+                .push_restart_last_voted_fork_slots(&update, Hash::default())
+                .is_ok()
+        );
         cluster_info.flush_push_queue();
         // Should now include both slots.
         let slots = cluster_info.get_restart_last_voted_fork_slots(&mut Cursor::default());
@@ -3742,9 +3756,11 @@ mod tests {
         {
             let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
             for entry in entries {
-                assert!(gossip_crds
-                    .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                    .is_ok());
+                assert!(
+                    gossip_crds
+                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
+                        .is_ok()
+                );
             }
         }
         // Should exclude other node's heaviest_fork because of different
@@ -3884,9 +3900,10 @@ mod tests {
             )),
             &keypair2,
         );
-        assert!(crds
-            .insert(ci_wrong_pubkey, /*now=*/ 0, GossipRoute::LocalMessage)
-            .is_ok());
+        assert!(
+            crds.insert(ci_wrong_pubkey, /*now=*/ 0, GossipRoute::LocalMessage)
+                .is_ok()
+        );
 
         // Test insert EpochSlot w/ previous ContactInfo w/ matching shred version but different pubkey -> should be rejected
         let epoch_slots = EpochSlots::new_rand(&mut rng, Some(keypair.pubkey()));
@@ -3898,9 +3915,10 @@ mod tests {
         }
 
         // Now insert ContactInfo with same pubkey as EpochSlot
-        assert!(crds
-            .insert(ci.clone(), /*now=*/ 0, GossipRoute::LocalMessage)
-            .is_ok());
+        assert!(
+            crds.insert(ci.clone(), /*now=*/ 0, GossipRoute::LocalMessage)
+                .is_ok()
+        );
 
         let mut msg = Protocol::PushMessage(keypair.pubkey(), vec![es]);
         discard_different_shred_version(&mut msg, self_shred_version, &crds, &stats);

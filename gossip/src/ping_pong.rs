@@ -6,7 +6,7 @@ use {
     serde_big_array::BigArray,
     siphasher::sip::SipHasher24,
     solana_hash::Hash,
-    solana_keypair::{signable::Signable, Keypair},
+    solana_keypair::{Keypair, signable::Signable},
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
@@ -187,18 +187,18 @@ impl<const N: usize> PingCache<N> {
             return false;
         };
         self.pongs.put(remote_node, now);
-        if let Some(sent_time) = self.ping_times.pop(&socket.ip()) {
-            if should_report_message_signature(
+        if let Some(sent_time) = self.ping_times.pop(&socket.ip())
+            && should_report_message_signature(
                 pong.signature(),
                 PONG_SIGNATURE_SAMPLE_LEADING_ZEROS,
-            ) {
-                let rtt = now.saturating_duration_since(sent_time);
-                datapoint_info!(
-                    "ping_rtt",
-                    ("peer_ip", socket.ip().to_string(), String),
-                    ("rtt_us", rtt.as_micros() as i64, i64),
-                );
-            }
+            )
+        {
+            let rtt = now.saturating_duration_since(sent_time);
+            datapoint_info!(
+                "ping_rtt",
+                ("peer_ip", socket.ip().to_string(), String),
+                ("rtt_us", rtt.as_micros() as i64, i64),
+            );
         }
         true
     }
