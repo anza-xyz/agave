@@ -34,30 +34,11 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-<<<<<<< HEAD
-=======
-// Empirically found max number of concurrent streams
-// that seems to maximize TPS on GCE (higher values don't seem to
-// give significant improvement or seem to impact stability)
-pub const QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS: usize = 128;
-pub const QUIC_MIN_STAKED_CONCURRENT_STREAMS: usize = 128;
-
-// Set the maximum concurrent stream numbers to avoid excessive streams.
-// The value was lowered from 2048 to reduce contention of the limited
-// receive_window among the streams which is observed in CI bench-tests with
-// forwarded packets from staked nodes.
-pub const QUIC_MAX_STAKED_CONCURRENT_STREAMS: usize = 512;
-
-pub const QUIC_TOTAL_STAKED_CONCURRENT_STREAMS: usize = 100_000;
-/// Below this RTT, we apply the legacy logic (no BDP scaling)
-/// Above this RTT, we increase the RX window and number of streams
-/// as RTT increases to preserve reasonable bandwidth.
 const REFERENCE_RTT_MS: u64 = 50;
 
 /// Above this RTT we stop scaling for BDP
 const MAX_RTT_MS: u64 = 350;
 
->>>>>>> 8faf30c7f (scale max_concurrent_uni_streams with BDP (#8948))
 #[derive(Clone)]
 pub struct SwQosConfig {
     pub max_streams_per_ms: u64,
@@ -204,10 +185,6 @@ impl SwQos {
             remote_addr,
         );
 
-        let max_connections_per_peer = match conn_context.peer_type() {
-            ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
-            ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
-        };
         if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
             .try_add_connection(
                 ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
@@ -216,30 +193,13 @@ impl SwQos {
                 Some(connection.clone()),
                 conn_context.peer_type(),
                 conn_context.last_update.clone(),
-                max_connections_per_peer,
-                || Arc::new(ConnectionStreamCounter::new()),
+                self.max_connections_per_peer,
             )
         {
             update_open_connections_stat(&self.stats, &connection_table_l);
             drop(connection_table_l);
 
-<<<<<<< HEAD
-            if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-                .try_add_connection(
-                    ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
-                    remote_addr.port(),
-                    client_connection_tracker,
-                    Some(connection.clone()),
-                    conn_context.peer_type(),
-                    conn_context.last_update.clone(),
-                    self.max_connections_per_peer,
-                )
-            {
-                update_open_connections_stat(&self.stats, &connection_table_l);
-                drop(connection_table_l);
-=======
             connection.set_max_concurrent_uni_streams(max_uni_streams);
->>>>>>> 8faf30c7f (scale max_concurrent_uni_streams with BDP (#8948))
 
             Ok((last_update, cancel_connection, stream_counter))
         } else {
