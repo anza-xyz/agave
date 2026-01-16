@@ -18,7 +18,6 @@ use {
     solana_packet as packet,
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
-    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
         bank_forks::SharableBanks,
@@ -27,6 +26,7 @@ use {
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
+    solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,

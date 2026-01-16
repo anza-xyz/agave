@@ -7,7 +7,7 @@ use {
             memory::{IoBufferChunk, PageAlignedMemory},
             sqpoll, IO_PRIO_BE_HIGHEST,
         },
-        FileInfo,
+        FileInfo, FileSize, IoSize,
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
@@ -31,10 +31,10 @@ use {
 // Based on transfers seen with `dd bs=SIZE` for NVME drives: values >=64KiB are fine,
 // but usually peak around 256KiB-1MiB. Also compare with particular NVME parameters, e.g.
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
-pub const DEFAULT_WRITE_SIZE: usize = 512 * 1024;
+pub const DEFAULT_WRITE_SIZE: IoSize = 512 * 1024;
 
 // 99.9% of accounts storage files are < 8MiB
-type BacklogVec = SmallVec<[PendingWrite; 8 * 1024 * 1024 / DEFAULT_WRITE_SIZE]>;
+type BacklogVec = SmallVec<[PendingWrite; 8 * 1024 * 1024 / DEFAULT_WRITE_SIZE as usize]>;
 
 // Sanity limit for slab size and number of concurrent operations, in practice with 0.5-1GiB
 // buffer this is also close to the number of available buffers that small files will use up.
@@ -53,7 +53,7 @@ const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::fro
 
 /// Utility for building [`IoUringFileCreator`] with specified tuning options.
 pub struct IoUringFileCreatorBuilder<'sp> {
-    write_capacity: usize,
+    write_capacity: IoSize,
     max_iowq_workers: u32,
     ring_squeue_size: Option<u32>,
     shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
@@ -76,7 +76,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
     ///
     /// This influences the concurrency, since buffer is divided into chunks of this size.
     #[cfg(test)]
-    pub fn write_capacity(mut self, write_capacity: usize) -> Self {
+    pub fn write_capacity(mut self, write_capacity: IoSize) -> Self {
         self.write_capacity = write_capacity;
         self
     }
@@ -113,7 +113,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
     where
         F: FnMut(FileInfo) -> Option<File> + 'a,
     {
-        let buf_capacity = buf_capacity.max(self.write_capacity);
+        let buf_capacity = buf_capacity.max(self.write_capacity as usize);
         let buffer = PageAlignedMemory::new(buf_capacity)?;
         self.build_with_buffer(buffer, file_complete)
     }
@@ -126,7 +126,8 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         file_complete: F,
     ) -> io::Result<IoUringFileCreator<'a>> {
         // Align buffer capacity to write capacity, so we always write equally sized chunks
-        let buf_capacity = buffer.as_mut().len() / self.write_capacity * self.write_capacity;
+        let buf_capacity =
+            buffer.as_mut().len() / self.write_capacity as usize * self.write_capacity as usize;
         assert_ne!(buf_capacity, 0, "write size aligned buffer is too small");
         let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
 
@@ -162,7 +163,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         // but also amortizes number of `submit` syscalls made).
         let ring_qsize = self
             .ring_squeue_size
-            .unwrap_or((buf_capacity / self.write_capacity / 2).max(1) as u32);
+            .unwrap_or((buf_capacity / self.write_capacity as usize / 2).max(1) as u32);
 
         let ring = sqpoll::io_uring_builder_with(self.shared_sqpoll_fd).build(ring_qsize)?;
         // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
@@ -194,7 +195,7 @@ impl FileCreator for IoUringFileCreator<'_> {
         self.write_and_close(contents, file_key)
     }
 
-    fn file_complete(&mut self, file: File, path: PathBuf, size: u64) {
+    fn file_complete(&mut self, file: File, path: PathBuf, size: FileSize) {
         let file_info = FileInfo { file, path, size };
         (self.ring.context_mut().file_complete)(file_info);
     }
@@ -242,7 +243,8 @@ impl IoUringFileCreator<'_> {
 
     fn write_and_close(&mut self, mut src: impl Read, file_key: usize) -> io::Result<()> {
         let mut offset = 0;
-        loop {
+        let mut reached_eof = false;
+        while !reached_eof {
             let buf = self.wait_free_buf()?;
 
             let state = self.ring.context_mut();
@@ -251,41 +253,65 @@ impl IoUringFileCreator<'_> {
             // Safety: the buffer points to the valid memory backed by `self._backing_buffer`.
             // It's obtained from the queue of free buffers and is written to exclusively
             // here before being handled to the kernel or backlog in `file`.
-            let mut_slice = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
-            let len = src.read(mut_slice)?;
-
-            if len == 0 {
-                file_state.size_on_eof = Some(offset as u64);
-
-                state.buffers.push_front(buf);
-                if let Some(file_info) = file_state.try_take_completed_file_info() {
-                    match (state.file_complete)(file_info) {
-                        Some(unconsumed_file) => self.ring.push(FileCreatorOp::Close(
-                            CloseOp::new(file_key, unconsumed_file),
-                        ))?,
-                        None => state.mark_file_complete(file_key),
-                    }
+            let mut mut_slice =
+                unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len() as usize) };
+            // Fill as much of the buffer as possible to avoid excess IO operations
+            let write_len;
+            loop {
+                let len = src.read(mut_slice)?;
+                if len == 0 {
+                    reached_eof = true;
+                    write_len = buf.len() - mut_slice.len() as IoSize;
+                    file_state.size_on_eof = Some(write_len as FileSize + offset);
+                    break;
                 }
-                break;
+                if len == mut_slice.len() {
+                    write_len = buf.len();
+                    break;
+                }
+                mut_slice = &mut mut_slice[len..];
             }
 
             file_state.writes_started += 1;
             if let Some(file) = &file_state.open_file {
+                if write_len == 0 {
+                    // File size was aligned with previously used buffers, return back unused `buf`
+                    state.buffers.push_front(buf);
+                    file_state.writes_completed += 1;
+
+                    // In case no operation is in progress (i.e. completions were run for all buffers)
+                    // and EOF was reached just now, the `file_complete` needs to be called, since
+                    // no other operation will run it in its completion handler.
+                    // This is not necessary if `write_len > 0`, since completion of the write to be
+                    // added will handle EOF case properly.
+                    if let Some(file_info) = file_state.try_take_completed_file_info() {
+                        match (state.file_complete)(file_info) {
+                            Some(unconsumed_file) => self.ring.push(FileCreatorOp::Close(
+                                CloseOp::new(file_key, unconsumed_file),
+                            ))?,
+                            None => state.mark_file_complete(file_key),
+                        }
+                    }
+                    // Skip issuing empty write
+                    break;
+                }
+
                 let op = WriteOp {
                     file_key,
                     fd: types::Fd(file.as_raw_fd()),
                     offset,
                     buf,
                     buf_offset: 0,
-                    write_len: len,
+                    write_len,
                 };
-                state.submitted_writes_size += len;
+                state.submitted_writes_size += write_len as usize;
                 self.ring.push(FileCreatorOp::Write(op))?;
             } else {
-                file_state.backlog.push((buf, offset, len));
+                // Note: `write_len` might be 0 here, but it's handled on open op completion
+                file_state.backlog.push((buf, offset, write_len));
             }
 
-            offset += len;
+            offset += write_len as FileSize;
         }
 
         Ok(())
@@ -345,28 +371,28 @@ impl<'a> FileCreatorState<'a> {
         mem::take(&mut file.backlog)
     }
 
-    /// Returns owned `File` if all of the writes are done, but the callback didn't claim it
+    /// Calls `file_complete` callback with completed file info and optionally schedules close
     fn mark_write_completed(
-        &mut self,
+        ring: &mut Completion<'_, Self, FileCreatorOp>,
         file_key: usize,
-        write_len: usize,
+        write_len: IoSize,
         buf: IoBufferChunk,
-    ) -> Option<File> {
-        self.submitted_writes_size -= write_len;
-        self.buffers.push_front(buf);
+    ) {
+        let this = ring.context_mut();
+        this.submitted_writes_size -= write_len as usize;
+        this.buffers.push_front(buf);
 
-        let file_state = self.files.get_mut(file_key).unwrap();
+        let file_state = this.files.get_mut(file_key).unwrap();
         file_state.writes_completed += 1;
         if let Some(file_info) = file_state.try_take_completed_file_info() {
-            return match (self.file_complete)(file_info) {
-                unconsumed_file @ Some(_) => unconsumed_file,
-                None => {
-                    self.mark_file_complete(file_key);
-                    None
-                }
+            match (this.file_complete)(file_info) {
+                Some(unconsumed_file) => ring.push(FileCreatorOp::Close(CloseOp::new(
+                    file_key,
+                    unconsumed_file,
+                ))),
+                None => this.mark_file_complete(file_key),
             };
         }
-        None
     }
 
     fn mark_file_complete(&mut self, file_key: usize) {
@@ -435,6 +461,10 @@ impl OpenOp {
 
         let backlog = ring.context_mut().mark_file_opened(self.file_key, fd);
         for (buf, offset, len) in backlog {
+            if len == 0 {
+                FileCreatorState::mark_write_completed(ring, self.file_key, 0, buf);
+                break;
+            }
             let op = WriteOp {
                 file_key: self.file_key,
                 fd,
@@ -443,7 +473,7 @@ impl OpenOp {
                 buf_offset: 0,
                 write_len: len,
             };
-            ring.context_mut().submitted_writes_size += len;
+            ring.context_mut().submitted_writes_size += len as usize;
             ring.push(FileCreatorOp::Write(op));
         }
 
@@ -485,10 +515,10 @@ impl<'a> CloseOp {
 struct WriteOp {
     file_key: usize,
     fd: types::Fd,
-    offset: usize,
+    offset: FileSize,
     buf: IoBufferChunk,
-    buf_offset: usize,
-    write_len: usize,
+    buf_offset: IoSize,
+    write_len: IoSize,
 }
 
 impl<'a> WriteOp {
@@ -504,16 +534,16 @@ impl<'a> WriteOp {
 
         // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
         // reclaimed after completion passed in a call to `mark_write_completed`.
-        let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset) };
-        let write_len = *write_len as u32;
+        let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset as usize) };
+        let write_len = *write_len;
 
         let entry = match buf.io_buf_index() {
             Some(io_buf_index) => opcode::WriteFixed::new(*fd, buf_ptr, write_len, io_buf_index)
-                .offset(*offset as u64)
+                .offset(*offset)
                 .ioprio(IO_PRIO_BE_HIGHEST)
                 .build(),
             None => opcode::Write::new(*fd, buf_ptr, write_len)
-                .offset(*offset as u64)
+                .offset(*offset)
                 .ioprio(IO_PRIO_BE_HIGHEST)
                 .build(),
         };
@@ -532,7 +562,7 @@ impl<'a> WriteOp {
             // Fail fast if no progress. FS should report an error (e.g. `StorageFull`) if the
             // condition isn't transient, but it's hard to verify without extra tracking.
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-            Ok(res) => res as usize,
+            Ok(res) => res as IoSize,
             Err(err) => return Err(err),
         };
 
@@ -553,7 +583,7 @@ impl<'a> WriteOp {
             ring.push(FileCreatorOp::Write(WriteOp {
                 file_key: *file_key,
                 fd: *fd,
-                offset: *offset + written,
+                offset: *offset + written as FileSize,
                 buf,
                 buf_offset: total_written,
                 write_len: *write_len - written,
@@ -561,15 +591,7 @@ impl<'a> WriteOp {
             return Ok(());
         }
 
-        if let Some(unconsumed_file) =
-            ring.context_mut()
-                .mark_write_completed(*file_key, total_written, buf)
-        {
-            ring.push(FileCreatorOp::Close(CloseOp::new(
-                *file_key,
-                unconsumed_file,
-            )));
-        }
+        FileCreatorState::mark_write_completed(ring, *file_key, total_written, buf);
 
         Ok(())
     }
@@ -607,14 +629,14 @@ impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
     }
 }
 
-type PendingWrite = (IoBufferChunk, usize, usize);
+type PendingWrite = (IoBufferChunk, FileSize, IoSize);
 
 #[derive(Debug)]
 struct PendingFile {
     path: PathBuf,
     open_file: Option<File>,
     backlog: BacklogVec,
-    size_on_eof: Option<u64>,
+    size_on_eof: Option<FileSize>,
     writes_started: usize,
     writes_completed: usize,
 }
@@ -649,7 +671,47 @@ impl PendingFile {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::io::Cursor};
+    use {super::*, std::io::Cursor, test_case::test_case};
+
+    // Check several edge cases:
+    // * creating empty file
+    // * file content is a multiple of write size
+    // * buffer holds single write size (1 internal buffer is used)
+    // * negations and combinations of above
+    #[test_case(0, 2 * 1024, 1024)]
+    #[test_case(1024, 1024, 1024)]
+    #[test_case(2 * 1024, 1024, 1024)]
+    #[test_case(4 * 1024, 2 * 1024, 1024)]
+    #[test_case(9 * 1024, 1024, 1024)]
+    #[test_case(9 * 1024, 2 * 1024, 1024)]
+    fn test_create_chunked_content(file_size: FileSize, buf_size: usize, write_size: IoSize) {
+        let contents = vec![1u8; file_size as usize];
+        let (contents_a, contents_b) = contents.split_at(file_size as usize / 3);
+        // Content split such that creator will require >1 calls to `read` for filling single buf
+        let mut contents = Cursor::new(contents_a).chain(contents_b);
+        let mut created = false;
+
+        let mut creator = IoUringFileCreatorBuilder::new()
+            .write_capacity(write_size)
+            .use_registered_buffers(false)
+            .build(buf_size, |file_info| {
+                assert_eq!(file_info.size, file_size);
+                assert_eq!(file_info.file.metadata().unwrap().len(), file_info.size);
+                created = true;
+                Some(file_info.file)
+            })
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = Arc::new(File::open(temp_dir.path()).unwrap());
+        let file_path = temp_dir.path().join("test.txt");
+        creator
+            .schedule_create_at_dir(file_path, 0o644, dir, &mut contents)
+            .unwrap();
+        creator.drain().unwrap();
+        drop(creator);
+        assert!(created);
+    }
 
     #[test]
     fn test_non_registered_buffer_create() {

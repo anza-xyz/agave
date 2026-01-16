@@ -78,7 +78,6 @@ solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-quic-definitions = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }

@@ -25,15 +25,28 @@ pub type Age = u8;
 pub type AtomicAge = AtomicU8;
 const _: () = assert!(std::mem::size_of::<Age>() == std::mem::size_of::<AtomicAge>());
 
-// Trigger eviction when a bin exceeds this percent of the target entries.
-// Goal is to be as use a much of the available HashMap capacity as possible
-// while being able to catch growth before bins overshoot and trigger reallocations.
-const HIGH_WATER_MARK_PERCENTAGE: usize = 95;
-// Evict down to this percent of the target entries when flushing.
-// Goal is to evict the least number of entries as possible while still providing
-// sufficient headroom that bins don't immediately re-trigger flushing scan
-// after eviction.
-const LOW_WATER_MARK_PERCENTAGE: usize = 85;
+/// The number of entries below an in-mem index bin's usable capacity at which to begin evicting.
+///
+/// This number should be *at least* the worst case rate that entries are added to the in-mem
+/// index per bin.  This ensures we start evicting early enough so that we do not exceed the
+/// configured index threshold limit.
+///
+/// At the same time, we want this value to be as small as possible.  The smaller this value, the
+/// higher the utilization of the in-mem index bins.
+///
+/// This value is used to compute the high watermark.
+const NUM_ENTRIES_OVERHEAD: usize = 5_000;
+
+/// The number of entries to evict, once we've hit the high watermark.
+///
+/// We want this number to be small, similar to `NUM_ENTRIES_OVERHEAD`, to keep utilization high.
+/// It also must be large enough to ensure once an eviction is triggered that scanning + flushing +
+/// evicting completes before the high watermark is crossed again.
+/// We also want to avoid/ammortize scanning the bins for flush/evict, so a larger number helps
+/// with that goal.
+///
+/// This value is used to compute the low watermark.
+const NUM_ENTRIES_TO_EVICT: usize = 10_000;
 
 pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub disk: Option<BucketMap<(Slot, U)>>,
@@ -255,26 +268,35 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         let threshold_entries_per_bin = match config.index_limit {
             IndexLimit::InMemOnly | IndexLimit::Minimal => None,
             IndexLimit::Threshold(limit_bytes) => {
-                let bytes_per_bin = (limit_bytes as usize) / bins;
                 let bytes_per_entry = InMemAccountsIndex::<T, U>::size_of_uninitialized()
                     + InMemAccountsIndex::<T, U>::size_of_single_entry();
-                let entries_per_bin = bytes_per_bin / bytes_per_entry;
+                let limit_entries = (limit_bytes as usize) / bytes_per_entry;
+                let entries_per_bin = limit_entries / bins;
                 let target_entries_per_bin =
                     Self::calculate_target_entries_per_bin(entries_per_bin);
-                let threshold_entries_per_bin =
-                    Self::calculate_threshold_entries(target_entries_per_bin);
-
+                let high_water_mark = target_entries_per_bin
+                    .checked_sub(NUM_ENTRIES_OVERHEAD)
+                    .expect("limit too small for high watermark");
+                let low_water_mark = high_water_mark
+                    .checked_sub(NUM_ENTRIES_TO_EVICT)
+                    .expect("limit too small for low watermark");
+                #[rustfmt::skip]
                 info!(
-                    "AccountsIndex threshold configured: limit_bytes={limit_bytes}, \
-                     target_bytes={}, bytes_per_bin={bytes_per_bin}, \
-                     entries_per_bin={entries_per_bin}, target_entries_per_bin={}, \
-                     high_water_mark={}, low_water_mark={}",
-                    target_entries_per_bin * bins * bytes_per_entry,
-                    threshold_entries_per_bin.target_entries,
-                    threshold_entries_per_bin.high_water_mark,
-                    threshold_entries_per_bin.low_water_mark,
+                    "AccountsIndex threshold configuration: \
+                     num_bins: {bins}, \
+                     bytes_per_entry: {bytes_per_entry}, \
+                     limit_bytes_total: {limit_bytes}, \
+                     limit_entries_total: {limit_entries}, \
+                     limit_entries_per_bin: {entries_per_bin}, \
+                     target_entries_per_bin: {target_entries_per_bin}, \
+                     high_water_mark_entries_per_bin: {high_water_mark}, \
+                     low_water_mark_entries_per_bin: {low_water_mark}",
                 );
-                Some(threshold_entries_per_bin)
+                Some(ThresholdEntriesPerBin {
+                    _target_entries: target_entries_per_bin,
+                    high_water_mark,
+                    low_water_mark,
+                })
             }
         };
 
@@ -336,25 +358,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             let entries_per_bin_log2 = entries_per_bin.ilog2();
             (1usize << entries_per_bin_log2) * 7 / 8
         }
-    }
-
-    fn calculate_threshold_entries(target_entries_per_bin: usize) -> ThresholdEntriesPerBin {
-        ThresholdEntriesPerBin {
-            target_entries: target_entries_per_bin,
-            high_water_mark: Self::scale_by_percentage(
-                target_entries_per_bin,
-                HIGH_WATER_MARK_PERCENTAGE,
-            ),
-            low_water_mark: Self::scale_by_percentage(
-                target_entries_per_bin,
-                LOW_WATER_MARK_PERCENTAGE,
-            ),
-        }
-    }
-
-    fn scale_by_percentage(value: usize, percentage: usize) -> usize {
-        // SAFETY: `value * percentage` is not allowed to overflow
-        value.checked_mul(percentage).unwrap() / 100
     }
 
     // get the next bucket to flush, with the idea that the previous bucket
@@ -501,7 +504,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
 #[derive(Clone, Copy, Debug)]
 struct ThresholdEntriesPerBin {
     /// Rounded target entries per bin used as the baseline for thresholds.
-    target_entries: usize,
+    _target_entries: usize,
     /// Entry count above which a bin triggers flushing to disk and eviction
     /// from in-memory index.
     high_water_mark: usize,
@@ -621,7 +624,7 @@ pub mod tests {
     #[test]
     fn test_should_flush_threshold() {
         let bins = 1;
-        let num_entries = 1000;
+        let num_entries = (NUM_ENTRIES_OVERHEAD + NUM_ENTRIES_TO_EVICT) * 3;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
             + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
         let config = AccountsIndexConfig {
@@ -697,7 +700,7 @@ pub mod tests {
     #[test_case(4; "bins=4")]
     #[test_case(8; "bins=8")]
     fn test_max_evictions_threshold(num_bins: usize) {
-        let num_entries = 1000;
+        let num_entries = 1_234_567_890;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
             + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
         let limit_bytes = (num_entries * bytes_per_entry) as u64;

@@ -1728,11 +1728,10 @@ impl ClusterInfo {
             } else {
                 score
             };
-            let score = match value.data() {
+            match value.data() {
                 CrdsData::ContactInfo(_) => 2 * score,
                 _ => score,
-            };
-            score
+            }
         };
         let mut num_crds_values = 0;
         let (scores, mut pull_responses): (Vec<_>, Vec<_>) = requests

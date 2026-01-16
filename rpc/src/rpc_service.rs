@@ -34,7 +34,6 @@ use {
     solana_metrics::inc_new_counter_info,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
-    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
@@ -45,6 +44,7 @@ use {
         transaction_client::{TpuClientNextClient, TransactionClient},
     },
     solana_storage_bigtable::CredentialType,
+    solana_tls_utils::NotifyKeyUpdate,
     solana_validator_exit::Exit,
     std::{
         net::{SocketAddr, UdpSocket},

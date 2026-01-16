@@ -6,12 +6,12 @@ use std::{
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
-        epoch_stakes::VersionedEpochStakes,
+        epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         snapshot_utils::StorageAndNextAccountsFileId,
         stake_account::StakeAccount,
-        stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
+        stakes::{serialize_stake_accounts_to_delegation_format, DeserializableStakes, Stakes},
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
@@ -53,6 +53,7 @@ use {
             atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         },
+        thread,
         time::Instant,
     },
     storage::SerializableStorage,
@@ -181,7 +182,7 @@ struct DeserializableVersionedBank {
     rent_collector: RentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: Stakes<Delegation>,
+    stakes: DeserializableStakes<Delegation>,
     #[allow(dead_code)]
     unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
@@ -222,7 +223,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             inflation: dvb.inflation,
             stakes: dvb.stakes,
             is_delta: dvb.is_delta,
-            versioned_epoch_stakes: HashMap::default(), // populated from ExtraFieldsToDeserialize
+            versioned_epoch_stakes: vec![], // populated from ExtraFieldsToDeserialize
             accounts_lt_hash: AccountsLtHash(LT_HASH_CANARY), // populated from ExtraFieldsToDeserialize
             bank_hash_stats: BankHashStats::default(),        // populated from AccountsDbFields
         }
@@ -416,7 +417,6 @@ where
 /// added to this struct a minor release before they are added to the serialize
 /// struct.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 #[derive(Clone, Debug, Deserialize)]
 struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
@@ -426,9 +426,19 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     _obsolete_epoch_accounts_hash: Option<Hash>,
     #[serde(deserialize_with = "default_on_eof")]
-    versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
+    versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
     #[serde(deserialize_with = "default_on_eof")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
+    /// In order to maintain snapshot compatibility between adjacent versions
+    /// (edge <-> beta, and beta <-> stable), we must be able to deserialize
+    /// (and ignore) this new field (block id) in adjacent versions *before*
+    /// we serialize the new field into snapshots.
+    /// Hence the annotation to allow dead code.
+    /// This code is not truly dead though, as it enables newer versions to
+    /// populate this field and have older versions still load the snapshot.
+    #[allow(dead_code)]
+    #[serde(deserialize_with = "default_on_eof")]
+    block_id: Option<Hash>,
 }
 
 /// Extra fields that are serialized at the end of snapshots.
@@ -477,6 +487,7 @@ where
         _obsolete_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,
+        block_id: _,
     } = extra_fields;
 
     bank_fields.fee_rate_governor = bank_fields
@@ -800,6 +811,16 @@ where
     E: SerializableStorage + std::marker::Sync,
 {
     let mut bank_fields = bank_fields.collapse_into();
+    // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
+    let deserializable_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
+    let epoch_stakes_handle = thread::Builder::new()
+        .name("solRctEpochStk".into())
+        .spawn(|| {
+            deserializable_epoch_stakes
+                .into_iter()
+                .map(|(epoch, stakes)| (epoch, stakes.into()))
+                .collect()
+        })?;
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
         snapshot_accounts_db_fields,
         account_paths,
@@ -814,6 +835,7 @@ where
 
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
+    let epoch_stakes = epoch_stakes_handle.join().expect("calculate epoch stakes");
 
     let bank = Bank::new_from_snapshot(
         bank_rc,
@@ -822,6 +844,7 @@ where
         bank_fields,
         debug_keys,
         reconstructed_accounts_db_info.accounts_data_len,
+        epoch_stakes,
     );
 
     info!("rent_collector: {:?}", bank.rent_collector());
