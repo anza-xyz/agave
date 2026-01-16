@@ -1004,7 +1004,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
-        let mut post_account_state_info = process_result
+        let mut status = process_result
             .and_then(|_info| {
                 let post_account_state_info =
                     if environment.feature_set.relax_post_exec_min_balance_check {
@@ -1022,7 +1022,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &post_account_state_info,
                     &transaction_context,
                 )
-                .map(|_| post_account_state_info)
+                .map(|_| ())
             })
             .map_err(|err| {
                 match err {
@@ -1059,17 +1059,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             accounts_resize_delta: accounts_data_len_delta,
         } = execution_record;
 
-        if post_account_state_info.is_ok()
+        if status.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
                 .filter(|lamports_after_tx| lamports_before_tx == *lamports_after_tx)
                 .is_none()
         {
-            post_account_state_info = Err(TransactionError::UnbalancedTransaction);
+            status = Err(TransactionError::UnbalancedTransaction);
         }
-        let status = post_account_state_info
-            .as_ref()
-            .map(|_| ())
-            .map_err(|err| err.clone());
+        let status = status.as_ref().map(|_| ()).map_err(|err| err.clone());
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
