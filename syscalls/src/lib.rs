@@ -1120,12 +1120,30 @@ declare_builtin_function!(
         result_point_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{
-            curve_syscall_traits::*,
-            edwards::{self, PodEdwardsPoint},
-            ristretto::{self, PodRistrettoPoint},
-            scalar,
+        use {
+            crate::bls12_381_curve_id::*,
+            agave_bls12_381::{
+                PodG1Point as PodBLSG1Point,
+                PodG2Point as PodBLSG2Point,
+                PodScalar as PodBLSScalar,
+            },
+            solana_curve25519::{
+                curve_syscall_traits::*,
+                edwards::{self, PodEdwardsPoint},
+                ristretto::{self, PodRistrettoPoint},
+                scalar,
+            },
         };
+
+        if !invoke_context.get_feature_set().enable_bls12_381_syscall
+            && matches!(
+                curve_id,
+                BLS12_381_G1_BE | BLS12_381_G1_LE | BLS12_381_G2_BE | BLS12_381_G2_LE
+            )
+        {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
+
         match curve_id {
             CURVE25519_EDWARDS => match group_op {
                 ADD => {
@@ -1322,6 +1340,231 @@ declare_builtin_function!(
                     }
                 }
             },
+
+            BLS12_381_G1_LE | BLS12_381_G1_BE => {
+                let endianness = if curve_id == BLS12_381_G1_LE {
+                    agave_bls12_381::Endianness::LE
+                } else {
+                    agave_bls12_381::Endianness::BE
+                };
+
+                match group_op {
+                    ADD => {
+                        let cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
+                        consume_compute_meter(invoke_context, cost)?;
+
+                        let left_point = translate_type::<PodBLSG1Point>(
+                            memory_mapping,
+                            left_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+                        let right_point = translate_type::<PodBLSG1Point>(
+                            memory_mapping,
+                            right_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+
+                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_addition(
+                            agave_bls12_381::Version::V0,
+                            left_point,
+                            right_point,
+                            endianness,
+                        ) {
+                            translate_mut!(
+                                memory_mapping,
+                                invoke_context.get_check_aligned(),
+                                let result_point_ref_mut: &mut PodBLSG1Point = map(result_point_addr)?;
+                            );
+                            *result_point_ref_mut = result_point;
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    SUB => {
+                        let cost = invoke_context
+                            .get_execution_cost()
+                            .bls12_381_g1_subtract_cost;
+                        consume_compute_meter(invoke_context, cost)?;
+
+                        let left_point = translate_type::<PodBLSG1Point>(
+                            memory_mapping,
+                            left_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+                        let right_point = translate_type::<PodBLSG1Point>(
+                            memory_mapping,
+                            right_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+
+                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_subtraction(
+                            agave_bls12_381::Version::V0,
+                            left_point,
+                            right_point,
+                            endianness,
+                        ) {
+                            translate_mut!(
+                                memory_mapping,
+                                invoke_context.get_check_aligned(),
+                                let result_point_ref_mut: &mut PodBLSG1Point = map(result_point_addr)?;
+                            );
+                            *result_point_ref_mut = result_point;
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    MUL => {
+                        let cost = invoke_context
+                            .get_execution_cost()
+                            .bls12_381_g1_multiply_cost;
+                        consume_compute_meter(invoke_context, cost)?;
+
+                        let scalar = translate_type::<PodBLSScalar>(
+                            memory_mapping,
+                            left_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+                        let point = translate_type::<PodBLSG1Point>(
+                            memory_mapping,
+                            right_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+
+                        if let Some(result_point) = agave_bls12_381::bls12_381_g1_multiplication(
+                            agave_bls12_381::Version::V0,
+                            point,
+                            scalar,
+                            endianness,
+                        ) {
+                            translate_mut!(
+                                memory_mapping,
+                                invoke_context.get_check_aligned(),
+                                let result_point_ref_mut: &mut PodBLSG1Point = map(result_point_addr)?;
+                            );
+                            *result_point_ref_mut = result_point;
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    _ => Ok(1),
+                }
+            }
+
+            // New BLS12-381 G2 Implementation
+            BLS12_381_G2_LE | BLS12_381_G2_BE => {
+                let endianness = if curve_id == BLS12_381_G2_LE {
+                    agave_bls12_381::Endianness::LE
+                } else {
+                    agave_bls12_381::Endianness::BE
+                };
+
+                match group_op {
+                    ADD => {
+                        let cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
+                        consume_compute_meter(invoke_context, cost)?;
+
+                        let left_point = translate_type::<PodBLSG2Point>(
+                            memory_mapping,
+                            left_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+                        let right_point = translate_type::<PodBLSG2Point>(
+                            memory_mapping,
+                            right_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+
+                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_addition(
+                            agave_bls12_381::Version::V0,
+                            left_point,
+                            right_point,
+                            endianness,
+                        ) {
+                            translate_mut!(
+                                memory_mapping,
+                                invoke_context.get_check_aligned(),
+                                let result_point_ref_mut: &mut PodBLSG2Point = map(result_point_addr)?;
+                            );
+                            *result_point_ref_mut = result_point;
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    SUB => {
+                        let cost = invoke_context
+                            .get_execution_cost()
+                            .bls12_381_g2_subtract_cost;
+                        consume_compute_meter(invoke_context, cost)?;
+
+                        let left_point = translate_type::<PodBLSG2Point>(
+                            memory_mapping,
+                            left_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+                        let right_point = translate_type::<PodBLSG2Point>(
+                            memory_mapping,
+                            right_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+
+                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_subtraction(
+                            agave_bls12_381::Version::V0,
+                            left_point,
+                            right_point,
+                            endianness,
+                        ) {
+                            translate_mut!(
+                                memory_mapping,
+                                invoke_context.get_check_aligned(),
+                                let result_point_ref_mut: &mut PodBLSG2Point = map(result_point_addr)?;
+                            );
+                            *result_point_ref_mut = result_point;
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    MUL => {
+                        let cost = invoke_context
+                            .get_execution_cost()
+                            .bls12_381_g2_multiply_cost;
+                        consume_compute_meter(invoke_context, cost)?;
+
+                        let scalar = translate_type::<PodBLSScalar>(
+                            memory_mapping,
+                            left_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+                        let point = translate_type::<PodBLSG2Point>(
+                            memory_mapping,
+                            right_input_addr,
+                            invoke_context.get_check_aligned(),
+                        )?;
+
+                        if let Some(result_point) = agave_bls12_381::bls12_381_g2_multiplication(
+                            agave_bls12_381::Version::V0,
+                            point,
+                            scalar,
+                            endianness,
+                        ) {
+                            translate_mut!(
+                                memory_mapping,
+                                invoke_context.get_check_aligned(),
+                                let result_point_ref_mut: &mut PodBLSG2Point = map(result_point_addr)?;
+                            );
+                            *result_point_ref_mut = result_point;
+                            Ok(SUCCESS)
+                        } else {
+                            Ok(1)
+                        }
+                    }
+                    _ => Ok(1),
+                }
+            }
 
             _ => {
                 if invoke_context.get_feature_set().abort_on_invalid_curve {
