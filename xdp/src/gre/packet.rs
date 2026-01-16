@@ -14,6 +14,7 @@ pub const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
 /// Minimal GRE header size in bytes without optional fields
 pub const GRE_HEADER_BASE_SIZE: usize = 4;
 const GRE_HEADER_FLAGS_VERSION_BASIC: u16 = 0x0000;
+type MacAddrBytes = [u8; 6];
 
 /// Calculate total packet size for GRE encapsulation.
 pub const fn gre_packet_size(payload_len: usize) -> usize {
@@ -110,15 +111,15 @@ impl TryFrom<&crate::netlink::GreTunnelInfo> for TunnelInfo {
     }
 }
 
-/// Wrap a UDP packet with L3 GRE encapsulation
+/// Write outer headers for L3 GRE encapsulation.
 ///
-/// Takes the original packet (IP + UDP + payload) and wraps it
-/// with Ethernet + IP + GRE headers, to create:
-/// [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
-fn wrap_packet_with_gre(
+/// This function assumes the buffer has reserved space for the inner packet
+/// (IP + UDP + payload) and for the outer Ethernet + IP + GRE headers. It does
+/// not move or preserve any existing data in `packet`.
+fn write_gre_outer_headers(
     packet: &mut [u8],
-    gre_src_mac: &[u8; 6],
-    gre_dst_mac: &[u8; 6],
+    gre_src_mac: &MacAddrBytes,
+    gre_dst_mac: &MacAddrBytes,
     inner_packet_len: usize,
     gre_header: &GreHeader,
     config: &TunnelInfo,
@@ -158,8 +159,8 @@ pub fn construct_gre_packet(
     src_port: u16,
     dst_port: u16,
     payload: &[u8],
-    src_mac: &[u8; 6],
-    dst_mac: &[u8; 6],
+    src_mac: &MacAddrBytes,
+    dst_mac: &MacAddrBytes,
     config: &TunnelInfo,
 ) -> Result<(), PacketError> {
     let payload_len = payload.len();
@@ -176,6 +177,15 @@ pub fn construct_gre_packet(
             have: packet.len(),
         });
     }
+
+    write_gre_outer_headers(
+        packet,
+        src_mac,
+        dst_mac,
+        inner_packet_len,
+        &gre_header,
+        config,
+    );
 
     let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE;
 
@@ -200,14 +210,5 @@ pub fn construct_gre_packet(
     packet[inner_start + INNER_PACKET_HEADER_SIZE
         ..inner_start + INNER_PACKET_HEADER_SIZE + payload_len]
         .copy_from_slice(payload);
-
-    wrap_packet_with_gre(
-        packet,
-        src_mac,
-        dst_mac,
-        inner_packet_len,
-        &gre_header,
-        config,
-    );
     Ok(())
 }
