@@ -23,7 +23,12 @@ pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
 pub const STREAM_THROTTLING_INTERVAL: Duration =
     Duration::from_millis(STREAM_THROTTLING_INTERVAL_MS);
 const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
-const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 10;
+// EMA smoothing window to reduce sensitivity to short-lived load spikes at the start
+// of a leader slot. Throttling is only triggered when saturation is sustained.
+// The value 40 was chosen based on simulations: at a max target TPS of ~400K,
+// it allows the system to absorb a burst of ~50K transactions over ~40 ms
+// before throttling activates.
+const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 
 const STAKED_THROTTLING_ON_LOAD_THRESHOLD_PERCENT: u64 = 95;
 
