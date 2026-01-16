@@ -356,6 +356,12 @@ pub struct InterfaceInfo {
     pub gre_tunnel: Option<GreTunnelInfo>,
 }
 
+impl InterfaceInfo {
+    pub fn is_gre(&self) -> bool {
+        self.gre_tunnel.is_some()
+    }
+}
+
 #[repr(C)]
 struct InterfaceRequest {
     header: nlmsghdr,

@@ -15,6 +15,12 @@ pub const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
 pub const GRE_HEADER_BASE_SIZE: usize = 4;
 const GRE_HEADER_FLAGS_VERSION_BASIC: u16 = 0x0000;
 
+/// Calculate total packet size for GRE encapsulation.
+pub const fn gre_packet_size(payload_len: usize) -> usize {
+    (ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + INNER_PACKET_HEADER_SIZE)
+        .saturating_add(payload_len)
+}
+
 /// GRE tunnel configuration for packet construction
 ///
 /// Note: Only supports basic GRE header (no optional fields).
