@@ -147,14 +147,14 @@ mod tests {
         assert!(!cfg.should_generate_snapshots());
         assert!(cfg.should_load_snapshots());
 
-        assert!(matches!(
+        assert_eq!(
             cfg.full_snapshot_archive_interval,
             SnapshotInterval::Disabled
-        ));
-        assert!(matches!(
+        );
+        assert_eq!(
             cfg.incremental_snapshot_archive_interval,
             SnapshotInterval::Disabled
-        ));
+        );
     }
 
     #[test]
@@ -164,14 +164,14 @@ mod tests {
         assert!(!cfg.should_generate_snapshots());
         assert!(!cfg.should_load_snapshots());
 
-        assert!(matches!(
+        assert_eq!(
             cfg.full_snapshot_archive_interval,
             SnapshotInterval::Disabled
-        ));
-        assert!(matches!(
+        );
+        assert_eq!(
             cfg.incremental_snapshot_archive_interval,
             SnapshotInterval::Disabled
-        ));
+        );
     }
 
     #[test]
@@ -184,13 +184,13 @@ mod tests {
         assert!(cfg.should_generate_snapshots());
         assert!(cfg.should_load_snapshots());
 
-        assert!(matches!(
+        assert_eq!(
             cfg.full_snapshot_archive_interval,
             SnapshotInterval::Disabled
-        ));
-        assert!(matches!(
+        );
+        assert_eq!(
             cfg.incremental_snapshot_archive_interval,
             SnapshotInterval::Disabled
-        ));
+        );
     }
 }
