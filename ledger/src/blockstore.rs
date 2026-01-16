@@ -3197,8 +3197,7 @@ impl Blockstore {
     ) -> Result<Option<(VersionedTransaction, u32)>> {
         let slot_entries = self.get_slot_entries(slot, 0)?;
         Ok(slot_entries
-            .iter()
-            .cloned()
+            .into_iter()
             .flat_map(|entry| entry.transactions)
             .enumerate()
             .map(|(index, transaction)| {
