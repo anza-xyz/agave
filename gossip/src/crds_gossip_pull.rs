@@ -972,7 +972,7 @@ pub(crate) mod tests {
         ping_cache
             .lock()
             .unwrap()
-            .mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+            .mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         crds.write()
             .unwrap()
@@ -1035,13 +1035,13 @@ pub(crate) mod tests {
         crds.insert(entry, now, GossipRoute::LocalMessage).unwrap();
         let mut old = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
         old.set_gossip(([127, 0, 0, 1], 8020)).unwrap();
-        ping_cache.mock_pong(*old.pubkey(), old.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(old.gossip().unwrap(), Instant::now());
         let old = CrdsValue::new_unsigned(CrdsData::from(old));
         crds.insert(old.clone(), now, GossipRoute::LocalMessage)
             .unwrap();
         let mut new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
         new.set_gossip(([127, 0, 0, 1], 8021)).unwrap();
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         crds.insert(new, now, GossipRoute::LocalMessage).unwrap();
         let crds = RwLock::new(crds);
@@ -1096,7 +1096,7 @@ pub(crate) mod tests {
             .insert(entry, now, GossipRoute::LocalMessage)
             .unwrap();
         let new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), now);
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         node_crds
             .insert(new, now, GossipRoute::LocalMessage)
@@ -1214,7 +1214,7 @@ pub(crate) mod tests {
             .unwrap();
         let mut ping_cache = new_ping_cache();
         let new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 1);
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         node_crds.insert(new, 0, GossipRoute::LocalMessage).unwrap();
 
@@ -1222,7 +1222,7 @@ pub(crate) mod tests {
         let new_id = solana_pubkey::new_rand();
         let same_key = ContactInfo::new_localhost(&new_id, 0);
         let new = ContactInfo::new_localhost(&new_id, 1);
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         dest_crds
             .insert(new.clone(), 0, GossipRoute::LocalMessage)
@@ -1230,11 +1230,7 @@ pub(crate) mod tests {
         let dest_crds = RwLock::new(dest_crds);
 
         // node contains a key from the dest node, but at an older local timestamp
-        ping_cache.mock_pong(
-            *same_key.pubkey(),
-            same_key.gossip().unwrap(),
-            Instant::now(),
-        );
+        ping_cache.mock_pong(same_key.gossip().unwrap(), Instant::now());
         let same_key = CrdsValue::new_unsigned(CrdsData::from(same_key));
         assert_eq!(same_key.label(), new.label());
         assert!(same_key.wallclock() < new.wallclock());
