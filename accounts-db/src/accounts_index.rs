@@ -1299,14 +1299,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // Can save time when inserting lots of new keys.
     // But, does NOT update secondary index
     // This is designed to be called at startup time.
-    // returns (insertion_time_us, InsertNewIfMissingIntoPrimaryIndexInfo)
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
         mut items: Vec<(Pubkey, T)>,
-    ) -> (u64, InsertNewIfMissingIntoPrimaryIndexInfo) {
-        let mut insert_time = Measure::start("insert_into_primary_index");
-
+    ) -> InsertNewIfMissingIntoPrimaryIndexInfo {
         let use_disk = self.storage.storage.is_disk_index_enabled();
 
         let mut count = 0;
@@ -1391,17 +1388,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                     .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
             }
         }
-        insert_time.stop();
 
-        (
-            insert_time.as_us(),
-            InsertNewIfMissingIntoPrimaryIndexInfo {
-                count,
-                num_did_not_exist,
-                num_existed_in_mem,
-                num_existed_on_disk,
-            },
-        )
+        InsertNewIfMissingIntoPrimaryIndexInfo {
+            count,
+            num_did_not_exist,
+            num_existed_in_mem,
+            num_existed_on_disk,
+        }
     }
 
     /// use Vec<> because the internal vecs are already allocated per bin
@@ -1938,7 +1931,7 @@ pub mod tests {
         let account_info2: bool = !account_info;
         let items = vec![(*pubkey, account_info), (*pubkey, account_info2)];
         index.set_startup(Startup::Startup);
-        let (_, _result) = index.insert_new_if_missing_into_primary_index(slot, items);
+        index.insert_new_if_missing_into_primary_index(slot, items);
     }
 
     #[test]
@@ -1952,7 +1945,7 @@ pub mod tests {
         let items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let (_, result) = index.insert_new_if_missing_into_primary_index(slot, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot, items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -1989,7 +1982,7 @@ pub mod tests {
         let items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let (_, result) = index.insert_new_if_missing_into_primary_index(slot, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot, items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2210,7 +2203,7 @@ pub mod tests {
         index.set_startup(Startup::Startup);
         let items = vec![(key0, account_infos[0]), (key1, account_infos[1])];
         let expected_len = items.len();
-        let (_, result) = index.insert_new_if_missing_into_primary_index(slot0, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot0, items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2270,7 +2263,7 @@ pub mod tests {
                 let items = vec![(key, account_infos[0])];
                 index.set_startup(Startup::Startup);
                 let expected_len = items.len();
-                let (_, result) = index.insert_new_if_missing_into_primary_index(slot0, items);
+                let result = index.insert_new_if_missing_into_primary_index(slot0, items);
                 assert_eq!(result.count, expected_len);
                 index.set_startup(Startup::Normal);
             }
@@ -2318,7 +2311,7 @@ pub mod tests {
                 let items = vec![(key, account_infos[1])];
                 index.set_startup(Startup::Startup);
                 let expected_len = items.len();
-                let (_, result) = index.insert_new_if_missing_into_primary_index(slot1, items);
+                let result = index.insert_new_if_missing_into_primary_index(slot1, items);
                 assert_eq!(result.count, expected_len);
                 index.set_startup(Startup::Normal);
             }
