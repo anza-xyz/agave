@@ -22,10 +22,6 @@ use {
 const NETLINK_RCVBUF_SIZE: i32 = 1 << 16;
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
 // GRE nested attributes (from include/uapi/linux/if_tunnel.h)
-const IFLA_GRE_IFLAGS: u16 = 2;
-const IFLA_GRE_OFLAGS: u16 = 3;
-const IFLA_GRE_IKEY: u16 = 4;
-const IFLA_GRE_OKEY: u16 = 5;
 const IFLA_GRE_LOCAL: u16 = 6;
 const IFLA_GRE_REMOTE: u16 = 7;
 const IFLA_GRE_TTL: u16 = 8;
@@ -347,10 +343,6 @@ impl std::fmt::Display for MacAddress {
 pub struct GreTunnelInfo {
     pub local: Option<IpAddr>,
     pub remote: Option<IpAddr>,
-    pub iflags: Option<u16>, // ingress flags
-    pub oflags: Option<u16>,
-    pub ikey: Option<u32>, // ingress key
-    pub okey: Option<u32>,
     pub ttl: Option<u8>,
     pub tos: Option<u8>,
     pub pmtudisc: Option<u8>,
@@ -446,18 +438,9 @@ fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<G
 
     let u8_from_bytes = |data: &[u8]| -> Option<u8> { data.first().copied() };
 
-    fn u16_from_ne_bytes(data: &[u8]) -> Option<u16> {
-        let b: [u8; 2] = data.get(..2)?.try_into().ok()?;
-        Some(u16::from_ne_bytes(b))
-    }
-
     let mut tunnel_info = GreTunnelInfo {
         local: None,
         remote: None,
-        iflags: None,
-        oflags: None,
-        ikey: None,
-        okey: None,
         ttl: None,
         tos: None,
         pmtudisc: None,
@@ -469,18 +452,6 @@ fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<G
     if let Some(a) = gre.get(&IFLA_GRE_REMOTE) {
         tunnel_info.remote = parse_ip_address(a.data, AF_INET as u8);
     }
-    if let Some(a) = gre.get(&IFLA_GRE_IFLAGS) {
-        tunnel_info.iflags = u16_from_ne_bytes(a.data);
-    }
-    if let Some(a) = gre.get(&IFLA_GRE_OFLAGS) {
-        tunnel_info.oflags = u16_from_ne_bytes(a.data);
-    }
-    if let Some(a) = gre.get(&IFLA_GRE_IKEY) {
-        tunnel_info.ikey = u32_from_ne_bytes(a.data);
-    }
-    if let Some(a) = gre.get(&IFLA_GRE_OKEY) {
-        tunnel_info.okey = u32_from_ne_bytes(a.data);
-    }
     if let Some(a) = gre.get(&IFLA_GRE_TTL) {
         tunnel_info.ttl = u8_from_bytes(a.data);
     }
@@ -491,11 +462,6 @@ fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<G
         tunnel_info.pmtudisc = u8_from_bytes(a.data);
     }
     Some(tunnel_info)
-}
-
-fn u32_from_ne_bytes(data: &[u8]) -> Option<u32> {
-    data.get(..4)
-        .map(|data| u32::from_ne_bytes([data[0], data[1], data[2], data[3]]))
 }
 
 fn parse_linkinfo_kind_and_data<'a>(

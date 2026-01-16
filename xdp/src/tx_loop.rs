@@ -3,7 +3,7 @@
 use {
     crate::{
         device::{NetworkDevice, QueueId, RingSizes},
-        gre::{packet::GreConfig, GreEncapsulator},
+        gre::{packet::TunnelInfo, GreEncapsulator},
         netlink::{InterfaceInfo, MacAddress},
         packet::{
             write_eth_header, write_ip_header_for_udp, write_udp_header, ETH_HEADER_SIZE,
@@ -137,7 +137,7 @@ pub fn tx_loop<
     let mut batched_packets = 0;
 
     // GRE encapsulator manages GRE tunnel logic and caching
-    let mut gre_encapsulator = GreEncapsulator::default();
+    let mut gre_encapsulator = GreEncapsulator::new();
 
     let mut timeouts = 0;
     loop {
@@ -221,14 +221,13 @@ pub fn tx_loop<
                         };
 
                         // Convert to GreConfig and calculate packet size
-                        let Ok(gre_config) = GreConfig::try_from(gre) else {
+                        let Ok(gre_config) = TunnelInfo::try_from(gre) else {
                             log::warn!("dropping packet: invalid GRE tunnel endpoints");
                             batched_packets -= 1;
                             umem.release(frame.offset());
                             continue;
                         };
-                        let gre_packet_size =
-                            GreEncapsulator::calculate_packet_size(len, &gre_config);
+                        let gre_packet_size = GreEncapsulator::calculate_packet_size(len);
                         frame.set_len(gre_packet_size);
                         let packet = umem.map_frame_mut(&frame);
 

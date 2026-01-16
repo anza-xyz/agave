@@ -225,14 +225,14 @@ impl Router {
 
         let if_index = default_route
             .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)?;
+            .ok_or(RouteError::MissingOutputInterface)? as u32;
 
         let next_hop_ip = match default_route.gateway {
             Some(gateway) => gateway,
             None => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         };
 
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index as u32).cloned();
+        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
         let preferred_src_ip = match default_route.pref_src {
             Some(IpAddr::V4(v4)) => Some(v4),
             _ => None,
@@ -241,7 +241,7 @@ impl Router {
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
-            if_index: if_index as u32,
+            if_index,
             preferred_src_ip,
         })
     }
@@ -268,7 +268,7 @@ impl Router {
         let next_hop = NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
-            if_index: if_index as u32,
+            if_index,
             preferred_src_ip,
         };
 

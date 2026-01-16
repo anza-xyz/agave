@@ -8,7 +8,6 @@ use {
 pub const ETH_HEADER_SIZE: usize = 14;
 pub const IP_HEADER_SIZE: usize = 20;
 pub const UDP_HEADER_SIZE: usize = 8;
-pub const GRE_HEADER_SIZE: usize = 4;
 const IP_DONT_FRAGMENT: u16 = 0x4000;
 
 pub fn write_eth_header(packet: &mut [u8], src_mac: &[u8; 6], dst_mac: &[u8; 6]) {

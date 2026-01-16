@@ -16,5 +16,5 @@ pub mod packet;
 
 pub use {
     encapsulator::{EncapsulationError, GreEncapsulator},
-    packet::{construct_gre_packet, GreConfig, GreHeader, PacketError},
+    packet::{construct_gre_packet, GreHeader, PacketError, TunnelInfo},
 };

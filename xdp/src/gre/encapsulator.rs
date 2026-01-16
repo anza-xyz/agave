@@ -3,7 +3,7 @@
 use {
     crate::{
         gre::packet::{
-            construct_gre_packet, GreConfig, PacketError, GRE_HEADER_BASE_SIZE,
+            construct_gre_packet, PacketError, TunnelInfo, GRE_HEADER_BASE_SIZE,
             INNER_PACKET_HEADER_SIZE,
         },
         netlink::{GreTunnelInfo, InterfaceInfo, MacAddress},
@@ -24,6 +24,12 @@ pub struct GreEncapsulator {
 }
 
 impl GreEncapsulator {
+    pub fn new() -> Self {
+        Self {
+            cached_remote: None,
+        }
+    }
+
     pub fn is_gre(interface_info: &InterfaceInfo) -> bool {
         interface_info.gre_tunnel.is_some()
     }
@@ -56,10 +62,9 @@ impl GreEncapsulator {
     }
 
     /// Calculate size of a GRE-encapsulated packet
-    pub fn calculate_packet_size(payload_len: usize, _config: &GreConfig) -> usize {
+    pub const fn calculate_packet_size(payload_len: usize) -> usize {
         // Basic GRE header is always 4 bytes (no optional fields)
-        let gre_header_size = GRE_HEADER_BASE_SIZE;
-        (ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size + INNER_PACKET_HEADER_SIZE)
+        (ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + INNER_PACKET_HEADER_SIZE)
             .saturating_add(payload_len)
     }
 
@@ -74,7 +79,7 @@ impl GreEncapsulator {
         src_port: u16,
         src_mac: MacAddress,
         next_hop: &NextHop,
-        gre_config: &GreConfig,
+        gre_config: &TunnelInfo,
         route_fn: &R,
     ) -> Result<(), EncapsulationError>
     where
