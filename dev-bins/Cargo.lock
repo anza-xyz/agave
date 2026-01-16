@@ -2297,6 +2297,18 @@ dependencies = [
 
 [[package]]
 name = "educe"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4bd92664bf78c4d3dba9b7cdafce6fa15b13ed3ed16175218196942e99168a8"
+dependencies = [
+ "enum-ordinalize 4.3.2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "educe"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d7bc049e1bd8cdeb31b68bbd586a9464ecf9f3944af3958a7a9d0f8b9799417"
@@ -6306,7 +6318,7 @@ dependencies = [
  "tarpc",
  "thiserror 2.0.17",
  "tokio",
- "tokio-serde",
+ "tokio-serde 0.9.0",
 ]
 
 [[package]]
@@ -6353,7 +6365,7 @@ dependencies = [
  "solana-transaction-error",
  "tarpc",
  "tokio",
- "tokio-serde",
+ "tokio-serde 0.9.0",
  "tokio-util 0.7.18",
 ]
 
@@ -10438,7 +10450,7 @@ dependencies = [
  "tarpc-plugins",
  "thiserror 1.0.69",
  "tokio",
- "tokio-serde",
+ "tokio-serde 0.8.0",
  "tokio-util 0.6.10",
  "tracing",
  "tracing-opentelemetry",
@@ -10731,6 +10743,21 @@ dependencies = [
  "pin-project",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tokio-serde"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caf600e7036b17782571dd44fa0a5cea3c82f60db5137f774a325a76a0d6852b"
+dependencies = [
+ "bincode",
+ "bytes",
+ "educe 0.5.11",
+ "futures-core",
+ "futures-sink",
+ "pin-project",
+ "serde",
 ]
 
 [[package]]
