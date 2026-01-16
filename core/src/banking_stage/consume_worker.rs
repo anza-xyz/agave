@@ -357,7 +357,7 @@ pub(crate) mod external {
             // If we began execution when a slot was still in process, and could
             // not record at the end because the slot has ended, we will retry
             // on the next slot.
-            for _ in 0..1 {
+            for _ in 0..2 {
                 let Some(leader_state) =
                     active_leader_state_with_timeout(&self.shared_leader_state)
                 else {
