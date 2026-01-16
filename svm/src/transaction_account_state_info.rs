@@ -1,6 +1,7 @@
 use {
     crate::rent_calculator::{RentState, check_rent_state, get_account_rent_state},
     solana_account::ReadableAccount,
+    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
@@ -13,6 +14,7 @@ pub struct WritableTransactionAccountStateInfo {
     rent_state: RentState,
     balance: u64,
     data_size: usize,
+    owner: Pubkey,
 }
 
 pub(crate) type TransactionAccountStateInfo = Option<WritableTransactionAccountStateInfo>; // None: readonly account
@@ -24,10 +26,15 @@ pub(crate) fn new_pre_exec(
     (0..message.account_keys().len())
         .map(|i| {
             if message.is_writable(i) {
-                if let Ok(account) = transaction_context
+                let account = transaction_context
                     .accounts()
-                    .try_borrow(i as IndexOfAccount)
-                {
+                    .try_borrow(i as IndexOfAccount);
+                debug_assert!(
+                    account.is_ok(),
+                    "message and transaction context out of sync, fatal"
+                );
+
+                if let Ok(account) = account {
                     // RentState::RentPaying is no longer allowed
                     let state = if account.lamports() == 0 {
                         RentState::Uninitialized
@@ -39,9 +46,10 @@ pub(crate) fn new_pre_exec(
                         rent_state: state,
                         balance: account.lamports(),
                         data_size: account.data().len(),
+                        owner: *account.owner(),
                     })
                 } else {
-                    panic!("message and transaction context out of sync, fatal");
+                    None
                 }
             } else {
                 None
@@ -62,40 +70,51 @@ pub(crate) fn new_post_exec(
     (0..message.account_keys().len())
         .zip(pre_exec_state_infos)
         .map(|(i, pre_exec_state_info)| {
-            if message.is_writable(i) {
-                if let Ok(account) = transaction_context
-                    .accounts()
-                    .try_borrow(i as IndexOfAccount)
-                {
-                    // the same account MUST be present and marked writable in both pre and post exec
-                    debug_assert!(pre_exec_state_info.is_some());
-                    let pre_exec_state_info = pre_exec_state_info.as_ref().unwrap();
-
-                    // if the account size increased or account was created in this transaction,
-                    // do standard rent exempt check
-                    // otherwise, pre-exec balance can also be used as the minimum balance
-                    let mut min_balance = rent.minimum_balance(account.data().len());
-                    if pre_exec_state_info.rent_state != RentState::Uninitialized
-                        && account.data().len() <= pre_exec_state_info.data_size
-                    {
-                        min_balance = min(pre_exec_state_info.balance, min_balance);
-                    }
-
-                    Some(WritableTransactionAccountStateInfo {
-                        rent_state: get_account_rent_state(
-                            account.lamports(),
-                            account.data().len(),
-                            min_balance,
-                        ),
-                        balance: account.lamports(),
-                        data_size: account.data().len(),
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
+            if !message.is_writable(i) {
+                return None;
             }
+
+            let account = transaction_context
+                .accounts()
+                .try_borrow(i as IndexOfAccount);
+            debug_assert!(
+                account.is_ok(),
+                "message and transaction context out of sync, fatal"
+            );
+            let Ok(account) = account else {
+                return None;
+            };
+
+            // the same account MUST be present and marked writable in both pre and post exec
+            debug_assert!(
+                pre_exec_state_info.is_some(),
+                "message and pre-exec state out of sync, fatal"
+            );
+            let Some(pre_exec_state_info) = pre_exec_state_info else {
+                return None;
+            };
+
+            // if the account size increased,account was created in this transaction,
+            // or the owner of the account changed, do standard rent exempt check
+            // otherwise, pre-exec balance can also be used as the minimum balance
+            let mut min_balance = rent.minimum_balance(account.data().len());
+            if pre_exec_state_info.rent_state != RentState::Uninitialized
+                && account.data().len() <= pre_exec_state_info.data_size
+                && account.owner() == &pre_exec_state_info.owner
+            {
+                min_balance = min(pre_exec_state_info.balance, min_balance);
+            }
+
+            Some(WritableTransactionAccountStateInfo {
+                rent_state: get_account_rent_state(
+                    account.lamports(),
+                    account.data().len(),
+                    min_balance,
+                ),
+                balance: account.lamports(),
+                data_size: account.data().len(),
+                owner: *account.owner(),
+            })
         })
         .collect()
 }
@@ -134,6 +153,7 @@ pub(crate) fn new_post_exec_legacy(
                 rent_state,
                 balance: 0,
                 data_size: 0,
+                owner: Pubkey::default(),
             })
         })
         .collect()
@@ -260,12 +280,14 @@ mod test {
                     rent_state: RentState::Uninitialized,
                     balance: 0,
                     data_size: 0,
+                    owner: Pubkey::default(),
                 }),
                 None,
                 Some(WritableTransactionAccountStateInfo {
                     rent_state: RentState::Uninitialized,
                     balance: 0,
                     data_size: 0,
+                    owner: Pubkey::default(),
                 }),
             ]
         );
@@ -423,6 +445,49 @@ mod test {
     }
 
     #[test]
+    fn test_post_exec_owner_changed_requires_full_min() {
+        let rent = Rent::default();
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+        let key4 = Keypair::new();
+        let owner_pre = Keypair::new();
+        let owner_post = Keypair::new();
+
+        let data_len: usize = 64;
+        let min_full = rent.minimum_balance(data_len);
+        let pre_balance = min_full.saturating_sub(5);
+
+        let sanitized_message = sanitized_msg_for(key1.pubkey(), key2.pubkey(), key4.pubkey());
+
+        let tx_accounts_pre = accounts_key2_first(
+            key1.pubkey(),
+            key2.pubkey(),
+            key3.pubkey(),
+            AccountSharedData::new(pre_balance, data_len, &owner_pre.pubkey()),
+        );
+        let context_pre = TransactionContext::new(tx_accounts_pre, rent.clone(), 20, 20, 1);
+        let pre = new_pre_exec(&context_pre, &sanitized_message);
+
+        // post: owner changed; balance/size unchanged => should require full min
+        let tx_accounts_post = accounts_key2_first(
+            key1.pubkey(),
+            key2.pubkey(),
+            key3.pubkey(),
+            AccountSharedData::new(pre_balance, data_len, &owner_post.pubkey()),
+        );
+        let context_post = TransactionContext::new(tx_accounts_post, rent.clone(), 20, 20, 1);
+        let post = new_post_exec(&context_post, &pre, &sanitized_message, &rent);
+
+        assert!(is_rent_paying(&post[0]));
+        let res = verify_changes(&pre, &post, &context_post);
+        assert_eq!(
+            res.err(),
+            Some(TransactionError::InsufficientFundsForRent { account_index: 0 })
+        );
+    }
+
+    #[test]
     fn test_verify_changes() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
@@ -431,17 +496,20 @@ mod test {
                 rent_state: RentState::Uninitialized,
                 balance: 0,
                 data_size: 0,
+                owner: Pubkey::default(),
             }),
             Some(WritableTransactionAccountStateInfo {
                 rent_state: RentState::Uninitialized,
                 balance: 0,
                 data_size: 0,
+                owner: Pubkey::default(),
             }),
         ];
         let post_rent_state = vec![Some(WritableTransactionAccountStateInfo {
             rent_state: RentState::Uninitialized,
             balance: 0,
             data_size: 0,
+            owner: Pubkey::default(),
         })];
 
         let transaction_accounts = vec![
@@ -458,6 +526,7 @@ mod test {
             rent_state: RentState::Uninitialized,
             balance: 0,
             data_size: 0,
+            owner: Pubkey::default(),
         })];
         let post_rent_state = vec![Some(WritableTransactionAccountStateInfo {
             rent_state: RentState::RentPaying {
@@ -466,6 +535,7 @@ mod test {
             },
             balance: 0,
             data_size: 0,
+            owner: Pubkey::default(),
         })];
 
         let transaction_accounts = vec![
