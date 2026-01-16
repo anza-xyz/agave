@@ -1,0 +1,19 @@
+[package]
+name = "loader"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+agave-xdp.workspace = true
+agave-xdp-ebpf.workspace = true
+clap = { version = "4.*", features = ["derive"] }
+serde_json = { workspace = true }
+solana-logger = "3.0.0"
+tokio = { workspace = true, features = ["full"] }
+[lints]
+workspace = true

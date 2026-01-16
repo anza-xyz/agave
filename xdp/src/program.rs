@@ -2,8 +2,19 @@
 
 use {
     crate::device::NetworkDevice,
-    aya::{programs::Xdp, Ebpf, EbpfLoader},
-    std::io::{Cursor, Write},
+    agave_xdp_ebpf::{DecisionEvent, FirewallConfig, DECISION_EVENT_SIZE},
+    aya::{
+        maps::{Array, MapData, RingBuf},
+        programs::Xdp,
+        Ebpf,
+    },
+    libc::{poll, pollfd, POLLERR, POLLIN},
+    log::{info, warn},
+    std::{
+        io::{Cursor, Write},
+        os::fd::AsRawFd,
+        thread,
+    },
 };
 
 macro_rules! write_fields {
@@ -40,21 +51,83 @@ const XDP_PROG: &[u8] = &[
 // the string table
 const STRTAB: &[u8] = b"\0xdp\0.symtab\0.strtab\0agave_xdp\0";
 
-pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error::Error>> {
-    let mut loader = EbpfLoader::new();
+pub fn load_xdp_program(
+    dev: &NetworkDevice,
+    firewall_config: Option<FirewallConfig>,
+) -> Result<Ebpf, Box<dyn std::error::Error>> {
     let broken_frags = dev.driver()? == "i40e";
-    let mut ebpf = if broken_frags {
-        loader.set_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
-        loader.load(&agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
-    } else {
-        loader.load(&generate_xdp_elf())
-    }?;
-    let p: &mut Xdp = ebpf.program_mut("agave_xdp").unwrap().try_into().unwrap();
-    p.load()?;
+    let load_firewall = broken_frags || firewall_config.is_some();
 
+    let mut firewall_config = firewall_config.unwrap_or_default();
+    let mut ebpf = if load_firewall {
+        info!("Loading the XDP program with firewall support");
+        let ebpf = Ebpf::load(agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)?;
+        firewall_config.drop_frags = broken_frags;
+        // in new aya this would require active polling!
+        //let logger = aya_log::EbpfLogger::init(&mut ebpf)?;
+        //Box::leak(Box::new(logger));
+        ebpf
+    } else {
+        info!("Loading the bypass XDP program");
+        Ebpf::load(&generate_xdp_elf())?
+    };
+
+    let p: &mut Xdp = ebpf.program_mut("agave_xdp").unwrap().try_into().unwrap();
+
+    p.load()?;
     p.attach_to_if_index(dev.if_index(), aya::programs::xdp::XdpFlags::DRV_MODE)?;
 
+    if load_firewall {
+        let mut array = Array::try_from(
+            ebpf.map_mut("FIREWALL_CONFIG")
+                .expect("Must have loaded the correct program"),
+        )?;
+        array.set(0, firewall_config, 0)?;
+        info!("Firewall configured with {firewall_config:?}");
+        let ringbuf = RingBuf::try_from(
+            ebpf.take_map("RING_BUF")
+                .expect("Must have loaded the correct program"),
+        )?;
+        thread::spawn(move || watch_ring(ringbuf));
+    }
     Ok(ebpf)
+}
+
+fn watch_ring(mut ring: RingBuf<MapData>) {
+    let mut fds = [pollfd {
+        fd: ring.as_raw_fd(),
+        events: POLLIN | POLLERR,
+        revents: 0,
+    }];
+
+    loop {
+        // Wait up to 100ms for events
+        let ret = unsafe { poll(fds.as_mut_ptr(), fds.len() as u64, 1000) };
+        if ret < 0 {
+            panic!("poll failed");
+        }
+        if ret == 0 {
+            warn!("timeout, no events");
+            continue;
+        }
+        // Drain everything currently in the ring
+        loop {
+            let item = ring.next();
+            let Some(read) = item else {
+                break;
+            };
+            assert_eq!(read.len(), DECISION_EVENT_SIZE, "Invalid event size");
+
+            let ptr = read.as_ptr();
+            let event =
+                unsafe { std::ptr::read_unaligned::<DecisionEvent>(ptr as *const DecisionEvent) };
+
+            warn!(
+                "Firewall decision: {:?} for port {}",
+                event.decision, event.dst_port,
+            );
+        }
+    }
 }
 
 fn generate_xdp_elf() -> Vec<u8> {

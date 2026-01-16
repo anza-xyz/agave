@@ -1,5 +1,5 @@
 // re-export since this is needed at validator startup
-pub use agave_xdp::set_cpu_affinity;
+pub use {agave_xdp::set_cpu_affinity, agave_xdp_ebpf::FirewallConfig};
 #[cfg(target_os = "linux")]
 use {
     agave_xdp::{
@@ -35,6 +35,7 @@ pub struct XdpConfig {
     // The capacity of the channel that sits between retransmit stage and each XDP thread that
     // enqueues packets to the NIC.
     pub rtx_channel_cap: usize,
+    pub firewall_config: Option<FirewallConfig>,
 }
 
 impl XdpConfig {
@@ -49,6 +50,7 @@ impl Default for XdpConfig {
             cpus: vec![],
             zero_copy: false,
             rtx_channel_cap: Self::DEFAULT_RTX_CHANNEL_CAP,
+            firewall_config: None,
         }
     }
 }
@@ -60,6 +62,7 @@ impl XdpConfig {
             cpus,
             zero_copy,
             rtx_channel_cap: XdpConfig::DEFAULT_RTX_CHANNEL_CAP,
+            firewall_config: None,
         }
     }
 }
@@ -151,8 +154,11 @@ impl XdpRetransmitter {
             NetworkDevice::new_from_default_route().unwrap()
         });
 
-        let ebpf = if config.zero_copy {
-            Some(load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"))?)
+        let ebpf = if config.zero_copy || config.firewall_config.is_some() {
+            Some(
+                load_xdp_program(&dev, config.firewall_config)
+                    .map_err(|e| format!("failed to attach xdp program: {e}"))?,
+            )
         } else {
             None
         };
