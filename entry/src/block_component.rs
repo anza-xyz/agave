@@ -227,9 +227,9 @@ impl<T: SchemaWrite<Src = T>> SchemaWrite for LengthPrefixed<T> {
     type Src = Self;
 
     const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static { size, zero_copy } => TypeMeta::Static {
+        TypeMeta::Static { size, .. } => TypeMeta::Static {
             size: size + std::mem::size_of::<u16>(),
-            zero_copy,
+            zero_copy: false,
         },
         TypeMeta::Dynamic => TypeMeta::Dynamic,
     };
@@ -253,9 +253,9 @@ impl<'de, T: SchemaRead<'de, Dst = T>> SchemaRead<'de> for LengthPrefixed<T> {
     type Dst = Self;
 
     const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static { size, zero_copy } => TypeMeta::Static {
+        TypeMeta::Static { size, .. } => TypeMeta::Static {
             size: size + std::mem::size_of::<u16>(),
-            zero_copy,
+            zero_copy: false,
         },
         TypeMeta::Dynamic => TypeMeta::Dynamic,
     };
