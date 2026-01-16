@@ -264,6 +264,22 @@ impl HasherImpl for Keccak256Hasher {
     }
 }
 
+// NOTE: These constants are temporarily added here to avoid immediate 
+// dependency conflicts.
+mod bls12_381_curve_id {
+    /// Curve ID for BLS12-381 pairing operations
+    pub(crate) const BLS12_381_LE: u64 = 4;
+    pub(crate) const BLS12_381_BE: u64 = 4 | 0x80;
+
+    /// Curve ID for BLS12-381 G1 group operations
+    pub(crate) const BLS12_381_G1_LE: u64 = 5;
+    pub(crate) const BLS12_381_G1_BE: u64 = 5 | 0x80;
+
+    /// Curve ID for BLS12-381 G2 group operations
+    pub(crate) const BLS12_381_G2_LE: u64 = 6;
+    pub(crate) const BLS12_381_G2_BE: u64 = 6 | 0x80;
+}
+
 fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<(), Error> {
     invoke_context.consume_checked(amount)?;
     Ok(())
@@ -968,7 +984,24 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto};
+        use {
+            crate::bls12_381_curve_id::*,
+            solana_curve25519::{curve_syscall_traits::*, edwards, ristretto},
+        };
+
+        // SIMD-0388: BLS12-381 syscalls
+        if !invoke_context.get_feature_set().enable_bls12_381_syscall &&
+            matches!(
+                curve_id,
+                BLS12_381_G1_BE
+                    | BLS12_381_G1_LE
+                    | BLS12_381_G2_BE
+                    | BLS12_381_G2_LE
+            )
+        {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
+
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
@@ -1002,6 +1035,62 @@ declare_builtin_function!(
 
                 if ristretto::validate_ristretto(point) {
                     Ok(0)
+                } else {
+                    Ok(1)
+                }
+            }
+            BLS12_381_G1_LE | BLS12_381_G1_BE => {
+                let cost = invoke_context
+                    .get_execution_cost()
+                    .bls12_381_g1_validate_cost;
+                consume_compute_meter(invoke_context, cost)?;
+
+                let point = translate_type::<agave_bls12_381::PodG1Point>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let endianness = if curve_id == BLS12_381_G1_LE {
+                    agave_bls12_381::Endianness::LE
+                } else {
+                    agave_bls12_381::Endianness::BE
+                };
+
+                if agave_bls12_381::bls12_381_g1_point_validation(
+                    agave_bls12_381::Version::V0,
+                    point,
+                    endianness,
+                ) {
+                    Ok(SUCCESS)
+                } else {
+                    Ok(1)
+                }
+            }
+            BLS12_381_G2_LE | BLS12_381_G2_BE => {
+                let cost = invoke_context
+                    .get_execution_cost()
+                    .bls12_381_g2_validate_cost;
+                consume_compute_meter(invoke_context, cost)?;
+
+                let point = translate_type::<agave_bls12_381::PodG2Point>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let endianness = if curve_id == BLS12_381_G2_LE {
+                    agave_bls12_381::Endianness::LE
+                } else {
+                    agave_bls12_381::Endianness::BE
+                };
+
+                if agave_bls12_381::bls12_381_g2_point_validation(
+                    agave_bls12_381::Version::V0,
+                    point,
+                    endianness,
+                ) {
+                    Ok(SUCCESS)
                 } else {
                     Ok(1)
                 }

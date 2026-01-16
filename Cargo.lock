@@ -339,6 +339,7 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls12-381",
  "assert_matches",
  "bincode",
  "libsecp256k1",
