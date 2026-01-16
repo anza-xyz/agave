@@ -553,16 +553,9 @@ impl SchemaWrite for BlockComponent {
 
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
-            Self::EntryBatch(entries) => {
-                // TODO(ksn): replace with wincode:: upon upstreaming to Agave. This also removes
-                // the map_err.
-                let size = bincode::serialized_size(entries).map_err(|_| {
-                    wincode::WriteError::Custom("Couldn't invoke bincode::serialized_size")
-                })?;
-                Ok(size as usize)
-            }
+            Self::EntryBatch(entries) => <Vec<Entry>>::size_of(entries),
             Self::BlockMarker(marker) => {
-                let marker_size = wincode::serialized_size(marker)? as usize;
+                let marker_size = VersionedBlockMarker::size_of(marker)?;
                 Ok(Self::ENTRY_COUNT_SIZE + marker_size)
             }
         }
@@ -570,18 +563,10 @@ impl SchemaWrite for BlockComponent {
 
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
-            Self::EntryBatch(entries) => {
-                // TODO(ksn): replace with wincode:: upon upstreaming to Agave. This also removes
-                // the map_err.
-                let bytes = bincode::serialize(entries).map_err(|_| {
-                    wincode::WriteError::Custom("Couldn't invoke bincode::serialize")
-                })?;
-                writer.write(&bytes)?;
-                Ok(())
-            }
+            Self::EntryBatch(entries) => <Vec<Entry>>::write(writer, entries),
             Self::BlockMarker(marker) => {
                 writer.write(&0u64.to_le_bytes())?;
-                <VersionedBlockMarker as SchemaWrite>::write(writer, marker)
+                VersionedBlockMarker::write(writer, marker)
             }
         }
     }
@@ -597,30 +582,15 @@ impl<'de> SchemaRead<'de> for BlockComponent {
 
         if entry_count == 0 {
             // This is a BlockMarker - consume the count bytes and read the marker
-            reader.consume(8)?;
+            // SAFETY: fill_array::<8>() above guarantees at least 8 bytes are available
+            unsafe { reader.consume_unchecked(8) };
             dst.write(Self::BlockMarker(VersionedBlockMarker::get(reader)?));
         } else {
-            // This is an EntryBatch - read in the rest of the data. We do not anticipate having
-            // cases where we need to deserialize multiple BlockComponents from a single slice, and
-            // do not know where the delimiters are ahead of time.
-            // First, get all remaining bytes to deserialize
-            let data = reader.fill_buf(usize::MAX)?;
-
-            // TODO(ksn): replace with wincode:: upon upstreaming to Agave. This also removes the
-            // map_err.
-            let entries: Vec<Entry> = bincode::deserialize(data)
-                .map_err(|_| wincode::ReadError::Custom("Couldn't deserialize entries."))?;
+            let entries: Vec<Entry> = <Vec<Entry>>::get(reader)?;
 
             if entries.len() >= Self::MAX_ENTRIES {
                 return Err(wincode::ReadError::Custom("Too many entries"));
             }
-
-            // TODO(ksn): replace with wincode:: upon upstreaming to Agave. This also removes the
-            // map_err.
-            let consumed = bincode::serialized_size(&entries)
-                .map_err(|_| wincode::ReadError::Custom("Couldn't determine serialized size."))?
-                as usize;
-            reader.consume(consumed)?;
 
             dst.write(Self::EntryBatch(entries));
         }
