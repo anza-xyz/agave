@@ -7,6 +7,7 @@ use {
     std::{
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        sync::Arc,
     },
     thiserror::Error,
 };
@@ -158,16 +159,19 @@ impl RouteTable {
 
 #[derive(Clone, Debug)]
 struct InterfaceTable {
-    interfaces: Vec<InterfaceInfo>,
+    interfaces: Vec<Arc<InterfaceInfo>>,
 }
 
 impl InterfaceTable {
     pub fn new() -> Result<Self, io::Error> {
-        let interfaces = netlink_get_interfaces(AF_INET as u8)?;
+        let interfaces = netlink_get_interfaces(AF_INET as u8)?
+            .into_iter()
+            .map(Arc::new)
+            .collect();
         Ok(Self { interfaces })
     }
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = &InterfaceInfo> {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &Arc<InterfaceInfo>> {
         self.interfaces.iter()
     }
 
@@ -177,13 +181,13 @@ impl InterfaceTable {
             .iter_mut()
             .find(|old| old.if_index == new_interface.if_index)
         {
-            if *existing != new_interface {
-                *existing = new_interface;
+            if existing.as_ref() != &new_interface {
+                *existing = Arc::new(new_interface);
                 return true;
             }
             return false;
         }
-        self.interfaces.push(new_interface);
+        self.interfaces.push(Arc::new(new_interface));
         true
     }
 
@@ -225,14 +229,14 @@ impl Router {
 
         let if_index = default_route
             .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)?;
+            .ok_or(RouteError::MissingOutputInterface)? as u32;
 
         let next_hop_ip = match default_route.gateway {
             Some(gateway) => gateway,
             None => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         };
 
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index as u32).cloned();
+        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
         let preferred_src_ip = match default_route.pref_src {
             Some(IpAddr::V4(v4)) => Some(v4),
             _ => None,
@@ -241,12 +245,12 @@ impl Router {
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
-            if_index: if_index as u32,
+            if_index,
             preferred_src_ip,
         })
     }
 
-    pub fn route(&self, dest_ip: IpAddr) -> Result<(NextHop, InterfaceInfo), RouteError> {
+    pub fn route(&self, dest_ip: IpAddr) -> Result<(NextHop, Arc<InterfaceInfo>), RouteError> {
         let route = lookup_route(self.route_table.iter(), dest_ip)
             .ok_or(RouteError::NoRouteFound(dest_ip))?;
 
@@ -268,7 +272,7 @@ impl Router {
         let next_hop = NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
-            if_index: if_index as u32,
+            if_index,
             preferred_src_ip,
         };
 
@@ -495,7 +499,10 @@ mod tests {
 
         // Upsert new interface and check that it was inserted
         assert!(router.upsert_interface(interface.clone()));
-        assert!(router.interface_table.iter().any(|i| i == &interface));
+        assert!(router
+            .interface_table
+            .iter()
+            .any(|i| i.as_ref() == &interface));
         assert!(router.interface_table.iter().len() >= before_interface_len);
 
         // Upsert same interface with no changes should return false
@@ -508,8 +515,11 @@ mod tests {
         assert!(router
             .interface_table
             .iter()
-            .any(|i| i == &modified_interface));
-        assert!(router.interface_table.iter().all(|i| i != &interface));
+            .any(|i| i.as_ref() == &modified_interface));
+        assert!(router
+            .interface_table
+            .iter()
+            .all(|i| i.as_ref() != &interface));
 
         // Delete interface and check that it was deleted
         assert!(router.remove_interface(test_if_index));

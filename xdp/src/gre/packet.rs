@@ -15,18 +15,21 @@ pub const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
 pub const GRE_HEADER_BASE_SIZE: usize = 4;
 const GRE_HEADER_FLAGS_VERSION_BASIC: u16 = 0x0000;
 
+/// Calculate total packet size for GRE encapsulation.
+pub const fn gre_packet_size(payload_len: usize) -> usize {
+    (ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + INNER_PACKET_HEADER_SIZE)
+        .saturating_add(payload_len)
+}
+
 /// GRE tunnel configuration for packet construction
 ///
-/// Note: Only supports basic GRE header (no optional fields). The `oflags` and `okey`
-/// fields are preserved for future extensibility but are not currently used.
+/// Note: Only supports basic GRE header (no optional fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GreConfig {
+pub struct TunnelInfo {
     /// Source IP address for the GRE tunnel header
     pub local: Ipv4Addr,
     /// Destination IP address for the GRE tunnel header
     pub remote: Ipv4Addr,
-    pub oflags: Option<u16>,
-    pub okey: Option<u32>,
     pub ttl: Option<u8>,
     pub tos: Option<u8>,
     /// PMTU discovery setting (IFLA_GRE_PMTUDISC)
@@ -56,16 +59,11 @@ pub struct GreHeader {
 }
 
 impl GreHeader {
-    pub fn new(protocol_type: u16, _oflags: Option<u16>, _okey: Option<u32>) -> Self {
+    pub fn new(protocol_type: u16) -> Self {
         Self {
             flags_version: GRE_HEADER_FLAGS_VERSION_BASIC,
             protocol: protocol_type,
         }
-    }
-
-    /// Get the size of this GRE header in bytes
-    pub fn size(&self) -> usize {
-        GRE_HEADER_BASE_SIZE
     }
 
     /// Write the GRE header to a packet buffer
@@ -75,13 +73,11 @@ impl GreHeader {
     }
 }
 
-impl GreConfig {
+impl TunnelInfo {
     pub fn new(local: Ipv4Addr, remote: Ipv4Addr) -> Self {
         Self {
             local,
             remote,
-            oflags: None,
-            okey: None,
             ttl: None,
             tos: None,
             pmtudisc: None,
@@ -93,7 +89,7 @@ impl GreConfig {
 ///
 /// This allows GRE packet construction to work with tunnel info discovered via netlink,
 /// while keeping the core GRE module independent of netlink.
-impl TryFrom<&crate::netlink::GreTunnelInfo> for GreConfig {
+impl TryFrom<&crate::netlink::GreTunnelInfo> for TunnelInfo {
     type Error = ();
 
     fn try_from(info: &crate::netlink::GreTunnelInfo) -> Result<Self, Self::Error> {
@@ -107,8 +103,6 @@ impl TryFrom<&crate::netlink::GreTunnelInfo> for GreConfig {
         Ok(Self {
             local,
             remote,
-            oflags: info.oflags,
-            okey: info.okey,
             ttl: info.ttl,
             tos: info.tos,
             pmtudisc: info.pmtudisc,
@@ -127,16 +121,14 @@ fn wrap_packet_with_gre(
     gre_dst_mac: &[u8; 6],
     inner_packet_len: usize,
     gre_header: &GreHeader,
-    config: &GreConfig,
+    config: &TunnelInfo,
 ) {
-    let gre_header_size = gre_header.size();
-
     write_eth_header(packet, gre_src_mac, gre_dst_mac);
 
-    let dont_fragment = config.pmtudisc.map(|v| v == 0).unwrap_or(true);
+    let dont_fragment = config.pmtudisc.map(|v| v != 0).unwrap_or(true);
 
     // Write outer IP header (protocol = GRE = 47)
-    let gre_payload_len = gre_header_size + inner_packet_len;
+    let gre_payload_len = GRE_HEADER_BASE_SIZE + inner_packet_len;
     write_ip_header(
         &mut packet[ETH_HEADER_SIZE..],
         &config.local,
@@ -168,15 +160,14 @@ pub fn construct_gre_packet(
     payload: &[u8],
     src_mac: &[u8; 6],
     dst_mac: &[u8; 6],
-    config: &GreConfig,
+    config: &TunnelInfo,
 ) -> Result<(), PacketError> {
     let payload_len = payload.len();
 
-    let gre_header = GreHeader::new(ETH_P_IP as u16, config.oflags, config.okey);
-    let gre_header_size = gre_header.size();
+    let gre_header = GreHeader::new(ETH_P_IP as u16);
     let inner_packet_len = INNER_PACKET_HEADER_SIZE.saturating_add(payload_len);
     let gre_packet_size =
-        (ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size).saturating_add(inner_packet_len);
+        (ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE).saturating_add(inner_packet_len);
 
     // Ensure packet buffer is large enough
     if packet.len() < gre_packet_size {
@@ -186,7 +177,7 @@ pub fn construct_gre_packet(
         });
     }
 
-    let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + gre_header_size;
+    let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE;
 
     write_ip_header_for_udp(
         &mut packet[inner_start..inner_start + IP_HEADER_SIZE],

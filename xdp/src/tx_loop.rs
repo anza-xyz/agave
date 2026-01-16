@@ -3,7 +3,7 @@
 use {
     crate::{
         device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
-        gre::{packet::GreConfig, GreEncapsulator},
+        gre::{construct_gre_packet, gre_packet_size, GreRouteCache, TunnelInfo},
         netlink::{InterfaceInfo, MacAddress},
         packet::{
             write_eth_header, write_ip_header_for_udp, write_udp_header, ETH_HEADER_SIZE,
@@ -12,12 +12,13 @@ use {
         route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
-        umem::{Frame, OwnedUmem, PageAlignedMemory, SliceUmemFrame, Umem},
+        umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
         thread,
         time::Duration,
     },
@@ -216,7 +217,7 @@ pub struct TxLoop<U: Umem> {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<(NextHop, InterfaceInfo)>>(
+    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<(NextHop, Arc<InterfaceInfo>)>>(
         self,
         receiver: Receiver<(A, T)>,
         drop_sender: Sender<(A, T)>,
@@ -250,12 +251,14 @@ impl<U: Umem> TxLoop<U> {
 
         // Local buffer where we store packets before sending themi.
         let mut batched_items = Vec::with_capacity(BATCH_SIZE);
-        let mut gre_encapsulator = GreEncapsulator::default();
 
         // How many packets we've batched. This is _not_ batched_items.len(), but item * peers. For
         // example if we have 3 packets to transmit to 2 destination addresses each, we have 6 batched
         // packets.
         let mut batched_packets = 0;
+
+        // GRE route cache resolves outer tunnel MACs
+        let mut gre_route_cache = GreRouteCache::new();
 
         let mut timeouts = 0;
         loop {
@@ -333,61 +336,69 @@ impl<U: Umem> TxLoop<U> {
                             continue;
                         };
                         // Handle GRE tunnel encapsulation if needed
-                        if GreEncapsulator::is_gre(&interface_info) {
+                        if interface_info.is_gre() {
                             let Some(gre) = interface_info.gre_tunnel.as_ref() else {
                                 continue;
                             };
 
                             // Convert to GreConfig and calculate packet size
-                            let Ok(gre_config) = GreConfig::try_from(gre) else {
+                            let Ok(tunnel_info) = TunnelInfo::try_from(gre) else {
                                 log::warn!("dropping packet: invalid GRE tunnel endpoints");
                                 batched_packets -= 1;
                                 umem.release(frame.offset());
                                 continue;
                             };
-                            let gre_packet_size =
-                                GreEncapsulator::calculate_packet_size(len, &gre_config);
-                            frame.set_len(gre_packet_size);
+                            frame.set_len(gre_packet_size(len));
                             let packet = umem.map_frame_mut(&frame);
 
-                            match gre_encapsulator.encapsulate_packet(
+                            let Some(outer_dst_mac) =
+                                gre_route_cache.resolve_outer_dst_mac(tunnel_info.remote, &route_fn)
+                            else {
+                                log::warn!(
+                                    "dropping packet: no route for GRE remote {}",
+                                    tunnel_info.remote
+                                );
+                                batched_packets -= 1;
+                                umem.release(frame.offset());
+                                continue;
+                            };
+
+                            let inner_src_ip = next_hop.preferred_src_ip.unwrap_or(src_ip);
+                            if let Err(err) = construct_gre_packet(
                                 packet,
-                                payload.as_ref(),
-                                *addr,
-                                src_ip,
+                                &inner_src_ip,
+                                &dst_ip,
                                 src_port,
-                                src_mac,
-                                &next_hop,
-                                &gre_config,
-                                &route_fn,
+                                addr.port(),
+                                payload.as_ref(),
+                                &src_mac.0,
+                                &outer_dst_mac.0,
+                                &tunnel_info,
                             ) {
-                                Ok(()) => {
-                                    // write the packet into the ring
-                                    ring.write(frame, 0)
-                                        .map_err(|_| "ring full")
-                                        // this should never happen as we check for available slots above
-                                        .expect("failed to write to ring");
-
-                                    batched_packets -= 1;
-                                    chunk_remaining -= 1;
-
-                                    // check if it's time to commit the ring and kick the driver
-                                    if chunk_remaining == 0 {
-                                        chunk_remaining = BATCH_SIZE.min(batched_packets);
-
-                                        // commit new frames
-                                        ring.commit();
-                                        kick(&ring);
-                                    }
-                                    continue;
-                                }
-                                Err(e) => {
-                                    log::warn!("dropping packet: {e}");
-                                    batched_packets -= 1;
-                                    umem.release(frame.offset());
-                                    continue;
-                                }
+                                log::warn!("dropping packet: {err}");
+                                batched_packets -= 1;
+                                umem.release(frame.offset());
+                                continue;
                             }
+
+                            // write the packet into the ring
+                            ring.write(frame, 0)
+                                .map_err(|_| "ring full")
+                                // this should never happen as we check for available slots above
+                                .expect("failed to write to ring");
+
+                            batched_packets -= 1;
+                            chunk_remaining -= 1;
+
+                            // check if it's time to commit the ring and kick the driver
+                            if chunk_remaining == 0 {
+                                chunk_remaining = BATCH_SIZE.min(batched_packets);
+
+                                // commit new frames
+                                ring.commit();
+                                kick(&ring);
+                            }
+                            continue;
                         }
 
                         // we need the MAC address to send the packet

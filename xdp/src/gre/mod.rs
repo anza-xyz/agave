@@ -11,10 +11,10 @@
 //! References:
 //! - RFC 2784: Generic Routing Encapsulation (GRE)
 //! - RFC 2890: Key and Sequence Number Extensions to GRE
-pub mod encapsulator;
 pub mod packet;
+pub mod route_cache;
 
 pub use {
-    encapsulator::{EncapsulationError, GreEncapsulator},
-    packet::{construct_gre_packet, GreConfig, GreHeader, PacketError},
+    packet::{construct_gre_packet, gre_packet_size, GreHeader, PacketError, TunnelInfo},
+    route_cache::GreRouteCache,
 };
