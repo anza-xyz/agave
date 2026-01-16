@@ -81,7 +81,7 @@ solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true }
-solana-rent = "=3.0.0"
+solana-rent = "=3.1.0"
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
