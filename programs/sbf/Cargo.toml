@@ -174,7 +174,7 @@ solana-transaction-status = { path = "../../transaction-status", version = "=4.0
 solana-vote = { path = "../../vote", version = "=4.0.0-alpha.0" }
 solana-vote-program = { path = "../../programs/vote", version = "=4.0.0-alpha.0" }
 test-case = "3.3.1"
-thiserror = "1.0"
+thiserror = "2.0"
 
 [features]
 sbf_c = []

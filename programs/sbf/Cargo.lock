@@ -8786,7 +8786,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-pubkey 4.0.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
