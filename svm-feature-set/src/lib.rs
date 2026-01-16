@@ -58,6 +58,7 @@ pub struct SVMFeatureSet {
     pub enable_alt_bn128_g2_syscalls: bool,
     pub commission_rate_in_basis_points: bool,
     pub custom_commission_collector: bool,
+    pub enable_bls12_381_syscall: bool,
 }
 
 impl SVMFeatureSet {
@@ -112,6 +113,7 @@ impl SVMFeatureSet {
             enable_alt_bn128_g2_syscalls: true,
             commission_rate_in_basis_points: true,
             custom_commission_collector: true,
+            enable_bls12_381_syscall: true,
         }
     }
 }
