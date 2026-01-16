@@ -106,7 +106,7 @@ itertools = "0.14.0"
 libsecp256k1 = { version = "0.7.0", default-features = false }
 log = "0.4.11"
 miow = "0.6.1"
-net2 = "0.2.37"
+net2 = "0.2.39"
 num-derive = "0.4.2"
 num-traits = "0.2"
 rand = "0.8"
