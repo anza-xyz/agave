@@ -744,10 +744,8 @@ mod test {
     };
 
     fn new_test_keypair() -> Keypair {
-        let secret = ed25519_dalek::SecretKey::from_bytes(&[0u8; 32]).unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        let keypair = ed25519_dalek::Keypair { secret, public };
-        Keypair::try_from(keypair.to_bytes().as_ref()).unwrap()
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0u8; 32]);
+        Keypair::try_from(signing_key.to_keypair_bytes().as_ref()).unwrap()
     }
 
     fn new_test_v0_transaction() -> VersionedTransaction {

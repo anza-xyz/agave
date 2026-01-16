@@ -1,6 +1,6 @@
 use {
     agave_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
-    ed25519_dalek::{ed25519::signature::Signature, Verifier},
+    ed25519_dalek::{Signature, Verifier, VerifyingKey},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
@@ -49,7 +49,7 @@ pub fn verify(
         )?;
 
         let signature =
-            Signature::from_bytes(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+            Signature::from_slice(signature).map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out pubkey
         let pubkey = get_data_slice(
@@ -60,7 +60,7 @@ pub fn verify(
             PUBKEY_SERIALIZED_SIZE,
         )?;
 
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey)
+        let publickey = VerifyingKey::from_bytes(pubkey.try_into().unwrap())
             .map_err(|_| PrecompileError::InvalidPublicKey)?;
 
         // Parse out message
@@ -117,15 +117,21 @@ pub mod tests {
         super::*,
         crate::test_verify_with_alignment,
         bytemuck::bytes_of,
-        ed25519_dalek::Signer as EdSigner,
+        ed25519_dalek::{Signer as EdSigner, SigningKey},
         hex,
-        rand0_7::{thread_rng, Rng},
         solana_ed25519_program::{
             new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction, DATA_START,
         },
         solana_instruction::Instruction,
         std::vec,
     };
+
+    fn generate_signing_key() -> SigningKey {
+        use rand::RngCore;
+        let mut seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut seed);
+        SigningKey::from_bytes(&seed)
+    }
 
     pub fn new_ed25519_instruction_raw(
         pubkey: &[u8],
@@ -339,10 +345,10 @@ pub mod tests {
     fn test_ed25519() {
         agave_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = generate_signing_key();
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey = privkey.verifying_key().to_bytes();
         let mut instruction =
             new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
@@ -356,7 +362,8 @@ pub mod tests {
         .is_ok());
 
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            use rand::Rng;
+            let index = rand::rng().random_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -377,7 +384,7 @@ pub mod tests {
     fn test_offsets_to_ed25519_instruction() {
         agave_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = generate_signing_key();
         let messages: [&[u8]; 3] = [b"hello", b"IBRL", b"goodbye"];
         let data_start =
             messages.len() * SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
@@ -405,8 +412,8 @@ pub mod tests {
 
         let mut instruction = offsets_to_ed25519_instruction(&offsets);
 
-        let pubkey = privkey.public.as_ref();
-        instruction.data.extend_from_slice(pubkey);
+        let verifying_key = privkey.verifying_key();
+        instruction.data.extend_from_slice(verifying_key.as_bytes());
 
         for message in messages {
             let signature = privkey.sign(message).to_bytes();
@@ -425,7 +432,8 @@ pub mod tests {
         .is_ok());
 
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            use rand::Rng;
+            let index = rand::rng().random_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -447,10 +455,10 @@ pub mod tests {
         agave_logger::setup();
 
         // sig created via ed25519_dalek: both pass
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = generate_signing_key();
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey = privkey.verifying_key().to_bytes();
         let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
