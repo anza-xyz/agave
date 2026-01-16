@@ -10,7 +10,7 @@ use {
             sqpoll,
         },
     },
-    agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
+    agave_io_uring::{Completion, FixedSlab, Ring, RingAccess, RingOp},
     core::slice,
     io_uring::{IoUring, opcode, squeue, types},
     libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
@@ -276,23 +276,12 @@ impl IoUringFileCreator<'_> {
             file_state.writes_started += 1;
             if let Some(file) = &file_state.open_file {
                 if write_len == 0 {
-                    // File size was aligned with previously used buffers, return back unused `buf`
-                    state.buffers.push_front(buf);
-                    file_state.writes_completed += 1;
-
                     // In case no operation is in progress (i.e. completions were run for all buffers)
                     // and EOF was reached just now, the `file_complete` needs to be called, since
                     // no other operation will run it in its completion handler.
                     // This is not necessary if `write_len > 0`, since completion of the write to be
                     // added will handle EOF case properly.
-                    if let Some(file_info) = file_state.try_take_completed_file_info() {
-                        match (state.file_complete)(file_info) {
-                            Some(unconsumed_file) => self.ring.push(FileCreatorOp::Close(
-                                CloseOp::new(file_key, unconsumed_file),
-                            ))?,
-                            None => state.mark_file_complete(file_key),
-                        }
-                    }
+                    FileCreatorState::mark_write_completed(&mut self.ring, file_key, 0, buf)?;
                     // Skip issuing empty write
                     break;
                 }
@@ -374,11 +363,11 @@ impl<'a> FileCreatorState<'a> {
 
     /// Calls `file_complete` callback with completed file info and optionally schedules close
     fn mark_write_completed(
-        ring: &mut Completion<'_, Self, FileCreatorOp>,
+        ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
         file_key: usize,
         write_len: IoSize,
         buf: IoBufferChunk,
-    ) {
+    ) -> io::Result<()> {
         let this = ring.context_mut();
         this.submitted_writes_size -= write_len as usize;
         this.buffers.push_front(buf);
@@ -390,10 +379,11 @@ impl<'a> FileCreatorState<'a> {
                 Some(unconsumed_file) => ring.push(FileCreatorOp::Close(CloseOp::new(
                     file_key,
                     unconsumed_file,
-                ))),
+                )))?,
                 None => this.mark_file_complete(file_key),
             };
         }
+        Ok(())
     }
 
     fn mark_file_complete(&mut self, file_key: usize) {
@@ -463,7 +453,7 @@ impl OpenOp {
         let backlog = ring.context_mut().mark_file_opened(self.file_key, fd);
         for (buf, offset, len) in backlog {
             if len == 0 {
-                FileCreatorState::mark_write_completed(ring, self.file_key, 0, buf);
+                FileCreatorState::mark_write_completed(ring, self.file_key, 0, buf)?;
                 break;
             }
             let op = WriteOp {
@@ -475,7 +465,7 @@ impl OpenOp {
                 write_len: len,
             };
             ring.context_mut().submitted_writes_size += len as usize;
-            ring.push(FileCreatorOp::Write(op));
+            ring.push(FileCreatorOp::Write(op))?;
         }
 
         Ok(())
@@ -581,7 +571,7 @@ impl<'a> WriteOp {
 
         if written < *write_len {
             log::warn!("short write ({written}/{}), file={}", *write_len, *file_key);
-            ring.push(FileCreatorOp::Write(WriteOp {
+            return ring.push(FileCreatorOp::Write(WriteOp {
                 file_key: *file_key,
                 fd: *fd,
                 offset: *offset + written as FileSize,
@@ -589,12 +579,9 @@ impl<'a> WriteOp {
                 buf_offset: total_written,
                 write_len: *write_len - written,
             }));
-            return Ok(());
         }
 
-        FileCreatorState::mark_write_completed(ring, *file_key, total_written, buf);
-
-        Ok(())
+        FileCreatorState::mark_write_completed(ring, *file_key, total_written, buf)
     }
 }
 

@@ -8,6 +8,28 @@ use {
     std::{io, os::fd::RawFd, time::Duration},
 };
 
+/// Trait for accessing the context and pushing operations to the [Ring].
+///
+/// Enables generic operations on [Ring] or [Completion].
+pub trait RingAccess {
+    type Context;
+    type Operation;
+
+    /// Returns a reference to the context value stored in a [Ring].
+    fn context(&self) -> &Self::Context;
+
+    /// Returns a mutable reference to the context value stored in a [Ring].
+    fn context_mut(&mut self) -> &mut Self::Context;
+
+    /// Pushes an operation for execution in io_uring.
+    ///
+    /// Once completed, [RingOp::complete] will be called with the result.
+    ///
+    /// Note that the exact moment the operation is submitted to the kernel is implementation
+    /// specific.
+    fn push(&mut self, op: Self::Operation) -> io::Result<()>;
+}
+
 /// An io_uring instance.
 pub struct Ring<T, E: RingOp<T>> {
     ring: IoUring,
@@ -27,16 +49,6 @@ impl<T, E: RingOp<T>> Ring<T, E> {
             ring,
             context: ctx,
         }
-    }
-
-    /// Returns a reference to the context value.
-    pub fn context(&self) -> &T {
-        &self.context
-    }
-
-    /// Returns a mutable reference to the context value.
-    pub fn context_mut(&mut self) -> &mut T {
-        &mut self.context
     }
 
     /// Registers in-memory fixed buffers for I/O with the kernel.
@@ -61,40 +73,6 @@ impl<T, E: RingOp<T>> Ring<T, E> {
     /// open operation).
     pub fn register_files(&self, fds: &[RawFd]) -> io::Result<()> {
         self.ring.submitter().register_files(fds)
-    }
-
-    /// Pushes an operation to the submission queue.
-    ///
-    /// Once completed, [RingOp::complete] will be called with the result.
-    ///
-    /// Note that the operation is not submitted to the kernel until [Ring::submit] is called. If
-    /// the submission queue is full, submit will be called internally to make room for the new
-    /// operation.
-    ///
-    /// See also [Ring::submit].
-    pub fn push(&mut self, op: E) -> io::Result<()> {
-        loop {
-            self.process_completions()?;
-
-            if !self.entries.is_full() {
-                break;
-            }
-            // if the entries slab is full, we need to submit and poll
-            // completions to make room
-            self.submit_and_wait(1, None)?;
-        }
-        let key = self.entries.insert(op);
-        let entry = self.entries.get_mut(key).unwrap().entry();
-        let entry = entry.user_data(key as u64);
-        // Safety: the entry is stored in self.entries and guaranteed to be valid for the lifetime
-        // of the operation. E implementations must still ensure that the entry
-        // remains valid until the last E::complete call.
-        while unsafe { self.ring.submission().push(&entry) }.is_err() {
-            self.submit()?;
-            self.process_completions()?;
-        }
-
-        Ok(())
     }
 
     /// Submits all pending operations to the kernel.
@@ -225,23 +203,69 @@ pub struct Completion<'a, T, E: RingOp<T>> {
     context: &'a mut T,
 }
 
-impl<T, E: RingOp<T>> Completion<'_, T, E> {
-    /// Returns a reference to the context value stored in a [Ring].
-    pub fn context(&self) -> &T {
-        self.context
+impl<T, E: RingOp<T>> RingAccess for Ring<T, E> {
+    type Context = T;
+    type Operation = E;
+
+    fn context(&self) -> &T {
+        &self.context
     }
 
-    /// Returns a mutable reference to the context value stored in a [Ring].
-    pub fn context_mut(&mut self) -> &mut T {
-        self.context
+    fn context_mut(&mut self) -> &mut T {
+        &mut self.context
     }
 
     /// Pushes an operation to the submission queue.
     ///
+    /// Note that the operation is not submitted to the kernel until [Ring::submit] is called. If
+    /// the submission queue is full, submit will be called internally to make room for the new
+    /// operation.
+    ///
+    /// See also [Ring::submit].
+    fn push(&mut self, op: E) -> io::Result<()> {
+        loop {
+            self.process_completions()?;
+
+            if !self.entries.is_full() {
+                break;
+            }
+            // if the entries slab is full, we need to submit and poll
+            // completions to make room
+            self.submit_and_wait(1, None)?;
+        }
+        let key = self.entries.insert(op);
+        let entry = self.entries.get_mut(key).unwrap().entry();
+        let entry = entry.user_data(key as u64);
+        // Safety: the entry is stored in self.entries and guaranteed to be valid for the lifetime
+        // of the operation. E implementations must still ensure that the entry
+        // remains valid until the last E::complete call.
+        while unsafe { self.ring.submission().push(&entry) }.is_err() {
+            self.submit()?;
+            self.process_completions()?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<T, E: RingOp<T>> RingAccess for Completion<'_, T, E> {
+    type Context = T;
+    type Operation = E;
+
+    fn context(&self) -> &T {
+        self.context
+    }
+
+    fn context_mut(&mut self) -> &mut T {
+        self.context
+    }
+
     /// This can be used to push new operations from within [RingOp::complete].
     ///
-    /// See also [Ring::push].
-    pub fn push(&mut self, op: E) {
+    /// Note that the operations are buffered until completion is finished and then pushed
+    /// to the parent [Ring].
+    fn push(&mut self, op: E) -> io::Result<()> {
         self.new_entries.push(op);
+        Ok(())
     }
 }
