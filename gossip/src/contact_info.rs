@@ -681,9 +681,7 @@ macro_rules! socketaddr {
     ($ip:expr, $port:expr) => {
         std::net::SocketAddr::from((std::net::Ipv4Addr::from($ip), $port))
     };
-    ($str:expr) => {{
-        $str.parse::<std::net::SocketAddr>().unwrap()
-    }};
+    ($str:expr) => {{ $str.parse::<std::net::SocketAddr>().unwrap() }};
 }
 
 #[macro_export]
@@ -698,8 +696,8 @@ mod tests {
     use {
         super::*,
         rand::{
-            prelude::{IndexedRandom as _, SliceRandom as _},
             Rng,
+            prelude::{IndexedRandom as _, SliceRandom as _},
         },
         solana_keypair::Keypair,
         solana_signer::Signer,
@@ -959,19 +957,22 @@ mod tests {
                 sockets.values().map(SocketAddr::ip).collect::<HashSet<_>>(),
             );
             // Assert that all sockets reference a valid IP address.
-            assert!(node
-                .sockets
-                .iter()
-                .map(|entry| node.addrs.get(usize::from(entry.index)))
-                .all(|addr| addr.is_some()));
-            // Assert that port offsets don't overflow.
-            assert!(u16::try_from(
+            assert!(
                 node.sockets
                     .iter()
-                    .map(|entry| u64::from(entry.offset))
-                    .sum::<u64>()
-            )
-            .is_ok());
+                    .map(|entry| node.addrs.get(usize::from(entry.index)))
+                    .all(|addr| addr.is_some())
+            );
+            // Assert that port offsets don't overflow.
+            assert!(
+                u16::try_from(
+                    node.sockets
+                        .iter()
+                        .map(|entry| u64::from(entry.offset))
+                        .sum::<u64>()
+                )
+                .is_ok()
+            );
             // Assert that serde round trips.
             let bytes = bincode::serialize(&node).unwrap();
             let other: ContactInfo = bincode::deserialize(&bytes).unwrap();

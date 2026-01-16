@@ -230,25 +230,27 @@ pub(crate) fn split_gossip_messages<T: Serialize + Debug>(
     let mut data_feed = data_feed.into_iter().fuse();
     let mut buffer = vec![];
     let mut buffer_size = 0; // Serialized size of buffered values.
-    std::iter::from_fn(move || loop {
-        let Some(data) = data_feed.next() else {
-            return (!buffer.is_empty()).then(|| std::mem::take(&mut buffer));
-        };
-        let data_size = match bincode::serialized_size(&data) {
-            Ok(size) => size as usize,
-            Err(err) => {
-                error!("serialized_size failed: {err:?}");
-                continue;
+    std::iter::from_fn(move || {
+        loop {
+            let Some(data) = data_feed.next() else {
+                return (!buffer.is_empty()).then(|| std::mem::take(&mut buffer));
+            };
+            let data_size = match bincode::serialized_size(&data) {
+                Ok(size) => size as usize,
+                Err(err) => {
+                    error!("serialized_size failed: {err:?}");
+                    continue;
+                }
+            };
+            if buffer_size + data_size <= max_chunk_size {
+                buffer_size += data_size;
+                buffer.push(data);
+            } else if data_size <= max_chunk_size {
+                buffer_size = data_size;
+                return Some(std::mem::replace(&mut buffer, vec![data]));
+            } else {
+                error!("dropping data larger than the maximum chunk size {data:?}",);
             }
-        };
-        if buffer_size + data_size <= max_chunk_size {
-            buffer_size += data_size;
-            buffer.push(data);
-        } else if data_size <= max_chunk_size {
-            buffer_size = data_size;
-            return Some(std::mem::replace(&mut buffer, vec![data]));
-        } else {
-            error!("dropping data larger than the maximum chunk size {data:?}",);
         }
     })
 }
@@ -262,7 +264,7 @@ pub(crate) mod tests {
             crds_data::{
                 self, AccountsHashes, CrdsData, LowestSlot, SnapshotHashes, Vote as CrdsVote,
             },
-            duplicate_shred::{self, tests::new_rand_shred, MAX_DUPLICATE_SHREDS},
+            duplicate_shred::{self, MAX_DUPLICATE_SHREDS, tests::new_rand_shred},
         },
         rand::Rng,
         solana_clock::Slot,

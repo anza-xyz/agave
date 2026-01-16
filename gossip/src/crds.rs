@@ -37,17 +37,17 @@ use {
     },
     assert_matches::debug_assert_matches,
     indexmap::{
-        map::{rayon::ParValues, Entry, IndexMap},
+        map::{Entry, IndexMap, rayon::ParValues},
         set::IndexSet,
     },
     lru::LruCache,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
-        collections::{hash_map, BTreeMap, HashMap, VecDeque},
+        collections::{BTreeMap, HashMap, VecDeque, hash_map},
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
@@ -192,12 +192,11 @@ fn overrides(value: &CrdsValue, other: &VersionedCrdsValue) -> bool {
     // Contact-infos are special cased so that if there are
     // two running instances of the same node, the more recent start is
     // propagated through gossip regardless of wallclocks.
-    if let CrdsData::ContactInfo(value) = value.data() {
-        if let CrdsData::ContactInfo(other) = other.value.data() {
-            if let Some(out) = value.overrides(other) {
-                return out;
-            }
-        }
+    if let CrdsData::ContactInfo(value) = value.data()
+        && let CrdsData::ContactInfo(other) = other.value.data()
+        && let Some(out) = value.overrides(other)
+    {
+        return out;
     }
     match value.wallclock().cmp(&other.value.wallclock()) {
         Ordering::Less => false,
@@ -518,16 +517,15 @@ impl Crds {
             // If the origin's contact-info hasn't expired yet then preserve
             // all associated values.
             let origin = CrdsValueLabel::ContactInfo(*pubkey);
-            if let Some(origin) = self.table.get(&origin) {
-                if origin
+            if let Some(origin) = self.table.get(&origin)
+                && origin
                     .value
                     .wallclock()
                     .min(origin.local_timestamp)
                     .saturating_add(timeout)
                     > now
-                {
-                    return vec![];
-                }
+            {
+                return vec![];
             }
             // Otherwise check each value's timestamp individually.
             index
@@ -698,11 +696,11 @@ impl Default for CrdsDataStats {
 impl CrdsDataStats {
     fn record_insert(&mut self, entry: &VersionedCrdsValue, route: GossipRoute) {
         self.counts[Self::ordinal(entry)] += 1;
-        if let CrdsData::Vote(_, vote) = entry.value.data() {
-            if let Some(slot) = vote.slot() {
-                let num_nodes = self.votes.get(&slot).copied().unwrap_or_default();
-                self.votes.put(slot, num_nodes + 1);
-            }
+        if let CrdsData::Vote(_, vote) = entry.value.data()
+            && let Some(slot) = vote.slot()
+        {
+            let num_nodes = self.votes.get(&slot).copied().unwrap_or_default();
+            self.votes.put(slot, num_nodes + 1);
         }
 
         let GossipRoute::PushMessage(from) = route else {
@@ -781,8 +779,8 @@ impl CrdsStats {
 mod tests {
     use {
         super::*,
-        crate::crds_data::{new_rand_timestamp, AccountsHashes},
-        rand::{rng, Rng},
+        crate::crds_data::{AccountsHashes, new_rand_timestamp},
+        rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_keypair::Keypair,
         solana_signer::Signer,
