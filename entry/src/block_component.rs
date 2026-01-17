@@ -204,14 +204,20 @@ pub struct NotarRewardCertificate {
 /// Wraps a value with a u16 length prefix for TLV-style serialization.
 ///
 /// The length prefix represents the serialized byte size of the inner value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LengthPrefixed<T> {
+#[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
+pub struct LengthPrefixed<T: SchemaWrite<Src = T> + for<'a> SchemaRead<'a, Dst = T>> {
+    len: u16,
     inner: T,
 }
 
-impl<T> LengthPrefixed<T> {
+impl<T: SchemaWrite<Src = T> + for<'a> SchemaRead<'a, Dst = T>> LengthPrefixed<T> {
     pub fn new(inner: T) -> Self {
-        Self { inner }
+        let inner_size = T::size_of(&inner).unwrap();
+        let len = inner_size
+            .try_into()
+            .map_err(|_| write_length_encoding_overflow("u16::MAX"))
+            .unwrap();
+        Self { len, inner }
     }
 
     pub fn inner(&self) -> &T {
@@ -220,51 +226,6 @@ impl<T> LengthPrefixed<T> {
 
     pub fn into_inner(self) -> T {
         self.inner
-    }
-}
-
-impl<T: SchemaWrite<Src = T>> SchemaWrite for LengthPrefixed<T> {
-    type Src = Self;
-
-    const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static { size, .. } => TypeMeta::Static {
-            size: size + std::mem::size_of::<u16>(),
-            zero_copy: false,
-        },
-        TypeMeta::Dynamic => TypeMeta::Dynamic,
-    };
-
-    fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        let inner_size = T::size_of(&src.inner)?;
-        Ok(std::mem::size_of::<u16>() + inner_size)
-    }
-
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        let inner_size = T::size_of(&src.inner)?;
-        let Ok(len): Result<u16, _> = inner_size.try_into() else {
-            return Err(write_length_encoding_overflow("u16::MAX"));
-        };
-        u16::write(writer, &len)?;
-        T::write(writer, &src.inner)
-    }
-}
-
-impl<'de, T: SchemaRead<'de, Dst = T>> SchemaRead<'de> for LengthPrefixed<T> {
-    type Dst = Self;
-
-    const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static { size, .. } => TypeMeta::Static {
-            size: size + std::mem::size_of::<u16>(),
-            zero_copy: false,
-        },
-        TypeMeta::Dynamic => TypeMeta::Dynamic,
-    };
-
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let _len = u16::get(reader)?;
-        let inner_dst = unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).inner).cast() };
-        T::read(reader, inner_dst)?;
-        Ok(())
     }
 }
 
