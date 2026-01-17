@@ -199,6 +199,12 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .value_name("EPOCH")
                         .validator(is_epoch)
                         .help("Epoch to show leader schedule for [default: current]"),
+                )
+                .arg(
+                    Arg::with_name("vote-account")
+                        .long("vote-account")
+                        .takes_value(false)
+                        .help("Group leader schedule by vote account instead of identity"),
                 ),
         )
         .subcommand(
@@ -1021,8 +1027,12 @@ pub async fn process_first_available_block(rpc_client: &RpcClient) -> ProcessRes
 
 pub fn parse_leader_schedule(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let epoch = value_of(matches, "epoch");
+    let use_vote_account = matches.is_present("vote-account");
     Ok(CliCommandInfo::without_signers(
-        CliCommand::LeaderSchedule { epoch },
+        CliCommand::LeaderSchedule {
+            epoch,
+            use_vote_account,
+        },
     ))
 }
 
@@ -1030,6 +1040,7 @@ pub async fn process_leader_schedule(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     epoch: Option<Epoch>,
+    use_vote_account: bool,
 ) -> ProcessResult {
     let epoch_info = rpc_client.get_epoch_info().await?;
     let epoch = epoch.unwrap_or(epoch_info.epoch);
@@ -1040,9 +1051,20 @@ pub async fn process_leader_schedule(
     let epoch_schedule = rpc_client.get_epoch_schedule().await?;
     let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
 
-    let leader_schedule = rpc_client
-        .get_leader_schedule(Some(first_slot_in_epoch))
-        .await?;
+    let leader_schedule = if use_vote_account {
+        use solana_rpc_client_api::config::RpcLeaderScheduleConfig;
+        let config = RpcLeaderScheduleConfig {
+            use_vote_account: Some(true),
+            ..RpcLeaderScheduleConfig::default()
+        };
+        rpc_client
+            .get_leader_schedule_with_config(Some(first_slot_in_epoch), config)
+            .await?
+    } else {
+        rpc_client
+            .get_leader_schedule(Some(first_slot_in_epoch))
+            .await?
+    };
     if leader_schedule.is_none() {
         return Err(
             format!("Unable to fetch leader schedule for slot {first_slot_in_epoch}").into(),
