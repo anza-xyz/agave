@@ -327,15 +327,15 @@ macro_rules! create_vm {
     };
 }
 
-fn create_memory_mapping<'a, 'b, C: ContextObject>(
-    executable: &'a Executable<C>,
-    stack: &'b mut [u8],
-    heap: &'b mut [u8],
+fn create_memory_mapping<'a, C: ContextObject>(
+    executable: &Executable<C>,
+    stack: &'a mut [u8],
+    heap: &'a mut [u8],
     additional_regions: Vec<MemoryRegion>,
     transaction_context: &TransactionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
-) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
+) -> Result<MemoryMapping, Box<dyn std::error::Error>> {
     let config = executable.get_config();
     let sbpf_version = executable.get_sbpf_version();
     let regions: Vec<MemoryRegion> = vec![
@@ -343,7 +343,7 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
         MemoryRegion::new_writable_gapped(
             stack,
             ebpf::MM_STACK_START,
-            if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
+            if !sbpf_version.manual_stack_frame_bump() && config.enable_stack_frame_gaps {
                 config.stack_frame_size as u64
             } else {
                 0

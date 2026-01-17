@@ -6227,9 +6227,9 @@ impl AccountsDb {
             })
             .expect("must scan accounts storage");
 
-        let (insert_time_us, insert_info) = self
+        let (insert_info, insert_time_us) = measure_us!(self
             .accounts_index
-            .insert_new_if_missing_into_primary_index(slot, keyed_account_infos);
+            .insert_new_if_missing_into_primary_index(slot, keyed_account_infos));
 
         {
             // second, collect into the shared DashMap once we've figured out all the info per store_id
