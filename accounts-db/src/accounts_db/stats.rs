@@ -89,7 +89,7 @@ impl PurgeStats {
                     i64
                 ),
                 (
-                    "otal_num_stored_removed_slots_removed",
+                    "total_num_stored_slots_removed",
                     self.total_num_stored_slots_removed
                         .swap(0, Ordering::Relaxed),
                     i64
