@@ -4647,7 +4647,7 @@ impl AccountsDb {
             ),
             ("flush_roots_us", flush_roots_elapsed.as_us(), i64),
             (
-                "account_bytes_flushed",
+                "num_bytes_flushed",
                 flush_stats.num_bytes_flushed.0,
                 i64
             ),
