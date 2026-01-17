@@ -1,6 +1,11 @@
 pub const MAX_WORKERS: usize = 64;
 
-pub(crate) const VERSION: u64 = 2;
+/// Protocol version.
+///
+/// # Breaking changes
+///
+/// - Changed the meaning + number of variants of `leader_state` in `ProgressMessage`.
+pub(crate) const VERSION: u64 = 3;
 pub(crate) const LOGON_SUCCESS: u8 = 0x01;
 pub(crate) const LOGON_FAILURE: u8 = 0x02;
 pub(crate) const MAX_ALLOCATOR_HANDLES: usize = 128;
