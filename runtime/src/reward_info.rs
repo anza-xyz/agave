@@ -7,7 +7,7 @@ pub struct RewardInfo {
     pub reward_type: RewardType,
     pub lamports: i64,
     pub post_balance: u64,
-    pub commission: Option<u8>,
+    pub commission_bps: Option<u16>,
 }
 
 impl From<StakeRewardInfo> for RewardInfo {
@@ -16,7 +16,7 @@ impl From<StakeRewardInfo> for RewardInfo {
             reward_type: value.reward_type,
             lamports: value.lamports,
             post_balance: value.post_balance,
-            commission: value.commission,
+            commission_bps: value.commission_bps,
         }
     }
 }
