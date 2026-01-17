@@ -18,7 +18,7 @@ use {
     },
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsensusMetricsEvent {
     /// A vote was received from the node with `id`.
     Vote { id: Pubkey, vote: Vote },
@@ -86,7 +86,7 @@ impl NodeVoteMetrics {
             Vote::Skip(_) => self.skip.increment(elapsed),
             Vote::SkipFallback(_) => self.skip_fallback.increment(elapsed),
             Vote::Finalize(_) => self.final_.increment(elapsed),
-            Vote::Genesis(_) => Ok(()),
+            Vote::Genesis(_) => Ok(()), // Only for migration, tracked elsewhere
         };
         match res {
             Ok(()) => (),
@@ -117,10 +117,13 @@ pub enum RecordBlockHashError {
 pub struct ConsensusMetrics {
     /// Used to track this node's view of how the other nodes on the network are voting.
     node_metrics: BTreeMap<Pubkey, NodeVoteMetrics>,
+
     /// Used to track when this node received blocks from different leaders in the network.
     leader_metrics: BTreeMap<Pubkey, Histogram>,
+
     /// Counts number of times metrics recording failed.
     metrics_recording_failed: usize,
+
     /// Tracks when individual slots began.
     ///
     /// Relies on [`TimerManager`] to notify of start of slots.
@@ -152,10 +155,8 @@ impl ConsensusMetrics {
         Builder::new()
             .name("solConsMetrics".into())
             .spawn(move || {
-                info!("ConsensusMetricsService has started");
                 let mut metrics = Self::new(epoch, receiver);
                 metrics.run(exit);
-                info!("ConsensusMetricsService has stopped");
             })
             .expect("Failed to start consensus metrics thread")
     }
@@ -163,20 +164,20 @@ impl ConsensusMetrics {
     fn run(&mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             match self.receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok((recorded, events)) => {
+                Ok((received, events)) => {
                     for event in events {
                         match event {
                             ConsensusMetricsEvent::Vote { id, vote } => {
-                                self.record_vote(id, &vote, recorded);
+                                self.record_vote(id, &vote, received);
                             }
                             ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
-                                self.record_block_hash_seen(leader, slot, recorded);
+                                self.record_block_hash_seen(leader, slot, received);
                             }
                             ConsensusMetricsEvent::MaybeNewEpoch { epoch } => {
                                 self.maybe_new_epoch(epoch);
                             }
                             ConsensusMetricsEvent::StartOfSlot { slot } => {
-                                self.record_start_of_slot(slot, recorded);
+                                self.record_start_of_slot(slot, received);
                             }
                         }
                     }
@@ -193,23 +194,23 @@ impl ConsensusMetrics {
     }
 
     /// Records a `vote` from the node with `id`.
-    fn record_vote(&mut self, id: Pubkey, vote: &Vote, recorded: Instant) {
+    fn record_vote(&mut self, id: Pubkey, vote: &Vote, received: Instant) {
         let Some(start) = self.start_of_slot.get(&vote.slot()) else {
             self.metrics_recording_failed = self.metrics_recording_failed.saturating_add(1);
             return;
         };
         let node = self.node_metrics.entry(id).or_default();
-        let elapsed = recorded.duration_since(*start);
+        let elapsed = received.duration_since(*start);
         node.record_vote(vote, elapsed);
     }
 
     /// Records when a block for `slot` was seen and the `leader` is responsible for producing it.
-    fn record_block_hash_seen(&mut self, leader: Pubkey, slot: Slot, recorded: Instant) {
+    fn record_block_hash_seen(&mut self, leader: Pubkey, slot: Slot, received: Instant) {
         let Some(start) = self.start_of_slot.get(&slot) else {
             self.metrics_recording_failed = self.metrics_recording_failed.saturating_add(1);
             return;
         };
-        let elapsed = recorded.duration_since(*start).as_micros();
+        let elapsed = received.duration_since(*start).as_micros();
         let elapsed = match elapsed.try_into() {
             Ok(e) => e,
             Err(err) => {
@@ -236,57 +237,65 @@ impl ConsensusMetrics {
     }
 
     /// Records when a given slot started.
-    fn record_start_of_slot(&mut self, slot: Slot, recorded: Instant) {
-        self.start_of_slot.entry(slot).or_insert(recorded);
+    fn record_start_of_slot(&mut self, slot: Slot, received: Instant) {
+        self.start_of_slot.entry(slot).or_insert(received);
     }
 
     /// Performs end of epoch reporting and reset all the statistics for the subsequent epoch.
-    fn end_of_epoch_reporting(&mut self) {
+    fn end_of_epoch_reporting(&mut self, epoch: Epoch) {
         for (addr, metrics) in &self.node_metrics {
             let addr = addr.to_string();
-            datapoint_info!("votor_consensus_metrics",
+            datapoint_info!("consensus_vote_metrics",
                 "address" => addr,
                 ("notar_vote_count", metrics.notar.entries(), i64),
-                ("notar_vote_mean", metrics.notar.mean().ok(), Option<i64>),
-                ("notar_vote_stddev", metrics.notar.stddev(), Option<i64>),
-                ("notar_vote_maximum", metrics.notar.maximum().ok(), Option<i64>),
+                ("notar_vote_us_mean", metrics.notar.mean().ok(), Option<i64>),
+                ("notar_vote_us_stddev", metrics.notar.stddev(), Option<i64>),
+                ("notar_vote_us_maximum", metrics.notar.maximum().ok(), Option<i64>),
 
                 ("notar_fallback_vote_count", metrics.notar_fallback.entries(), i64),
-                ("notar_fallback_vote_mean", metrics.notar_fallback.mean().ok(), Option<i64>),
-                ("notar_fallback_vote_stddev", metrics.notar_fallback.stddev(), Option<i64>),
-                ("notar_fallback_vote_maximum", metrics.notar_fallback.maximum().ok(), Option<i64>),
+                ("notar_fallback_vote_us_mean", metrics.notar_fallback.mean().ok(), Option<i64>),
+                ("notar_fallback_vote_us_stddev", metrics.notar_fallback.stddev(), Option<i64>),
+                ("notar_fallback_vote_us_maximum", metrics.notar_fallback.maximum().ok(), Option<i64>),
 
                 ("skip_vote_count", metrics.skip.entries(), i64),
-                ("skip_vote_mean", metrics.skip.mean().ok(), Option<i64>),
-                ("skip_vote_stddev", metrics.skip.stddev(), Option<i64>),
-                ("skip_vote_maximum", metrics.skip.maximum().ok(), Option<i64>),
+                ("skip_vote_us_mean", metrics.skip.mean().ok(), Option<i64>),
+                ("skip_vote_us_stddev", metrics.skip.stddev(), Option<i64>),
+                ("skip_vote_us_maximum", metrics.skip.maximum().ok(), Option<i64>),
 
                 ("skip_fallback_vote_count", metrics.skip_fallback.entries(), i64),
-                ("skip_fallback_vote_mean", metrics.skip_fallback.mean().ok(), Option<i64>),
-                ("skip_fallback_vote_stddev", metrics.skip_fallback.stddev(), Option<i64>),
-                ("skip_fallback_vote_maximum", metrics.skip_fallback.maximum().ok(), Option<i64>),
+                ("skip_fallback_vote_us_mean", metrics.skip_fallback.mean().ok(), Option<i64>),
+                ("skip_fallback_vote_us_stddev", metrics.skip_fallback.stddev(), Option<i64>),
+                ("skip_fallback_vote_us_maximum", metrics.skip_fallback.maximum().ok(), Option<i64>),
 
                 ("finalize_vote_count", metrics.final_.entries(), i64),
-                ("finalize_vote_mean", metrics.final_.mean().ok(), Option<i64>),
-                ("finalize_vote_stddev", metrics.final_.stddev(), Option<i64>),
-                ("finalize_vote_maximum", metrics.final_.maximum().ok(), Option<i64>),
+                ("finalize_vote_us_mean", metrics.final_.mean().ok(), Option<i64>),
+                ("finalize_vote_us_stddev", metrics.final_.stddev(), Option<i64>),
+                ("finalize_vote_us_maximum", metrics.final_.maximum().ok(), Option<i64>),
             );
         }
 
         for (addr, histogram) in &self.leader_metrics {
             let addr = addr.to_string();
-            datapoint_info!("votor_consensus_metrics",
+            datapoint_info!("consensus_block_hash_seen_metrics",
                 "address" => addr,
-                ("blocks_seen_vote_count", histogram.entries(), i64),
-                ("blocks_seen_vote_mean", histogram.mean().ok(), Option<i64>),
-                ("blocks_seen_vote_stddev", histogram.stddev(), Option<i64>),
-                ("blocks_seen_vote_maximum", histogram.maximum().ok(), Option<i64>),
+                ("block_hash_seen_count", histogram.entries(), i64),
+                ("block_hash_seen_us_mean", histogram.mean().ok(), Option<i64>),
+                ("block_hash_seen_us_stddev", histogram.stddev(), Option<i64>),
+                ("block_hash_seen_us_maximum", histogram.maximum().ok(), Option<i64>),
             );
         }
 
-        self.node_metrics.clear();
-        self.leader_metrics.clear();
-        self.start_of_slot.clear();
+        datapoint_info!(
+            "consensus_metrics_internals",
+            ("start_of_slot_count", self.start_of_slot.len(), i64),
+            (
+                "metrics_recording_failed",
+                self.metrics_recording_failed,
+                i64
+            ),
+        );
+
+        *self = Self::new(epoch, self.receiver.clone());
     }
 
     /// This function can be called if there is a new [`Epoch`] and it will carry out end of epoch reporting.
@@ -294,7 +303,7 @@ impl ConsensusMetrics {
         assert!(epoch >= self.current_epoch);
         if epoch != self.current_epoch {
             self.current_epoch = epoch;
-            self.end_of_epoch_reporting();
+            self.end_of_epoch_reporting(epoch);
         }
     }
 }

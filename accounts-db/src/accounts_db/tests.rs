@@ -4496,7 +4496,7 @@ fn test_cache_flush_delayed_remove_unrooted_race() {
                 if flush_trial_start_receiver.recv().is_err() {
                     return;
                 }
-                db.flush_slot_cache(10);
+                db.flush_unrooted_slot_cache(10);
                 flush_done_sender.send(()).unwrap();
             })
             .unwrap()
@@ -4558,7 +4558,7 @@ fn test_cache_flush_remove_unrooted_race_multiple_slots() {
                     return;
                 }
                 for slot in 0..num_cached_slots {
-                    db.flush_slot_cache(slot);
+                    db.flush_unrooted_slot_cache(slot);
                 }
                 flush_done_sender.send(()).unwrap();
             })
@@ -6478,10 +6478,13 @@ fn test_mark_obsolete_accounts_at_startup_purge_slot() {
     // Store the same pubkey in multiple slots
     // Store other pubkey in slot0 to ensure slot is not purged
     accounts_db.store_for_tests((0, [(&pubkey1, &account), (&pubkey2, &account)].as_slice()));
+    accounts_db.add_root(0);
     accounts_db.flush_accounts_cache_slot_for_tests(0);
     accounts_db.store_for_tests((1, [(&pubkey1, &account)].as_slice()));
+    accounts_db.add_root(1);
     accounts_db.flush_accounts_cache_slot_for_tests(1);
     accounts_db.store_for_tests((2, [(&pubkey1, &account)].as_slice()));
+    accounts_db.add_root(2);
     accounts_db.flush_accounts_cache_slot_for_tests(2);
 
     let pubkeys_with_duplicates_by_bin = vec![vec![pubkey1]];
@@ -6514,6 +6517,7 @@ fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
             slot,
             [(&pubkey1, &account), (&pubkey2, &account)].as_slice(),
         ));
+        accounts_db.add_root(slot);
         accounts_db.flush_accounts_cache_slot_for_tests(slot);
     }
 

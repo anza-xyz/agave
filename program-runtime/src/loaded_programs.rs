@@ -11,15 +11,15 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
     solana_svm_type_overrides::{
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, Condvar, Mutex, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         thread,
     },
     std::{
-        collections::{hash_map::Entry, HashMap},
+        collections::{HashMap, hash_map::Entry},
         fmt::{Debug, Formatter},
         sync::Weak,
     },
@@ -265,9 +265,7 @@ impl ProgramCacheStats {
             let evictions = evictions.join("\n");
             trace!(
                 "Eviction Details:\n  {:<44}  {}\n{}",
-                "Program",
-                "Count",
-                evictions
+                "Program", "Count", evictions
             );
         }
     }
@@ -580,12 +578,13 @@ impl EpochBoundaryPreparation {
 
     /// Before rerooting the blockstore this concludes the epoch boundary preparation
     pub fn reroot(&mut self, epoch: Epoch) -> Option<ProgramRuntimeEnvironments> {
-        if epoch == self.upcoming_epoch {
-            if let Some(upcoming_environments) = self.upcoming_environments.take() {
-                self.programs_to_recompile.clear();
-                return Some(upcoming_environments);
-            }
+        if epoch == self.upcoming_epoch
+            && let Some(upcoming_environments) = self.upcoming_environments.take()
+        {
+            self.programs_to_recompile.clear();
+            return Some(upcoming_environments);
         }
+
         None
     }
 }
@@ -976,12 +975,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 // epoch that had a different environment (e.g. different feature set).
                                 // Once the root moves to the new/current epoch, the entry will get pruned.
                                 // But, until then the entry might still be getting used by an older slot.
-                                if let Some(entry_env) = entry.program.get_environment() {
-                                    if let Some(env) = first_ancestor_env {
-                                        if !Arc::ptr_eq(entry_env, env) {
-                                            return true;
-                                        }
-                                    }
+                                if let Some(entry_env) = entry.program.get_environment()
+                                    && let Some(env) = first_ancestor_env
+                                    && !Arc::ptr_eq(entry_env, env)
+                                {
+                                    return true;
                                 }
                                 self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
                                 false
@@ -992,13 +990,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         })
                         .filter(|entry| {
                             // Remove outdated environment of previous feature set
-                            if let Some(upcoming_environments) = upcoming_environments.as_ref() {
-                                if !Self::matches_environment(entry, upcoming_environments) {
-                                    self.stats
-                                        .prunes_environment
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    return false;
-                                }
+                            if let Some(upcoming_environments) = upcoming_environments.as_ref()
+                                && !Self::matches_environment(entry, upcoming_environments)
+                            {
+                                self.stats
+                                    .prunes_environment
+                                    .fetch_add(1, Ordering::Relaxed);
+                                return false;
                             }
                             true
                         })
@@ -1396,9 +1394,10 @@ impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<
 mod tests {
     use {
         crate::loaded_programs::{
-            BlockRelation, ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheEntryOwner,
-            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramCacheMatchCriteria,
-            ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
+            BlockRelation, DELAY_VISIBILITY_SLOT_OFFSET, ForkGraph, ProgramCache,
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
         },
         assert_matches::assert_matches,
         percentage::Percentage,
@@ -1410,8 +1409,8 @@ mod tests {
             io::Read,
             ops::ControlFlow,
             sync::{
-                atomic::{AtomicU64, Ordering},
                 Arc, RwLock,
+                atomic::{AtomicU64, Ordering},
             },
         },
         test_case::{test_case, test_matrix},

@@ -10,8 +10,8 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder, MAX_CODE_SHREDS_PER_SLOT,
-        MAX_DATA_SHREDS_PER_SLOT,
+        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
+        Shred, ShredType, Shredder,
     },
     solana_time_utils::AtomicInterval,
     std::{borrow::Cow, sync::RwLock},
@@ -278,16 +278,16 @@ impl StandardBroadcastRun {
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L132-L142
         // By contrast Self::insert skips the 1st data shred with index zero:
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L367-L373
-        if let Some(shred) = shreds.iter().find(|shred| shred.is_data()) {
-            if shred.index() == 0 {
-                blockstore
-                    .insert_cow_shreds(
-                        [Cow::Borrowed(shred)],
-                        None, // leader_schedule
-                        true, // is_trusted
-                    )
-                    .expect("Failed to insert shreds in blockstore");
-            }
+        if let Some(shred) = shreds.iter().find(|shred| shred.is_data())
+            && shred.index() == 0
+        {
+            blockstore
+                .insert_cow_shreds(
+                    [Cow::Borrowed(shred)],
+                    None, // leader_schedule
+                    true, // is_trusted
+                )
+                .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
 
@@ -483,9 +483,9 @@ mod test {
             blockstore::Blockstore,
             genesis_utils::create_genesis_config,
             get_tmp_ledger_path,
-            shred::{max_ticks_per_n_shreds, DATA_SHREDS_PER_FEC_BLOCK},
+            shred::{DATA_SHREDS_PER_FEC_BLOCK, max_ticks_per_n_shreds},
         },
-        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{ops::Deref, sync::Arc, time::Duration},
@@ -678,18 +678,22 @@ mod test {
         );
 
         // Broadcast stats for interrupted slot should be cleared
-        assert!(standard_broadcast_run
-            .transmit_shreds_stats
-            .lock()
-            .unwrap()
-            .get(interrupted_slot)
-            .is_none());
-        assert!(standard_broadcast_run
-            .insert_shreds_stats
-            .lock()
-            .unwrap()
-            .get(interrupted_slot)
-            .is_none());
+        assert!(
+            standard_broadcast_run
+                .transmit_shreds_stats
+                .lock()
+                .unwrap()
+                .get(interrupted_slot)
+                .is_none()
+        );
+        assert!(
+            standard_broadcast_run
+                .insert_shreds_stats
+                .lock()
+                .unwrap()
+                .get(interrupted_slot)
+                .is_none()
+        );
 
         // Try to fetch the incomplete ticks from blockstore, should succeed
         assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);

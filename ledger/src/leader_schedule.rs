@@ -78,6 +78,10 @@ fn stake_weighted_slot_leaders(
     len: u64,
     repeat: u64,
 ) -> Vec<Pubkey> {
+    debug_assert!(
+        len.is_multiple_of(repeat),
+        "expected `len` {len} to be divisible by `repeat` {repeat}"
+    );
     sort_stakes(&mut keyed_stakes);
     let (keys, stakes): (Vec<_>, Vec<_>) = keyed_stakes.into_iter().unzip();
     let weighted_index = WeightedU64Index::new(stakes).unwrap();
@@ -192,7 +196,6 @@ mod tests {
     #[test_case(457470, &[10, 20, 30], 12, 1, &[2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0, 2])]
     #[test_case(3466545, &[10, 20, 30], 12, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2])]
     #[test_case(3466545, &[10, 20, 30], 13, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1])]
-    #[test_case(3466545, &[10, 20, 30], 13, 2, &[2, 2, 2, 2, 0, 0, 0, 0, 2, 2, 1, 1, 1])]
     #[test_case(3466545, &[10, 20, 30], 14, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1, 2])]
     #[test_case(3466545, &[10, 20, 30], 14, 2, &[2, 2, 2, 2, 0, 0, 0, 0, 2, 2, 1, 1, 1, 1])]
     fn test_stake_leader_schedule_exact_order(

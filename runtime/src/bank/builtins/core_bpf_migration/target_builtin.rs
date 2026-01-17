@@ -5,7 +5,9 @@ use {
     solana_builtins::core_bpf_migration::CoreBpfMigrationTargetType,
     solana_loader_v3_interface::get_program_data_address,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::native_loader::ID as NATIVE_LOADER_ID,
+    solana_sdk_ids::{
+        native_loader::ID as NATIVE_LOADER_ID, system_program::ID as SYSTEM_PROGRAM_ID,
+    },
 };
 
 /// The account details of a built-in program to be migrated to Core BPF.
@@ -14,6 +16,7 @@ pub(crate) struct TargetBuiltin {
     pub program_address: Pubkey,
     pub program_account: AccountSharedData,
     pub program_data_address: Pubkey,
+    pub program_data_account_lamports: u64,
 }
 
 impl TargetBuiltin {
@@ -23,6 +26,7 @@ impl TargetBuiltin {
         bank: &Bank,
         program_address: &Pubkey,
         migration_target: &CoreBpfMigrationTargetType,
+        allow_prefunded: bool,
     ) -> Result<Self, CoreBpfMigrationError> {
         let program_account = match migration_target {
             CoreBpfMigrationTargetType::Builtin => {
@@ -50,20 +54,38 @@ impl TargetBuiltin {
 
         let program_data_address = get_program_data_address(program_address);
 
-        // The program data account should not exist.
-        if bank
-            .get_account_with_fixed_root(&program_data_address)
-            .is_some()
-        {
-            return Err(CoreBpfMigrationError::ProgramHasDataAccount(
-                *program_address,
-            ));
-        }
+        let program_data_account_lamports = if allow_prefunded {
+            // The program data account should not exist, but a system account with funded
+            // lamports is acceptable.
+            if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
+                if account.owner() != &SYSTEM_PROGRAM_ID {
+                    return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                        *program_address,
+                    ));
+                }
+                account.lamports()
+            } else {
+                0
+            }
+        } else {
+            // The program data account should not exist and have zero lamports.
+            if bank
+                .get_account_with_fixed_root(&program_data_address)
+                .is_some()
+            {
+                return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                    *program_address,
+                ));
+            }
+
+            0
+        };
 
         Ok(Self {
             program_address: *program_address,
             program_account,
             program_data_address,
+            program_data_account_lamports,
         })
     }
 }
@@ -76,7 +98,7 @@ mod tests {
         solana_feature_gate_interface as feature,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_sdk_ids::bpf_loader_upgradeable::ID as BPF_LOADER_UPGRADEABLE_ID,
-        test_case::test_case,
+        test_case::test_matrix,
     };
 
     fn store_account<T: serde::Serialize>(
@@ -99,25 +121,34 @@ mod tests {
         bank.store_account_and_update_capitalization(address, &account);
     }
 
-    #[test_case(solana_sdk_ids::bpf_loader::id(), None)]
-    #[test_case(solana_sdk_ids::bpf_loader_deprecated::id(), None)]
-    #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(), None)]
-    #[test_case(solana_compute_budget_interface::id(), None)]
-    #[test_case(solana_system_interface::program::id(), None)]
-    #[test_case(solana_vote_interface::program::id(), None)]
-    #[test_case(
-        solana_sdk_ids::loader_v4::id(),
-        Some(feature_set::enable_loader_v4::id())
-    )]
-    #[test_case(
-        solana_sdk_ids::zk_token_proof_program::id(),
-        Some(feature_set::zk_token_sdk_enabled::id())
-    )]
-    #[test_case(
-        solana_sdk_ids::zk_elgamal_proof_program::id(),
-        Some(feature_set::zk_elgamal_proof_program_enabled::id())
-    )]
-    fn test_target_program_builtin(program_address: Pubkey, activation_feature: Option<Pubkey>) {
+    #[test_matrix(
+        [
+            (solana_sdk_ids::bpf_loader::id(), None),
+            (solana_sdk_ids::bpf_loader_deprecated::id(), None),
+            (solana_sdk_ids::bpf_loader_upgradeable::id(), None),
+            (solana_compute_budget_interface::id(), None),
+            (solana_system_interface::program::id(), None),
+            (solana_vote_interface::program::id(), None),
+            (
+                solana_sdk_ids::loader_v4::id(),
+                Some(feature_set::enable_loader_v4::id())
+            ),
+            (
+                solana_sdk_ids::zk_token_proof_program::id(),
+                Some(feature_set::zk_token_sdk_enabled::id())
+            ),
+            (
+                solana_sdk_ids::zk_elgamal_proof_program::id(),
+                Some(feature_set::zk_elgamal_proof_program_enabled::id())
+            ),
+        ],
+        [false, true])
+    ]
+    fn test_target_program_builtin(
+        program_address_and_activation_feature: (Pubkey, Option<Pubkey>),
+        allow_prefund: bool,
+    ) {
+        let (program_address, activation_feature) = program_address_and_activation_feature;
         let migration_target = CoreBpfMigrationTargetType::Builtin;
         let mut bank = create_simple_test_bank(0);
 
@@ -138,7 +169,8 @@ mod tests {
 
         // Success
         let target_builtin =
-            TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap();
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap();
         assert_eq!(target_builtin.program_address, program_address);
         assert_eq!(target_builtin.program_account, program_account);
         assert_eq!(target_builtin.program_data_address, program_data_address);
@@ -152,7 +184,8 @@ mod tests {
             &Pubkey::new_unique(), // Not the native loader
         );
         assert_matches!(
-            TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap_err(),
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap_err(),
             CoreBpfMigrationError::IncorrectOwner(..)
         );
 
@@ -175,9 +208,56 @@ mod tests {
             &BPF_LOADER_UPGRADEABLE_ID,
         );
         assert_matches!(
-            TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap_err(),
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap_err(),
             CoreBpfMigrationError::ProgramHasDataAccount(..)
         );
+
+        // Allow some lamports in the program data account owned by the system program
+        store_account(
+            &bank,
+            &program_data_address,
+            &vec![0u8; 100],
+            false,
+            &SYSTEM_PROGRAM_ID,
+        );
+
+        if allow_prefund {
+            // Succeed if prefund is allowed
+            assert!(TargetBuiltin::new_checked(
+                &bank,
+                &program_address,
+                &migration_target,
+                allow_prefund,
+            )
+            .is_ok());
+        } else {
+            // Fail if prefund is not allowed
+            assert_matches!(
+                TargetBuiltin::new_checked(
+                    &bank,
+                    &program_address,
+                    &migration_target,
+                    allow_prefund
+                )
+                .unwrap_err(),
+                CoreBpfMigrationError::ProgramHasDataAccount(..)
+            );
+        }
+
+        // Clean up the program data account lamports for zero-lamport test
+        bank.store_account_and_update_capitalization(
+            &program_data_address,
+            &AccountSharedData::default(),
+        );
+
+        // Success
+        let target_builtin =
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap();
+
+        assert_eq!(target_builtin.program_address, program_address);
+        assert_eq!(target_builtin.program_data_address, program_data_address);
 
         // Fail if the program account does not exist
         bank.store_account_and_update_capitalization(
@@ -185,14 +265,17 @@ mod tests {
             &AccountSharedData::default(),
         );
         assert_matches!(
-            TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap_err(),
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap_err(),
             CoreBpfMigrationError::AccountNotFound(..)
         );
     }
 
-    #[test_case(solana_feature_gate_interface::id())]
-    #[test_case(solana_sdk_ids::native_loader::id())]
-    fn test_target_program_stateless_builtin(program_address: Pubkey) {
+    #[test_matrix(
+        [solana_feature_gate_interface::id(), solana_sdk_ids::native_loader::id()],
+        [false, true]
+    )]
+    fn test_target_program_stateless_builtin(program_address: Pubkey, allow_prefund: bool) {
         let migration_target = CoreBpfMigrationTargetType::Stateless;
         let bank = create_simple_test_bank(0);
 
@@ -201,7 +284,8 @@ mod tests {
 
         // Success
         let target_builtin =
-            TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap();
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap();
         assert_eq!(target_builtin.program_address, program_address);
         assert_eq!(target_builtin.program_account, program_account);
         assert_eq!(target_builtin.program_data_address, program_data_address);
@@ -218,7 +302,8 @@ mod tests {
             &BPF_LOADER_UPGRADEABLE_ID,
         );
         assert_matches!(
-            TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap_err(),
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap_err(),
             CoreBpfMigrationError::ProgramHasDataAccount(..)
         );
 
@@ -231,7 +316,8 @@ mod tests {
             &NATIVE_LOADER_ID,
         );
         assert_matches!(
-            TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap_err(),
+            TargetBuiltin::new_checked(&bank, &program_address, &migration_target, allow_prefund)
+                .unwrap_err(),
             CoreBpfMigrationError::AccountExists(..)
         );
     }

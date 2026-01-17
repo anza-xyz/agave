@@ -24,6 +24,20 @@ fi
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
 
+# sort
+if [[ -n $CI ]]; then
+  # exclude from printing "Checking xxx ..."
+  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
+else
+  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
+fi
+
+# check dev-context-only-utils isn't used in normal dependencies
+_ scripts/check-dev-context-only-utils.sh tree
+
+# fmt
+_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
+
 # run cargo check for all rust files in this monorepo for faster turnaround in
 # case of any compilation/build error for nightly
 
@@ -46,17 +60,6 @@ fi
 _ ci/order-crates-for-publishing.py
 
 _ scripts/cargo-clippy.sh
-
-if [[ -n $CI ]]; then
-  # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
-else
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
-fi
-
-_ scripts/check-dev-context-only-utils.sh tree
-
-_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 
 _ ci/do-audit.sh
 

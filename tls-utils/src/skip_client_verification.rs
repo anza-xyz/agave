@@ -1,11 +1,11 @@
 use {
     crate::crypto_provider,
     rustls::{
+        DigitallySignedStruct, DistinguishedName, Error, SignatureScheme,
         client::danger::HandshakeSignatureValid,
         crypto::CryptoProvider,
         pki_types::{CertificateDer, UnixTime},
         server::danger::{ClientCertVerified, ClientCertVerifier},
-        DigitallySignedStruct, DistinguishedName, Error, SignatureScheme,
     },
     std::{fmt::Debug, sync::Arc},
 };

@@ -4,7 +4,7 @@ use {
     log::warn,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_quic_definitions::NotifyKeyUpdate,
+    solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,

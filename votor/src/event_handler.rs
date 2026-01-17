@@ -1,20 +1,21 @@
 //! Handles incoming VotorEvents to take action or
 //! notify block creation loop
+
 use {
     crate::{
         commitment::{update_commitment_cache, CommitmentType},
-        consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
+        consensus_metrics::ConsensusMetricsEvent,
         event::{CompletedBlock, VotorEvent, VotorEventReceiver},
         event_handler::stats::EventHandlerStats,
-        root_utils::{self, RootContext, SetRootError},
+        root_utils::{self, RootContext},
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
         voting_service::BLSOp,
         voting_utils::{generate_vote_message, VoteError, VotingContext},
-        votor::{SharedContext, Votor},
+        votor::SharedContext,
     },
-    agave_votor_messages::{consensus_message::Block, vote::Vote},
-    crossbeam_channel::{RecvTimeoutError, TrySendError},
+    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
+    crossbeam_channel::{select, RecvError, SendError},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -29,7 +30,7 @@ use {
         collections::{BTreeMap, BTreeSet},
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, Condvar, Mutex,
+            Arc,
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -46,7 +47,7 @@ pub(crate) type PendingBlocks = BTreeMap<Slot, Vec<(Block, Block)>>;
 /// Inputs for the event handler thread
 pub(crate) struct EventHandlerContext {
     pub(crate) exit: Arc<AtomicBool>,
-    pub(crate) start: Arc<(Mutex<bool>, Condvar)>,
+    pub(crate) migration_status: Arc<MigrationStatus>,
 
     pub(crate) event_receiver: VotorEventReceiver,
     pub(crate) timer_manager: Arc<RwLock<TimerManager>>,
@@ -60,19 +61,16 @@ pub(crate) struct EventHandlerContext {
 #[derive(Debug, Error)]
 enum EventLoopError {
     #[error("Receiver is disconnected")]
-    ReceiverDisconnected(#[from] RecvTimeoutError),
+    ReceiverDisconnected(#[from] RecvError),
 
     #[error("Sender is disconnected")]
-    SenderDisconnected,
+    SenderDisconnected(#[from] SendError<()>),
 
     #[error("Error generating and inserting vote")]
     VotingError(#[from] VoteError),
 
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
-
-    #[error("Set root error: {0}")]
-    SetRoot(#[from] SetRootError),
 }
 
 pub(crate) struct EventHandler {
@@ -93,12 +91,10 @@ impl EventHandler {
         let t_event_handler = Builder::new()
             .name("solVotorEvLoop".to_string())
             .spawn(move || {
-                info!("EventHandler has started");
                 if let Err(e) = Self::event_loop(ctx) {
+                    info!("Event loop exited: {e:?}. Shutting down");
                     exit.store(true, Ordering::Relaxed);
-                    error!("EventHandler exited with error: {e}");
                 }
-                info!("EventHandler has stopped");
             })
             .unwrap();
 
@@ -108,7 +104,7 @@ impl EventHandler {
     fn event_loop(context: EventHandlerContext) -> Result<(), EventLoopError> {
         let EventHandlerContext {
             exit,
-            start,
+            migration_status,
             event_receiver,
             timer_manager,
             shared_context: ctx,
@@ -125,21 +121,41 @@ impl EventHandler {
 
         // Wait until migration has completed
         info!("{}: Event loop initialized", local_context.my_pubkey);
-        Votor::wait_for_migration_or_exit(&exit, &start);
-        info!("{}: Event loop starting", local_context.my_pubkey);
+        let Some(genesis_block) = migration_status.wait_for_migration_or_exit(&exit) else {
+            // Exited during migration
+            return Ok(());
+        };
+        let root_slot = vctx.sharable_banks.root().slot();
+        info!(
+            "{}: Event loop starting genesis {genesis_block:?} root {root_slot}",
+            local_context.my_pubkey
+        );
+
+        // Check for set identity
+        if let Err(e) = Self::handle_set_identity(&mut local_context.my_pubkey, &ctx, &mut vctx) {
+            error!(
+                "Unable to load new vote history when attempting to change identity at startup \
+                 from {} to {} on voting loop startup, Exiting: {}",
+                vctx.vote_history.node_pubkey,
+                ctx.cluster_info.id(),
+                e
+            );
+            return Err(EventLoopError::SetIdentityError(e));
+        }
 
         while !exit.load(Ordering::Relaxed) {
             let mut receive_event_time = Measure::start("receive_event");
-            let event = match event_receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok(event) => event,
-                Err(RecvTimeoutError::Timeout) => continue,
-                Err(e) => return Err(EventLoopError::ReceiverDisconnected(e)),
+            let event = select! {
+                recv(event_receiver) -> msg => {
+                    msg?
+                },
+                default(Duration::from_secs(1))  => continue
             };
             receive_event_time.stop();
             local_context.stats.receive_event_time_us = local_context
                 .stats
                 .receive_event_time_us
-                .saturating_add(receive_event_time.as_us());
+                .saturating_add(receive_event_time.as_us() as u32);
 
             let root_bank = vctx.sharable_banks.root();
             if event.should_ignore(root_bank.slot()) {
@@ -165,15 +181,13 @@ impl EventHandler {
             let mut send_votes_batch_time = Measure::start("send_votes_batch");
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-                vctx.bls_sender
-                    .send(vote)
-                    .map_err(|_| EventLoopError::SenderDisconnected)?;
+                vctx.bls_sender.send(vote).map_err(|_| SendError(()))?;
             }
             send_votes_batch_time.stop();
             local_context.stats.send_votes_batch_time_us = local_context
                 .stats
                 .send_votes_batch_time_us
-                .saturating_add(send_votes_batch_time.as_us());
+                .saturating_add(send_votes_batch_time.as_us() as u32);
             local_context.stats.maybe_report();
         }
 
@@ -197,36 +211,14 @@ impl EventHandler {
             timer_manager.write().set_timeouts(slot);
             local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
-        let mut highest_parent_ready = ctx
-            .leader_window_notifier
-            .highest_parent_ready
-            .write()
-            .unwrap();
 
+        let mut highest_parent_ready = ctx.highest_parent_ready.write().unwrap();
         let (current_slot, _) = *highest_parent_ready;
 
         if slot > current_slot {
             *highest_parent_ready = (slot, parent_block);
         }
         Ok(())
-    }
-
-    fn send_to_metrics(
-        consensus_metrics_sender: &ConsensusMetricsEventSender,
-        consensus_metrics_events: Vec<ConsensusMetricsEvent>,
-        stats: &mut EventHandlerStats,
-    ) -> Result<(), EventLoopError> {
-        // Do not kill or block event handler threads just because metrics
-        // send failed (maybe because the queue is full).
-        match consensus_metrics_sender.try_send((Instant::now(), consensus_metrics_events)) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Disconnected(_)) => Err(EventLoopError::SenderDisconnected),
-            Err(TrySendError::Full(_)) => {
-                warn!("send_to_metrics failed: queue is full");
-                stats.metrics_queue_became_full = true;
-                Ok(())
-            }
-        }
     }
 
     fn handle_event(
@@ -238,22 +230,22 @@ impl EventHandler {
         local_context: &mut LocalContext,
     ) -> Result<Vec<BLSOp>, EventLoopError> {
         let mut votes = vec![];
-        let LocalContext {
-            my_pubkey,
-            pending_blocks,
-            finalized_blocks,
-            received_shred,
-            stats,
+        let &mut LocalContext {
+            ref mut my_pubkey,
+            ref mut pending_blocks,
+            ref mut finalized_blocks,
+            ref mut received_shred,
+            ref mut stats,
         } = local_context;
         match event {
             // Block has completed replay
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
                 debug_assert!(bank.is_frozen());
+                let now = Instant::now();
                 let mut consensus_metrics_events =
                     vec![ConsensusMetricsEvent::StartOfSlot { slot }];
                 if slot == first_of_consecutive_leader_slots(slot) {
-                    // all slots except the first in the window would typically start when
-                    // the block is seen so the recording would essentially record 0.
+                    // all slots except the first in the window would typically start when the block is seen so the recording would essentially record 0.
                     // hence we skip it.
                     consensus_metrics_events.push(ConsensusMetricsEvent::BlockHashSeen {
                         leader: *bank.leader_id(),
@@ -263,11 +255,9 @@ impl EventHandler {
                 consensus_metrics_events.push(ConsensusMetricsEvent::MaybeNewEpoch {
                     epoch: bank.epoch(),
                 });
-                Self::send_to_metrics(
-                    &vctx.consensus_metrics_sender,
-                    consensus_metrics_events,
-                    stats,
-                )?;
+                vctx.consensus_metrics_sender
+                    .send((now, consensus_metrics_events))
+                    .map_err(|_| SendError(()))?;
                 let (block, parent_block) = Self::get_block_parent_block(&bank);
                 info!("{my_pubkey}: Block {block:?} parent {parent_block:?}");
                 if Self::try_notar(
@@ -294,12 +284,12 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                )?;
-                if let Some((ready_slot, parent_block)) =
+                );
+                if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
                     Self::handle_parent_ready_event(
-                        ready_slot,
+                        slot,
                         parent_block,
                         vctx,
                         ctx,
@@ -324,11 +314,12 @@ impl EventHandler {
 
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
-                Self::send_to_metrics(
-                    &vctx.consensus_metrics_sender,
-                    vec![ConsensusMetricsEvent::StartOfSlot { slot }],
-                    stats,
-                )?;
+                vctx.consensus_metrics_sender
+                    .send((
+                        Instant::now(),
+                        vec![ConsensusMetricsEvent::StartOfSlot { slot }],
+                    ))
+                    .map_err(|_| SendError(()))?;
                 Self::handle_parent_ready_event(
                     slot,
                     parent_block,
@@ -352,13 +343,14 @@ impl EventHandler {
             VotorEvent::Timeout(slot) => {
                 info!("{my_pubkey}: Timeout {slot}");
                 if slot != last_of_consecutive_leader_slots(slot) {
-                    Self::send_to_metrics(
-                        &vctx.consensus_metrics_sender,
-                        vec![ConsensusMetricsEvent::StartOfSlot {
-                            slot: slot.saturating_add(1),
-                        }],
-                        stats,
-                    )?;
+                    vctx.consensus_metrics_sender
+                        .send((
+                            Instant::now(),
+                            vec![ConsensusMetricsEvent::StartOfSlot {
+                                slot: slot.saturating_add(1),
+                            }],
+                        ))
+                        .map_err(|_| SendError(()))?;
                 }
                 if vctx.vote_history.voted(slot) {
                     return Ok(votes);
@@ -404,21 +396,7 @@ impl EventHandler {
             // It is time to produce our leader window
             VotorEvent::ProduceWindow(window_info) => {
                 info!("{my_pubkey}: ProduceWindow {window_info:?}");
-                let mut l_window_info = ctx.leader_window_notifier.window_info.lock().unwrap();
-                if let Some(old_window_info) = l_window_info.as_ref() {
-                    stats.leader_window_replaced = stats.leader_window_replaced.saturating_add(1);
-                    error!(
-                        "{my_pubkey}: Attempting to start leader window for {}-{}, however there \
-                         is already a pending window to produce {}-{}. Our production is lagging, \
-                         discarding in favor of the newer window",
-                        window_info.start_slot,
-                        window_info.end_slot,
-                        old_window_info.start_slot,
-                        old_window_info.end_slot,
-                    );
-                }
-                *l_window_info = Some(window_info);
-                ctx.leader_window_notifier.window_notification.notify_one();
+                ctx.leader_window_info_sender.send(window_info).unwrap();
             }
 
             // We have finalized this block consider it for rooting
@@ -434,13 +412,13 @@ impl EventHandler {
                     finalized_blocks,
                     received_shred,
                     stats,
-                )?;
-                if let Some((slot, block)) =
+                );
+                if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
                     Self::handle_parent_ready_event(
-                        slot,
-                        block,
+                        block.0,
+                        parent_block,
                         vctx,
                         ctx,
                         local_context,
@@ -495,12 +473,14 @@ impl EventHandler {
     /// all later slots. So B and C together can keep finalizing the blocks and unstuck the
     /// cluster. If we get a finalization cert for later slots of the window and we have the
     /// block replayed, trace back to the first slot of the window and emit parent ready.
+    ///
+    /// Returns [`Some(Block)`] of the parent if the parent ready for the `finalized_block` should be added.
     fn add_missing_parent_ready(
         finalized_block: Block,
         ctx: &SharedContext,
         vctx: &mut VotingContext,
         local_context: &mut LocalContext,
-    ) -> Option<(Slot, Block)> {
+    ) -> Option<Block> {
         let (slot, block_id) = finalized_block;
         let first_slot_of_window = first_of_consecutive_leader_slots(slot);
         if first_slot_of_window == slot || first_slot_of_window == 0 {
@@ -537,7 +517,7 @@ impl EventHandler {
              {parent_block_id}",
             local_context.my_pubkey
         );
-        Some((slot, (parent_slot, parent_block_id)))
+        Some((parent_slot, parent_block_id))
     }
 
     fn handle_set_identity(
@@ -639,7 +619,7 @@ impl EventHandler {
     }
 
     /// Checks the pending blocks that have completed replay to see if they
-    /// are eligible to be voted on now
+    /// are eligble to be voted on now
     fn check_pending_blocks(
         my_pubkey: &Pubkey,
         pending_blocks: &mut PendingBlocks,
@@ -750,16 +730,15 @@ impl EventHandler {
         Ok(())
     }
 
-    /// Checks if we can set root on a new block. The block must:
-    /// - Be present in bank forks
+    /// Checks if we can set root on a new block
+    /// The block must be:
+    /// - Present in bank forks
     /// - Newer than the current root
-    /// - Already been voted on (bank.slot())
-    /// - Have its Bank frozen
-    /// - Finished shredding
-    /// - Have a finalization certificate (determined by presence in
-    ///   `finalized_blocks`)
+    /// - We must have already voted on bank.slot()
+    /// - Bank is frozen and finished shredding
+    /// - Block has a finalization certificate
     ///
-    /// If so, set root on the highest block that fits these conditions.
+    /// If so set root on the highest block that fits these conditions
     fn check_rootable_blocks(
         my_pubkey: &Pubkey,
         ctx: &SharedContext,
@@ -769,7 +748,7 @@ impl EventHandler {
         finalized_blocks: &mut BTreeSet<Block>,
         received_shred: &mut BTreeSet<Slot>,
         stats: &mut EventHandlerStats,
-    ) -> Result<(), EventLoopError> {
+    ) {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
         let old_root = bank_forks_r.root();
         let Some(new_root) = finalized_blocks
@@ -785,10 +764,10 @@ impl EventHandler {
             .max()
         else {
             // No rootable banks
-            return Ok(());
+            return;
         };
         drop(bank_forks_r);
-        let set_root_result = root_utils::set_root(
+        root_utils::set_root(
             my_pubkey,
             new_root,
             ctx,
@@ -797,14 +776,8 @@ impl EventHandler {
             pending_blocks,
             finalized_blocks,
             received_shred,
-        )
-        .map_err(EventLoopError::SetRoot);
-
-        if set_root_result.is_ok() {
-            stats.set_root(new_root)
-        }
-
-        set_root_result
+        );
+        stats.set_root(new_root);
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -825,13 +798,12 @@ mod tests {
                 VoteHistoryStorage,
             },
             voting_service::BLSOp,
-            votor::LeaderWindowNotifier,
         },
         agave_votor_messages::{
             consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
         },
-        crossbeam_channel::{bounded, Receiver, TryRecvError},
+        crossbeam_channel::{unbounded, Receiver, TryRecvError},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -861,14 +833,14 @@ mod tests {
     };
 
     struct EventHandlerTestContext {
-        exit: Arc<AtomicBool>,
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
         own_vote_receiver: Receiver<ConsensusMessage>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
-        leader_window_notifier: Arc<LeaderWindowNotifier>,
+        leader_window_info_receiver: Receiver<LeaderWindowInfo>,
+        highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
         drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
         cluster_info: Arc<ClusterInfo>,
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
@@ -879,118 +851,120 @@ mod tests {
         bls_ops: Vec<BLSOp>,
     }
 
-    impl EventHandlerTestContext {
-        fn setup() -> EventHandlerTestContext {
-            // For tests, we just make each queue bounded at 100, should be enough.
-            let (bls_sender, bls_receiver) = bounded(100);
-            let (commitment_sender, commitment_receiver) = bounded(100);
-            let (own_vote_sender, own_vote_receiver) = bounded(100);
-            let (drop_bank_sender, drop_bank_receiver) = bounded(100);
-            let exit = Arc::new(AtomicBool::new(false));
-            let (event_sender, _event_receiver) = bounded(100);
-            let (consensus_metrics_sender, consensus_metrics_receiver) = bounded(100);
-            let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
-                event_sender.clone(),
-                exit.clone(),
-            )));
+    fn setup() -> EventHandlerTestContext {
+        let (bls_sender, bls_receiver) = unbounded();
+        let (commitment_sender, commitment_receiver) = unbounded();
+        let (own_vote_sender, own_vote_receiver) = unbounded();
+        let (drop_bank_sender, drop_bank_receiver) = unbounded();
+        let exit = Arc::new(AtomicBool::new(false));
+        let (event_sender, _event_receiver) = unbounded();
+        let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
+        let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
+        let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
+            event_sender.clone(),
+            exit.clone(),
+            Arc::new(MigrationStatus::default()),
+        )));
 
-            // Create 10 node validatorvotekeypairs vec
-            let validator_keypairs = (0..10)
-                .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
-                .collect::<Vec<_>>();
-            let stakes = (0..validator_keypairs.len())
-                .rev()
-                .map(|i| 100_u64.saturating_add(i as u64))
-                .collect::<Vec<_>>();
-            let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-                1_000_000_000,
-                &validator_keypairs,
-                stakes,
-            );
-            let my_index = 0;
-            let my_node_keypair = validator_keypairs[my_index].node_keypair.insecure_clone();
-            let my_vote_keypair = validator_keypairs[my_index].vote_keypair.insecure_clone();
-            let my_bls_keypair =
-                BLSKeypair::derive_from_signer(&my_vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-            let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-            let bank_forks = BankForks::new_rw_arc(bank0);
-            let contact_info = ContactInfo::new_localhost(&my_node_keypair.pubkey(), 0);
-            let cluster_info = Arc::new(ClusterInfo::new(
-                contact_info,
-                Arc::new(my_node_keypair.insecure_clone()),
-                SocketAddrSpace::Unspecified,
-            ));
-            let blockstore = Arc::new(
-                Blockstore::open_with_options(
-                    &get_tmp_ledger_path!(),
-                    BlockstoreOptions::default_for_tests(),
-                )
-                .unwrap(),
-            );
+        // Create 10 node validatorvotekeypairs vec
+        let validator_keypairs = (0..10)
+            .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
+            .collect::<Vec<_>>();
+        let stakes = (0..validator_keypairs.len())
+            .rev()
+            .map(|i| 100_u64.saturating_add(i as u64))
+            .collect::<Vec<_>>();
+        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            stakes,
+        );
+        let my_index = 0;
+        let my_node_keypair = validator_keypairs[my_index].node_keypair.insecure_clone();
+        let my_vote_keypair = validator_keypairs[my_index].vote_keypair.insecure_clone();
+        let my_bls_keypair =
+            BLSKeypair::derive_from_signer(&my_vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+        let bank0 = Bank::new_for_tests(&genesis.genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank0);
+        let contact_info = ContactInfo::new_localhost(&my_node_keypair.pubkey(), 0);
+        let cluster_info = Arc::new(ClusterInfo::new(
+            contact_info,
+            Arc::new(my_node_keypair.insecure_clone()),
+            SocketAddrSpace::Unspecified,
+        ));
+        let blockstore = Arc::new(
+            Blockstore::open_with_options(
+                &get_tmp_ledger_path!(),
+                BlockstoreOptions::default_for_tests(),
+            )
+            .unwrap(),
+        );
+        let highest_parent_ready = Arc::new(RwLock::default());
 
-            let leader_window_notifier = Arc::new(LeaderWindowNotifier::default());
-            let shared_context = SharedContext {
-                cluster_info: cluster_info.clone(),
-                bank_forks: bank_forks.clone(),
-                vote_history_storage: Arc::new(FileVoteHistoryStorage::default()),
-                leader_window_notifier: leader_window_notifier.clone(),
-                blockstore,
-                rpc_subscriptions: None,
-            };
+        let shared_context = SharedContext {
+            cluster_info: cluster_info.clone(),
+            bank_forks: bank_forks.clone(),
+            vote_history_storage: Arc::new(FileVoteHistoryStorage::default()),
+            leader_window_info_sender,
+            blockstore,
+            rpc_subscriptions: None,
+            highest_parent_ready: highest_parent_ready.clone(),
+        };
 
-            let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
-            let voting_context = VotingContext {
-                identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
-                sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-                vote_history,
-                bls_sender,
-                commitment_sender,
-                vote_account_pubkey: my_vote_keypair.pubkey(),
-                wait_to_vote_slot: None,
-                authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
-                derived_bls_keypairs: HashMap::new(),
-                has_new_vote_been_rooted: false,
-                own_vote_sender,
-                consensus_metrics_sender,
-            };
+        let vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
+        let voting_context = VotingContext {
+            identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            vote_history,
+            bls_sender,
+            commitment_sender,
+            vote_account_pubkey: my_vote_keypair.pubkey(),
+            wait_to_vote_slot: None,
+            authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
+            derived_bls_keypairs: HashMap::new(),
+            has_new_vote_been_rooted: false,
+            own_vote_sender,
+            consensus_metrics_sender,
+        };
 
-            let root_context = RootContext {
-                leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(
-                    &bank_forks.read().unwrap().root_bank(),
-                )),
-                snapshot_controller: None,
-                bank_notification_sender: None,
-                drop_bank_sender,
-            };
+        let root_context = RootContext {
+            leader_schedule_cache: Arc::new(LeaderScheduleCache::new_from_bank(
+                &bank_forks.read().unwrap().root_bank(),
+            )),
+            snapshot_controller: None,
+            bank_notification_sender: None,
+            drop_bank_sender,
+        };
 
-            let local_context = LocalContext {
-                my_pubkey: my_node_keypair.pubkey(),
-                pending_blocks: BTreeMap::new(),
-                finalized_blocks: BTreeSet::new(),
-                received_shred: BTreeSet::new(),
-                stats: EventHandlerStats::default(),
-            };
+        let local_context = LocalContext {
+            my_pubkey: my_node_keypair.pubkey(),
+            pending_blocks: BTreeMap::new(),
+            finalized_blocks: BTreeSet::new(),
+            received_shred: BTreeSet::new(),
+            stats: EventHandlerStats::default(),
+        };
 
-            EventHandlerTestContext {
-                exit,
-                bls_receiver,
-                commitment_receiver,
-                own_vote_receiver,
-                bank_forks,
-                my_bls_keypair,
-                timer_manager,
-                leader_window_notifier,
-                drop_bank_receiver,
-                cluster_info,
-                consensus_metrics_receiver,
-                shared_context,
-                voting_context,
-                root_context,
-                local_context,
-                bls_ops: vec![],
-            }
+        EventHandlerTestContext {
+            bls_receiver,
+            commitment_receiver,
+            own_vote_receiver,
+            bank_forks,
+            my_bls_keypair,
+            timer_manager,
+            leader_window_info_receiver,
+            drop_bank_receiver,
+            cluster_info,
+            consensus_metrics_receiver,
+            highest_parent_ready,
+            shared_context,
+            voting_context,
+            root_context,
+            local_context,
+            bls_ops: vec![],
         }
+    }
 
+    impl EventHandlerTestContext {
         fn send_parent_ready_event(&mut self, slot: Slot, parent_block: Block) {
             let mut new_ops = EventHandler::handle_event(
                 VotorEvent::ParentReady { slot, parent_block },
@@ -1225,7 +1199,7 @@ mod tests {
             assert_eq!(commitment.slot, expected_slot);
         }
 
-        fn check_no_vote_or_commitment(&self) {
+        fn check_no_vote_or_commitment(&mut self) {
             assert_eq!(
                 self.bls_receiver.try_recv().err(),
                 Some(TryRecvError::Empty)
@@ -1236,24 +1210,17 @@ mod tests {
             );
         }
 
-        fn check_parent_ready_slot(&mut self, expected: (Slot, Block)) {
-            assert_eq!(
-                *self
-                    .leader_window_notifier
-                    .highest_parent_ready
-                    .read()
-                    .unwrap(),
-                expected
-            );
+        fn check_parent_ready_slot(&self, expected: (Slot, Block)) {
+            assert_eq!(*self.highest_parent_ready.read().unwrap(), expected);
             let slot = expected.0;
             self.check_timeout_set(slot);
         }
 
-        fn check_timeout_set(&mut self, expected_slot: Slot) {
+        fn check_timeout_set(&self, expected_slot: Slot) {
             assert!(self.timer_manager.read().is_timeout_set(expected_slot));
         }
 
-        fn check_for_metrics_event(&mut self, expected: ConsensusMetricsEvent) {
+        fn check_for_metrics_event(&self, expected: ConsensusMetricsEvent) {
             let event = self
                 .consensus_metrics_receiver
                 .try_recv()
@@ -1261,7 +1228,7 @@ mod tests {
             assert!(event.1.contains(&expected));
         }
 
-        fn create_vote_history_storage_and_switch_identity(
+        fn crate_vote_history_storage_and_switch_identity(
             &mut self,
             new_identity: &Keypair,
         ) -> PathBuf {
@@ -1274,6 +1241,7 @@ mod tests {
                 .is_ok());
             self.cluster_info
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
+
             self.send_set_identity_event();
             file_vote_history_storage.filename(&new_identity.pubkey())
         }
@@ -1283,7 +1251,7 @@ mod tests {
     fn test_received_block_event_and_parent_ready_event() {
         // Test different orders of received block event and parent ready event
         // some will send Notarize immediately, some will wait for parent ready
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
         // Received block event which says block has completed replay
 
         // If there is a parent ready for block 1 Notarization is sent out.
@@ -1305,7 +1273,6 @@ mod tests {
         // We should receive Notarize Vote for block 1
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_1));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
-
         // Add block event for 1 again will not trigger another Notarize or commitment
         test_context.send_block_event(1, bank1.clone());
         test_context.check_no_vote_or_commitment();
@@ -1317,7 +1284,6 @@ mod tests {
         // Because 2 is middle of window, we should see Notarize vote for block 2 even without parentready
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_2));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
-
         // Slot 3 somehow links to block 1, should not trigger Notarize vote because it has a wrong parent (not 2)
         let _ = test_context.create_block_and_send_block_event(3, bank1.clone());
         test_context.check_no_vote_or_commitment();
@@ -1326,7 +1292,6 @@ mod tests {
         let slot = 4;
         let bank4 = test_context.create_block_and_send_block_event(slot, bank2.clone());
         let block_id_4 = bank4.block_id().unwrap();
-        test_context.check_no_vote_or_commitment();
 
         // Send parent ready for slot 4 should trigger Notarize vote for slot 4
         test_context.send_parent_ready_event(slot, (2, block_id_2));
@@ -1339,7 +1304,7 @@ mod tests {
     fn test_received_block_notarized_and_timeout() {
         // Test block notarized event will trigger Finalize vote when all conditions are met
         // But it will not trigger Finalize if any of the conditions are not met
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         let root_bank = test_context
             .bank_forks
@@ -1355,7 +1320,6 @@ mod tests {
         test_context.check_parent_ready_slot((1, (0, Hash::default())));
         test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
-
         // Send block notarized event should trigger Finalize vote
         test_context.send_block_notarized_event((1, block_id_1));
         test_context.check_for_vote(&Vote::new_finalization_vote(1));
@@ -1409,13 +1373,11 @@ mod tests {
         let bank5 = test_context.create_block_only(slot, bank4.clone());
         test_context.send_block_event(slot, bank5.clone());
         test_context.check_no_vote_or_commitment();
-
-        test_context.exit.store(true, Ordering::Relaxed);
     }
 
     #[test]
     fn test_received_timeout_crashed_leader_and_first_shred() {
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         // Simulate a crashed leader for slot 4
         test_context.send_timeout_crashed_leader_event(4);
@@ -1435,7 +1397,7 @@ mod tests {
 
     #[test]
     fn test_received_safe_to_notar() {
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         // We can theoretically not vote skip here and test will pass, but in real world
         // safe_to_notar event only fires after we voted skip for the whole window
@@ -1448,6 +1410,7 @@ mod tests {
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1_old = bank_1.block_id().unwrap();
         test_context.send_parent_ready_event(1, (0, Hash::default()));
+
         test_context.check_parent_ready_slot((1, (0, Hash::default())));
         test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1_old));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
@@ -1478,7 +1441,7 @@ mod tests {
 
     #[test]
     fn test_received_safe_to_skip() {
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         // The safe_to_skip event only fires after we voted notarize for the slot
         let root_bank = test_context
@@ -1490,10 +1453,10 @@ mod tests {
         let bank_1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank_1.block_id().unwrap();
         test_context.send_parent_ready_event(1, (0, Hash::default()));
+
         test_context.check_parent_ready_slot((1, (0, Hash::default())));
         test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
-
         // Now we got safe_to_skip event for slot 1
         test_context.send_safe_to_skip_event(1);
         // We should see rest of the window skipped
@@ -1509,46 +1472,35 @@ mod tests {
 
     #[test]
     fn test_received_produce_window() {
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         // Produce a full window of blocks
         // Assume the leader for 1-3 is us, send produce window event
         test_context.send_produce_window_event(1, 3, (0, Hash::default()));
 
-        // Check that leader_window_notifier is updated
-        let mut guard = test_context
-            .leader_window_notifier
-            .window_info
-            .lock()
-            .unwrap();
-        let received_leader_window_info = guard.take().unwrap();
+        // Check that leader_window_info is sent via channel
+        let received_leader_window_info =
+            test_context.leader_window_info_receiver.try_recv().unwrap();
         assert_eq!(received_leader_window_info.start_slot, 1);
         assert_eq!(received_leader_window_info.end_slot, 3);
         assert_eq!(
             received_leader_window_info.parent_block,
             (0, Hash::default())
         );
-        drop(guard);
 
         // Suddenly I found out I produced block 1 already, send new produce window event
         let block_id_1 = Hash::new_unique();
         test_context.send_produce_window_event(2, 3, (1, block_id_1));
-        let mut guard = test_context
-            .leader_window_notifier
-            .window_info
-            .lock()
-            .unwrap();
-        let received_leader_window_info = guard.take().unwrap();
+        let received_leader_window_info =
+            test_context.leader_window_info_receiver.try_recv().unwrap();
         assert_eq!(received_leader_window_info.start_slot, 2);
         assert_eq!(received_leader_window_info.end_slot, 3);
         assert_eq!(received_leader_window_info.parent_block, (1, block_id_1));
-        drop(guard);
     }
 
     #[test]
     fn test_received_finalized() {
-        agave_logger::setup();
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         let root_bank = test_context
             .bank_forks
@@ -1560,10 +1512,10 @@ mod tests {
         let block_id_1 = bank1.block_id().unwrap();
 
         test_context.send_parent_ready_event(1, (0, Hash::default()));
+
         test_context.check_parent_ready_slot((1, (0, Hash::default())));
         test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
-
         // Now we got finalized event for slot 1
         test_context.send_finalized_event((1, block_id_1), true);
         // Listen on drop bank receiver, it should get bank 0
@@ -1576,8 +1528,7 @@ mod tests {
 
     #[test]
     fn test_parent_ready_in_middle_of_window() {
-        agave_logger::setup();
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         // We just woke up and received finalize for slot 5
         let root_bank = test_context
@@ -1593,6 +1544,7 @@ mod tests {
         let block_id_5 = bank5.block_id().unwrap();
 
         test_context.send_finalized_event((5, block_id_5), true);
+
         // We should now have parent ready for slot 5
         test_context.check_parent_ready_slot((5, (4, block_id_4)));
 
@@ -1601,6 +1553,7 @@ mod tests {
         let bank9 = test_context.create_block_only(9, bank5.clone());
         let block_id_9 = bank9.block_id().unwrap();
         test_context.send_finalized_event((9, block_id_9), true);
+
         test_context.send_block_event(9, bank9.clone());
 
         // We should now have parent ready for slot 9
@@ -1609,8 +1562,7 @@ mod tests {
 
     #[test]
     fn test_received_standstill() {
-        agave_logger::setup();
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
 
         // Send notarize vote for slot 1 then skip rest of the window
         let root_bank = test_context
@@ -1622,13 +1574,16 @@ mod tests {
         let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
         let block_id_1 = bank1.block_id().unwrap();
         test_context.send_parent_ready_event(1, (0, Hash::default()));
+
         test_context.check_for_vote(&Vote::new_notarization_vote(1, block_id_1));
+
         test_context.send_timeout_event(2);
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
 
         // Send a standstill event with highest parent ready at 0, we should refresh all the votes
         test_context.send_standstill_event(0);
+
         test_context.check_for_votes(&[
             Vote::new_notarization_vote(1, block_id_1),
             Vote::new_skip_vote(2),
@@ -1636,22 +1591,21 @@ mod tests {
         ]);
 
         // Send another standstill event with highest parent ready at 1, we should refresh votes for 2 and 3 only
-        test_context.bls_ops.clear();
         test_context.send_standstill_event(1);
+
         test_context.check_for_votes(&[Vote::new_skip_vote(2), Vote::new_skip_vote(3)]);
     }
 
     #[test]
     fn test_received_set_identity() {
-        agave_logger::setup();
-        let mut test_context = EventHandlerTestContext::setup();
+        let mut test_context = setup();
         let old_identity = test_context.cluster_info.keypair().insecure_clone();
         let new_identity = Keypair::new();
         let mut files_to_remove = vec![];
 
         // Before set identity we need to manually create the vote history storage file for new identity
         files_to_remove
-            .push(test_context.create_vote_history_storage_and_switch_identity(&new_identity));
+            .push(test_context.crate_vote_history_storage_and_switch_identity(&new_identity));
 
         // Should not send any votes because we set to a different identity
         let root_bank = test_context
@@ -1662,16 +1616,17 @@ mod tests {
             .root();
         let _ = test_context.create_block_and_send_block_event(1, root_bank.clone());
         test_context.send_parent_ready_event(1, (0, Hash::default()));
+
         // There should be no votes but we should see commitments for hot spares
         assert_eq!(
             test_context.bls_receiver.try_recv().err(),
-            Some(crossbeam_channel::TryRecvError::Empty)
+            Some(TryRecvError::Empty)
         );
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
 
         // Now set back to original identity
         files_to_remove
-            .push(test_context.create_vote_history_storage_and_switch_identity(&old_identity));
+            .push(test_context.crate_vote_history_storage_and_switch_identity(&old_identity));
 
         // We should now be able to vote again
         let slot = 4;

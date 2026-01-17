@@ -334,6 +334,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.stricter_abi_and_runtime_constraints,
+        allow_memory_region_zero: feature_set.enable_sbpf_v3_deployment_and_execution,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
@@ -539,25 +540,26 @@ pub fn create_program_runtime_environment_v2<'a, 'ix_data>(
         enabled_sbpf_versions: SBPFVersion::Reserved..=SBPFVersion::Reserved,
         optimize_rodata: true,
         aligned_memory_mapping: true,
+        allow_memory_region_zero: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     BuiltinProgram::new_loader(config)
 }
 
-fn translate_type<'a, T>(
-    memory_mapping: &'a MemoryMapping,
+fn translate_type<T>(
+    memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
-) -> Result<&'a T, Error> {
+) -> Result<&T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
         .map(|value| &*value)
 }
-fn translate_slice<'a, T>(
-    memory_mapping: &'a MemoryMapping,
+fn translate_slice<T>(
+    memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<&'a [T], Error> {
+) -> Result<&[T], Error> {
     translate_slice_inner!(
         memory_mapping,
         AccessType::Load,
@@ -587,21 +589,21 @@ fn translate_string_and_do(
 
 // Do not use this directly
 #[allow(clippy::mut_from_ref)]
-fn translate_type_mut<'a, T>(
-    memory_mapping: &'a MemoryMapping,
+fn translate_type_mut<T>(
+    memory_mapping: &MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
-) -> Result<&'a mut T, Error> {
+) -> Result<&mut T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
 // Do not use this directly
 #[allow(clippy::mut_from_ref)]
-fn translate_slice_mut<'a, T>(
-    memory_mapping: &'a MemoryMapping,
+fn translate_slice_mut<T>(
+    memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
+) -> Result<&mut [T], Error> {
     translate_slice_inner!(
         memory_mapping,
         AccessType::Store,
@@ -779,13 +781,13 @@ declare_builtin_function!(
     }
 );
 
-fn translate_and_check_program_address_inputs<'a>(
+fn translate_and_check_program_address_inputs(
     seeds_addr: u64,
     seeds_len: u64,
     program_id_addr: u64,
-    memory_mapping: &'a mut MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
-) -> Result<(Vec<&'a [u8]>, &'a Pubkey), Error> {
+) -> Result<(Vec<&[u8]>, &Pubkey), Error> {
     let untranslated_seeds =
         translate_slice::<VmSlice<u8>>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
     if untranslated_seeds.len() > MAX_SEEDS {

@@ -1,9 +1,9 @@
 use {
     crate::{
         account_loader::{
-            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
             AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, ValidatedTransactionDetails,
+            TransactionLoadResult, ValidatedTransactionDetails, load_transaction,
+            update_rent_exempt_status_for_account, validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
@@ -18,7 +18,7 @@ use {
     },
     log::debug,
     percentage::Percentage,
-    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
+    solana_account::{AccountSharedData, PROGRAM_OWNERS, ReadableAccount, state_traits::StateMut},
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -27,9 +27,9 @@ use {
         inner_instruction::{InnerInstruction, InnerInstructionsList},
     },
     solana_nonce::{
+        NONCED_TX_MARKER_IX_INDEX,
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
-        NONCED_TX_MARKER_IX_INDEX,
     },
     solana_nonce_account::verify_nonce_account,
     solana_program_runtime::{
@@ -51,7 +51,7 @@ use {
     solana_svm_measure::{measure::Measure, measure_us},
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_svm_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
+    solana_svm_type_overrides::sync::{Arc, RwLock, RwLockReadGuard, atomic::Ordering},
     solana_transaction_context::{ExecutionRecord, TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{
@@ -491,8 +491,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     }
                 },
                 TransactionLoadResult::Loaded(loaded_transaction) => {
-                    let (program_accounts_set, filter_executable_us) = measure_us!(self
-                        .filter_executable_program_accounts(
+                    let (program_accounts_set, filter_executable_us) =
+                        measure_us!(self.filter_executable_program_accounts(
                             &account_loader,
                             &mut program_cache_for_tx_batch,
                             tx,
@@ -815,10 +815,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
             } else if let Some((account, last_modification_slot)) =
                 account_loader.get_account_shared_data(account_key)
+                && PROGRAM_OWNERS.contains(account.owner())
             {
-                if PROGRAM_OWNERS.contains(account.owner()) {
-                    program_accounts_set.insert(*account_key, last_modification_slot);
-                }
+                program_accounts_set.insert(*account_key, last_modification_slot);
             }
         }
         program_accounts_set
@@ -953,6 +952,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment.rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
+            tx.num_instructions(),
         );
 
         let pre_account_state_info =
@@ -1090,11 +1090,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         record_inner_instructions: bool,
     ) -> (ExecutionRecord, Option<InnerInstructionsList>) {
         let inner_ix = if record_inner_instructions {
-            debug_assert!(transaction_context
-                .get_instruction_context_at_index_in_trace(0)
-                .map(|instruction_context| instruction_context.get_stack_height()
-                    == TRANSACTION_LEVEL_STACK_HEIGHT)
-                .unwrap_or(true));
+            debug_assert!(
+                transaction_context
+                    .get_instruction_context_at_index_in_trace(0)
+                    .map(|instruction_context| instruction_context.get_stack_height()
+                        == TRANSACTION_LEVEL_STACK_HEIGHT)
+                    .unwrap_or(true)
+            );
 
             let (ix_trace, accounts, ix_data_trace) = transaction_context.take_instruction_trace();
             let mut outer_instructions = Vec::new();
@@ -1181,14 +1183,14 @@ mod tests {
         super::*,
         crate::{
             account_loader::{
-                LoadedTransactionAccount, ValidatedTransactionDetails,
-                TRANSACTION_ACCOUNT_BASE_SIZE,
+                LoadedTransactionAccount, TRANSACTION_ACCOUNT_BASE_SIZE,
+                ValidatedTransactionDetails,
             },
             nonce_info::NonceInfo,
             rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
-        solana_account::{create_account_shared_data_for_test, WritableAccount},
+        solana_account::{WritableAccount, create_account_shared_data_for_test},
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_epoch_schedule::EpochSchedule,
@@ -1209,7 +1211,7 @@ mod tests {
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::TransactionContext,
         solana_transaction_error::TransactionError,
         std::collections::HashMap,
@@ -1359,6 +1361,7 @@ mod tests {
             )],
             Rent::default(),
             3,
+            instruction_trace.len(),
             instruction_trace.len(),
         );
         for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {

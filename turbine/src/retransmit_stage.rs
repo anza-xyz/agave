@@ -4,7 +4,7 @@ use {
     crate::{
         addr_cache::AddrCache,
         cluster_nodes::{
-            ClusterNodes, ClusterNodesCache, Error, DATA_PLANE_FANOUT, MAX_NUM_TURBINE_HOPS,
+            ClusterNodes, ClusterNodesCache, DATA_PLANE_FANOUT, Error, MAX_NUM_TURBINE_HOPS,
         },
         xdp::XdpSender,
     },
@@ -12,7 +12,7 @@ use {
     crossbeam_channel::{Receiver, RecvError, Sender, TryRecvError},
     lru::LruCache,
     rand::Rng,
-    rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
@@ -32,7 +32,7 @@ use {
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
     },
-    solana_streamer::sendmmsg::{multi_target_send, SendPktsError},
+    solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
     std::{
         borrow::Cow,
@@ -40,8 +40,8 @@ use {
         net::{SocketAddr, UdpSocket},
         ops::AddAssign,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -481,14 +481,14 @@ fn retransmit_shred(
     let num_nodes = match socket {
         RetransmitSocket::Xdp(sender) => {
             let mut sent = num_addrs;
-            if num_addrs > 0 {
-                if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
-                    log::warn!("xdp channel full: {e:?}");
-                    stats
-                        .num_shreds_dropped_xdp_full
-                        .fetch_add(num_addrs, Ordering::Relaxed);
-                    sent = 0;
-                }
+            if num_addrs > 0
+                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred)
+            {
+                log::warn!("xdp channel full: {e:?}");
+                stats
+                    .num_shreds_dropped_xdp_full
+                    .fetch_add(num_addrs, Ordering::Relaxed);
+                sent = 0;
             }
             sent
         }
@@ -883,13 +883,13 @@ fn notify_subscribers(
             .unwrap()
             .notify_first_shred_received(slot);
     }
-    if let Some(votor_event_sender) = votor_event_sender {
-        if let Err(err) = votor_event_sender.send(VotorEvent::FirstShred(slot)) {
-            warn!(
-                "Sending {:?} failed as channel became disconnected.  Ignoring.",
-                err.into_inner()
-            );
-        }
+    if let Some(votor_event_sender) = votor_event_sender
+        && let Err(err) = votor_event_sender.send(VotorEvent::FirstShred(slot))
+    {
+        warn!(
+            "Sending {:?} failed as channel became disconnected.  Ignoring.",
+            err.into_inner()
+        );
     }
 }
 

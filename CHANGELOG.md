@@ -32,8 +32,10 @@ Release channels have their own copy of this changelog:
   * `--wait-for-exit` (`exit` subcommand)
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+* The `--enable-accounts-disk-index` flag is now deprecated. Use `--accounts-index-limit` instead. To retain the same behavior, use `--accounts-index-limit minimal`.
 #### Changes
 * `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
+* Added `--accounts-index-limit` to specify the memory limit of the accounts index.
 ### CLI
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`

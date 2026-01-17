@@ -166,15 +166,15 @@ impl<T: BroadcastStats + Default> SlotBroadcastStats<T> {
                 if let Some(num_expected_batches) = batch_info.num_expected_batches {
                     slot_batch_counter.num_expected_batches = Some(num_expected_batches);
                 }
-                if let Some(num_expected_batches) = slot_batch_counter.num_expected_batches {
-                    if slot_batch_counter.num_batches == num_expected_batches {
-                        slot_batch_counter.broadcast_shred_stats.report_stats(
-                            batch_info.slot,
-                            batch_info.slot_start_ts,
-                            batch_info.was_interrupted,
-                        );
-                        should_delete = true;
-                    }
+                if let Some(num_expected_batches) = slot_batch_counter.num_expected_batches
+                    && slot_batch_counter.num_batches == num_expected_batches
+                {
+                    slot_batch_counter.broadcast_shred_stats.report_stats(
+                        batch_info.slot,
+                        batch_info.slot_start_ts,
+                        batch_info.was_interrupted,
+                    );
+                    should_delete = true;
                 }
             }
             if should_delete {

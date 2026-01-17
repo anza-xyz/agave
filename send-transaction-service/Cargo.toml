@@ -30,10 +30,10 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true, optional = true }
 solana-nonce-account = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
 solana-time-utils = { workspace = true }
+solana-tls-utils = { workspace = true }
 solana-tpu-client-next = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }

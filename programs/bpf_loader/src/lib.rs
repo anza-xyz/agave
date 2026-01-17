@@ -16,7 +16,7 @@ use {
     cfg_if::cfg_if,
     solana_bincode::limited_deserialize,
     solana_clock::Slot,
-    solana_instruction::{error::InstructionError, AccountMeta},
+    solana_instruction::{AccountMeta, error::InstructionError},
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
@@ -25,8 +25,9 @@ use {
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
-            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, DELAY_VISIBILITY_SLOT_OFFSET,
+            DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
+            ProgramCacheEntryOwner, ProgramCacheEntryType, ProgramCacheForTxBatch,
+            ProgramRuntimeEnvironment,
         },
         mem_pool::VmMemoryPool,
         serialization, stable_log,
@@ -46,12 +47,12 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_svm_log_collector::{ic_logger_msg, ic_msg, LogCollector},
+    solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
-    solana_svm_type_overrides::sync::{atomic::Ordering, Arc},
-    solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
+    solana_svm_type_overrides::sync::{Arc, atomic::Ordering},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, instruction as system_instruction},
     solana_transaction_context::{
-        instruction::InstructionContext, IndexOfAccount, TransactionContext,
+        IndexOfAccount, TransactionContext, instruction::InstructionContext,
     },
     std::{cell::RefCell, mem, rc::Rc},
 };
@@ -326,15 +327,15 @@ macro_rules! create_vm {
     };
 }
 
-fn create_memory_mapping<'a, 'b, C: ContextObject>(
-    executable: &'a Executable<C>,
-    stack: &'b mut [u8],
-    heap: &'b mut [u8],
+fn create_memory_mapping<'a, C: ContextObject>(
+    executable: &Executable<C>,
+    stack: &'a mut [u8],
+    heap: &'a mut [u8],
     additional_regions: Vec<MemoryRegion>,
     transaction_context: &TransactionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
-) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
+) -> Result<MemoryMapping, Box<dyn std::error::Error>> {
     let config = executable.get_config();
     let sbpf_version = executable.get_sbpf_version();
     let regions: Vec<MemoryRegion> = vec![
@@ -342,7 +343,7 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
         MemoryRegion::new_writable_gapped(
             stack,
             ebpf::MM_STACK_START,
-            if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
+            if !sbpf_version.manual_stack_frame_bump() && config.enable_stack_frame_gaps {
                 config.stack_frame_size as u64
             } else {
                 0
@@ -1210,21 +1211,23 @@ fn process_loader_upgradeable_instruction(
                     &[],
                 )?;
 
-                if upgrade_authority_address.is_none() {
+                if let Some(upgrade_authority_address) = upgrade_authority_address {
+                    if migration_authority::check_id(&provided_authority_address) {
+                        invoke_context.native_invoke(
+                            solana_loader_v4_interface::instruction::transfer_authority(
+                                &program_address,
+                                &provided_authority_address,
+                                &upgrade_authority_address,
+                            ),
+                            &[],
+                        )?;
+                    }
+                } else {
                     invoke_context.native_invoke(
                         solana_loader_v4_interface::instruction::finalize(
                             &program_address,
                             &provided_authority_address,
                             &program_address,
-                        ),
-                        &[],
-                    )?;
-                } else if migration_authority::check_id(&provided_authority_address) {
-                    invoke_context.native_invoke(
-                        solana_loader_v4_interface::instruction::transfer_authority(
-                            &program_address,
-                            &provided_authority_address,
-                            &upgrade_authority_address.unwrap(),
                         ),
                         &[],
                     )?;
@@ -1778,12 +1781,12 @@ mod tests {
         assert_matches::assert_matches,
         rand::Rng,
         solana_account::{
-            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
             AccountSharedData, ReadableAccount, WritableAccount,
+            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
-        solana_instruction::{error::InstructionError, AccountMeta},
+        solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },

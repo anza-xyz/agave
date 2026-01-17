@@ -8,7 +8,7 @@ use {
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
-    serde::{de::Deserializer, Deserialize, Serialize},
+    serde::{Deserialize, Serialize, de::Deserializer},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::{self, Pubkey},

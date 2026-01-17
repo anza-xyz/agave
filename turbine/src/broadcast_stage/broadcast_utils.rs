@@ -6,7 +6,7 @@ use {
     solana_hash::Hash,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, get_data_shred_bytes_per_batch_typical, ProcessShredsStats},
+        shred::{self, ProcessShredsStats, get_data_shred_bytes_per_batch_typical},
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
@@ -198,7 +198,7 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         solana_genesis_config::GenesisConfig,
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
