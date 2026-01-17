@@ -174,7 +174,7 @@ mod tests {
 
     fn add_root_and_flush_write_cache(bank: &Bank) {
         bank.rc.accounts.add_root(bank.slot());
-        bank.flush_accounts_cache_slot_for_tests()
+        bank.force_flush_accounts_cache();
     }
 
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]

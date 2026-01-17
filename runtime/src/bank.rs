@@ -6045,14 +6045,6 @@ impl Bank {
         self.try_process_entry_transactions(txs).unwrap()
     }
 
-    #[cfg(test)]
-    pub fn flush_accounts_cache_slot_for_tests(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .flush_accounts_cache_slot_for_tests(self.slot())
-    }
-
     pub fn get_sysvar_cache_for_tests(&self) -> SysvarCache {
         self.transaction_processor.get_sysvar_cache_for_tests()
     }

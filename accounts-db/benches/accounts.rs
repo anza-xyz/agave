@@ -86,10 +86,7 @@ where
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
     accounts.store_accounts_par((slot, storable_accounts.as_slice()), None);
-    accounts.add_root(slot);
-    accounts
-        .accounts_db
-        .flush_accounts_cache_slot_for_tests(slot);
+    accounts.accounts_db.add_root_and_flush_write_cache(slot);
 
     let pubkeys = Arc::new(pubkeys);
     for i in 0..num_readers {
