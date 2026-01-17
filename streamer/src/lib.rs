@@ -17,6 +17,9 @@ pub mod recvmmsg;
 pub mod sendmmsg;
 pub mod streamer;
 
+#[cfg(feature = "webtransport")]
+pub use nonblocking::webtransport::spawn_webtransport_server;
+
 #[macro_use]
 extern crate log;
 

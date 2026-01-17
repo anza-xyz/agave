@@ -135,6 +135,7 @@ members = [
     "votor",
     "votor-messages",
     "watchtower",
+    "web-transport",
     "wen-restart",
     "xdp",
     "xdp-ebpf",
@@ -210,6 +211,7 @@ agave-snapshots = { path = "snapshots", version = "=4.0.0-alpha.0", features = [
 agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-thread-manager = { path = "thread-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "transaction-view", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+agave-web-transport = { path = "web-transport" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -626,6 +628,7 @@ uriparse = "0.6.4"
 url = "2.5.8"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
+web-transport-proto = "0.3.1"
 winapi = "0.3.8"
 wincode = { version = "0.2.5", features = ["derive", "solana-short-vec"] }
 winreg = "0.55"
