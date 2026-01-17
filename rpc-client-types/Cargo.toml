@@ -39,3 +39,4 @@ thiserror = { workspace = true }
 [dev-dependencies]
 const_format = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-signature = { workspace = true }

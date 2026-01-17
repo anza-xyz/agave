@@ -2297,6 +2297,7 @@ pub async fn process_transaction_history(
                             block_time,
                             slot,
                             transaction: transaction_with_meta,
+                            ..
                         } = confirmed_transaction;
 
                         let decoded_transaction =
