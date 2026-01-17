@@ -82,7 +82,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteStateV4},
+        vote_state::{self, VoteStateV3, VoteStateV4},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -2390,14 +2390,27 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = vote_state::create_v4_account_with_authorized(
-                                identity_pubkey,
-                                identity_pubkey,
-                                identity_pubkey,
-                                None,
-                                10000,
-                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
-                            );
+                            let vote_account = if bank
+                                .feature_set
+                                .is_active(&feature_set::vote_state_v4::id())
+                            {
+                                vote_state::create_v4_account_with_authorized(
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    None,
+                                    10000,
+                                    rent.minimum_balance(VoteStateV4::size_of()).max(1),
+                                )
+                            } else {
+                                vote_state::create_v3_account_with_authorized(
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    100,
+                                    rent.minimum_balance(VoteStateV3::size_of()).max(1),
+                                )
+                            };
 
                             bank.store_account(
                                 stake_pubkey,
