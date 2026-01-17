@@ -143,7 +143,7 @@ use {
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
-        ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
 };
 
