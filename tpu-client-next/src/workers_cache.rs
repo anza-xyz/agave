@@ -184,7 +184,7 @@ impl WorkersCache {
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
-        if let Some(worker) = self.workers.peek(&peer) {
+        if let Some(worker) = self.workers.get(&peer) {
             // if worker is active, we will reuse it. Otherwise, we will spawn
             // the new one and the existing will be popped out.
             if worker.is_active() {
