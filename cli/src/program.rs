@@ -1299,24 +1299,21 @@ pub async fn process_program_subcommand(
 }
 
 fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
-    let program_keypair = {
-        if let Some(program_location) = program_location {
-            let mut keypair_file = PathBuf::new();
-            keypair_file.push(program_location);
-            let mut filename = keypair_file.file_stem().unwrap().to_os_string();
-            filename.push("-keypair");
-            keypair_file.set_file_name(filename);
-            keypair_file.set_extension("json");
-            if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
-                keypair
-            } else {
-                Keypair::new()
-            }
+    if let Some(program_location) = program_location {
+        let mut keypair_file = PathBuf::new();
+        keypair_file.push(program_location);
+        let mut filename = keypair_file.file_stem().unwrap().to_os_string();
+        filename.push("-keypair");
+        keypair_file.set_file_name(filename);
+        keypair_file.set_extension("json");
+        if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
+            keypair
         } else {
             Keypair::new()
         }
-    };
-    program_keypair
+    } else {
+        Keypair::new()
+    }
 }
 
 /// Deploy program using upgradeable loader. It also can process program upgrades
