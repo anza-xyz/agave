@@ -92,7 +92,7 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 
     /// Precomputed thresholds per bin for flushing and eviction
     /// None for Minimal/InMemOnly, Some(threshold_entries_per_bin) for Threshold
-    threshold_entries_per_bin: Option<ThresholdEntriesPerBin>,
+    pub(super) threshold_entries_per_bin: Option<ThresholdEntriesPerBin>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for BucketMapHolder<T, U> {
@@ -502,14 +502,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
 
 /// Precomputed thresholds derived from the configured per-bin target.
 #[derive(Clone, Copy, Debug)]
-struct ThresholdEntriesPerBin {
+pub struct ThresholdEntriesPerBin {
     /// Rounded target entries per bin used as the baseline for thresholds.
-    _target_entries: usize,
+    pub _target_entries: usize,
     /// Entry count above which a bin triggers flushing to disk and eviction
     /// from in-memory index.
-    high_water_mark: usize,
+    pub high_water_mark: usize,
     /// Entry count to reach after flushing/evicting from a bin.
-    low_water_mark: usize,
+    pub low_water_mark: usize,
 }
 
 #[cfg(test)]

@@ -977,15 +977,50 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             return;
         }
 
-        // during startup, nothing should be in the in-mem map
-        let map_internal = self.map_internal.read().unwrap();
-        assert!(
-            map_internal.is_empty(),
-            "len: {}, first: {:?}",
-            map_internal.len(),
-            map_internal.iter().take(1).collect::<Vec<_>>()
-        );
-        drop(map_internal);
+        if let Some(threshold_entries_per_bin) = self.storage.threshold_entries_per_bin.as_ref() {
+            // If a memory threshold is set, then insert into the in-mem index here,
+            // up to that limit.  This way we pre-populate the in-mem index, and can
+            // avoid having to load some entries from disk on first access.
+            let mut map = self.map_internal.write().unwrap();
+            // Insert up to the low water mark.  Purposely do not insert all the way up  to the
+            // high water mark, as that then causes the flush loop condition to immediately trigger
+            // and evict down to the low water mark anyway.
+            let num_available = threshold_entries_per_bin
+                .low_water_mark
+                .saturating_sub(map.len());
+            for (address, (slot, disk_index_value)) in insert.iter().take(num_available) {
+                match map.entry(*address) {
+                    Entry::Vacant(vacant) => {
+                        let index_value = (*disk_index_value).into();
+                        let slot_list = SlotList::from([(*slot, index_value)]);
+                        let ref_count = 1;
+                        let meta = AccountMapEntryMeta::new_clean(&self.storage);
+                        let account_map_entry = AccountMapEntry::new(slot_list, ref_count, meta);
+                        vacant.insert(Box::new(account_map_entry));
+                    }
+                    Entry::Occupied(occupied) => {
+                        // If the account already has an entry in the in-mem index, then that means
+                        // it is a duplicate.  We could merge them here, however duplicates
+                        // handling happens later during startup/index generation, in
+                        // populate_and_retrieve_duplicate_keys_from_startup(), which will insert
+                        // them back into the in-mem index.  Thus we should *not* insert them here!
+                        // Going further, we actually need to remove them here, so there aren't
+                        // issues later.
+                        occupied.remove_entry();
+                    }
+                }
+            }
+        } else {
+            // Else, we should not have anything in the in-mem index at all.
+            let map_internal = self.map_internal.read().unwrap();
+            assert!(
+                map_internal.is_empty(),
+                "len: {}, first: {:?}",
+                map_internal.len(),
+                map_internal.iter().take(1).collect::<Vec<_>>()
+            );
+            drop(map_internal);
+        }
 
         // this fn should only be called from a single thread, so holding the lock is fine
         let mut duplicates = self.startup_info.duplicates.lock().unwrap();
@@ -1276,11 +1311,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self::update_stat(stat, value);
     }
 
-    /// Returns the capacity for this bin's map
+    /// Returns the length and capacity of this bin's map
     ///
     /// Only intended to be called at startup, since it grabs the map's read lock.
-    pub(crate) fn capacity_for_startup(&self) -> usize {
-        self.map_internal.read().unwrap().capacity()
+    pub(crate) fn len_and_cap_for_startup(&self) -> (usize, usize) {
+        let map = self.map_internal.read().unwrap();
+        (map.len(), map.capacity())
     }
 }
 
