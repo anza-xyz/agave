@@ -19,8 +19,10 @@ name = "solana_streamer"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
+webtransport = ["dep:agave-web-transport"]
 
 [dependencies]
+agave-web-transport = { workspace = true, optional = true }
 arc-swap = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -68,3 +70,5 @@ chrono = { workspace = true, features = ["now"] }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-streamer = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+web-transport-quinn = "0.9"
+url = { workspace = true }
