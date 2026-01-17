@@ -56,6 +56,9 @@ RUN \
   libprotobuf-dev \
   protobuf-compiler \
   libclang-dev \
+  # for testing features: linux-shared-hidraw / linux-shared-libusb / linux-static-hidraw / linux-static-libusb
+  libhidapi-dev \
+  libusb-1.0-0-dev \
   && \
   # buildkite
   curl -fsSL https://keys.openpgp.org/vks/v1/by-fingerprint/32A37959C2FA5C3C99EFBC32A79206696452D198 | gpg --dearmor -o /usr/share/keyrings/buildkite-agent-archive-keyring.gpg && \
@@ -79,9 +82,7 @@ RUN \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
-  # uncomment once the dcou-parition related patch is upstreamed...
-  # cargo install cargo-hack && \
-  cargo install --git https://github.com/anza-xyz/cargo-hack.git --rev 5e59c3ec6c661c02601487c0d4b2a2649fe06c9f cargo-hack && \
+  cargo install cargo-hack && \
   cargo install cargo-sort@^2 && \
   cargo install mdbook && \
   cargo install mdbook-linkcheck && \
