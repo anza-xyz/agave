@@ -3265,6 +3265,16 @@ impl Bank {
                         executed_units,
                         loaded_accounts_data_size,
                     ),
+                    ProcessedTransaction::NoOp(no_op_tx) => (
+                        vec![],
+                        Err(no_op_tx.validation_error),
+                        None,
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
                 }
             }
             Err(error) => (vec![], Err(error), None, None, None, None, 0, 0),
@@ -3845,6 +3855,19 @@ impl Bank {
                             .fee_payer()
                             .1
                             .lamports(),
+                    }),
+                    ProcessedTransaction::NoOp(no_op_tx) => Ok(CommittedTransaction {
+                        status: Err(no_op_tx.validation_error),
+                        log_messages: None,
+                        inner_instructions: None,
+                        return_data: None,
+                        executed_units,
+                        fee_details: no_op_tx.fee_details,
+                        loaded_account_stats: TransactionLoadedAccountsStats {
+                            loaded_accounts_count: 0,
+                            loaded_accounts_data_size,
+                        },
+                        fee_payer_post_balance: no_op_tx.fee_payer_balance.unwrap_or(0),
                     }),
                 }
             })
