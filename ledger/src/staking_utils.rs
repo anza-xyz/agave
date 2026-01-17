@@ -1,6 +1,7 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use {
+        agave_feature_set::{bls_pubkey_management_in_vote_account, vote_state_v4},
         rand::Rng,
         solana_account::AccountSharedData,
         solana_clock::Clock,
@@ -18,10 +19,19 @@ pub(crate) mod tests {
         solana_vote::vote_account::{VoteAccount, VoteAccounts},
         solana_vote_program::{
             vote_instruction,
-            vote_state::{VoteInit, VoteStateV4, VoteStateVersions},
+            vote_state::{
+                create_bls_pubkey_and_proof_of_possession, VoteInit, VoteInitV2, VoteStateV4,
+                VoteStateVersions,
+            },
         },
         std::sync::Arc,
     };
+
+    fn is_bls_pubkey_feature_enabled(bank: &Bank) -> bool {
+        bank.feature_set
+            .is_active(&bls_pubkey_management_in_vote_account::id())
+            && bank.feature_set.is_active(&vote_state_v4::id())
+    }
 
     pub(crate) fn setup_vote_and_stake_accounts(
         bank: &Bank,
@@ -41,24 +51,47 @@ pub(crate) mod tests {
             bank.process_transaction(&tx).unwrap();
         }
 
-        process_instructions(
-            bank,
-            &[from_account, vote_account, validator_identity_account],
-            &vote_instruction::create_account_with_config(
+        let instructions = if is_bls_pubkey_feature_enabled(bank) {
+            let (bls_pubkey, bls_proof_of_possession) =
+                create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+            vote_instruction::create_account_with_config_v2(
                 &from_account.pubkey(),
                 &vote_pubkey,
-                &VoteInit {
+                &VoteInitV2 {
                     node_pubkey: validator_identity_account.pubkey(),
                     authorized_voter: vote_pubkey,
+                    authorized_voter_bls_pubkey: bls_pubkey,
+                    authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
                     authorized_withdrawer: vote_pubkey,
-                    commission: 0,
+                    ..Default::default()
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
                     space: VoteStateV4::size_of() as u64,
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
-            ),
+            )
+        } else {
+            vote_instruction::create_account_with_config(
+                &from_account.pubkey(),
+                &vote_pubkey,
+                &VoteInit {
+                    node_pubkey: validator_identity_account.pubkey(),
+                    authorized_voter: vote_pubkey,
+                    authorized_withdrawer: vote_pubkey,
+                    ..VoteInit::default()
+                },
+                amount,
+                vote_instruction::CreateVoteAccountConfig {
+                    space: VoteStateV4::size_of() as u64,
+                    ..vote_instruction::CreateVoteAccountConfig::default()
+                },
+            )
+        };
+        process_instructions(
+            bank,
+            &[from_account, vote_account, validator_identity_account],
+            &instructions,
         );
 
         let stake_account_keypair = Keypair::new();
