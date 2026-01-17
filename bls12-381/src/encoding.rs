@@ -1,5 +1,5 @@
 use {
-    blst::{blst_bendian_from_fp, blst_fp12, blst_lendian_from_fp},
+    blst::{blst_fp12, blst_lendian_from_fp},
     blstrs::{G1Affine, G2Affine, Gt, Scalar},
     bytemuck::Zeroable,
     bytemuck_derive::{Pod, Zeroable as DeriveZeroable},
@@ -184,9 +184,9 @@ pub(crate) fn swap_g2_c0_c1(bytes: &mut [u8]) {
 /// 1. **Fq (`Fp`)**:
 ///    - BE: Big-Endian bytes.
 ///    - LE: Little-Endian bytes.
-/// 2. **Fq2 (`Fp2`)**:
-///    - BE: `c1` followed by `c0`.
-///    - LE: `c0` followed by `c1`.
+/// 2. **Coefficient Ordering**:
+///    - BE: Highest degree coefficients first (reverses the entire tower).
+///    - LE: Lowest degree coefficients first (canonical memory order).
 pub(crate) fn serialize_gt(gt: Gt, endianness: Endianness) -> PodGtElement {
     // `blstrs::Gt` is `repr(transparent)` over `blst_fp12`.
     // We transmute to access the internal coefficients directly because
@@ -201,24 +201,26 @@ pub(crate) fn serialize_gt(gt: Gt, endianness: Endianness) -> PodGtElement {
     unsafe {
         for fp6 in val.fp6.iter() {
             for fp2 in fp6.fp2.iter() {
+                // In LE, we write c0 (Real) then c1 (Imaginary)
                 let c0 = &fp2.fp[0];
                 let c1 = &fp2.fp[1];
 
-                let fps = match endianness {
-                    Endianness::BE => [c1, c0],
-                    Endianness::LE => [c0, c1],
-                };
-
-                for fp in fps {
-                    match endianness {
-                        Endianness::BE => blst_bendian_from_fp(ptr, fp),
-                        Endianness::LE => blst_lendian_from_fp(ptr, fp),
-                    }
-                    ptr = ptr.add(FQ_SIZE);
-                }
+                blst_lendian_from_fp(ptr, c0);
+                ptr = ptr.add(FQ_SIZE);
+                blst_lendian_from_fp(ptr, c1);
+                ptr = ptr.add(FQ_SIZE);
             }
         }
     }
+
+    // If Big Endian is requested, simply reverse the entire byte array, which
+    // achieves both of the following simultaneously:
+    // - flips coefficient order (c0...c11 -> c11...c0)
+    // - flips coefficient bytes (LE -> BE)
+    if matches!(endianness, Endianness::BE) {
+        out.0.reverse();
+    }
+
     out
 }
 
@@ -273,12 +275,12 @@ mod tests {
         assert_eq!(&be_bytes.0[0..48], &[0u8; 48]);
         let mut one_be = [0u8; 48];
         one_be[47] = 1;
-        assert_eq!(&be_bytes.0[48..96], &one_be);
+        assert_eq!(&be_bytes.0[528..576], &one_be);
 
         // LE
         let le_bytes = serialize_gt(identity, Endianness::LE);
         let mut one_le = [0u8; 48];
-        one_le[0] = 1;
+        one_le[0] = 1; // [01, 00, ... 00]
         assert_eq!(&le_bytes.0[0..48], &one_le);
         assert_eq!(&le_bytes.0[48..96], &[0u8; 48]);
     }
