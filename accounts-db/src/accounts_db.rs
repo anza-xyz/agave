@@ -5130,29 +5130,31 @@ impl AccountsDb {
     /// Used for cached accounts only.
     fn update_index_cached_accounts<'a>(
         &self,
-        infos: Vec<AccountInfo>,
+        store_account: Vec<bool>,
         accounts: &impl StorableAccounts<'a>,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         let target_slot = accounts.target_slot();
-        let len = std::cmp::min(accounts.len(), infos.len());
+        let len = std::cmp::min(accounts.len(), store_account.len());
 
         let update = |start, end| {
             (start..end).for_each(|i| {
-                accounts.account(i, |account| {
-                    let info = infos[i];
-                    debug_assert!(info.is_cached());
-                    self.accounts_index.upsert(
-                        target_slot,
-                        target_slot,
-                        account.pubkey(),
-                        &account,
-                        &self.account_indexes,
-                        info,
-                        ReclaimsSlotList::default().as_mut(),
-                        UpsertReclaim::PreviousSlotEntryWasCached,
-                    );
-                });
+                if store_account[i] {
+                    accounts.account(i, |account| {
+                        let info =
+                            AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
+                        self.accounts_index.upsert(
+                            target_slot,
+                            target_slot,
+                            account.pubkey(),
+                            &account,
+                            &self.account_indexes,
+                            info,
+                            ReclaimsSlotList::default().as_mut(),
+                            UpsertReclaim::PreviousSlotEntryWasCached,
+                        );
+                    });
+                }
             });
         };
 
@@ -5622,7 +5624,8 @@ impl AccountsDb {
 
         // Store the accounts in the write cache
         let mut store_accounts_time = Measure::start("store_accounts");
-        let infos = self.write_accounts_to_cache(accounts.target_slot(), &accounts, transactions);
+        let (store_account, ephemeral_accounts_skipped) =
+            self.write_accounts_to_cache(accounts.target_slot(), &accounts, transactions);
         store_accounts_time.stop();
         self.stats
             .store_accounts_to_cache_us
@@ -5631,15 +5634,19 @@ impl AccountsDb {
         // Update the index
         let mut update_index_time = Measure::start("update_index");
 
-        self.update_index_cached_accounts(infos, &accounts, update_index_thread_selection);
+        self.update_index_cached_accounts(store_account, &accounts, update_index_thread_selection);
 
         update_index_time.stop();
         self.stats
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
+        self.stats.num_store_accounts_to_cache.fetch_add(
+            (accounts.len() - ephemeral_accounts_skipped) as u64,
+            Ordering::Relaxed,
+        );
         self.stats
-            .num_store_accounts_to_cache
-            .fetch_add(accounts.len() as u64, Ordering::Relaxed);
+            .ephemeral_accounts_skipped
+            .fetch_add(ephemeral_accounts_skipped as u64, Ordering::Relaxed);
         self.report_store_timings();
     }
 
@@ -5766,7 +5773,8 @@ impl AccountsDb {
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         txs: Option<&[&SanitizedTransaction]>,
-    ) -> Vec<AccountInfo> {
+    ) -> (Vec<bool>, usize) {
+        let mut accounts_skipped = 0;
         let mut current_write_version = if self.accounts_update_notifier.is_some() {
             self.write_version
                 .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel)
@@ -5774,38 +5782,48 @@ impl AccountsDb {
             0
         };
 
-        (0..accounts_and_meta_to_store.len())
-            .map(|index| {
-                let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
-                accounts_and_meta_to_store.account(index, |account| {
-                    let account_shared_data = account.take_account();
-                    let pubkey = account.pubkey();
-                    let account_info =
-                        AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
+        (
+            (0..accounts_and_meta_to_store.len())
+                .map(|index| {
+                    let txn =
+                        txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
+                    accounts_and_meta_to_store.account(index, |account| {
+                        let account_shared_data = account.take_account();
+                        let pubkey = account.pubkey();
+                        if account.is_zero_lamport()
+                            && self
+                                .accounts_index
+                                .get_and_then(pubkey, |account| (true, account.is_none()))
+                        {
+                            accounts_skipped += 1;
+                            return false;
+                        }
 
-                    // if geyser is enabled, send the account update notification
-                    // with the original version of the account
-                    self.notify_account_at_accounts_update(
-                        slot,
-                        &account_shared_data,
-                        &txn,
-                        pubkey,
-                        current_write_version,
-                    );
-                    current_write_version = current_write_version.saturating_add(1);
+                        // if geyser is enabled, send the account update notification
+                        // with the original version of the account
+                        self.notify_account_at_accounts_update(
+                            slot,
+                            &account_shared_data,
+                            &txn,
+                            pubkey,
+                            current_write_version,
+                        );
+                        current_write_version = current_write_version.saturating_add(1);
 
-                    // ...but when actually storing the account, if its balance is zero,
-                    // use the default, which zeroes out all the account fields
-                    let account_to_store = if account.is_zero_lamport() {
-                        AccountSharedData::default()
-                    } else {
-                        account_shared_data
-                    };
-                    self.accounts_cache.store(slot, pubkey, account_to_store);
-                    account_info
+                        // ...but when actually storing the account, if its balance is zero,
+                        // use the default, which zeroes out all the account fields
+                        let account_to_store = if account.is_zero_lamport() {
+                            AccountSharedData::default()
+                        } else {
+                            account_shared_data
+                        };
+                        self.accounts_cache.store(slot, pubkey, account_to_store);
+                        true
+                    })
                 })
-            })
-            .collect()
+                .collect(),
+            accounts_skipped,
+        )
     }
 
     fn write_accounts_to_storage<'a>(
@@ -6056,6 +6074,13 @@ impl AccountsDb {
                     "num_zero_lamport_accounts_added",
                     self.stats
                         .num_zero_lamport_accounts_added
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "ephemeral_accounts_skipped",
+                    self.stats
+                        .ephemeral_accounts_skipped
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),

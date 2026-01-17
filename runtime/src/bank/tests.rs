@@ -8778,8 +8778,8 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     bank1
         .transfer(amount, &mint_keypair, &key1.pubkey())
         .unwrap();
-    bank1.store_account(&key4.pubkey(), &AccountSharedData::new(0, 0, &owner));
-    bank1.store_account(&key5.pubkey(), &AccountSharedData::new(0, 0, &owner));
+    bank1.store_account(&key4.pubkey(), &AccountSharedData::new(1, 0, &owner));
+    bank1.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
 
     if let FreezeBank1::Yes = freeze_bank1 {
         bank1.freeze();
@@ -8793,7 +8793,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     bank2
         .transfer(amount, &mint_keypair, &key3.pubkey())
         .unwrap();
-    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(0, 0, &owner));
+    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
 
     bank2.freeze(); // the freeze here is not strictly necessary, but more for illustration
     bank2.squash();
@@ -11062,6 +11062,8 @@ where
     // create the next bank in the current epoch
     let slot = bank.slot() + 1;
     let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let account = AccountSharedData::new(1, len1, &program);
+    bank.store_account(&bob_pubkey, &account);
 
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;
