@@ -6,7 +6,7 @@ use {
         IO_PRIO_BE_HIGHEST,
     },
     crate::{io_uring::sqpoll, FileSize, IoSize},
-    agave_io_uring::{Completion, Ring, RingOp},
+    agave_io_uring::{Completion, Ring, RingOp, RingReceiver},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
         fs::{File, OpenOptions},
@@ -472,7 +472,7 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             // Safety:
             // The op points to a buffer which is guaranteed to be valid for the
             // lifetime of the operation
-            completion.push(op);
+            completion.push(op)?;
         } else {
             reader_state.buffers[*reader_buf_index] =
                 ReadBufState::Full(Cursor::new(buf.into_shrinked(total_read_len)));
