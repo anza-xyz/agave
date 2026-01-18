@@ -1213,7 +1213,7 @@ pub mod replace_spl_token_with_p_token {
 }
 
 pub mod alt_bn128_little_endian {
-    solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+    solana_pubkey::declare_id!("bn2oPgpkzQPT3tohMaAsMVGjhDmmDa4jCaVPqCFmtxM");
 }
 
 pub mod bls_pubkey_management_in_vote_account {
