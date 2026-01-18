@@ -91,4 +91,17 @@ mod test {
     fn test_sigverify_shred_cpu_repair() {
         run_test_sigverify_shred_cpu_repair(0xdead_c0de);
     }
+
+    #[test]
+    fn test_repair_response_packet_from_bytes_oversized() {
+        let packet = Packet::default();
+        let max_buffer_size = packet.buffer_mut().len();
+        // Create data that exceeds packet buffer size when combined with nonce
+        let oversized_data = vec![0u8; max_buffer_size - SIZE_OF_NONCE + 1];
+        let dest = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
+        let nonce = 42;
+
+        let result = repair_response_packet_from_bytes(oversized_data, &dest, nonce);
+        assert!(result.is_none(), "Should return None for oversized data");
+    }
 }
