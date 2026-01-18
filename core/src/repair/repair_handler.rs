@@ -8,6 +8,7 @@ use {
         repair_response,
         serve_repair::{AncestorHashesResponse, MAX_ANCESTOR_RESPONSES},
     },
+    agave_votor_messages::migration::MigrationStatus,
     bincode::serialize,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -152,12 +153,14 @@ impl RepairHandlerType {
         cluster_info: Arc<ClusterInfo>,
         sharable_banks: SharableBanks,
         serve_repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
+        migration_status: Arc<MigrationStatus>,
     ) -> ServeRepair {
         ServeRepair::new(
             cluster_info,
             sharable_banks,
             serve_repair_whitelist,
             self.to_handler(blockstore),
+            migration_status,
         )
     }
 }

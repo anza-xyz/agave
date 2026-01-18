@@ -141,14 +141,14 @@ impl MigrationPhase {
         matches!(self, MigrationPhase::PreFeatureActivation)
     }
 
-    /// Check if we are ready to enable
-    fn is_ready_to_enable(&self) -> bool {
-        matches!(self, MigrationPhase::ReadyToEnable { .. })
-    }
-
     /// Check if we are in the migrationary period
     fn is_in_migration(&self) -> bool {
         matches!(self, MigrationPhase::Migration { .. })
+    }
+
+    /// Check if we are ready to enable
+    fn is_ready_to_enable(&self) -> bool {
+        matches!(self, MigrationPhase::ReadyToEnable { .. })
     }
 
     /// Is alpenglow enabled. This can be either in the migration epoch after we have certified
@@ -163,6 +163,20 @@ impl MigrationPhase {
     /// Check if we are in the full alpenglow epoch
     fn is_full_alpenglow_epoch(&self) -> bool {
         matches!(self, MigrationPhase::FullAlpenglowEpoch { .. })
+    }
+
+    /// Is this block an alpenglow block?
+    /// We only treat blocks as alpenglow after the migration has succeeded and slot > genesis_slot
+    fn is_alpenglow_block(&self, slot: Slot) -> bool {
+        match self {
+            MigrationPhase::PreFeatureActivation
+            | MigrationPhase::Migration { .. }
+            | MigrationPhase::ReadyToEnable { .. } => false,
+            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
+                slot > genesis_cert.cert_type.slot()
+            }
+            MigrationPhase::FullAlpenglowEpoch { .. } => true,
+        }
     }
 
     /// Check if we are in the process of discovering the genesis block, and `slot` could qualify
@@ -238,17 +252,9 @@ impl MigrationPhase {
     }
 
     /// Should we send `VotorEvent`s for this slot?
-    /// Only send events once alpenglow is enabled for slots > alpenglow genesis
+    /// Only send events for alpenglow blocks
     fn should_send_votor_event(&self, slot: Slot) -> bool {
-        match self {
-            MigrationPhase::PreFeatureActivation
-            | MigrationPhase::Migration { .. }
-            | MigrationPhase::ReadyToEnable { .. } => false,
-            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
-                slot > genesis_cert.cert_type.slot()
-            }
-            MigrationPhase::FullAlpenglowEpoch { .. } => true,
-        }
+        self.is_alpenglow_block(slot)
     }
 
     /// Should we respond to ancestor hashes repair requests  for this slot?
@@ -259,14 +265,13 @@ impl MigrationPhase {
 
     /// Should this block only have an alpentick (1 tick at the end of the block)?
     fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool {
-        // Same as votor events, all other blocks are expected to have normal PoH ticks
-        self.should_send_votor_event(slot)
+        self.is_alpenglow_block(slot)
     }
 
     /// Should this block be allowed to have block markers?
     fn should_allow_block_markers(&self, slot: Slot) -> bool {
-        // Same as votor events, TowerBFT blocks should not have markers
-        self.should_send_votor_event(slot)
+        // Only allow for alpenglow blocks, TowerBFT blocks should not have markers
+        self.is_alpenglow_block(slot)
     }
 }
 

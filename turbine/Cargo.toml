@@ -15,6 +15,7 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-votor = { workspace = true }
+agave-votor-messages = { workspace = true }
 agave-xdp = { workspace = true }
 arc-swap = { workspace = true }
 bincode = { workspace = true }

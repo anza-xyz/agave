@@ -753,17 +753,21 @@ impl RepairService {
         repair_info: RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
     ) {
-        let sharable_banks = repair_info.bank_forks.read().unwrap().sharable_banks();
+        let bank_forks_r = repair_info.bank_forks.read().unwrap();
+        let sharable_banks = bank_forks_r.sharable_banks();
+        let migration_status = bank_forks_r.migration_status();
+        drop(bank_forks_r);
         let root_bank_slot = sharable_banks.root().slot();
         let mut repair_tracker = RepairTracker {
-            sharable_banks,
+            sharable_banks: sharable_banks.clone(),
             repair_weight: RepairWeight::new(root_bank_slot),
             serve_repair: {
                 ServeRepair::new(
                     repair_info.cluster_info.clone(),
-                    repair_info.bank_forks.read().unwrap().sharable_banks(),
+                    sharable_banks,
                     repair_info.repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
+                    migration_status,
                 )
             },
             repair_metrics: RepairMetrics::default(),
@@ -1656,11 +1660,13 @@ mod test {
         let cluster_info = Arc::new(new_test_cluster_info());
         let identity_keypair = cluster_info.keypair();
         let serve_repair = {
+            let bank_forks_r = bank_forks.read().unwrap();
             ServeRepair::new(
                 cluster_info,
-                bank_forks.read().unwrap().sharable_banks(),
+                bank_forks_r.sharable_banks(),
                 Arc::new(RwLock::new(HashSet::default())),
                 Box::new(StandardRepairHandler::new(blockstore.clone())),
+                bank_forks_r.migration_status(),
             )
         };
         let mut duplicate_slot_repair_statuses = HashMap::new();
@@ -1758,11 +1764,13 @@ mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let serve_repair = {
+            let bank_forks_r = bank_forks.read().unwrap();
             ServeRepair::new(
                 cluster_info.clone(),
-                bank_forks.read().unwrap().sharable_banks(),
+                bank_forks_r.sharable_banks(),
                 Arc::new(RwLock::new(HashSet::default())),
                 Box::new(StandardRepairHandler::new(blockstore)),
+                bank_forks_r.migration_status(),
             )
         };
         let valid_repair_peer = Node::new_localhost().info;

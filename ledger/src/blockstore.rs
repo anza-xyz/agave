@@ -1374,8 +1374,23 @@ impl Blockstore {
         }
     }
 
-    // Bypasses erasure recovery because it is called from broadcast stage
-    // when inserting own shreds during leader slots.
+    /// Atomically clear a range of `slot` inclusive, similar to `Blockstore::clear_unconfirmed_slot`
+    /// Holds the shred lock during the entire purge.
+    pub fn clear_unconfirmed_slots(&self, start: Slot, end: Slot) {
+        let _lock = self.insert_shreds_lock.lock().unwrap();
+        for slot in start..=end {
+            match self.purge_slot_cleanup_chaining(slot) {
+                Ok(_) => {}
+                Err(BlockstoreError::SlotUnavailable) => {
+                    error!("clear_unconfirmed_slots() called on slot {slot} with no SlotMeta")
+                }
+                Err(e) => panic!("Purge database operations failed {e}"),
+            }
+        }
+    }
+
+    // Bypasses erasure recovery becuase it is called from broadcast stage
+    // when inserting own shreds during leader slots. Stores all shreds in the original column.
     pub fn insert_cow_shreds<'a>(
         &self,
         shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
