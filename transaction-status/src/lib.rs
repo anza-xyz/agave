@@ -1009,9 +1009,10 @@ mod test {
 
         let confirmed_tx = ConfirmedTransactionWithStatusMeta {
             slot: 42,
-            tx_with_meta: TransactionWithStatusMeta::Complete(
-                VersionedTransactionWithStatusMeta { transaction: tx, meta },
-            ),
+            tx_with_meta: TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
+                transaction: tx,
+                meta,
+            }),
             block_time: Some(1234567890),
             index: 7,
         };
