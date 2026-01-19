@@ -60,7 +60,7 @@ mod tests {
     use {super::*, crate::test_vectors::*, bytemuck::cast_slice};
 
     fn run_pairing_test(
-        op_name: &str,
+        test_name: &str,
         num_pairs: u64,
         input_be: &[u8],
         output_be: &[u8],
@@ -85,7 +85,7 @@ mod tests {
         assert_eq!(
             result_be,
             Some(expected_be),
-            "Pairing {op_name} BE Test Failed",
+            "Pairing {test_name} BE Test Failed",
         );
 
         // --- Test Little Endian ---
@@ -99,14 +99,14 @@ mod tests {
         assert_eq!(
             result_le,
             Some(expected_le),
-            "Pairing {op_name} LE Test Failed",
+            "Pairing {test_name} LE Test Failed",
         );
     }
 
     #[test]
     fn test_pairing_identity() {
         run_pairing_test(
-            "IDENTITY",
+            "Pair: IDENTITY",
             0,
             INPUT_BE_PAIRING_IDENTITY,
             OUTPUT_BE_PAIRING_IDENTITY,
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn test_pairing_one_pair() {
         run_pairing_test(
-            "ONE_PAIR",
+            "Pair: ONE_PAIR",
             1,
             INPUT_BE_PAIRING_ONE_PAIR,
             OUTPUT_BE_PAIRING_ONE_PAIR,
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn test_pairing_two_pairs() {
         run_pairing_test(
-            "TWO_PAIRS",
+            "Pair: TWO_PAIRS",
             2,
             INPUT_BE_PAIRING_TWO_PAIRS,
             OUTPUT_BE_PAIRING_TWO_PAIRS,
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn test_pairing_three_pairs() {
         run_pairing_test(
-            "THREE_PAIRS",
+            "Pair: THREE_PAIRS",
             3,
             INPUT_BE_PAIRING_THREE_PAIRS,
             OUTPUT_BE_PAIRING_THREE_PAIRS,
@@ -155,7 +155,7 @@ mod tests {
     fn test_pairing_bilinearity() {
         // e(aP, Q) * e(P, -aQ) == 1
         run_pairing_test(
-            "BILINEARITY_IDENTITY",
+            "Pair: BILINEARITY_IDENTITY",
             2,
             INPUT_BE_PAIRING_BILINEARITY_IDENTITY,
             OUTPUT_BE_PAIRING_BILINEARITY_IDENTITY,

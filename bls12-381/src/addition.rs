@@ -70,7 +70,7 @@ mod tests {
     }
 
     fn run_g1_test(
-        op_name: &str,
+        test_name: &str,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
@@ -84,7 +84,11 @@ mod tests {
 
         // Test Big Endian
         let result_be = bls12_381_g1_addition(Version::V0, &p1_be, &p2_be, Endianness::BE);
-        assert_eq!(result_be, Some(expected_be), "G1 {op_name} BE Test Failed",);
+        assert_eq!(
+            result_be,
+            Some(expected_be),
+            "G1 {test_name} BE Test Failed",
+        );
 
         // Test Little Endian
         let (p1_le, p2_le) = input_le.split_at(96);
@@ -93,11 +97,15 @@ mod tests {
         let expected_le = to_pod_g1(output_le);
 
         let result_le = bls12_381_g1_addition(Version::V0, &p1_le, &p2_le, Endianness::LE);
-        assert_eq!(result_le, Some(expected_le), "G1 {op_name} LE Test Failed",);
+        assert_eq!(
+            result_le,
+            Some(expected_le),
+            "G1 {test_name} LE Test Failed",
+        );
     }
 
     fn run_g2_test(
-        op_name: &str,
+        test_name: &str,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
@@ -111,7 +119,11 @@ mod tests {
 
         // Test Big Endian
         let result_be = bls12_381_g2_addition(Version::V0, &p1_be, &p2_be, Endianness::BE);
-        assert_eq!(result_be, Some(expected_be), "G2 {op_name} BE Test Failed",);
+        assert_eq!(
+            result_be,
+            Some(expected_be),
+            "G2 {test_name} BE Test Failed",
+        );
 
         // Test Little Endian
         let (p1_le, p2_le) = input_le.split_at(192);
@@ -120,13 +132,17 @@ mod tests {
         let expected_le = to_pod_g2(output_le);
 
         let result_le = bls12_381_g2_addition(Version::V0, &p1_le, &p2_le, Endianness::LE);
-        assert_eq!(result_le, Some(expected_le), "G2 {op_name} LE Test Failed",);
+        assert_eq!(
+            result_le,
+            Some(expected_le),
+            "G2 {test_name} LE Test Failed",
+        );
     }
 
     #[test]
     fn test_g1_addition_random() {
         run_g1_test(
-            "ADD",
+            "ADD: P (Rand) + Q (Rand)",
             INPUT_BE_G1_ADD_RANDOM,
             OUTPUT_BE_G1_ADD_RANDOM,
             INPUT_LE_G1_ADD_RANDOM,
@@ -137,7 +153,7 @@ mod tests {
     #[test]
     fn test_g1_addition_doubling() {
         run_g1_test(
-            "ADD",
+            "ADD: P + P (Doubling)",
             INPUT_BE_G1_ADD_DOUBLING,
             OUTPUT_BE_G1_ADD_DOUBLING,
             INPUT_LE_G1_ADD_DOUBLING,
@@ -149,7 +165,7 @@ mod tests {
     fn test_g1_addition_infinity_edge_cases() {
         // P + Inf
         run_g1_test(
-            "ADD",
+            "ADD: P + Inf",
             INPUT_BE_G1_ADD_P_PLUS_INF,
             OUTPUT_BE_G1_ADD_P_PLUS_INF,
             INPUT_LE_G1_ADD_P_PLUS_INF,
@@ -157,7 +173,7 @@ mod tests {
         );
         // Inf + Inf
         run_g1_test(
-            "ADD",
+            "ADD: Inf + Inf",
             INPUT_BE_G1_ADD_INF_PLUS_INF,
             OUTPUT_BE_G1_ADD_INF_PLUS_INF,
             INPUT_LE_G1_ADD_INF_PLUS_INF,
@@ -168,7 +184,7 @@ mod tests {
     #[test]
     fn test_g2_addition_random() {
         run_g2_test(
-            "ADD",
+            "ADD: P (Rand) + Q (Rand)",
             INPUT_BE_G2_ADD_RANDOM,
             OUTPUT_BE_G2_ADD_RANDOM,
             INPUT_LE_G2_ADD_RANDOM,
@@ -179,7 +195,7 @@ mod tests {
     #[test]
     fn test_g2_addition_doubling() {
         run_g2_test(
-            "ADD",
+            "ADD: P + P (Doubling)",
             INPUT_BE_G2_ADD_DOUBLING,
             OUTPUT_BE_G2_ADD_DOUBLING,
             INPUT_LE_G2_ADD_DOUBLING,
@@ -191,7 +207,7 @@ mod tests {
     fn test_g2_addition_infinity_edge_cases() {
         // P + Inf
         run_g2_test(
-            "ADD",
+            "ADD: P + Inf",
             INPUT_BE_G2_ADD_P_PLUS_INF,
             OUTPUT_BE_G2_ADD_P_PLUS_INF,
             INPUT_LE_G2_ADD_P_PLUS_INF,
@@ -199,7 +215,7 @@ mod tests {
         );
         // Inf + Inf
         run_g2_test(
-            "ADD",
+            "ADD: Inf + Inf",
             INPUT_BE_G2_ADD_INF_PLUS_INF,
             OUTPUT_BE_G2_ADD_INF_PLUS_INF,
             INPUT_LE_G2_ADD_INF_PLUS_INF,

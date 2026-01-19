@@ -100,7 +100,7 @@ mod tests {
     }
 
     fn run_g1_test(
-        op_name: &str,
+        test_name: &str,
         input_be: &[u8],
         output_be: Option<&[u8]>,
         input_le: &[u8],
@@ -113,9 +113,9 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_be,
                 Some(to_pod_g1(expected)),
-                "G1 {op_name} BE Test Failed",
+                "G1 {test_name} BE Test Failed",
             ),
-            None => assert!(result_be.is_none(), "G1 {op_name} BE expected failure"),
+            None => assert!(result_be.is_none(), "G1 {test_name} BE expected failure"),
         }
 
         // Test Little Endian
@@ -125,14 +125,14 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_le,
                 Some(to_pod_g1(expected)),
-                "G1 {op_name} LE Test Failed",
+                "G1 {test_name} LE Test Failed",
             ),
-            None => assert!(result_le.is_none(), "G1 {op_name} LE expected failure"),
+            None => assert!(result_le.is_none(), "G1 {test_name} LE expected failure"),
         }
     }
 
     fn run_g2_test(
-        op_name: &str,
+        test_name: &str,
         input_be: &[u8],
         output_be: Option<&[u8]>,
         input_le: &[u8],
@@ -145,9 +145,9 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_be,
                 Some(to_pod_g2(expected)),
-                "G2 {op_name} BE Test Failed",
+                "G2 {test_name} BE Test Failed",
             ),
-            None => assert!(result_be.is_none(), "G2 {op_name} BE expected failure"),
+            None => assert!(result_be.is_none(), "G2 {test_name} BE expected failure"),
         }
 
         // Test Little Endian
@@ -157,16 +157,16 @@ mod tests {
             Some(expected) => assert_eq!(
                 result_le,
                 Some(to_pod_g2(expected)),
-                "G2 {op_name} LE Test Failed",
+                "G2 {test_name} LE Test Failed",
             ),
-            None => assert!(result_le.is_none(), "G2 {op_name} LE expected failure"),
+            None => assert!(result_le.is_none(), "G2 {test_name} LE expected failure"),
         }
     }
 
     #[test]
     fn test_g1_decompress_random() {
         run_g1_test(
-            "RANDOM",
+            "Decompress: RANDOM",
             INPUT_BE_G1_DECOMPRESS_RANDOM,
             Some(OUTPUT_BE_G1_DECOMPRESS_RANDOM),
             INPUT_LE_G1_DECOMPRESS_RANDOM,
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_g1_decompress_infinity() {
         run_g1_test(
-            "INFINITY",
+            "Decompress: INFINITY",
             INPUT_BE_G1_DECOMPRESS_INFINITY,
             Some(OUTPUT_BE_G1_DECOMPRESS_INFINITY),
             INPUT_LE_G1_DECOMPRESS_INFINITY,
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn test_g1_decompress_generator() {
         run_g1_test(
-            "GENERATOR",
+            "Decompress: GENERATOR",
             INPUT_BE_G1_DECOMPRESS_GENERATOR,
             Some(OUTPUT_BE_G1_DECOMPRESS_GENERATOR),
             INPUT_LE_G1_DECOMPRESS_GENERATOR,
@@ -199,14 +199,14 @@ mod tests {
     #[test]
     fn test_g1_decompress_invalid() {
         run_g1_test(
-            "INVALID_CURVE",
+            "Decompress: INVALID_CURVE",
             INPUT_BE_G1_DECOMPRESS_RANDOM_INVALID_CURVE,
             None,
             INPUT_LE_G1_DECOMPRESS_RANDOM_INVALID_CURVE,
             None,
         );
         run_g1_test(
-            "INVALID_FIELD",
+            "Decompress: INVALID_FIELD",
             INPUT_BE_G1_DECOMPRESS_FIELD_TOO_LARGE_INVALID,
             None,
             INPUT_LE_G1_DECOMPRESS_FIELD_TOO_LARGE_INVALID,
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn test_g2_decompress_random() {
         run_g2_test(
-            "RANDOM",
+            "Decompress: RANDOM",
             INPUT_BE_G2_DECOMPRESS_RANDOM,
             Some(OUTPUT_BE_G2_DECOMPRESS_RANDOM),
             INPUT_LE_G2_DECOMPRESS_RANDOM,
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_g2_decompress_infinity() {
         run_g2_test(
-            "INFINITY",
+            "Decompress: INFINITY",
             INPUT_BE_G2_DECOMPRESS_INFINITY,
             Some(OUTPUT_BE_G2_DECOMPRESS_INFINITY),
             INPUT_LE_G2_DECOMPRESS_INFINITY,
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn test_g2_decompress_generator() {
         run_g2_test(
-            "GENERATOR",
+            "Decompress: GENERATOR",
             INPUT_BE_G2_DECOMPRESS_GENERATOR,
             Some(OUTPUT_BE_G2_DECOMPRESS_GENERATOR),
             INPUT_LE_G2_DECOMPRESS_GENERATOR,
@@ -250,14 +250,14 @@ mod tests {
     #[test]
     fn test_g2_decompress_invalid() {
         run_g2_test(
-            "INVALID_CURVE",
+            "Decompress: INVALID_CURVE",
             INPUT_BE_G2_DECOMPRESS_RANDOM_INVALID_CURVE,
             None,
             INPUT_LE_G2_DECOMPRESS_RANDOM_INVALID_CURVE,
             None,
         );
         run_g2_test(
-            "INVALID_FIELD",
+            "Decompress: INVALID_FIELD",
             INPUT_BE_G2_DECOMPRESS_FIELD_TOO_LARGE_INVALID,
             None,
             INPUT_LE_G2_DECOMPRESS_FIELD_TOO_LARGE_INVALID,
