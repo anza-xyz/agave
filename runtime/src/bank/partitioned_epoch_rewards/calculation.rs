@@ -8,7 +8,7 @@ use {
     },
     crate::{
         bank::{
-            null_tracer, PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent,
+            null_tracer, EpochInflationRewards, RewardCalcTracer, RewardCalculationEvent,
             RewardsMetrics, VoteReward, VoteRewards,
         },
         inflation_rewards::{
@@ -296,12 +296,12 @@ impl Bank {
         metrics: &mut RewardsMetrics,
     ) -> PartitionedRewardsCalculation {
         let capitalization = self.capitalization();
-        let PrevEpochInflationRewards {
-            validator_rewards,
-            prev_epoch_duration_in_years,
+        let EpochInflationRewards {
+            validator_rewards_lamports,
+            epoch_duration_in_years,
             validator_rate,
             foundation_rate,
-        } = self.calculate_previous_epoch_inflation_rewards(capitalization, rewarded_epoch);
+        } = self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
 
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
@@ -313,7 +313,7 @@ impl Bank {
                 stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
-                validator_rewards,
+                validator_rewards_lamports,
                 reward_calc_tracer,
                 thread_pool,
                 metrics,
@@ -330,7 +330,7 @@ impl Bank {
             stake_rewards,
             validator_rate,
             foundation_rate,
-            prev_epoch_duration_in_years,
+            prev_epoch_duration_in_years: epoch_duration_in_years,
             capitalization,
             point_value,
         }

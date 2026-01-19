@@ -831,21 +831,22 @@ where
         - bank2_sysvar_delta();
 
     // this assumes that no new builtins or precompiles were activated in bank1 or bank2
-    let PrevEpochInflationRewards {
-        validator_rewards, ..
-    } = bank2.calculate_previous_epoch_inflation_rewards(bank0.capitalization(), bank0.epoch());
+    let EpochInflationRewards {
+        validator_rewards_lamports,
+        ..
+    } = bank2.calculate_epoch_inflation_rewards(bank0.capitalization(), bank0.epoch());
 
     // verify the stake and vote accounts are the right size
     assert!(
         ((bank2.get_balance(&stake_id) - stake_account.lamports() + bank2.get_balance(&vote_id)
             - vote_account.lamports()) as f64
-            - validator_rewards as f64)
+            - validator_rewards_lamports as f64)
             .abs()
             < 1.0
     );
 
     // verify the rewards are the right size
-    assert!((validator_rewards as f64 - paid_rewards as f64).abs() < 1.0); // rounding, truncating
+    assert!((validator_rewards_lamports as f64 - paid_rewards as f64).abs() < 1.0); // rounding, truncating
 
     // verify validator rewards show up in rewards vectors
     assert_eq!(
@@ -854,7 +855,7 @@ where
             stake_id,
             RewardInfo {
                 reward_type: RewardType::Staking,
-                lamports: validator_rewards as i64,
+                lamports: validator_rewards_lamports as i64,
                 post_balance: bank2.get_balance(&stake_id),
                 commission: Some(0),
             }
