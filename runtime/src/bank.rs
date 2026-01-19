@@ -2421,38 +2421,36 @@ impl Bank {
     /// by combining previously separate rewards and accounts vectors into a
     /// single accounts_with_rewards vector.
     fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
-        let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
-            accounts_with_rewards: Vec::with_capacity(len),
+            accounts_with_rewards: Vec::with_capacity(vote_account_rewards.len()),
             total_vote_rewards_lamports: 0,
         };
-        vote_account_rewards.into_iter().for_each(
-            |(
-                vote_pubkey,
-                VoteReward {
-                    mut vote_account,
-                    commission,
-                    vote_rewards,
-                },
-            )| {
-                if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
-                    debug!("reward redemption failed for {vote_pubkey}: {err:?}");
-                    return;
-                }
-
-                result.accounts_with_rewards.push((
-                    vote_pubkey,
-                    RewardInfo {
-                        reward_type: RewardType::Voting,
-                        lamports: vote_rewards as i64,
-                        post_balance: vote_account.lamports(),
-                        commission: Some(commission),
-                    },
-                    vote_account,
-                ));
-                result.total_vote_rewards_lamports += vote_rewards;
+        for (
+            vote_pubkey,
+            VoteReward {
+                mut vote_account,
+                commission,
+                vote_rewards,
             },
-        );
+        ) in vote_account_rewards
+        {
+            if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
+                debug!("reward redemption failed for {vote_pubkey}: {err:?}");
+                continue;
+            }
+
+            result.accounts_with_rewards.push((
+                vote_pubkey,
+                RewardInfo {
+                    reward_type: RewardType::Voting,
+                    lamports: vote_rewards as i64,
+                    post_balance: vote_account.lamports(),
+                    commission: Some(commission),
+                },
+                vote_account,
+            ));
+            result.total_vote_rewards_lamports += vote_rewards;
+        }
         result
     }
 
