@@ -1,6 +1,8 @@
 use {
     agave_votor_messages::{
-        consensus_message::CertificateType, migration::GENESIS_VOTE_THRESHOLD, vote::Vote,
+        consensus_message::CertificateType,
+        migration::GENESIS_VOTE_THRESHOLD,
+        vote::{Vote, VoteType},
     },
     std::time::Duration,
 };
@@ -8,70 +10,50 @@ use {
 // Core consensus types and constants
 pub type Stake = u64;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum VoteType {
-    Finalize,
-    Notarize,
-    NotarizeFallback,
-    Skip,
-    SkipFallback,
-    Genesis,
-}
-
-impl VoteType {
-    pub fn get_type(vote: &Vote) -> VoteType {
-        match vote {
-            Vote::Notarize(_) => VoteType::Notarize,
-            Vote::NotarizeFallback(_) => VoteType::NotarizeFallback,
-            Vote::Skip(_) => VoteType::Skip,
-            Vote::SkipFallback(_) => VoteType::SkipFallback,
-            Vote::Finalize(_) => VoteType::Finalize,
-            Vote::Genesis(_) => VoteType::Genesis,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_notarize_type(&self) -> bool {
-        matches!(self, Self::Notarize | Self::NotarizeFallback)
+pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
+    match vote_type {
+        VoteType::Finalize => &[VoteType::NotarizeFallback, VoteType::Skip],
+        VoteType::Notarize => &[VoteType::Skip, VoteType::NotarizeFallback],
+        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize],
+        VoteType::Skip => &[
+            VoteType::Finalize,
+            VoteType::Notarize,
+            VoteType::SkipFallback,
+        ],
+        VoteType::SkipFallback => &[VoteType::Skip],
+        VoteType::Genesis => &[
+            VoteType::Finalize,
+            VoteType::Notarize,
+            VoteType::NotarizeFallback,
+            VoteType::Skip,
+            VoteType::SkipFallback,
+        ],
     }
 }
 
-/// For a given [`CertificateType`], returns the fractional stake, the [`Vote`], and the optional fallback [`Vote`] required to construct it.
+/// Lookup from `CertificateId` to the `VoteType`s that contribute,
+/// as well as the stake fraction required for certificate completion.
 ///
-/// Must be in sync with [`vote_to_certificate_ids`].
-pub(crate) fn certificate_limits_and_votes(
+/// Must be in sync with `vote_to_cert_types`
+pub(crate) const fn certificate_limits_and_vote_types(
     cert_type: &CertificateType,
-) -> (f64, Vote, Option<Vote>) {
+) -> (f64, &'static [VoteType]) {
     match cert_type {
-        CertificateType::Notarize(slot, block_id) => {
-            (0.6, Vote::new_notarization_vote(*slot, *block_id), None)
+        CertificateType::Notarize(_, _) => (0.6, &[VoteType::Notarize]),
+        CertificateType::NotarizeFallback(_, _) => {
+            (0.6, &[VoteType::Notarize, VoteType::NotarizeFallback])
         }
-        CertificateType::NotarizeFallback(slot, block_id) => (
-            0.6,
-            Vote::new_notarization_vote(*slot, *block_id),
-            Some(Vote::new_notarization_fallback_vote(*slot, *block_id)),
-        ),
-        CertificateType::FinalizeFast(slot, block_id) => {
-            (0.8, Vote::new_notarization_vote(*slot, *block_id), None)
-        }
-        CertificateType::Finalize(slot) => (0.6, Vote::new_finalization_vote(*slot), None),
-        CertificateType::Skip(slot) => (
-            0.6,
-            Vote::new_skip_vote(*slot),
-            Some(Vote::new_skip_fallback_vote(*slot)),
-        ),
-        CertificateType::Genesis(slot, block_id) => (
-            GENESIS_VOTE_THRESHOLD,
-            Vote::new_genesis_vote(*slot, *block_id),
-            None,
-        ),
+        CertificateType::FinalizeFast(_, _) => (0.8, &[VoteType::Notarize]),
+        CertificateType::Finalize(_) => (0.6, &[VoteType::Finalize]),
+        CertificateType::Skip(_) => (0.6, &[VoteType::Skip, VoteType::SkipFallback]),
+        CertificateType::Genesis(_, _) => (GENESIS_VOTE_THRESHOLD, &[VoteType::Genesis]),
     }
 }
 
 /// Lookup from `Vote` to the `CertificateId`s the vote accounts for
 ///
 /// Must be in sync with `certificate_limits_and_vote_types` and `VoteType::get_type`
-pub fn vote_to_certificate_ids(vote: &Vote) -> Vec<CertificateType> {
+pub fn vote_to_cert_types(vote: &Vote) -> Vec<CertificateType> {
     match vote {
         Vote::Notarize(vote) => vec![
             CertificateType::Notarize(vote.slot, vote.block_id),

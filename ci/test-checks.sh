@@ -21,39 +21,22 @@ ERROR: cargo hack failed.
 EOF
 fi
 
-echo --- build environment
-(
-  set -x
-
-  rustup run "$rust_stable" rustc --version --verbose
-  rustup run "$rust_nightly" rustc --version --verbose
-
-  cargo --version --verbose
-  $cargoNightly --version --verbose
-
-  cargo clippy --version --verbose
-  $cargoNightly clippy --version --verbose
-
-  # miri is only available with nightly
-  $cargoNightly miri --version --verbose
-
-  $cargoNightly hack --version --verbose
-
-  # audit is done only with "$cargo stable"
-  cargo audit --version
-
-  grcov --version
-
-  sccache --version
-
-  wasm-pack --version
-
-  cargo nextest --version --verbose
-  $cargoNightly nextest --version --verbose
-)
-
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
+
+# sort
+if [[ -n $CI ]]; then
+  # exclude from printing "Checking xxx ..."
+  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
+else
+  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
+fi
+
+# check dev-context-only-utils isn't used in normal dependencies
+_ scripts/check-dev-context-only-utils.sh tree
+
+# fmt
+_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 
 # run cargo check for all rust files in this monorepo for faster turnaround in
 # case of any compilation/build error for nightly
@@ -77,17 +60,6 @@ fi
 _ ci/order-crates-for-publishing.py
 
 _ scripts/cargo-clippy.sh
-
-if [[ -n $CI ]]; then
-  # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
-else
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
-fi
-
-_ scripts/check-dev-context-only-utils.sh tree
-
-_ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 
 _ ci/do-audit.sh
 

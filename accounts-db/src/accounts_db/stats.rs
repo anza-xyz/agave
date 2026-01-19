@@ -11,12 +11,14 @@ use {
 #[derive(Debug, Default)]
 pub struct AccountsStats {
     pub last_store_report: AtomicInterval,
-    pub store_accounts: AtomicU64,
+    pub store_accounts_to_cache_us: AtomicU64,
+    pub store_accounts_to_storage_us: AtomicU64,
     pub store_update_index: AtomicU64,
     pub store_handle_reclaims: AtomicU64,
     pub store_append_accounts: AtomicU64,
     pub stakes_cache_check_and_store_us: AtomicU64,
-    pub store_num_accounts: AtomicU64,
+    pub num_store_accounts_to_cache: AtomicU64,
+    pub num_store_accounts_to_storage: AtomicU64,
     pub store_total_data: AtomicU64,
     pub num_reclaims: AtomicU64,
     pub create_store_count: AtomicU64,

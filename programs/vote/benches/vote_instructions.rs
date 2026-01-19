@@ -19,9 +19,9 @@ use {
         vote_instruction::VoteInstruction,
         vote_processor::Entrypoint,
         vote_state::{
-            create_v4_account_with_authorized, TowerSync, Vote, VoteAuthorize,
-            VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate,
-            VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            create_v4_account_with_authorized, handler::VoteStateHandle, TowerSync, Vote,
+            VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit,
+            VoteStateUpdate, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
 };

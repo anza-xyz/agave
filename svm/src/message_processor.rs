@@ -88,12 +88,12 @@ mod tests {
         },
         rand0_7::thread_rng,
         solana_account::{
-            Account, AccountSharedData, ReadableAccount, WritableAccount,
-            DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+            Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount,
+            WritableAccount,
         },
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_hash::Hash,
-        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_instruction::{AccountMeta, Instruction, error::InstructionError},
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_precompile_error::PrecompileError,
         solana_program_runtime::{
@@ -191,7 +191,7 @@ mod tests {
                 create_loadable_account_for_test("mock_system_program"),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3);
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 2);
         let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
@@ -433,7 +433,7 @@ mod tests {
                 create_loadable_account_for_test("mock_system_program"),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3);
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 2);
         let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
@@ -661,7 +661,7 @@ mod tests {
             (solana_secp256r1_program::id(), secp256r1_account),
             (mock_program_id, mock_program_account),
         ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 4);
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 4, 4);
 
         let message = new_sanitized_message(Message::new(
             &[

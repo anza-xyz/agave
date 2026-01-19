@@ -1,12 +1,12 @@
 use {
     super::Bank,
-    crate::bank::CollectorFeeDetails,
+    crate::{bank::CollectorFeeDetails, reward_info::RewardInfo},
     log::debug,
     solana_account::{ReadableAccount, WritableAccount},
     solana_fee::FeeFeatures,
     solana_fee_structure::FeeBudgetLimits,
     solana_pubkey::Pubkey,
-    solana_reward_info::{RewardInfo, RewardType},
+    solana_reward_info::RewardType,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
     solana_system_interface::program as system_program,
@@ -204,7 +204,6 @@ pub mod tests {
         enum Scenario {
             Normal,
             InvalidOwner,
-            RentPaying,
         }
 
         struct TestCase {
@@ -220,7 +219,6 @@ pub mod tests {
         for test_case in [
             TestCase::new(Scenario::Normal),
             TestCase::new(Scenario::InvalidOwner),
-            TestCase::new(Scenario::RentPaying),
         ] {
             let mut genesis = create_genesis_config(0);
             let rent = Rent::default();
@@ -231,21 +229,18 @@ pub mod tests {
             let deposit = 100;
             let mut burn = 100;
 
-            if test_case.scenario == Scenario::RentPaying {
-                // ensure that account balance + collected fees will make it rent-paying
-                let initial_balance = 100;
-                let account = AccountSharedData::new(initial_balance, 0, &system_program::id());
-                bank.store_account(bank.leader_id(), &account);
-                assert!(initial_balance + deposit < min_rent_exempt_balance);
-            } else if test_case.scenario == Scenario::InvalidOwner {
-                // ensure that account owner is invalid and fee distribution will fail
-                let account =
-                    AccountSharedData::new(min_rent_exempt_balance, 0, &Pubkey::new_unique());
-                bank.store_account(bank.leader_id(), &account);
-            } else {
-                let account =
-                    AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
-                bank.store_account(bank.leader_id(), &account);
+            match test_case.scenario {
+                Scenario::InvalidOwner => {
+                    // ensure that account owner is invalid and fee distribution will fail
+                    let account =
+                        AccountSharedData::new(min_rent_exempt_balance, 0, &Pubkey::new_unique());
+                    bank.store_account(bank.leader_id(), &account);
+                }
+                Scenario::Normal => {
+                    let account =
+                        AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
+                    bank.store_account(bank.leader_id(), &account);
+                }
             }
 
             let initial_burn = burn;
@@ -253,7 +248,7 @@ pub mod tests {
             burn += bank.deposit_or_burn_fee(deposit);
             let new_leader_id_balance = bank.get_balance(bank.leader_id());
 
-            if test_case.scenario != Scenario::Normal {
+            if test_case.scenario == Scenario::InvalidOwner {
                 assert_eq!(initial_leader_id_balance, new_leader_id_balance);
                 assert_eq!(initial_burn + deposit, burn);
                 let locked_rewards = bank.rewards.read().unwrap();
@@ -329,26 +324,6 @@ pub mod tests {
             bank.deposit_fees(&pubkey, deposit_amount),
             Err(DepositFeeError::InvalidAccountOwner),
             "Expected an error due to invalid account owner"
-        );
-    }
-
-    #[test]
-    fn test_deposit_fees_invalid_rent_paying() {
-        let initial_balance = 0;
-        let genesis = create_genesis_config(initial_balance);
-        let pubkey = genesis.mint_keypair.pubkey();
-        let mut genesis_config = genesis.genesis_config;
-        genesis_config.rent = Rent::default(); // Ensure rent is non-zero, as genesis_utils sets Rent::free by default
-        let bank = Bank::new_for_tests(&genesis_config);
-        let min_rent_exempt_balance = genesis_config.rent.minimum_balance(0);
-
-        let deposit_amount = 500;
-        assert!(initial_balance + deposit_amount < min_rent_exempt_balance);
-
-        assert_eq!(
-            bank.deposit_fees(&pubkey, deposit_amount),
-            Err(DepositFeeError::InvalidRentPayingAccount),
-            "Expected an error due to invalid rent paying account"
         );
     }
 

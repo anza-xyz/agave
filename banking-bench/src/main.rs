@@ -11,6 +11,7 @@ use {
     solana_core::{
         banking_stage::{
             transaction_scheduler::scheduler_controller::SchedulerConfig,
+            unified_scheduler::ensure_banking_stage_setup,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage,
         },
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
@@ -36,6 +37,7 @@ use {
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         num::NonZeroUsize,
         sync::{atomic::Ordering, Arc, RwLock},
@@ -449,6 +451,28 @@ fn main() {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         )))
         .unwrap();
+    let banking_tracer_channels = banking_tracer.create_channels();
+    if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            Some(replay_vote_sender.clone()),
+            None,
+        );
+        ensure_banking_stage_setup(
+            &pool,
+            &bank_forks,
+            &banking_tracer_channels,
+            &poh_recorder,
+            transaction_recorder.clone(),
+            block_production_num_workers,
+        );
+        bank_forks.write().unwrap().install_scheduler_pool(pool);
+    }
     let Channels {
         non_vote_sender,
         non_vote_receiver,
@@ -456,9 +480,9 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_sender,
         gossip_vote_receiver,
-    } = banking_tracer.create_channels(false);
+    } = banking_tracer_channels;
     let banking_stage = BankingStage::new_num_threads(
-        block_production_method,
+        block_production_method.clone(),
         poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
@@ -475,6 +499,18 @@ fn main() {
         bank_forks.clone(),
         None,
     );
+
+    // This bench processes transactions, starting from the very first bank, so special-casing is
+    // needed for unified scheduler.
+    if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        bank = bank_forks
+            .write()
+            .unwrap()
+            .reinstall_block_production_scheduler_into_working_genesis_bank();
+    }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
     // If it is dropped before poh_service, then poh_service will error when

@@ -3,7 +3,7 @@ use jemallocator::Jemalloc;
 #[path = "receive_and_buffer_utils.rs"]
 mod utils;
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{criterion_group, criterion_main, Criterion, Throughput},
     crossbeam_channel::{unbounded, Receiver, Sender},
     solana_core::banking_stage::{
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
@@ -17,7 +17,10 @@ use {
         },
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    std::time::{Duration, Instant},
+    std::{
+        hint::black_box,
+        time::{Duration, Instant},
+    },
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]

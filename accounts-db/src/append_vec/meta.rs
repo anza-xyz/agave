@@ -1,10 +1,6 @@
 use {
-    crate::is_zero_lamport::IsZeroLamport,
-    serde::{Deserialize, Serialize},
-    solana_account::ReadableAccount,
-    solana_clock::Epoch,
-    solana_pubkey::Pubkey,
-    std::{ptr, str},
+    crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount, solana_clock::Epoch,
+    solana_pubkey::Pubkey, std::ptr,
 };
 
 /// Meta contains enough context to recover the index from storage itself
@@ -25,7 +21,7 @@ pub struct StoredMeta {
 
 /// This struct will be backed by mmapped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct AccountMeta {
     /// lamports in the account
@@ -36,26 +32,6 @@ pub struct AccountMeta {
     pub owner: Pubkey,
     /// this account's data contains a loaded program (and is now read-only)
     pub executable: bool,
-}
-
-impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
-    fn from(account: &'a T) -> Self {
-        Self {
-            lamports: account.lamports(),
-            owner: *account.owner(),
-            executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
-        }
-    }
-}
-
-impl<'a, T: ReadableAccount> From<Option<&'a T>> for AccountMeta {
-    fn from(account: Option<&'a T>) -> Self {
-        match account {
-            Some(account) => AccountMeta::from(account),
-            None => AccountMeta::default(),
-        }
-    }
 }
 
 /// References to account data stored elsewhere. Getting an `Account` requires cloning
@@ -85,14 +61,6 @@ impl<'append_vec> StoredAccountMeta<'append_vec> {
 
     pub fn data(&self) -> &'append_vec [u8] {
         self.data
-    }
-
-    pub fn data_len(&self) -> usize {
-        self.meta.data_len as usize
-    }
-
-    pub fn meta(&self) -> &StoredMeta {
-        self.meta
     }
 }
 

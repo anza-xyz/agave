@@ -1,7 +1,7 @@
 use {
     crate::{
-        ip_echo_server::{IpEchoServerMessage, IpEchoServerResponse},
         HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, MAX_PORT_COUNT_PER_MESSAGE,
+        ip_echo_server::{IpEchoServerMessage, IpEchoServerResponse},
     },
     anyhow::bail,
     bytes::{BufMut, BytesMut},

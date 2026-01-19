@@ -1,6 +1,8 @@
 use {
+    crate::IoSize,
     agave_io_uring::{Ring, RingOp},
     std::{
+        alloc::{alloc, Layout, LayoutError},
         io,
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
@@ -12,68 +14,89 @@ use {
 //
 // Instead of doing many large allocations and registering those, we do a single large one
 // and chunk it in slices of up to 1G each.
-const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
+const FIXED_BUFFER_LEN: IoSize = 1024 * 1024 * 1024;
 
-pub enum LargeBuffer {
-    Vec(Vec<u8>),
-    HugeTable(PageAlignedMemory),
+#[derive(thiserror::Error, Debug)]
+pub enum AllocError {
+    #[error("out of memory")]
+    OutOfMemory,
+
+    #[error("invalid layout parameters: {0}")]
+    LayoutCreation(#[from] LayoutError),
+
+    #[error("can't allocate a zero size buffer")]
+    LayoutSize,
+
+    #[error("libc mmap failed")]
+    MMapFailed,
 }
 
-impl Deref for LargeBuffer {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_slice(),
-            Self::HugeTable(mem) => mem.deref(),
-        }
-    }
-}
-
-impl DerefMut for LargeBuffer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Vec(buf) => buf.as_mut_slice(),
-            Self::HugeTable(mem) => mem.deref_mut(),
-        }
-    }
-}
-
-impl AsMut<[u8]> for LargeBuffer {
-    fn as_mut(&mut self) -> &mut [u8] {
-        match self {
-            Self::Vec(vec) => vec.as_mut_slice(),
-            LargeBuffer::HugeTable(mem) => mem,
-        }
-    }
-}
-
-impl LargeBuffer {
-    /// Allocate memory buffer optimized for io_uring operations, i.e.
-    /// using HugeTable when it is available on the host.
-    pub fn new(size: usize) -> Self {
-        if size > PageAlignedMemory::page_size() {
-            let size = size.next_power_of_two();
-            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
-                log::info!("obtained hugetable io_uring buffer (len={size})");
-                return Self::HugeTable(alloc);
+impl From<AllocError> for io::Error {
+    fn from(error: AllocError) -> io::Error {
+        match error {
+            AllocError::OutOfMemory => io::Error::new(io::ErrorKind::OutOfMemory, "out of memory"),
+            AllocError::LayoutCreation(layout_err) => {
+                io::Error::new(io::ErrorKind::InvalidInput, layout_err)
             }
+            AllocError::LayoutSize => io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "can't allocate a zero size buffer",
+            ),
+            _ => io::Error::other(error),
         }
-        Self::Vec(vec![0; size])
     }
 }
 
-#[derive(Debug)]
-struct AllocError;
+enum AllocationMethod {
+    Std(Layout),
+    Mmap,
+}
 
+/// Memory buffer whose base address is aligned to the system page size.
+///
+/// `ptr` is always aligned to the system page size.
+/// `len` is not guaranteed to be page-aligned.
+///
+/// On allocation:
+/// - If `len` is smaller than the system page size, only `ptr` is
+///   page-aligned.
+/// - Otherwise allocation might use huge pages and if it succeeds, both `ptr` and `len` are
+///   aligned to the system page size.
 pub struct PageAlignedMemory {
     ptr: NonNull<u8>,
     len: usize,
+    allocation_method: AllocationMethod,
 }
 
 impl PageAlignedMemory {
-    fn alloc_huge_table(memory_size: usize) -> Result<Self, AllocError> {
+    /// Allocate memory buffer optimized for io_uring operations, i.e.
+    /// using HugeTable when it is available on the host.
+    pub fn new(size: usize) -> Result<Self, AllocError> {
         let page_size = Self::page_size();
+        if size > page_size {
+            let size = size.next_power_of_two();
+            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size, page_size) {
+                log::info!("obtained hugetable io_uring buffer (len={size})");
+                return Ok(alloc);
+            }
+        }
+
+        let layout = Layout::from_size_align(size, page_size)?;
+        if layout.size() == 0 {
+            return Err(AllocError::LayoutSize);
+        }
+        // Safety:
+        // layout size is nonzero
+        let ptr = unsafe { alloc(layout) };
+
+        Ok(Self {
+            ptr: NonNull::new(ptr).ok_or(AllocError::OutOfMemory)?,
+            len: size,
+            allocation_method: AllocationMethod::Std(layout),
+        })
+    }
+
+    fn alloc_huge_table(memory_size: usize, page_size: usize) -> Result<Self, AllocError> {
         debug_assert!(memory_size.is_power_of_two());
         debug_assert!(page_size.is_power_of_two());
         let aligned_size = memory_size.next_multiple_of(page_size);
@@ -92,12 +115,13 @@ impl PageAlignedMemory {
         };
 
         if std::ptr::eq(ptr, libc::MAP_FAILED) {
-            return Err(AllocError);
+            return Err(AllocError::MMapFailed);
         }
 
         Ok(Self {
-            ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError)?,
+            ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError::OutOfMemory)?,
             len: aligned_size,
+            allocation_method: AllocationMethod::Mmap,
         })
     }
 
@@ -109,10 +133,21 @@ impl PageAlignedMemory {
 
 impl Drop for PageAlignedMemory {
     fn drop(&mut self) {
-        // Safety:
-        // ptr is a valid pointer returned by mmap
-        unsafe {
-            libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
+        match self.allocation_method {
+            AllocationMethod::Std(layout) => {
+                // Safety:
+                // ptr was allocated with the same layout
+                unsafe {
+                    std::alloc::dealloc(self.ptr.as_ptr(), layout);
+                }
+            }
+            AllocationMethod::Mmap => {
+                // Safety:
+                // ptr is a valid pointer returned by mmap
+                unsafe {
+                    libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
+                }
+            }
         }
     }
 }
@@ -131,50 +166,59 @@ impl DerefMut for PageAlignedMemory {
     }
 }
 
-/// Fixed mutable view into externally allocated IO bytes buffer
-/// registered in `io_uring` for access in scheduled IO operations.
+/// Mutable view into externally allocated bytes buffer for use in io-uring operations.
 ///
-/// It is used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
+/// The underlying buffer might be registered in `io_uring` for access through "fixed"
+/// IO operations, in which case the `registered_io_buf_index` field will be set.
+///
+/// Stored `ptr` and `size` are used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
 #[derive(Debug)]
-pub(super) struct FixedIoBuffer {
+pub(super) struct IoBufferChunk {
     ptr: *mut u8,
-    size: usize,
-    io_buf_index: Option<u16>,
+    size: IoSize,
+    /// IO buffer index identifying part of the underlying buffer if it was registered in `io_uring`.
+    ///
+    /// It is used in `ReadFixed` and `WriteFixed` opcodes. The index doesn't identify the chunk
+    /// uniquely, since usually chunks are smaller than `FIXED_BUFFER_LEN`.
+    registered_io_buf_index: Option<u16>,
 }
 
-impl FixedIoBuffer {
+impl IoBufferChunk {
     pub const fn empty() -> Self {
         Self {
             ptr: std::ptr::null_mut(),
             size: 0,
-            io_buf_index: None,
+            registered_io_buf_index: None,
         }
     }
 
-    /// Split buffer into `chunk_size` sized `IoFixedBuffer` buffers for use as registered
-    /// buffer in io_uring operations.
+    /// Split buffer into `chunk_size` sized [`IoBufferChunk`] buffers for use as registered
+    /// buffer in `io_uring` operations.
     #[allow(clippy::arithmetic_side_effects)]
     pub unsafe fn split_buffer_chunks(
         buffer: &mut [u8],
-        chunk_size: usize,
+        chunk_size: IoSize,
+        registered_buffer: bool,
     ) -> impl Iterator<Item = Self> + use<'_> {
         assert!(
-            buffer.len() / FIXED_BUFFER_LEN <= u16::MAX as usize,
+            (buffer.len() / FIXED_BUFFER_LEN as usize) <= u16::MAX as usize,
             "buffer too large to register in io_uring"
         );
-        let buf_start = buffer.as_ptr() as usize;
+        let buf_start = buffer.as_ptr().addr();
 
-        buffer.chunks_exact_mut(chunk_size).map(move |buf| {
-            let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
-            Self {
-                ptr: buf.as_mut_ptr(),
-                size: buf.len(),
-                io_buf_index: Some(io_buf_index as u16),
-            }
-        })
+        buffer
+            .chunks_exact_mut(chunk_size as usize)
+            .map(move |buf| {
+                let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN as usize;
+                Self {
+                    ptr: buf.as_mut_ptr(),
+                    size: buf.len() as IoSize,
+                    registered_io_buf_index: registered_buffer.then_some(io_buf_index as u16),
+                }
+            })
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> IoSize {
         self.size
     }
 
@@ -186,16 +230,16 @@ impl FixedIoBuffer {
 
     /// The index of the fixed buffer in the ring. See register_buffers().
     pub fn io_buf_index(&self) -> Option<u16> {
-        self.io_buf_index
+        self.registered_io_buf_index
     }
 
     /// Return a clone of `self` reduced to specified `size`
-    pub fn into_shrinked(self, size: usize) -> Self {
+    pub fn into_shrinked(self, size: IoSize) -> Self {
         assert!(size <= self.size);
         Self {
             ptr: self.ptr,
             size,
-            io_buf_index: self.io_buf_index,
+            registered_io_buf_index: self.registered_io_buf_index,
         }
     }
 
@@ -205,7 +249,7 @@ impl FixedIoBuffer {
         ring: &Ring<S, E>,
     ) -> io::Result<()> {
         let iovecs = buffer
-            .chunks(FIXED_BUFFER_LEN)
+            .chunks(FIXED_BUFFER_LEN as usize)
             .map(|buf| libc::iovec {
                 iov_base: buf.as_ptr() as _,
                 iov_len: buf.len(),
@@ -215,8 +259,8 @@ impl FixedIoBuffer {
     }
 }
 
-impl AsRef<[u8]> for FixedIoBuffer {
+impl AsRef<[u8]> for IoBufferChunk {
     fn as_ref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr, self.size) }
+        unsafe { slice::from_raw_parts(self.ptr, self.size as usize) }
     }
 }

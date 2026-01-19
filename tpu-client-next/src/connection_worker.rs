@@ -82,6 +82,7 @@ pub(crate) struct ConnectionWorker {
     peer: SocketAddr,
     transactions_receiver: mpsc::Receiver<TransactionBatch>,
     connection: ConnectionState,
+    last_congestion_events: u64,
     skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
     send_txs_stats: Arc<SendTransactionStats>,
@@ -120,6 +121,7 @@ impl ConnectionWorker {
             send_txs_stats,
             cancel: cancel.clone(),
             handshake_timeout,
+            last_congestion_events: 0,
         };
 
         (this, cancel)
@@ -251,7 +253,7 @@ impl ConnectionWorker {
             ConnectionError::VersionMismatch | ConnectionError::LocallyClosed => {
                 ConnectionState::Closing
             }
-            _ => ConnectionState::Retry(0),
+            _ => ConnectionState::Retry(1),
         };
     }
 
@@ -280,7 +282,7 @@ impl ConnectionWorker {
             // Check connection health before each send
             if connection.close_reason().is_some() {
                 debug!("Connection closed during transaction batch sending");
-                self.connection = ConnectionState::Retry(0);
+                self.connection = ConnectionState::Retry(1);
                 break;
             }
 
@@ -292,10 +294,17 @@ impl ConnectionWorker {
                     self.peer
                 );
                 record_error(error, &self.send_txs_stats);
-                self.connection = ConnectionState::Retry(0);
+                self.connection = ConnectionState::Retry(1);
                 // Exit early since connection is likely broken
                 break;
             } else {
+                let events = connection.stats().path.congestion_events;
+                self.send_txs_stats.transport_congestion_events.fetch_add(
+                    self.last_congestion_events.saturating_sub(events),
+                    Ordering::Relaxed,
+                );
+                self.last_congestion_events = events;
+
                 self.send_txs_stats
                     .successfully_sent
                     .fetch_add(1, Ordering::Relaxed);

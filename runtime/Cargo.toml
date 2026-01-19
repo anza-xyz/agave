@@ -94,6 +94,7 @@ serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
 shuttle = { workspace = true, optional = true }
+smallvec = { workspace = true, features = ["serde"] }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }

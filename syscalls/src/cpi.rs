@@ -45,7 +45,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        memory_mapping: &MemoryMapping<'_>,
+        memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
@@ -112,7 +112,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
     fn translate_accounts<'a>(
         account_infos_addr: u64,
         account_infos_len: u64,
-        memory_mapping: &MemoryMapping<'_>,
+        memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {

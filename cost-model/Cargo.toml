@@ -69,7 +69,7 @@ solana-vote-program = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 itertools = { workspace = true }
-rand = "0.8.5"
+rand = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-compute-budget-instruction = { workspace = true, features = [
     "dev-context-only-utils",

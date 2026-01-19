@@ -6,7 +6,7 @@ use {
     serde_big_array::BigArray,
     siphasher::sip::SipHasher24,
     solana_hash::Hash,
-    solana_keypair::{signable::Signable, Keypair},
+    solana_keypair::{Keypair, signable::Signable},
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
@@ -166,7 +166,7 @@ impl<const N: usize> PingCache<N> {
         Self {
             ttl,
             rate_limit_delay,
-            hashers: std::array::from_fn(|_| SipHasher24::new_with_key(&rng.gen())),
+            hashers: std::array::from_fn(|_| SipHasher24::new_with_key(&rng.random())),
             key_refresh: now,
             pings: LruCache::new(cap),
             pongs: LruCache::new(cap),
@@ -187,18 +187,18 @@ impl<const N: usize> PingCache<N> {
             return false;
         };
         self.pongs.put(remote_node, now);
-        if let Some(sent_time) = self.ping_times.pop(&socket.ip()) {
-            if should_report_message_signature(
+        if let Some(sent_time) = self.ping_times.pop(&socket.ip())
+            && should_report_message_signature(
                 pong.signature(),
                 PONG_SIGNATURE_SAMPLE_LEADING_ZEROS,
-            ) {
-                let rtt = now.saturating_duration_since(sent_time);
-                datapoint_info!(
-                    "ping_rtt",
-                    ("peer_ip", socket.ip().to_string(), String),
-                    ("rtt_us", rtt.as_micros() as i64, i64),
-                );
-            }
+            )
+        {
+            let rtt = now.saturating_duration_since(sent_time);
+            datapoint_info!(
+                "ping_rtt",
+                ("peer_ip", socket.ip().to_string(), String),
+                ("rtt_us", rtt.as_micros() as i64, i64),
+            );
         }
         true
     }
@@ -262,7 +262,7 @@ impl<const N: usize> PingCache<N> {
 
     fn maybe_refresh_key<R: Rng + CryptoRng>(&mut self, rng: &mut R, now: Instant) {
         if now.checked_duration_since(self.key_refresh) > Some(KEY_REFRESH_CADENCE) {
-            let hasher = SipHasher24::new_with_key(&rng.gen());
+            let hasher = SipHasher24::new_with_key(&rng.random());
             self.hashers[1] = std::mem::replace(&mut self.hashers[0], hasher);
             self.key_refresh = now;
         }
@@ -304,9 +304,9 @@ mod tests {
 
     #[test]
     fn test_ping_pong() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
-        let ping = Ping::<32>::new(rng.gen(), &keypair);
+        let ping = Ping::<32>::new(rng.random(), &keypair);
         assert!(ping.verify());
         assert!(ping.sanitize().is_ok());
 
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn test_ping_cache() {
         let now = Instant::now();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let ttl = Duration::from_millis(256);
         let delay = ttl / 64;
         let mut cache = PingCache::new(&mut rng, Instant::now(), ttl, delay, /*cap=*/ 1000);
@@ -330,15 +330,15 @@ mod tests {
         let keypairs: Vec<_> = repeat_with(Keypair::new).take(8).collect();
         let sockets: Vec<_> = repeat_with(|| {
             SocketAddr::V4(SocketAddrV4::new(
-                Ipv4Addr::new(rng.gen(), rng.gen(), rng.gen(), rng.gen()),
-                rng.gen(),
+                Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
+                rng.random(),
             ))
         })
         .take(8)
         .collect();
         let remote_nodes: Vec<(&Keypair, SocketAddr)> = repeat_with(|| {
-            let keypair = &keypairs[rng.gen_range(0..keypairs.len())];
-            let socket = sockets[rng.gen_range(0..sockets.len())];
+            let keypair = &keypairs[rng.random_range(0..keypairs.len())];
+            let socket = sockets[rng.random_range(0..sockets.len())];
             (keypair, socket)
         })
         .take(128)

@@ -5,9 +5,11 @@ use {
     crate::{
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
         banking_stage::{
-            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
+            unified_scheduler::ensure_banking_stage_setup, BankingStage,
         },
         banking_trace::{self, BankingTracer, TraceError},
+        block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -21,9 +23,7 @@ use {
             repair_handler::RepairHandlerType,
             serve_repair_service::ServeRepairService,
         },
-        resource_limits::{
-            adjust_nofile_limit, validate_memlock_limit_for_disk_io, ResourceLimitError,
-        },
+        resource_limits::{adjust_nofile_limit, ResourceLimitError},
         sample_performance_service::SamplePerformanceService,
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
@@ -143,7 +143,8 @@ use {
         broadcast_stage::BroadcastStageType,
         xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitter},
     },
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::VoteStateV4,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
@@ -162,7 +163,7 @@ use {
         time::{Duration, Instant},
     },
     strum::VariantNames,
-    strum_macros::{Display, EnumCount, EnumIter, EnumString, EnumVariantNames, IntoStaticStr},
+    strum_macros::{Display, EnumCount, EnumIter, EnumString, IntoStaticStr},
     thiserror::Error,
     tokio::{runtime::Runtime as TokioRuntime, sync::mpsc},
     tokio_util::sync::CancellationToken,
@@ -176,9 +177,7 @@ const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
     WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT;
 
-#[derive(
-    Clone, EnumCount, EnumIter, EnumString, EnumVariantNames, Default, IntoStaticStr, Display,
-)]
+#[derive(Clone, EnumCount, EnumIter, EnumString, VariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockVerificationMethod {
     BlockstoreProcessor,
@@ -199,8 +198,10 @@ impl BlockVerificationMethod {
 #[derive(
     Clone,
     Debug,
+    EnumCount,
+    EnumIter,
     EnumString,
-    EnumVariantNames,
+    VariantNames,
     Default,
     IntoStaticStr,
     Display,
@@ -215,10 +216,29 @@ pub enum BlockProductionMethod {
     CentralScheduler,
     #[default]
     CentralSchedulerGreedy,
+    UnifiedScheduler,
 }
 
 impl BlockProductionMethod {
-    pub const fn cli_names() -> &'static [&'static str] {
+    pub fn cli_names() -> &'static [&'static str] {
+        // Simply return Self::VARIANTS by removing this code block altogether once after
+        // UnifiedScheduler isn't experimental
+        {
+            use std::sync::LazyLock;
+            static VARIANTS_NO_EXPERIMENTAL: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+                BlockProductionMethod::VARIANTS
+                    .iter()
+                    .filter_map(|&variant| (variant != "unified-scheduler").then_some(variant))
+                    .collect()
+            });
+
+            let disable_experimental =
+                std::env::var("SOLANA_ENABLE_EXPERIMENTAL_BLOCK_PRODUCTION_METHOD").is_err();
+            if disable_experimental {
+                return &VARIANTS_NO_EXPERIMENTAL[..];
+            }
+        }
+
         Self::VARIANTS
     }
 
@@ -231,7 +251,7 @@ impl BlockProductionMethod {
     Clone,
     Debug,
     EnumString,
-    EnumVariantNames,
+    VariantNames,
     Default,
     IntoStaticStr,
     Display,
@@ -259,7 +279,7 @@ impl TransactionStructure {
 }
 
 #[derive(
-    Clone, Debug, EnumVariantNames, IntoStaticStr, Display, Serialize, Deserialize, PartialEq, Eq,
+    Clone, Debug, VariantNames, IntoStaticStr, Display, Serialize, Deserialize, PartialEq, Eq,
 )]
 #[strum(serialize_all = "kebab-case")]
 #[serde(rename_all = "kebab-case")]
@@ -291,6 +311,23 @@ impl SchedulerPacing {
             SchedulerPacing::Disabled => None,
             SchedulerPacing::FillTimeMillis(millis) => Some(Duration::from_millis(millis.get())),
         }
+    }
+}
+
+pub fn supported_scheduling_mode(
+    (verification, production): (&BlockVerificationMethod, &BlockProductionMethod),
+) -> SupportedSchedulingMode {
+    match (verification, production) {
+        (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Both
+        }
+        (BlockVerificationMethod::UnifiedScheduler, _) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
+        }
+        (_, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction)
+        }
+        _ => unreachable!("seems unified scheduler is disabled"),
     }
 }
 
@@ -556,8 +593,6 @@ pub struct ValidatorTpuConfig {
     pub vote_use_quic: bool,
     /// Controls the connection cache pool size
     pub tpu_connection_pool_size: usize,
-    /// Controls if to enable UDP for TPU transactions.
-    pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
@@ -569,7 +604,7 @@ pub struct ValidatorTpuConfig {
 impl ValidatorTpuConfig {
     /// A convenient function to build a ValidatorTpuConfig for testing with good
     /// default.
-    pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
+    pub fn new_for_tests() -> Self {
         let tpu_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
@@ -601,7 +636,6 @@ impl ValidatorTpuConfig {
         ValidatorTpuConfig {
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -628,9 +662,10 @@ pub struct Validator {
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
     completed_data_sets_service: Option<CompletedDataSetsService>,
-    snapshot_packager_service: Option<SnapshotPackagerService>,
+    snapshot_packager_service: SnapshotPackagerService,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     poh_service: PohService,
+    block_creation_loop: BlockCreationLoop,
     tpu: Tpu,
     tvu: Tvu,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
@@ -640,9 +675,6 @@ pub struct Validator {
     geyser_plugin_service: Option<GeyserPluginService>,
     blockstore_metric_report_service: BlockstoreMetricReportService,
     accounts_background_service: AccountsBackgroundService,
-    turbine_quic_endpoint: Option<Endpoint>,
-    turbine_quic_endpoint_runtime: Option<TokioRuntime>,
-    turbine_quic_endpoint_join_handle: Option<solana_turbine::quic_endpoint::AsyncTryJoinHandle>,
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
@@ -679,7 +711,6 @@ impl Validator {
         let ValidatorTpuConfig {
             vote_use_quic,
             tpu_connection_pool_size,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -759,8 +790,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {cluster_entrypoint:?}");
         }
-
-        validate_memlock_limit_for_disk_io(config.accounts_db_config.memlock_budget_size)?;
 
         if !ledger_path.is_dir() {
             return Err(anyhow!(
@@ -946,29 +975,20 @@ impl Validator {
         ));
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let snapshot_packager_service = if snapshot_controller
-            .snapshot_config()
-            .should_generate_snapshots()
-        {
-            let exit_backpressure = config
-                .validator_exit_backpressure
-                .get(SnapshotPackagerService::NAME)
-                .cloned();
-            let enable_gossip_push = true;
-            let snapshot_packager_service = SnapshotPackagerService::new(
-                pending_snapshot_packages.clone(),
-                starting_snapshot_hashes,
-                exit.clone(),
-                exit_backpressure,
-                cluster_info.clone(),
-                snapshot_controller.clone(),
-                enable_gossip_push,
-            );
-            Some(snapshot_packager_service)
-        } else {
-            None
-        };
-
+        let exit_backpressure = config
+            .validator_exit_backpressure
+            .get(SnapshotPackagerService::NAME)
+            .cloned();
+        let enable_gossip_push = true;
+        let snapshot_packager_service = SnapshotPackagerService::new(
+            pending_snapshot_packages.clone(),
+            starting_snapshot_hashes,
+            exit.clone(),
+            exit_backpressure,
+            cluster_info.clone(),
+            snapshot_controller.clone(),
+            enable_gossip_push,
+        );
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
@@ -1034,30 +1054,43 @@ impl Validator {
         } else {
             info!("Disabled banking trace");
         }
-        let banking_tracer_channels = banking_tracer.create_channels(false);
+        let banking_tracer_channels = banking_tracer.create_channels();
 
-        match &config.block_verification_method {
-            BlockVerificationMethod::BlockstoreProcessor => {
-                info!("no scheduler pool is installed for block verification...");
-                if let Some(count) = config.unified_scheduler_handler_threads {
-                    warn!(
-                        "--unified-scheduler-handler-threads={count} is ignored because unified \
-                         scheduler isn't enabled"
-                    );
-                }
-            }
-            BlockVerificationMethod::UnifiedScheduler => {
-                let scheduler_pool = DefaultSchedulerPool::new_dyn(
+        match (
+            &config.block_verification_method,
+            &config.block_production_method,
+        ) {
+            methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+            | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+                let scheduler_pool = DefaultSchedulerPool::new(
+                    supported_scheduling_mode(methods),
                     config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
                     Some(replay_vote_sender.clone()),
                     prioritization_fee_cache.clone(),
                 );
+                ensure_banking_stage_setup(
+                    &scheduler_pool,
+                    &bank_forks,
+                    &banking_tracer_channels,
+                    &poh_recorder,
+                    transaction_recorder.clone(),
+                    config.block_production_num_workers,
+                );
                 bank_forks
                     .write()
                     .unwrap()
                     .install_scheduler_pool(scheduler_pool);
+            }
+            _ => {
+                info!("no scheduler pool is installed for block verification/production...");
+                if let Some(count) = config.unified_scheduler_handler_threads {
+                    warn!(
+                        "--unified-scheduler-handler-threads={count} is ignored because unified \
+                         scheduler isn't enabled"
+                    );
+                }
             }
         }
 
@@ -1155,7 +1188,7 @@ impl Validator {
         // context which forces us to use the same runtime because a nested
         // runtime will cause panic at drop. Outside test-validator crate, we
         // always need a tokio runtime (and the respective handle) to initialize
-        // the turbine QUIC endpoint.
+        // the QUIC endpoints.
         let current_runtime_handle = tokio::runtime::Handle::try_current();
         let tpu_client_next_runtime = current_runtime_handle.is_err().then(|| {
             tokio::runtime::Builder::new_multi_thread()
@@ -1372,6 +1405,13 @@ impl Validator {
         let wait_for_vote_to_start_leader =
             !waited_for_supermajority && !config.no_wait_for_vote_to_start_leader;
 
+        // Pass RecordReceiver from PohService to BlockCreationLoop when shutting down. Gives us a strong guarentee
+        // that both block producers are not running at the same time
+        let (record_receiver_sender, record_receiver_receiver) = bounded(1);
+        // Sender for notifications about our leader window. We allow for a maximum of 7 leader windows in case we have
+        // consecutive leader windows and are slow. There is an early give up if our leader window is skipped because we
+        // are too slow, so in practice this channel should never be full.
+        let (_leader_window_info_sender, leader_window_info_receiver) = bounded(7);
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -1381,7 +1421,30 @@ impl Validator {
             config.poh_hashes_per_batch,
             record_receiver,
             poh_service_message_receiver,
+            migration_status.clone(),
+            record_receiver_sender,
         );
+
+        let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
+        let highest_parent_ready = Arc::new(RwLock::default());
+
+        let block_creation_loop_config = BlockCreationLoopConfig {
+            exit: exit.clone(),
+            bank_forks: bank_forks.clone(),
+            blockstore: blockstore.clone(),
+            cluster_info: cluster_info.clone(),
+            poh_recorder: poh_recorder.clone(),
+            leader_schedule_cache: leader_schedule_cache.clone(),
+            rpc_subscriptions: rpc_subscriptions.clone(),
+            banking_tracer: banking_tracer.clone(),
+            slot_status_notifier: slot_status_notifier.clone(),
+            record_receiver_receiver,
+            leader_window_info_receiver: leader_window_info_receiver.clone(),
+            replay_highest_frozen: replay_highest_frozen.clone(),
+            highest_parent_ready: highest_parent_ready.clone(),
+        };
+        let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
+
         assert_eq!(
             blockstore.get_new_shred_signals_len(),
             1,
@@ -1398,38 +1461,6 @@ impl Validator {
         let entry_notification_sender = entry_notifier_service
             .as_ref()
             .map(|service| service.sender_cloned());
-
-        let turbine_quic_endpoint_runtime = (current_runtime_handle.is_err()
-            && genesis_config.cluster_type != ClusterType::MainnetBeta)
-            .then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .thread_name("solTurbineQuic")
-                    .build()
-                    .unwrap()
-            });
-        let (turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
-        let (
-            turbine_quic_endpoint,
-            turbine_quic_endpoint_sender,
-            turbine_quic_endpoint_join_handle,
-        ) = if genesis_config.cluster_type == ClusterType::MainnetBeta {
-            let (sender, _receiver) = tokio::sync::mpsc::channel(1);
-            (None, sender, None)
-        } else {
-            solana_turbine::quic_endpoint::new_quic_endpoint(
-                turbine_quic_endpoint_runtime
-                    .as_ref()
-                    .map(TokioRuntime::handle)
-                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap()),
-                &identity_keypair,
-                node.sockets.tvu_quic,
-                turbine_quic_endpoint_sender,
-                bank_forks.clone(),
-            )
-            .map(|(endpoint, sender, join_handle)| (Some(endpoint), sender, Some(join_handle)))
-            .unwrap()
-        };
 
         // Repair quic endpoint.
         let repair_quic_endpoints_runtime = (current_runtime_handle.is_err()
@@ -1499,6 +1530,7 @@ impl Validator {
                 Tower::default()
             }
         };
+        migration_status.log_phase();
         let last_vote = tower.last_vote();
 
         let outstanding_repair_requests =
@@ -1593,8 +1625,6 @@ impl Validator {
             config.runtime_config.log_messages_bytes_limit,
             prioritization_fee_cache.clone(),
             banking_tracer.clone(),
-            turbine_quic_endpoint_sender.clone(),
-            turbine_quic_endpoint_receiver,
             repair_response_quic_receiver,
             repair_quic_async_senders.repair_request_quic_sender,
             repair_quic_async_senders.ancestor_hashes_request_quic_sender,
@@ -1649,8 +1679,6 @@ impl Validator {
             entry_receiver,
             retransmit_slots_receiver,
             TpuSockets {
-                transactions: node.sockets.tpu,
-                transaction_forwards: node.sockets.tpu_forwards,
                 vote: node.sockets.tpu_vote,
                 broadcast: node.sockets.broadcast,
                 transactions_quic: node.sockets.tpu_quic,
@@ -1676,14 +1704,12 @@ impl Validator {
             bank_notification_sender,
             duplicate_confirmed_slot_sender,
             forwarding_tpu_client,
-            turbine_quic_endpoint_sender,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,
             config.staked_nodes_overrides.clone(),
             banking_tracer_channels,
             tracer_thread,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1733,6 +1759,7 @@ impl Validator {
             cluster_slots,
             node: Some(node_multihoming),
             banking_control_sender,
+            snapshot_controller,
         });
 
         Ok(Self {
@@ -1754,6 +1781,7 @@ impl Validator {
             tpu,
             tvu,
             poh_service,
+            block_creation_loop,
             poh_recorder,
             ip_echo_server,
             validator_exit: config.validator_exit.clone(),
@@ -1763,9 +1791,6 @@ impl Validator {
             geyser_plugin_service,
             blockstore_metric_report_service,
             accounts_background_service,
-            turbine_quic_endpoint,
-            turbine_quic_endpoint_runtime,
-            turbine_quic_endpoint_join_handle,
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
@@ -1864,6 +1889,9 @@ impl Validator {
         drop(self.cluster_info);
 
         self.poh_service.join().expect("poh_service");
+        self.block_creation_loop
+            .join()
+            .expect("block_creation_loop");
         drop(self.poh_recorder);
 
         if let Some(json_rpc_service) = self.json_rpc_service {
@@ -1912,9 +1940,9 @@ impl Validator {
                 .expect("entry_notifier_service");
         }
 
-        if let Some(s) = self.snapshot_packager_service {
-            s.join().expect("snapshot_packager_service");
-        }
+        self.snapshot_packager_service
+            .join()
+            .expect("snapshot_packager_service");
 
         self.gossip_service.join().expect("gossip_service");
         self.repair_quic_endpoints
@@ -1939,20 +1967,11 @@ impl Validator {
         self.accounts_background_service
             .join()
             .expect("accounts_background_service");
-        if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
-            solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
-        }
         if let Some(xdp_retransmitter) = self.xdp_retransmitter {
             xdp_retransmitter.join().expect("xdp_retransmitter");
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
-        if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
-            self.turbine_quic_endpoint_runtime
-                .map(|runtime| runtime.block_on(turbine_quic_endpoint_join_handle))
-                .transpose()
-                .unwrap();
-        }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
             completed_data_sets_service
                 .join()
@@ -2852,6 +2871,12 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
                 );
             }
         }
+        datapoint_info!(
+            "wfsm_gossip",
+            ("online_stake", online_stake, i64),
+            ("offline_stake", offline_stake, i64),
+            ("total_activated_stake", total_activated_stake, i64),
+        );
     }
 
     online_stake_percentage as u64
@@ -2903,7 +2928,6 @@ mod tests {
         },
         solana_poh_config::PohConfig,
         solana_sha256_hasher::hash,
-        solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
 
@@ -2941,7 +2965,7 @@ mod tests {
             None, // rpc_to_plugin_manager_receiver
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
-            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -3155,7 +3179,7 @@ mod tests {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,
-                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+                    ValidatorTpuConfig::new_for_tests(),
                     Arc::new(RwLock::new(None)),
                 )
                 .expect("assume successful validator start")

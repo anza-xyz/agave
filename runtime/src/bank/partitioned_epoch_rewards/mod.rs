@@ -6,8 +6,8 @@ mod sysvar;
 use {
     super::Bank,
     crate::{
-        inflation_rewards::points::PointValue, stake_account::StakeAccount,
-        stake_history::StakeHistory,
+        inflation_rewards::points::PointValue, reward_info::RewardInfo,
+        stake_account::StakeAccount, stake_history::StakeHistory,
     },
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
@@ -18,7 +18,6 @@ use {
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_reward_info::RewardInfo,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::{mem::MaybeUninit, sync::Arc},

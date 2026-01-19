@@ -1040,7 +1040,7 @@ mod tests {
         assert_eq!(bank.epoch(), op.epoch);
         for (vote_address, vote_op) in &op.vote_operations {
             if let Some(balance) = &vote_op.create_with_balance {
-                let vote_state = VoteStateVersions::V4(Box::new(VoteStateV4::new(
+                let vote_state = VoteStateVersions::V4(Box::new(VoteStateV4::new_with_defaults(
                     vote_address,
                     &VoteInit {
                         node_pubkey: Pubkey::new_unique(),
@@ -2192,7 +2192,7 @@ mod tests {
             &stakers,              // expected_stakers
             0,                     // expected_vote_rewards
             12300,                 // expected_stake_rewards
-            12392,                 // expected_rewards
+            12395,                 // expected_rewards
             8_400_000_000_000u128, // expected_points
             None,                  // parent_capitalization
         );
@@ -2213,7 +2213,7 @@ mod tests {
             &stakers,                    // expected_stakers
             145,                         // expected_vote_rewards
             13010,                       // expected_stake_rewards
-            13163,                       // expected_rewards
+            13165,                       // expected_rewards
             9_450_000_000_000u128,       // expected_points
             Some(parent_capitalization), // parent_capitalization
         );
@@ -2234,7 +2234,7 @@ mod tests {
             &stakers,                    // expected_stakers
             525,                         // expected_vote_rewards
             15030,                       // expected_stake_rewards
-            15629,                       // expected_rewards
+            15631,                       // expected_rewards
             12_810_000_000_000u128,      // expected_points
             Some(parent_capitalization), // parent_capitalization
         );

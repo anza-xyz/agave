@@ -50,10 +50,7 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::{
-    merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload,
-    shred_data::resize_stored_shred,
-};
+pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::blockstore::{self},

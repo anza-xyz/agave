@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{Bencher, benchmark_group, benchmark_main},
     bv::BitVec,
     fnv::FnvHasher,
     rand::Rng,

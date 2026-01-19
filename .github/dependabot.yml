@@ -1,25 +1,30 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://help.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
-
 version: 2
 updates:
   - package-ecosystem: cargo
     directories:
       - "/"
+    schedule:
+      interval: daily
+      time: "08:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 6
+
+  # split from root directory schedule to avoid duplicate checks
+  - package-ecosystem: cargo
+    directories:
       - "/dev-bins"
       - "/ci/xtask"
       - "/programs/sbf"
     schedule:
       interval: daily
-      time: "01:00"
-      timezone: America/Los_Angeles
+      time: "14:00"
+      timezone: Etc/UTC
     open-pull-requests-limit: 6
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: daily
-      time: "01:00"
-      timezone: America/Los_Angeles
+      time: "08:00"
+      timezone: Etc/UTC
     open-pull-requests-limit: 3

@@ -9,7 +9,6 @@ use {
         multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
     },
     solana_perf::packet::PacketBatch,
-    solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
         nonblocking::{quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, swqos::SwQosConfig},
         quic::{
@@ -18,6 +17,7 @@ use {
         },
         streamer::StakedNodes,
     },
+    solana_tls_utils::NotifyKeyUpdate,
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{Arc, Mutex, RwLock},

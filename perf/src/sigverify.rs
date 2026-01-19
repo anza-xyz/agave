@@ -580,7 +580,7 @@ mod tests {
         },
         bincode::{deserialize, serialize},
         bytes::{BufMut, Bytes, BytesMut},
-        rand::{thread_rng, Rng},
+        rand::Rng,
         solana_keypair::Keypair,
         solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
         solana_packet::PACKET_DATA_SIZE,
@@ -601,12 +601,12 @@ mod tests {
 
     #[test]
     fn test_copy_return_values() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let sig_lens: Vec<Vec<u32>> = {
-            let size = rng.gen_range(0..64);
+            let size = rng.random_range(0..64);
             repeat_with(|| {
-                let size = rng.gen_range(0..16);
-                repeat_with(|| rng.gen_range(0..5)).take(size).collect()
+                let size = rng.random_range(0..16);
+                repeat_with(|| rng.random_range(0..5)).take(size).collect()
             })
             .take(size)
             .collect()
@@ -616,7 +616,7 @@ mod tests {
             .map(|sig_lens| {
                 sig_lens
                     .iter()
-                    .map(|&size| repeat_with(|| rng.gen()).take(size as usize).collect())
+                    .map(|&size| repeat_with(|| rng.random()).take(size as usize).collect())
                     .collect()
             })
             .collect();
@@ -1124,7 +1124,7 @@ mod tests {
     #[test]
     fn test_is_simple_vote_transaction() {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // transfer tx is not
         {
@@ -1207,7 +1207,7 @@ mod tests {
     #[test]
     fn test_is_simple_vote_transaction_with_offsets() {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // batch of legacy messages
         {
@@ -1272,11 +1272,11 @@ mod tests {
 
     #[test]
     fn test_shrink_fuzz() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..5 {
             let mut batches: Vec<_> = (0..3)
                 .map(|_| {
-                    if rng.gen_bool(0.5) {
+                    if rng.random_bool(0.5) {
                         let batch = (0..PACKETS_PER_BATCH)
                             .map(|_| {
                                 BytesPacket::from_data(None, test_tx()).expect("serialize request")
@@ -1293,7 +1293,7 @@ mod tests {
                 .collect();
             batches.iter_mut().for_each(|b| {
                 b.iter_mut()
-                    .for_each(|mut p| p.meta_mut().set_discard(thread_rng().gen()))
+                    .for_each(|mut p| p.meta_mut().set_discard(rand::rng().random()))
             });
             //find all the non discarded packets
             let mut start = vec![];

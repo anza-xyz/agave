@@ -61,10 +61,6 @@ const CONNECTION_CLOSE_REASON_DROPPED_ENTRY: &[u8] = b"dropped";
 pub(crate) const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
 pub(crate) const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
 
-pub(crate) const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
-pub(crate) const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] =
-    b"exceed_max_stream_count";
-
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 
@@ -412,7 +408,6 @@ pub fn get_connection_stake(
 #[derive(Debug)]
 pub(crate) enum ConnectionHandlerError {
     ConnectionAddError,
-    MaxStreamError,
 }
 
 pub(crate) fn update_open_connections_stat<S: OpaqueStreamerCounter>(
@@ -503,6 +498,7 @@ async fn setup_connection<Q, C>(
                 {
                     tasks.spawn(handle_connection(
                         packet_sender.clone(),
+                        from,
                         new_connection,
                         stats,
                         server_params.wait_for_chunk_timeout,
@@ -592,6 +588,7 @@ fn track_streamer_fetch_packet_performance(
 
 async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketBatch>,
+    remote_address: SocketAddr,
     connection: Connection,
     stats: Arc<StreamerStats>,
     wait_for_chunk_timeout: Duration,
@@ -603,10 +600,9 @@ async fn handle_connection<Q, C>(
     C: ConnectionContext + Send + Sync + 'static,
 {
     let peer_type = context.peer_type();
-    let remote_addr = connection.remote_address();
     debug!(
         "quic new connection {} streams: {} connections: {}",
-        remote_addr,
+        remote_address,
         stats.active_streams.load(Ordering::Relaxed),
         stats.total_connections.load(Ordering::Relaxed),
     );
@@ -632,7 +628,7 @@ async fn handle_connection<Q, C>(
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
         let mut meta = Meta::default();
-        meta.set_socket_addr(&remote_addr);
+        meta.set_socket_addr(&remote_address);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
         if let Some(pubkey) = context.remote_pubkey() {
             meta.set_remote_pubkey(pubkey);
