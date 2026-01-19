@@ -8504,6 +8504,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
+ "agave-votor-messages",
  "assert_matches",
  "bincode",
  "crossbeam-channel",
@@ -8515,6 +8516,8 @@ dependencies = [
  "rayon",
  "serde",
  "solana-address 2.0.0",
+ "solana-bls-signatures",
+ "solana-clock",
  "solana-entry",
  "solana-hash 3.1.0",
  "solana-keypair",
@@ -8533,6 +8536,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-transaction",
  "solana-transaction-error",
+ "thiserror 2.0.17",
  "wincode",
 ]
 
