@@ -632,10 +632,17 @@ impl HeaviestSubtreeForkChoice {
         split_tree_fork_infos.insert(*slot_hash_key, split_tree_root);
 
         // Split off the relevant votes to the new tree
-        let mut split_tree_latest_votes = self.latest_votes.clone();
-        split_tree_latest_votes.retain(|_, node| split_tree_fork_infos.contains_key(node));
-        self.latest_votes
-            .retain(|_, node| self.fork_infos.contains_key(node));
+        let latest_votes = std::mem::take(&mut self.latest_votes);
+        let mut split_tree_latest_votes = HashMap::new();
+        let mut remaining_latest_votes = HashMap::new();
+        for (pubkey, node) in latest_votes {
+            if split_tree_fork_infos.contains_key(&node) {
+                split_tree_latest_votes.insert(pubkey, node);
+            } else if self.fork_infos.contains_key(&node) {
+                remaining_latest_votes.insert(pubkey, node);
+            }
+        }
+        self.latest_votes = remaining_latest_votes;
 
         // Create a new tree from the split
         HeaviestSubtreeForkChoice {
