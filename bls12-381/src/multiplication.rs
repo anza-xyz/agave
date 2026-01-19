@@ -71,7 +71,6 @@ mod tests {
 
     fn run_g1_test(
         op_name: &str,
-        func: fn(Version, &PodG1Point, &PodScalar, Endianness) -> Option<PodG1Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
@@ -83,7 +82,8 @@ mod tests {
         let scalar_be = to_pod_scalar(scalar_be);
         let expected_be = to_pod_g1(output_be);
 
-        let result_be = func(Version::V0, &point_be, &scalar_be, Endianness::BE);
+        let result_be =
+            bls12_381_g1_multiplication(Version::V0, &point_be, &scalar_be, Endianness::BE);
         assert_eq!(result_be, Some(expected_be), "G1 {op_name} BE Test Failed",);
 
         // G1 Input is [Point (96) | Scalar (32)]
@@ -92,13 +92,13 @@ mod tests {
         let scalar_le = to_pod_scalar(scalar_le);
         let expected_le = to_pod_g1(output_le);
 
-        let result_le = func(Version::V0, &point_le, &scalar_le, Endianness::LE);
+        let result_le =
+            bls12_381_g1_multiplication(Version::V0, &point_le, &scalar_le, Endianness::LE);
         assert_eq!(result_le, Some(expected_le), "G1 {op_name} LE Test Failed",);
     }
 
     fn run_g2_test(
         op_name: &str,
-        func: fn(Version, &PodG2Point, &PodScalar, Endianness) -> Option<PodG2Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
@@ -110,7 +110,8 @@ mod tests {
         let scalar_be = to_pod_scalar(scalar_be);
         let expected_be = to_pod_g2(output_be);
 
-        let result_be = func(Version::V0, &point_be, &scalar_be, Endianness::BE);
+        let result_be =
+            bls12_381_g2_multiplication(Version::V0, &point_be, &scalar_be, Endianness::BE);
         assert_eq!(result_be, Some(expected_be), "G2 {op_name} BE Test Failed",);
 
         let (point_le, scalar_le) = input_le.split_at(192);
@@ -118,7 +119,8 @@ mod tests {
         let scalar_le = to_pod_scalar(scalar_le);
         let expected_le = to_pod_g2(output_le);
 
-        let result_le = func(Version::V0, &point_le, &scalar_le, Endianness::LE);
+        let result_le =
+            bls12_381_g2_multiplication(Version::V0, &point_le, &scalar_le, Endianness::LE);
         assert_eq!(result_le, Some(expected_le), "G2 {op_name} LE Test Failed",);
     }
 
@@ -126,7 +128,6 @@ mod tests {
     fn test_g1_multiplication_random() {
         run_g1_test(
             "MUL",
-            bls12_381_g1_multiplication,
             INPUT_BE_G1_MUL_RANDOM,
             OUTPUT_BE_G1_MUL_RANDOM,
             INPUT_LE_G1_MUL_RANDOM,
@@ -138,7 +139,6 @@ mod tests {
     fn test_g1_multiplication_zero() {
         run_g1_test(
             "MUL",
-            bls12_381_g1_multiplication,
             INPUT_BE_G1_MUL_SCALAR_ZERO,
             OUTPUT_BE_G1_MUL_SCALAR_ZERO,
             INPUT_LE_G1_MUL_SCALAR_ZERO,
@@ -150,7 +150,6 @@ mod tests {
     fn test_g1_multiplication_one() {
         run_g1_test(
             "MUL",
-            bls12_381_g1_multiplication,
             INPUT_BE_G1_MUL_SCALAR_ONE,
             OUTPUT_BE_G1_MUL_SCALAR_ONE,
             INPUT_LE_G1_MUL_SCALAR_ONE,
@@ -162,7 +161,6 @@ mod tests {
     fn test_g1_multiplication_minus_one() {
         run_g1_test(
             "MUL",
-            bls12_381_g1_multiplication,
             INPUT_BE_G1_MUL_SCALAR_MINUS_ONE,
             OUTPUT_BE_G1_MUL_SCALAR_MINUS_ONE,
             INPUT_LE_G1_MUL_SCALAR_MINUS_ONE,
@@ -174,7 +172,6 @@ mod tests {
     fn test_g1_multiplication_infinity() {
         run_g1_test(
             "MUL",
-            bls12_381_g1_multiplication,
             INPUT_BE_G1_MUL_POINT_INFINITY,
             OUTPUT_BE_G1_MUL_POINT_INFINITY,
             INPUT_LE_G1_MUL_POINT_INFINITY,
@@ -186,7 +183,6 @@ mod tests {
     fn test_g2_multiplication_random() {
         run_g2_test(
             "MUL",
-            bls12_381_g2_multiplication,
             INPUT_BE_G2_MUL_RANDOM,
             OUTPUT_BE_G2_MUL_RANDOM,
             INPUT_LE_G2_MUL_RANDOM,
@@ -198,7 +194,6 @@ mod tests {
     fn test_g2_multiplication_zero() {
         run_g2_test(
             "MUL",
-            bls12_381_g2_multiplication,
             INPUT_BE_G2_MUL_SCALAR_ZERO,
             OUTPUT_BE_G2_MUL_SCALAR_ZERO,
             INPUT_LE_G2_MUL_SCALAR_ZERO,
@@ -210,7 +205,6 @@ mod tests {
     fn test_g2_multiplication_one() {
         run_g2_test(
             "MUL",
-            bls12_381_g2_multiplication,
             INPUT_BE_G2_MUL_SCALAR_ONE,
             OUTPUT_BE_G2_MUL_SCALAR_ONE,
             INPUT_LE_G2_MUL_SCALAR_ONE,
@@ -222,7 +216,6 @@ mod tests {
     fn test_g2_multiplication_minus_one() {
         run_g2_test(
             "MUL",
-            bls12_381_g2_multiplication,
             INPUT_BE_G2_MUL_SCALAR_MINUS_ONE,
             OUTPUT_BE_G2_MUL_SCALAR_MINUS_ONE,
             INPUT_LE_G2_MUL_SCALAR_MINUS_ONE,
@@ -234,7 +227,6 @@ mod tests {
     fn test_g2_multiplication_infinity() {
         run_g2_test(
             "MUL",
-            bls12_381_g2_multiplication,
             INPUT_BE_G2_MUL_POINT_INFINITY,
             OUTPUT_BE_G2_MUL_POINT_INFINITY,
             INPUT_LE_G2_MUL_POINT_INFINITY,

@@ -74,7 +74,6 @@ mod tests {
 
     fn run_g1_test(
         op_name: &str,
-        func: fn(Version, &PodG1Point, &PodG1Point, Endianness) -> Option<PodG1Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
@@ -85,7 +84,7 @@ mod tests {
         let p2_be = to_pod_g1(p2_be);
         let expected_be = to_pod_g1(output_be);
 
-        let result_be = func(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        let result_be = bls12_381_g1_subtraction(Version::V0, &p1_be, &p2_be, Endianness::BE);
         assert_eq!(result_be, Some(expected_be), "G1 {op_name} BE Test Failed",);
 
         let (p1_le, p2_le) = input_le.split_at(96);
@@ -93,13 +92,12 @@ mod tests {
         let p2_le = to_pod_g1(p2_le);
         let expected_le = to_pod_g1(output_le);
 
-        let result_le = func(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        let result_le = bls12_381_g1_subtraction(Version::V0, &p1_le, &p2_le, Endianness::LE);
         assert_eq!(result_le, Some(expected_le), "G1 {op_name} LE Test Failed",);
     }
 
     fn run_g2_test(
         op_name: &str,
-        func: fn(Version, &PodG2Point, &PodG2Point, Endianness) -> Option<PodG2Point>,
         input_be: &[u8],
         output_be: &[u8],
         input_le: &[u8],
@@ -110,7 +108,7 @@ mod tests {
         let p2_be = to_pod_g2(p2_be);
         let expected_be = to_pod_g2(output_be);
 
-        let result_be = func(Version::V0, &p1_be, &p2_be, Endianness::BE);
+        let result_be = bls12_381_g2_subtraction(Version::V0, &p1_be, &p2_be, Endianness::BE);
         assert_eq!(result_be, Some(expected_be), "G2 {op_name} BE Test Failed",);
 
         let (p1_le, p2_le) = input_le.split_at(192);
@@ -118,7 +116,7 @@ mod tests {
         let p2_le = to_pod_g2(p2_le);
         let expected_le = to_pod_g2(output_le);
 
-        let result_le = func(Version::V0, &p1_le, &p2_le, Endianness::LE);
+        let result_le = bls12_381_g2_subtraction(Version::V0, &p1_le, &p2_le, Endianness::LE);
         assert_eq!(result_le, Some(expected_le), "G2 {op_name} LE Test Failed",);
     }
 
@@ -126,7 +124,6 @@ mod tests {
     fn test_g1_subtraction_random() {
         run_g1_test(
             "SUB",
-            bls12_381_g1_subtraction,
             INPUT_BE_G1_SUB_RANDOM,
             OUTPUT_BE_G1_SUB_RANDOM,
             INPUT_LE_G1_SUB_RANDOM,
@@ -139,7 +136,6 @@ mod tests {
         // Result should be Identity
         run_g1_test(
             "SUB",
-            bls12_381_g1_subtraction,
             INPUT_BE_G1_SUB_P_MINUS_P,
             OUTPUT_BE_G1_SUB_P_MINUS_P,
             INPUT_LE_G1_SUB_P_MINUS_P,
@@ -152,7 +148,6 @@ mod tests {
         // Inf - P (Should result in -P)
         run_g1_test(
             "SUB",
-            bls12_381_g1_subtraction,
             INPUT_BE_G1_SUB_INF_MINUS_P,
             OUTPUT_BE_G1_SUB_INF_MINUS_P,
             INPUT_LE_G1_SUB_INF_MINUS_P,
@@ -162,7 +157,6 @@ mod tests {
         // P - Inf (Should result in P)
         run_g1_test(
             "SUB",
-            bls12_381_g1_subtraction,
             INPUT_BE_G1_SUB_P_MINUS_INF,
             OUTPUT_BE_G1_SUB_P_MINUS_INF,
             INPUT_LE_G1_SUB_P_MINUS_INF,
@@ -174,7 +168,6 @@ mod tests {
     fn test_g2_subtraction_random() {
         run_g2_test(
             "SUB",
-            bls12_381_g2_subtraction,
             INPUT_BE_G2_SUB_RANDOM,
             OUTPUT_BE_G2_SUB_RANDOM,
             INPUT_LE_G2_SUB_RANDOM,
@@ -187,7 +180,6 @@ mod tests {
         // Result should be Identity
         run_g2_test(
             "SUB",
-            bls12_381_g2_subtraction,
             INPUT_BE_G2_SUB_P_MINUS_P,
             OUTPUT_BE_G2_SUB_P_MINUS_P,
             INPUT_LE_G2_SUB_P_MINUS_P,
@@ -200,7 +192,6 @@ mod tests {
         // Inf - P (Should result in -P)
         run_g2_test(
             "SUB",
-            bls12_381_g2_subtraction,
             INPUT_BE_G2_SUB_INF_MINUS_P,
             OUTPUT_BE_G2_SUB_INF_MINUS_P,
             INPUT_LE_G2_SUB_INF_MINUS_P,
@@ -210,7 +201,6 @@ mod tests {
         // P - Inf (Should result in P)
         run_g2_test(
             "SUB",
-            bls12_381_g2_subtraction,
             INPUT_BE_G2_SUB_P_MINUS_INF,
             OUTPUT_BE_G2_SUB_P_MINUS_INF,
             INPUT_LE_G2_SUB_P_MINUS_INF,
