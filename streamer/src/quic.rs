@@ -51,9 +51,9 @@ pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 2000;
 pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
 
 /// The new connections per minute from a particular IP address.
-/// Heuristically set to the default maximum concurrent connections
+/// Heuristically set to twice the default maximum concurrent connections
 /// per IP address. Might be adjusted later.
-pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
+pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 16;
 
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
