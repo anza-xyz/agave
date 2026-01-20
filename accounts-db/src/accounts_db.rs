@@ -5131,12 +5131,13 @@ impl AccountsDb {
     /// Used for cached accounts only.
     fn update_index_cached_accounts<'a>(
         &self,
-        store_account: Vec<bool>,
         accounts: &impl StorableAccounts<'a>,
+        store_account: &[bool],
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         let target_slot = accounts.target_slot();
-        let len = std::cmp::min(accounts.len(), store_account.len());
+        let len = accounts.len();
+        assert_eq!(accounts.len(), store_account.len());
 
         let update = |start, end| {
             (start..end).for_each(|i| {
@@ -5625,7 +5626,7 @@ impl AccountsDb {
 
         // Store the accounts in the write cache
         let mut store_accounts_time = Measure::start("store_accounts");
-        let (store_account, ephemeral_accounts_skipped) =
+        let (store_account, num_ephemeral_accounts_skipped) =
             self.write_accounts_to_cache(accounts.target_slot(), &accounts, transactions);
         store_accounts_time.stop();
         self.stats
@@ -5635,19 +5636,19 @@ impl AccountsDb {
         // Update the index
         let mut update_index_time = Measure::start("update_index");
 
-        self.update_index_cached_accounts(store_account, &accounts, update_index_thread_selection);
+        self.update_index_cached_accounts(&accounts, &store_account, update_index_thread_selection);
 
         update_index_time.stop();
         self.stats
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
         self.stats.num_store_accounts_to_cache.fetch_add(
-            (accounts.len() - ephemeral_accounts_skipped) as u64,
+            (accounts.len() - num_ephemeral_accounts_skipped) as u64,
             Ordering::Relaxed,
         );
         self.stats
-            .ephemeral_accounts_skipped
-            .fetch_add(ephemeral_accounts_skipped as u64, Ordering::Relaxed);
+            .num_ephemeral_accounts_skipped
+            .fetch_add(num_ephemeral_accounts_skipped as u64, Ordering::Relaxed);
         self.report_store_timings();
     }
 
@@ -5787,7 +5788,7 @@ impl AccountsDb {
             0
         };
 
-        let store_account: Vec<bool> = (0..accounts_and_meta_to_store.len())
+        let store_account = (0..accounts_and_meta_to_store.len())
             .map(|index| {
                 let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
                 accounts_and_meta_to_store.account(index, |account| {
@@ -6081,9 +6082,9 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "ephemeral_accounts_skipped",
+                    "num_ephemeral_accounts_skipped",
                     self.stats
-                        .ephemeral_accounts_skipped
+                        .num_ephemeral_accounts_skipped
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),

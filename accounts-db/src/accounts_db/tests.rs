@@ -6587,16 +6587,20 @@ fn test_new_zero_lamport_accounts_skipped() {
     let account = AccountSharedData::new(100, 0, &Pubkey::default());
     let slot = 0;
 
-    // 1. Insert a single zero-lamport account and verify it is not added to the index.
+    // 1. Insert a single zero-lamport account and verify it is not added to the index or the
+    //    write cache. Since this is the first write to this slot, the slot cache should not be
+    //    created.
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey1, &zero_account)].as_slice()),
         None,
         UpdateIndexThreadSelection::PoolWithThreshold,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
+    assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
 
-    // 2. Insert a zero-lamport (pubkey1) together with non-zero accounts (pubkey2, pubkey3)
-    //    in the same slot and verify only the non-zero pubkeys are indexed.
+    // 2. Insert a zero-lamport (pubkey1) together with non-zero lamport accounts
+    //    (pubkey2, pubkey3) in the same slot and verify only the non-zero lamport pubkeys are
+    //    indexed.
     accounts_db.store_accounts_unfrozen(
         (
             slot,
@@ -6611,26 +6615,57 @@ fn test_new_zero_lamport_accounts_skipped() {
         UpdateIndexThreadSelection::PoolWithThreshold,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
+    assert!(!accounts_db
+        .accounts_cache
+        .slot_cache(slot)
+        .unwrap()
+        .contains_key(&pubkey1));
     assert!(accounts_db.accounts_index.contains(&pubkey2));
+    assert!(accounts_db
+        .accounts_cache
+        .slot_cache(slot)
+        .unwrap()
+        .contains_key(&pubkey2));
     assert!(accounts_db.accounts_index.contains(&pubkey3));
+    assert!(accounts_db
+        .accounts_cache
+        .slot_cache(slot)
+        .unwrap()
+        .contains_key(&pubkey3));
 
     // 3. Insert a zero-lamport update for an already-indexed pubkey (pubkey2).
-    //    Verify pubkey2 remains in the index.
+    //    Verify pubkey2 remains in the index and gets added to the slot cache.
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey2, &zero_account)].as_slice()),
         None,
         UpdateIndexThreadSelection::PoolWithThreshold,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey2));
+    assert!(accounts_db
+        .accounts_cache
+        .slot_cache(slot)
+        .unwrap()
+        .contains_key(&pubkey2));
 
     // 4. Flush the slot to simulate write-cache -> storage transition and verify
-    //    pubkey1 is still not present while pubkey2 remains indexed.
+    //    pubkey1 is still not present while pubkey2 remains indexed but is now zero-lamport.
     accounts_db.add_root_and_flush_write_cache(slot);
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(accounts_db.accounts_index.contains(&pubkey2));
     assert!(accounts_db.accounts_index.contains(&pubkey3));
 
-    // 5. Add a non-zero account for a pubkey that was previously only written as zero
+    // Verify pubkey2 is present in slot in the index with a zero-lamport AccountInfo.
+    assert!(accounts_db.accounts_index.get_and_then(&pubkey2, |entry| {
+        let account_info = entry
+            .unwrap()
+            .slot_list_read_lock()
+            .first()
+            .unwrap()
+            .clone();
+        (false, account_info.1.is_zero_lamport())
+    }));
+
+    // 5. Add a non-zero lamport account for a pubkey that was previously only written as zero
     //    (pubkey1) and verify the pubkey is added to the index.
     let slot = slot + 1;
     accounts_db.store_accounts_unfrozen(
@@ -6640,7 +6675,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     );
     assert!(accounts_db.accounts_index.contains(&pubkey1));
 
-    // 6. Set pubkey3 to zero lamports flush. Verify pubkey3 is present in the index with
+    // 6. Set pubkey3 to zero lamports and flush. Verify pubkey3 is present in the index with
     // a zero-lamport AccountInfo after flushing.
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey3, &zero_account)].as_slice()),
