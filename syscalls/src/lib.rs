@@ -264,7 +264,7 @@ impl HasherImpl for Keccak256Hasher {
     }
 }
 
-// NOTE: These constants are temporarily added here to avoid immediate 
+// NOTE: These constants are temporarily added here to avoid immediate
 // dependency conflicts.
 mod bls12_381_curve_id {
     /// Curve ID for BLS12-381 pairing operations
@@ -416,6 +416,12 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         curve25519_syscall_enabled,
         "sol_curve_multiscalar_mul",
         SyscallCurveMultiscalarMultiplication::vm,
+    )?;
+    register_feature_gated_function!(
+        result,
+        enable_alt_bn128_syscall,
+        "sol_curve_decompress",
+        SyscallCurveDecompress::vm,
     )?;
 
     // Sysvars
@@ -990,13 +996,10 @@ declare_builtin_function!(
         };
 
         // SIMD-0388: BLS12-381 syscalls
-        if !invoke_context.get_feature_set().enable_bls12_381_syscall &&
-            matches!(
+        if !invoke_context.get_feature_set().enable_bls12_381_syscall
+            && matches!(
                 curve_id,
-                BLS12_381_G1_BE
-                    | BLS12_381_G1_LE
-                    | BLS12_381_G2_BE
-                    | BLS12_381_G2_LE
+                BLS12_381_G1_BE | BLS12_381_G1_LE | BLS12_381_G2_BE | BLS12_381_G2_LE
             )
         {
             return Err(SyscallError::InvalidAttribute.into());
@@ -1107,6 +1110,107 @@ declare_builtin_function!(
 );
 
 declare_builtin_function!(
+    /// Elliptic Curve Point Decompression
+    SyscallCurveDecompress,
+    fn rust(
+        invoke_context: &mut InvokeContext,
+        curve_id: u64,
+        point_addr: u64,
+        result_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use {
+            crate::bls12_381_curve_id::*,
+            agave_bls12_381::{
+                PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
+                PodG1Compressed as PodBLSG1Compressed, PodG2Compressed as
+                PodBLSG2Compressed
+            },
+        };
+
+        match curve_id {
+            BLS12_381_G1_LE | BLS12_381_G1_BE => {
+                let cost = invoke_context
+                    .get_execution_cost()
+                    .bls12_381_g1_decompress_cost;
+                consume_compute_meter(invoke_context, cost)?;
+
+                let compressed_point = translate_type::<PodBLSG1Compressed>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let endianness = if curve_id == BLS12_381_G1_LE {
+                    agave_bls12_381::Endianness::LE
+                } else {
+                    agave_bls12_381::Endianness::BE
+                };
+
+                if let Some(affine_point) = agave_bls12_381::bls12_381_g1_decompress(
+                    agave_bls12_381::Version::V0,
+                    compressed_point,
+                    endianness,
+                ) {
+                    translate_mut!(
+                        memory_mapping,
+                        invoke_context.get_check_aligned(),
+                        let result_ref_mut: &mut PodBLSG1Point = map(result_addr)?;
+                    );
+                    *result_ref_mut = affine_point;
+                    Ok(SUCCESS)
+                } else {
+                    Ok(1)
+                }
+            }
+            BLS12_381_G2_LE | BLS12_381_G2_BE => {
+                let cost = invoke_context
+                    .get_execution_cost()
+                    .bls12_381_g2_decompress_cost;
+                consume_compute_meter(invoke_context, cost)?;
+
+                let compressed_point = translate_type::<PodBLSG2Compressed>(
+                    memory_mapping,
+                    point_addr,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let endianness = if curve_id == BLS12_381_G2_LE {
+                    agave_bls12_381::Endianness::LE
+                } else {
+                    agave_bls12_381::Endianness::BE
+                };
+
+                if let Some(affine_point) = agave_bls12_381::bls12_381_g2_decompress(
+                    agave_bls12_381::Version::V0,
+                    compressed_point,
+                    endianness,
+                ) {
+                    translate_mut!(
+                        memory_mapping,
+                        invoke_context.get_check_aligned(),
+                        let result_ref_mut: &mut PodBLSG2Point = map(result_addr)?;
+                    );
+                    *result_ref_mut = affine_point;
+                    Ok(SUCCESS)
+                } else {
+                    Ok(1)
+                }
+            }
+            _ => {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+declare_builtin_function!(
     // Elliptic Curve Group Operations
     //
     // Currently, only curve25519 Edwards and Ristretto representations are supported
@@ -1123,9 +1227,7 @@ declare_builtin_function!(
         use {
             crate::bls12_381_curve_id::*,
             agave_bls12_381::{
-                PodG1Point as PodBLSG1Point,
-                PodG2Point as PodBLSG2Point,
-                PodScalar as PodBLSScalar,
+                PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point, PodScalar as PodBLSScalar,
             },
             solana_curve25519::{
                 curve_syscall_traits::*,
