@@ -967,8 +967,6 @@ struct EpochInflationRewards {
     /// the epoch and its stake is equal to the network capitalization i.e.
     /// the total supply.
     validator_rewards_lamports: u64,
-    /// How long a single epoch lasts in years.
-    epoch_duration_in_years: f64,
     /// The current inflation rate for the validators.
     validator_rate: f64,
     /// The current inflation rate for the foundation.
@@ -2413,7 +2411,6 @@ impl Bank {
 
         EpochInflationRewards {
             validator_rewards_lamports,
-            epoch_duration_in_years,
             validator_rate,
             foundation_rate,
         }
