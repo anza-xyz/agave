@@ -6656,11 +6656,7 @@ fn test_new_zero_lamport_accounts_skipped() {
 
     // Verify pubkey2 is present in slot in the index with a zero-lamport AccountInfo.
     assert!(accounts_db.accounts_index.get_and_then(&pubkey2, |entry| {
-        let account_info = *entry
-            .unwrap()
-            .slot_list_read_lock()
-            .first()
-            .unwrap();
+        let account_info = *entry.unwrap().slot_list_read_lock().first().unwrap();
         (false, account_info.1.is_zero_lamport())
     }));
 
