@@ -963,7 +963,9 @@ impl Default for BankTestConfig {
 
 /// Data returned from [`Bank::calculate_epoch_inflation_rewards()`].
 struct EpochInflationRewards {
-    /// Amount of rewards a validator should get if it voted in every slot in the epoch and its stake is equal to the network capitalization i.e. the total supply.
+    /// Amount of rewards a validator should get if it voted in every slot in
+    /// the epoch and its stake is equal to the network capitalization i.e.
+    /// the total supply.
     validator_rewards_lamports: u64,
     /// How long a single epoch lasts in years.
     epoch_duration_in_years: f64,
