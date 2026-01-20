@@ -190,8 +190,6 @@ impl StandardBroadcastRun {
             last_tick_height,
         } = receive_results;
 
-        inc_new_counter_info!("broadcast_service-entries_received", entries.len());
-
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
 
         if self.slot != bank.slot() {
