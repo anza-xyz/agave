@@ -5398,6 +5398,33 @@ impl Bank {
             self.update_rent();
         }
 
+        // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated (SIMD-0194),
+        // so rent.lamports_per_byte_year can be set directly
+        {
+            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_6333::id()) {
+                self.rent_collector.rent.lamports_per_byte_year =
+                    feature_set::set_lamports_per_byte_to_6333::LAMPORTS_PER_BYTE;
+            }
+            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_5080::id()) {
+                self.rent_collector.rent.lamports_per_byte_year =
+                    feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE;
+            }
+            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_2575::id()) {
+                self.rent_collector.rent.lamports_per_byte_year =
+                    feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE;
+            }
+            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_1322::id()) {
+                self.rent_collector.rent.lamports_per_byte_year =
+                    feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE;
+            }
+            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_696::id()) {
+                self.rent_collector.rent.lamports_per_byte_year =
+                    feature_set::set_lamports_per_byte_to_696::LAMPORTS_PER_BYTE;
+            }
+
+            self.update_rent();
+        }
+
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
             *self.inflation.write().unwrap() = Inflation::pico();
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn

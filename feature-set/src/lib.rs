@@ -1244,6 +1244,37 @@ pub mod enable_bls12_381_syscall {
     solana_pubkey::declare_id!("b1sraWPVFdcUizB2LV5wQTeMuK8M313bi5bHjco5eVU");
 }
 
+// SIMD-0437 feature gates
+pub mod set_lamports_per_byte_to_6333 {
+    solana_pubkey::declare_id!("4a6f7o7iTcA8hRDCrPLkSatnt5Ykxiu36wo5p1Tt12wC");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 6333;
+}
+
+pub mod set_lamports_per_byte_to_5080 {
+    solana_pubkey::declare_id!("61BtM7BkDEE8Yq5fskEVAQT9mYA8qCejJWoLe5apqg81");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 5080;
+}
+
+pub mod set_lamports_per_byte_to_2575 {
+    solana_pubkey::declare_id!("Ftxb3ZKq7aNqgxDBbP7EonvR2RszZk9ctjdsTX38kQaz");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 2575;
+}
+
+pub mod set_lamports_per_byte_to_1322 {
+    solana_pubkey::declare_id!("GsUBNYNDPdMLHPD37TToHzrzcNcjpC9w5n1EcJk5iTaM");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 1322;
+}
+
+pub mod set_lamports_per_byte_to_696 {
+    solana_pubkey::declare_id!("mZdnRh9T2EbDNvqKjkCR3bvo5c816tJaojtE9Xs7iuY");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 696;
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2230,6 +2261,26 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enable_bls12_381_syscall::id(),
             "SIMD-0388: BLS12-381 syscalls",
+        ),
+        (
+            set_lamports_per_byte_to_6333::id(),
+            "SIMD-0437-1: Set lamports per byte to 6333",
+        ),
+        (
+            set_lamports_per_byte_to_5080::id(),
+            "SIMD-0437-2: Set lamports per byte to 5080",
+        ),
+        (
+            set_lamports_per_byte_to_2575::id(),
+            "SIMD-0437-3: Set lamports per byte to 2575",
+        ),
+        (
+            set_lamports_per_byte_to_1322::id(),
+            "SIMD-0437-4: Set lamports per byte to 1322",
+        ),
+        (
+            set_lamports_per_byte_to_696::id(),
+            "SIMD-0437-5: Set lamports per byte to 696",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
