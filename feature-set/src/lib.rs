@@ -1275,6 +1275,12 @@ pub mod set_lamports_per_byte_to_696 {
     pub const LAMPORTS_PER_BYTE: u64 = 696;
 }
 
+pub mod set_lamports_per_byte_to_6960 {
+    solana_pubkey::declare_id!("5AqsUgSb6cgLizSaNiFn3o9XB7VUtKDtDZfcKEjEDmni");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 6960;
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2281,6 +2287,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             set_lamports_per_byte_to_696::id(),
             "SIMD-0437-5: Set lamports per byte to 696",
+        ),
+        (
+            set_lamports_per_byte_to_6960::id(),
+            "SIMD-0438: Reset lamports per byte to legacy value of 6960",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
