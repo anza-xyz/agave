@@ -423,6 +423,12 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
         "sol_curve_decompress",
         SyscallCurveDecompress::vm,
     )?;
+    register_feature_gated_function!(
+        result,
+        enable_alt_bn128_syscall,
+        "sol_curve_pairing_map",
+        SyscallCurvePairingMap::vm,
+    )?;
 
     // Sysvars
     result.register_function("sol_get_clock_sysvar", SyscallGetClockSysvar::vm)?;
@@ -1785,6 +1791,86 @@ declare_builtin_function!(
                 }
             }
 
+            _ => {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
+        }
+    }
+);
+
+declare_builtin_function!(
+    /// Elliptic Curve Pairing Map
+    SyscallCurvePairingMap,
+    fn rust(
+        invoke_context: &mut InvokeContext,
+        curve_id: u64,
+        num_pairs: u64,
+        g1_points_addr: u64,
+        g2_points_addr: u64,
+        result_addr: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        use {
+            crate::bls12_381_curve_id::*,
+            agave_bls12_381::{
+                PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
+                PodGtElement as PodBLSGtElement,
+            },
+        };
+
+        match curve_id {
+            BLS12_381_LE | BLS12_381_BE => {
+                let execution_cost = invoke_context.get_execution_cost();
+                let cost = execution_cost
+                    .bls12_381_pair_base_cost
+                    .saturating_add(
+                        execution_cost
+                            .bls12_381_pair_per_pair_cost
+                            .saturating_mul(num_pairs),
+                    );
+                consume_compute_meter(invoke_context, cost)?;
+
+                let g1_points = translate_slice::<PodBLSG1Point>(
+                    memory_mapping,
+                    g1_points_addr,
+                    num_pairs,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let g2_points = translate_slice::<PodBLSG2Point>(
+                    memory_mapping,
+                    g2_points_addr,
+                    num_pairs,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                let endianness = if curve_id == BLS12_381_LE {
+                    agave_bls12_381::Endianness::LE
+                } else {
+                    agave_bls12_381::Endianness::BE
+                };
+
+                if let Some(gt_element) = agave_bls12_381::bls12_381_pairing_map(
+                    agave_bls12_381::Version::V0,
+                    g1_points,
+                    g2_points,
+                    endianness,
+                ) {
+                    translate_mut!(
+                        memory_mapping,
+                        invoke_context.get_check_aligned(),
+                        let result_ref_mut: &mut PodBLSGtElement = map(result_addr)?;
+                    );
+                    *result_ref_mut = gt_element;
+                    Ok(SUCCESS)
+                } else {
+                    Ok(1)
+                }
+            }
             _ => {
                 if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())

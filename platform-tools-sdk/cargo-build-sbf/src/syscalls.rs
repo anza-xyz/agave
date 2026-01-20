@@ -30,6 +30,7 @@ pub(crate) const SYSCALLS: &[&str] = &[
     "sol_curve_group_op",
     "sol_curve_multiscalar_mul",
     "sol_curve_decompress",
+    "sol_curve_pairing_map",
     "sol_get_fees_sysvar",
     "sol_get_last_restart_slot",
     "sol_alloc_free_",
