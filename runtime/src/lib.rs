@@ -35,6 +35,7 @@ pub mod serde_snapshot;
 pub mod snapshot_bank_utils;
 pub mod snapshot_controller;
 pub mod snapshot_minimizer;
+pub mod snapshot_mode;
 pub mod snapshot_package;
 pub mod snapshot_utils;
 mod stake_account;
