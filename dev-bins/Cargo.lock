@@ -63,6 +63,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-bls12-381"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "blst",
+ "blstrs",
+ "bytemuck",
+ "bytemuck_derive",
+ "group",
+ "pairing",
+ "solana-define-syscall 4.0.1",
+]
+
+[[package]]
 name = "agave-feature-set"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -306,6 +319,7 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls12-381",
  "bincode",
  "libsecp256k1",
  "num-traits",

@@ -63,6 +63,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-bls12-381"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "blst",
+ "blstrs",
+ "bytemuck",
+ "bytemuck_derive",
+ "group",
+ "pairing",
+ "solana-define-syscall 4.0.1",
+]
+
+[[package]]
 name = "agave-feature-set"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -209,6 +222,7 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls12-381",
  "bincode",
  "libsecp256k1 0.6.0",
  "num-traits",
@@ -1260,9 +1274,9 @@ dependencies = [
 
 [[package]]
 name = "blst"
-version = "0.3.15"
+version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fd49896f12ac9b6dcd7a5998466b9b58263a695a3dd1ecc1aaca2e12a90b080"
+checksum = "dcdb4c7013139a150f9fc55d123186dbfaba0d912817466282c73ac49e71fb45"
 dependencies = [
  "cc",
  "glob",
