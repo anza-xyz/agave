@@ -2706,7 +2706,7 @@ mod tests {
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
             memory::address_is_aligned,
-            with_mock_invoke_context,
+            with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
             aligned_memory::AlignedMemory,
@@ -2756,6 +2756,33 @@ mod tests {
                 ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
             ];
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
+            $invoke_context
+                .transaction_context
+                .configure_next_instruction_for_tests(1, vec![], vec![])
+                .unwrap();
+            $invoke_context.push().unwrap();
+        };
+    }
+
+    macro_rules! prepare_mock_with_feature_set {
+        ($invoke_context:ident,
+         $program_key:ident,
+         $loader_key:expr,
+         $feature_set:ident $(,)?) => {
+            let $program_key = Pubkey::new_unique();
+            let transaction_accounts = vec![
+                (
+                    $loader_key,
+                    AccountSharedData::new(0, 0, &native_loader::id()),
+                ),
+                ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
+            ];
+            with_mock_invoke_context_with_feature_set!(
+                $invoke_context,
+                transaction_context,
+                $feature_set,
+                transaction_accounts
+            );
             $invoke_context
                 .transaction_context
                 .configure_next_instruction_for_tests(1, vec![], vec![])
@@ -5790,5 +5817,680 @@ mod tests {
             &mut memory_mapping,
         );
         assert_access_violation!(result, 0x100000000, 4);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_g1_add() {
+        use {
+            crate::bls12_381_curve_id::BLS12_381_G1_BE,
+            solana_curve25519::curve_syscall_traits::ADD,
+        };
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+
+        let p1_bytes: [u8; 96] = [
+            9, 86, 169, 212, 236, 245, 17, 101, 127, 183, 56, 13, 99, 100, 183, 133, 57, 107, 96,
+            220, 198, 197, 2, 215, 225, 175, 212, 57, 168, 143, 104, 127, 117, 242, 180, 200, 162,
+            135, 72, 155, 88, 154, 58, 90, 58, 46, 248, 176, 10, 206, 25, 112, 240, 1, 57, 89, 10,
+            30, 165, 94, 164, 252, 219, 225, 133, 214, 161, 4, 118, 177, 123, 53, 57, 53, 233, 255,
+            112, 117, 241, 247, 185, 195, 232, 36, 123, 31, 221, 6, 57, 176, 251, 163, 195, 39, 35,
+            175,
+        ];
+        let p2_bytes: [u8; 96] = [
+            13, 32, 61, 215, 83, 124, 186, 189, 82, 0, 79, 244, 67, 167, 21, 50, 48, 229, 8, 107,
+            51, 15, 19, 47, 75, 77, 246, 185, 63, 66, 143, 109, 237, 211, 153, 146, 163, 175, 74,
+            69, 50, 198, 235, 218, 9, 170, 225, 46, 22, 211, 116, 84, 32, 115, 130, 224, 106, 250,
+            205, 143, 238, 115, 74, 207, 238, 193, 232, 16, 59, 140, 20, 252, 7, 34, 144, 47, 137,
+            56, 190, 170, 235, 189, 238, 45, 97, 58, 199, 202, 45, 164, 139, 200, 190, 215, 9, 59,
+        ];
+        let expected_sum: [u8; 96] = [
+            23, 62, 255, 137, 157, 188, 98, 86, 192, 102, 136, 171, 187, 49, 155, 83, 204, 133,
+            217, 144, 137, 103, 15, 4, 116, 75, 127, 65, 29, 89, 223, 147, 32, 161, 91, 104, 96,
+            211, 239, 102, 233, 95, 48, 130, 207, 154, 19, 189, 18, 112, 102, 145, 36, 73, 17, 27,
+            47, 96, 116, 45, 56, 25, 16, 191, 56, 21, 86, 216, 133, 245, 207, 71, 158, 31, 29, 51,
+            84, 185, 134, 138, 64, 68, 55, 161, 55, 153, 214, 155, 250, 21, 233, 4, 3, 117, 41,
+            239,
+        ];
+
+        let p1_va = 0x100000000;
+        let p2_va = 0x200000000;
+        let result_va = 0x300000000;
+
+        let mut result_buf = [0u8; 96];
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&p1_bytes, p1_va),
+                MemoryRegion::new_readonly(&p2_bytes, p2_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g1_add_cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
+        invoke_context.mock_set_remaining(bls12_381_g1_add_cost);
+
+        let result = SyscallCurveGroupOps::rust(
+            &mut invoke_context,
+            BLS12_381_G1_BE,
+            ADD,
+            p1_va,
+            p2_va,
+            result_va,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_sum);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_g1_sub() {
+        use {
+            crate::bls12_381_curve_id::BLS12_381_G1_BE,
+            solana_curve25519::curve_syscall_traits::SUB,
+        };
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+
+        let sub_p1: [u8; 96] = [
+            6, 126, 67, 177, 221, 168, 219, 147, 17, 32, 109, 112, 204, 95, 207, 179, 227, 202, 32,
+            250, 118, 43, 195, 105, 176, 47, 188, 43, 181, 226, 123, 119, 132, 240, 97, 172, 225,
+            247, 180, 76, 58, 229, 188, 121, 247, 28, 245, 198, 17, 128, 94, 239, 206, 10, 10, 20,
+            148, 186, 226, 202, 12, 196, 71, 72, 167, 44, 87, 64, 24, 214, 238, 218, 6, 166, 113,
+            165, 178, 8, 221, 0, 21, 154, 72, 160, 158, 70, 46, 244, 127, 4, 250, 158, 31, 2, 130,
+            152,
+        ];
+        let sub_p2: [u8; 96] = [
+            12, 173, 131, 106, 17, 172, 169, 46, 205, 228, 83, 25, 204, 216, 118, 223, 16, 102, 52,
+            235, 202, 255, 183, 91, 99, 78, 141, 169, 14, 244, 161, 28, 240, 32, 214, 46, 0, 93,
+            106, 73, 41, 176, 220, 160, 251, 37, 18, 110, 15, 86, 67, 210, 137, 114, 71, 220, 167,
+            121, 177, 224, 142, 151, 152, 29, 206, 12, 35, 6, 46, 60, 53, 127, 84, 78, 231, 88, 49,
+            95, 219, 36, 224, 182, 0, 253, 136, 115, 59, 15, 80, 229, 136, 103, 27, 211, 120, 90,
+        ];
+        let expected_sub: [u8; 96] = [
+            13, 144, 131, 116, 67, 229, 136, 165, 135, 146, 181, 191, 197, 215, 68, 126, 103, 158,
+            231, 50, 49, 105, 8, 243, 53, 209, 99, 16, 39, 177, 211, 99, 128, 164, 37, 101, 139,
+            186, 14, 225, 84, 210, 120, 16, 203, 115, 160, 49, 10, 243, 68, 241, 87, 193, 186, 179,
+            87, 214, 88, 39, 123, 126, 136, 31, 178, 134, 203, 222, 127, 206, 218, 240, 135, 183,
+            93, 145, 136, 148, 174, 238, 159, 0, 117, 212, 171, 247, 148, 197, 206, 7, 225, 81,
+            114, 74, 63, 201,
+        ];
+
+        let p1_va = 0x100000000;
+        let p2_va = 0x200000000;
+        let result_va = 0x300000000;
+
+        let mut result_buf = [0u8; 96];
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&sub_p1, p1_va),
+                MemoryRegion::new_readonly(&sub_p2, p2_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g1_subtract_cost = invoke_context
+            .get_execution_cost()
+            .bls12_381_g1_subtract_cost;
+        invoke_context.mock_set_remaining(bls12_381_g1_subtract_cost);
+
+        let result = SyscallCurveGroupOps::rust(
+            &mut invoke_context,
+            BLS12_381_G1_BE,
+            SUB,
+            p1_va,
+            p2_va,
+            result_va,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_sub);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_g1_mul() {
+        use {
+            crate::bls12_381_curve_id::BLS12_381_G1_BE,
+            solana_curve25519::curve_syscall_traits::MUL,
+        };
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+
+        let mul_point: [u8; 96] = [
+            20, 18, 233, 201, 110, 206, 56, 32, 8, 44, 140, 121, 37, 196, 157, 56, 180, 134, 164,
+            33, 180, 130, 147, 7, 26, 239, 183, 163, 219, 85, 143, 197, 247, 243, 117, 252, 201,
+            171, 156, 90, 210, 7, 43, 92, 89, 130, 165, 224, 5, 101, 24, 54, 189, 22, 73, 76, 145,
+            136, 99, 59, 51, 255, 124, 43, 61, 8, 121, 30, 118, 90, 254, 12, 126, 92, 152, 78, 44,
+            231, 126, 56, 220, 35, 54, 117, 2, 175, 190, 105, 138, 188, 202, 36, 171, 12, 231, 225,
+        ];
+        let mul_scalar: [u8; 32] = [
+            29, 192, 111, 151, 187, 37, 109, 91, 129, 223, 188, 225, 117, 3, 120, 162, 107, 66,
+            159, 255, 61, 128, 41, 32, 242, 95, 232, 202, 106, 188, 154, 147,
+        ];
+        let expected_mul: [u8; 96] = [
+            22, 101, 72, 255, 3, 247, 39, 218, 234, 117, 208, 91, 158, 114, 126, 55, 166, 71, 227,
+            205, 6, 124, 55, 255, 167, 66, 154, 237, 83, 143, 8, 179, 98, 185, 162, 164, 170, 62,
+            141, 4, 1, 179, 41, 49, 95, 212, 139, 227, 18, 125, 245, 10, 169, 201, 171, 172, 152,
+            1, 105, 81, 159, 160, 252, 184, 80, 59, 165, 170, 185, 114, 248, 208, 228, 111, 229,
+            200, 221, 204, 9, 120, 153, 142, 88, 240, 228, 164, 157, 79, 72, 55, 119, 239, 56, 104,
+            54, 58,
+        ];
+
+        let scalar_va = 0x100000000;
+        let point_va = 0x200000000;
+        let result_va = 0x300000000;
+
+        let mut result_buf = [0u8; 96];
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&mul_scalar, scalar_va),
+                MemoryRegion::new_readonly(&mul_point, point_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g1_multiply_cost = invoke_context
+            .get_execution_cost()
+            .bls12_381_g1_multiply_cost;
+        invoke_context.mock_set_remaining(bls12_381_g1_multiply_cost);
+
+        let result = SyscallCurveGroupOps::rust(
+            &mut invoke_context,
+            BLS12_381_G1_BE,
+            MUL,
+            scalar_va,
+            point_va,
+            result_va,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_mul);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_g2_add() {
+        use crate::bls12_381_curve_id::BLS12_381_G2_BE;
+        use solana_curve25519::curve_syscall_traits::ADD;
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+
+        let p1_bytes: [u8; 192] = [
+            11, 83, 21, 62, 4, 174, 123, 131, 163, 19, 62, 216, 192, 48, 25, 184, 57, 207, 80, 70,
+            253, 51, 129, 169, 87, 182, 142, 1, 148, 102, 203, 99, 86, 111, 207, 55, 204, 117, 82,
+            138, 199, 89, 131, 207, 158, 244, 204, 139, 18, 151, 214, 201, 158, 39, 101, 252, 189,
+            53, 251, 236, 205, 27, 152, 163, 232, 101, 53, 197, 18, 238, 241, 70, 182, 113, 111,
+            249, 99, 122, 42, 220, 55, 127, 55, 247, 172, 164, 183, 169, 146, 229, 218, 185, 144,
+            176, 86, 174, 21, 132, 150, 29, 241, 241, 215, 77, 12, 75, 238, 103, 23, 90, 189, 191,
+            85, 72, 181, 214, 85, 253, 183, 150, 158, 8, 250, 178, 220, 169, 215, 243, 146, 213,
+            150, 12, 6, 40, 188, 197, 56, 210, 46, 125, 87, 5, 17, 7, 24, 27, 160, 22, 99, 114, 9,
+            7, 244, 108, 179, 201, 38, 33, 153, 219, 10, 211, 2, 212, 74, 95, 151, 223, 200, 96,
+            121, 166, 10, 186, 122, 40, 222, 87, 34, 227, 49, 166, 195, 139, 37, 221, 44, 227, 86,
+            119, 190, 41,
+        ];
+        let p2_bytes: [u8; 192] = [
+            14, 110, 180, 174, 46, 74, 145, 125, 94, 28, 39, 205, 107, 126, 53, 188, 36, 69, 162,
+            98, 105, 79, 49, 148, 136, 229, 5, 128, 197, 187, 0, 234, 141, 201, 246, 223, 103, 75,
+            177, 33, 2, 75, 90, 33, 139, 152, 156, 89, 25, 91, 158, 100, 20, 12, 135, 130, 191,
+            181, 5, 41, 94, 195, 89, 36, 181, 111, 238, 24, 187, 178, 179, 143, 17, 181, 68, 203,
+            184, 134, 185, 195, 176, 27, 90, 2, 29, 165, 209, 16, 143, 11, 224, 251, 63, 188, 218,
+            41, 23, 71, 91, 90, 202, 108, 80, 160, 200, 194, 162, 109, 200, 96, 5, 102, 156, 245,
+            43, 247, 221, 139, 148, 254, 253, 183, 161, 83, 253, 247, 22, 71, 133, 93, 36, 127,
+            162, 248, 49, 64, 173, 201, 17, 210, 8, 214, 18, 65, 7, 222, 11, 4, 120, 17, 85, 49,
+            205, 95, 132, 208, 152, 136, 92, 19, 195, 176, 136, 39, 90, 207, 17, 195, 14, 215, 33,
+            191, 232, 59, 3, 86, 78, 78, 149, 165, 179, 145, 161, 190, 247, 67, 243, 252, 137, 1,
+            39, 71,
+        ];
+        let expected_sum: [u8; 192] = [
+            21, 157, 10, 251, 156, 56, 24, 174, 24, 91, 98, 201, 33, 37, 68, 76, 41, 161, 12, 166,
+            16, 128, 161, 31, 108, 31, 92, 216, 56, 197, 198, 66, 210, 6, 64, 106, 154, 96, 135,
+            57, 170, 119, 220, 210, 238, 73, 98, 83, 15, 146, 74, 122, 70, 40, 186, 123, 191, 139,
+            11, 249, 221, 20, 12, 62, 81, 37, 191, 22, 248, 113, 78, 124, 29, 157, 228, 220, 187,
+            6, 252, 15, 59, 236, 98, 198, 252, 205, 176, 190, 192, 199, 154, 213, 92, 126, 189, 55,
+            2, 109, 8, 15, 128, 190, 31, 106, 180, 130, 96, 215, 125, 50, 11, 124, 71, 119, 83, 28,
+            65, 209, 128, 47, 7, 46, 212, 157, 230, 199, 51, 98, 143, 220, 157, 254, 179, 203, 186,
+            116, 41, 76, 35, 28, 123, 207, 54, 17, 5, 248, 36, 247, 193, 201, 116, 118, 202, 201,
+            125, 201, 200, 13, 68, 244, 39, 207, 70, 206, 12, 117, 206, 192, 9, 232, 62, 33, 137,
+            88, 73, 16, 121, 190, 139, 91, 158, 80, 147, 207, 125, 23, 177, 93, 227, 132, 103, 89,
+        ];
+
+        let p1_va = 0x100000000;
+        let p2_va = 0x200000000;
+        let result_va = 0x300000000;
+
+        let mut result_buf = [0u8; 192];
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&p1_bytes, p1_va),
+                MemoryRegion::new_readonly(&p2_bytes, p2_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g2_add_cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
+        invoke_context.mock_set_remaining(bls12_381_g2_add_cost);
+
+        let result = SyscallCurveGroupOps::rust(
+            &mut invoke_context,
+            BLS12_381_G2_BE,
+            ADD,
+            p1_va,
+            p2_va,
+            result_va,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_sum);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_g2_sub() {
+        use {
+            crate::bls12_381_curve_id::BLS12_381_G2_BE,
+            solana_curve25519::curve_syscall_traits::SUB,
+        };
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+
+        let sub_p1: [u8; 192] = [
+            1, 111, 113, 42, 165, 128, 194, 26, 130, 142, 58, 198, 61, 244, 113, 64, 25, 96, 196,
+            12, 211, 55, 213, 85, 109, 210, 211, 177, 96, 48, 15, 122, 155, 173, 166, 16, 113, 95,
+            253, 69, 196, 15, 187, 201, 207, 255, 81, 176, 15, 77, 24, 199, 78, 142, 23, 177, 55,
+            118, 62, 248, 123, 41, 213, 72, 169, 177, 5, 176, 197, 158, 62, 1, 5, 219, 190, 92, 36,
+            37, 117, 162, 202, 9, 231, 199, 13, 72, 102, 36, 246, 241, 52, 68, 185, 44, 238, 23,
+            23, 1, 192, 28, 61, 103, 236, 74, 46, 28, 64, 67, 194, 243, 208, 186, 46, 201, 142, 7,
+            166, 139, 114, 215, 101, 234, 108, 184, 93, 135, 61, 176, 154, 208, 28, 79, 210, 132,
+            96, 21, 199, 11, 73, 210, 40, 241, 107, 215, 8, 203, 156, 2, 211, 33, 203, 196, 124,
+            172, 148, 232, 121, 116, 109, 226, 15, 13, 147, 241, 20, 70, 28, 10, 17, 51, 143, 140,
+            35, 127, 109, 7, 202, 220, 208, 97, 11, 167, 119, 94, 192, 92, 165, 215, 230, 160, 16,
+            56,
+        ];
+        let sub_p2: [u8; 192] = [
+            14, 73, 101, 89, 211, 85, 5, 115, 148, 81, 82, 216, 141, 148, 50, 174, 17, 86, 246,
+            146, 42, 230, 181, 250, 40, 64, 248, 121, 6, 167, 117, 190, 219, 96, 57, 80, 127, 234,
+            141, 179, 154, 109, 5, 82, 233, 254, 7, 48, 5, 108, 253, 196, 16, 144, 81, 140, 252,
+            184, 236, 193, 97, 200, 129, 223, 132, 28, 135, 121, 129, 129, 60, 33, 77, 43, 181,
+            180, 60, 224, 108, 127, 207, 112, 54, 66, 81, 185, 166, 120, 54, 169, 55, 238, 32, 219,
+            172, 212, 24, 165, 106, 207, 20, 68, 130, 233, 190, 75, 177, 17, 157, 112, 174, 88,
+            189, 182, 126, 219, 114, 136, 67, 15, 167, 133, 50, 172, 124, 94, 8, 149, 203, 232, 35,
+            218, 144, 142, 74, 150, 94, 182, 33, 106, 111, 120, 203, 59, 10, 121, 79, 248, 118,
+            165, 232, 57, 87, 60, 42, 223, 98, 104, 158, 238, 68, 152, 59, 19, 172, 89, 20, 238,
+            63, 49, 204, 138, 108, 195, 10, 233, 81, 79, 215, 107, 43, 197, 190, 231, 15, 14, 251,
+            203, 179, 205, 224, 195,
+        ];
+        let expected_sub: [u8; 192] = [
+            15, 192, 220, 234, 246, 126, 141, 163, 107, 162, 43, 117, 171, 158, 195, 132, 196, 214,
+            237, 133, 98, 133, 112, 248, 161, 148, 3, 163, 20, 26, 49, 136, 161, 244, 36, 179, 237,
+            204, 58, 22, 51, 106, 0, 4, 239, 244, 242, 89, 5, 14, 149, 31, 78, 213, 70, 153, 147,
+            43, 84, 19, 223, 100, 235, 61, 172, 66, 136, 201, 11, 81, 168, 136, 207, 46, 198, 208,
+            171, 144, 187, 35, 77, 58, 186, 147, 191, 243, 9, 12, 224, 22, 230, 36, 112, 246, 114,
+            19, 13, 116, 186, 62, 158, 176, 201, 150, 187, 13, 32, 135, 140, 108, 178, 174, 90,
+            212, 50, 184, 238, 17, 229, 167, 195, 104, 179, 156, 166, 251, 99, 115, 133, 25, 144,
+            101, 45, 70, 19, 86, 91, 247, 236, 93, 252, 14, 106, 212, 15, 42, 62, 104, 162, 216, 8,
+            180, 156, 52, 254, 179, 29, 95, 94, 16, 245, 215, 165, 67, 115, 50, 186, 190, 227, 213,
+            71, 126, 29, 81, 217, 43, 157, 12, 100, 105, 211, 172, 101, 212, 73, 140, 149, 109,
+            252, 180, 98, 22,
+        ];
+
+        let p1_va = 0x100000000;
+        let p2_va = 0x200000000;
+        let result_va = 0x300000000;
+
+        let mut result_buf = [0u8; 192];
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&sub_p1, p1_va),
+                MemoryRegion::new_readonly(&sub_p2, p2_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g2_subtract_cost = invoke_context
+            .get_execution_cost()
+            .bls12_381_g2_subtract_cost;
+        invoke_context.mock_set_remaining(bls12_381_g2_subtract_cost);
+
+        let result = SyscallCurveGroupOps::rust(
+            &mut invoke_context,
+            BLS12_381_G2_BE,
+            SUB,
+            p1_va,
+            p2_va,
+            result_va,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_sub);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_g2_mul() {
+        use {
+            crate::bls12_381_curve_id::BLS12_381_G2_BE,
+            solana_curve25519::curve_syscall_traits::MUL,
+        };
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+
+        let mul_point: [u8; 192] = [
+            1, 95, 16, 90, 117, 185, 253, 76, 25, 68, 54, 111, 154, 161, 125, 203, 121, 4, 154, 67,
+            205, 157, 76, 9, 128, 224, 37, 81, 214, 226, 71, 59, 224, 187, 152, 153, 199, 62, 58,
+            74, 137, 245, 46, 101, 155, 17, 212, 64, 5, 134, 0, 185, 19, 132, 205, 101, 77, 204,
+            118, 63, 71, 172, 208, 29, 210, 61, 51, 4, 190, 191, 211, 175, 105, 245, 204, 57, 56,
+            84, 210, 184, 235, 169, 231, 161, 128, 83, 252, 234, 227, 255, 166, 219, 201, 176, 169,
+            16, 20, 218, 203, 38, 181, 98, 213, 89, 152, 123, 230, 201, 4, 95, 42, 86, 29, 137, 67,
+            233, 230, 161, 206, 231, 201, 176, 79, 12, 197, 56, 212, 36, 235, 216, 160, 27, 221,
+            99, 124, 220, 133, 76, 123, 209, 200, 78, 122, 36, 16, 171, 18, 247, 111, 111, 132, 38,
+            240, 183, 27, 76, 135, 211, 136, 202, 55, 93, 246, 235, 191, 146, 183, 161, 110, 129,
+            4, 58, 238, 59, 77, 242, 56, 88, 96, 150, 146, 247, 137, 230, 137, 35, 9, 108, 95, 127,
+            75, 78,
+        ];
+        let mul_scalar: [u8; 32] = [
+            29, 192, 111, 151, 187, 37, 109, 91, 129, 223, 188, 225, 117, 3, 120, 162, 107, 66,
+            159, 255, 61, 128, 41, 32, 242, 95, 232, 202, 106, 188, 154, 147,
+        ];
+        let expected_mul: [u8; 192] = [
+            10, 92, 88, 192, 26, 200, 38, 128, 188, 148, 254, 16, 202, 39, 174, 252, 33, 111, 41,
+            121, 211, 9, 209, 138, 43, 104, 122, 214, 4, 251, 34, 81, 36, 92, 143, 19, 151, 213,
+            111, 240, 100, 15, 33, 74, 123, 143, 181, 153, 6, 107, 82, 96, 141, 147, 63, 200, 13,
+            31, 66, 5, 184, 135, 24, 82, 189, 240, 58, 250, 48, 61, 132, 13, 23, 240, 31, 238, 252,
+            33, 191, 241, 38, 90, 221, 201, 164, 137, 98, 92, 148, 246, 225, 22, 239, 99, 97, 179,
+            20, 251, 39, 114, 14, 156, 165, 182, 58, 233, 100, 41, 34, 59, 119, 103, 40, 206, 50,
+            175, 223, 126, 146, 17, 161, 14, 84, 43, 149, 58, 212, 197, 250, 15, 208, 122, 33, 4,
+            87, 219, 82, 201, 12, 11, 44, 76, 59, 182, 18, 76, 38, 184, 175, 11, 211, 4, 64, 133,
+            41, 104, 185, 153, 63, 246, 39, 145, 38, 113, 162, 183, 77, 2, 51, 134, 243, 196, 74,
+            111, 183, 169, 222, 228, 191, 53, 129, 53, 186, 94, 97, 144, 31, 117, 218, 207, 214,
+            189,
+        ];
+
+        let scalar_va = 0x100000000;
+        let point_va = 0x200000000;
+        let result_va = 0x300000000;
+
+        let mut result_buf = [0u8; 192];
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&mul_scalar, scalar_va),
+                MemoryRegion::new_readonly(&mul_point, point_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g2_multiply_cost = invoke_context
+            .get_execution_cost()
+            .bls12_381_g2_multiply_cost;
+        invoke_context.mock_set_remaining(bls12_381_g2_multiply_cost);
+
+        let result = SyscallCurveGroupOps::rust(
+            &mut invoke_context,
+            BLS12_381_G2_BE,
+            MUL,
+            scalar_va,
+            point_va,
+            result_va,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_mul);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_pairing() {
+        use crate::bls12_381_curve_id::BLS12_381_BE;
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+
+        let g1_bytes: [u8; 96] = [
+            14, 109, 179, 165, 174, 150, 53, 65, 12, 65, 27, 45, 194, 213, 151, 119, 31, 9, 194,
+            218, 211, 97, 143, 55, 132, 10, 10, 7, 104, 36, 23, 203, 71, 135, 56, 38, 9, 165, 177,
+            68, 248, 225, 230, 200, 147, 186, 63, 233, 21, 191, 133, 37, 160, 52, 2, 249, 115, 111,
+            217, 16, 135, 98, 243, 12, 166, 50, 1, 39, 253, 40, 48, 101, 13, 108, 76, 237, 12, 58,
+            245, 113, 75, 90, 47, 216, 156, 35, 223, 160, 84, 160, 16, 120, 6, 103, 132, 45,
+        ];
+        let g2_bytes: [u8; 192] = [
+            15, 28, 53, 78, 205, 37, 201, 37, 205, 66, 121, 138, 56, 120, 211, 146, 62, 157, 236,
+            102, 230, 5, 117, 56, 119, 245, 49, 92, 180, 132, 179, 13, 134, 141, 118, 41, 212, 62,
+            195, 177, 51, 52, 191, 208, 220, 201, 90, 107, 13, 181, 66, 54, 203, 86, 69, 137, 40,
+            184, 192, 93, 191, 235, 165, 80, 4, 38, 89, 135, 14, 18, 234, 249, 67, 193, 188, 223,
+            62, 250, 122, 158, 179, 30, 56, 95, 176, 0, 239, 3, 155, 141, 171, 224, 6, 198, 246,
+            205, 6, 159, 251, 49, 151, 133, 155, 57, 7, 59, 182, 22, 210, 145, 203, 209, 62, 59,
+            188, 64, 10, 195, 114, 199, 159, 219, 25, 179, 2, 23, 18, 62, 254, 101, 113, 141, 109,
+            175, 167, 124, 251, 150, 153, 231, 34, 234, 175, 52, 24, 151, 67, 45, 189, 197, 212,
+            143, 102, 25, 192, 143, 11, 184, 18, 229, 147, 145, 193, 201, 144, 5, 38, 33, 182, 18,
+            92, 144, 146, 21, 74, 61, 179, 104, 196, 158, 244, 63, 172, 73, 22, 70, 100, 202, 90,
+            139, 102, 98,
+        ];
+        let expected_gt: [u8; 576] = [
+            15, 124, 219, 251, 80, 222, 126, 43, 196, 49, 34, 25, 153, 233, 75, 211, 42, 192, 212,
+            47, 166, 9, 195, 137, 10, 35, 193, 182, 166, 62, 203, 209, 114, 113, 49, 238, 59, 132,
+            83, 7, 201, 153, 94, 103, 238, 38, 46, 65, 24, 238, 46, 54, 251, 113, 78, 88, 118, 210,
+            42, 173, 49, 235, 34, 119, 182, 188, 84, 157, 108, 155, 133, 112, 91, 220, 108, 130,
+            37, 245, 120, 246, 152, 201, 30, 73, 98, 226, 186, 91, 221, 33, 124, 121, 240, 115,
+            217, 139, 0, 76, 30, 151, 238, 121, 241, 41, 110, 37, 191, 196, 47, 131, 231, 124, 230,
+            162, 114, 111, 209, 71, 210, 58, 12, 203, 213, 51, 134, 225, 104, 113, 58, 71, 229, 65,
+            151, 115, 104, 25, 44, 57, 243, 39, 102, 13, 144, 200, 15, 88, 112, 64, 33, 170, 119,
+            93, 19, 156, 108, 29, 198, 39, 166, 48, 23, 74, 155, 223, 42, 172, 198, 112, 219, 243,
+            55, 173, 86, 90, 91, 200, 75, 132, 111, 74, 52, 155, 78, 78, 103, 251, 35, 177, 14, 75,
+            131, 163, 7, 89, 200, 246, 231, 130, 166, 139, 189, 229, 65, 8, 248, 174, 254, 151, 73,
+            215, 90, 237, 189, 155, 173, 55, 74, 177, 209, 235, 254, 87, 18, 175, 120, 153, 71,
+            112, 51, 104, 126, 107, 29, 240, 156, 107, 44, 244, 49, 210, 9, 255, 160, 66, 243, 94,
+            2, 213, 65, 92, 123, 138, 42, 60, 163, 203, 26, 228, 174, 224, 119, 252, 51, 37, 21,
+            211, 101, 222, 41, 123, 220, 123, 206, 62, 235, 209, 132, 71, 145, 101, 86, 192, 65,
+            97, 4, 64, 112, 128, 20, 188, 225, 66, 2, 121, 250, 44, 15, 111, 14, 46, 90, 145, 158,
+            141, 164, 140, 221, 75, 157, 244, 85, 6, 108, 104, 222, 142, 17, 157, 236, 111, 67, 41,
+            237, 242, 44, 9, 83, 142, 146, 85, 204, 94, 111, 124, 233, 150, 16, 243, 161, 196, 153,
+            36, 162, 27, 203, 69, 247, 195, 31, 24, 69, 138, 191, 107, 221, 159, 51, 24, 170, 218,
+            132, 249, 30, 160, 130, 230, 3, 251, 36, 125, 152, 249, 16, 96, 56, 14, 37, 1, 56, 146,
+            210, 78, 201, 45, 11, 77, 198, 95, 103, 57, 51, 124, 247, 176, 78, 84, 148, 48, 135,
+            203, 66, 216, 134, 116, 101, 52, 136, 60, 221, 177, 111, 145, 41, 95, 184, 75, 145, 7,
+            209, 62, 33, 132, 45, 53, 254, 247, 34, 115, 154, 24, 142, 146, 8, 203, 106, 160, 213,
+            238, 51, 215, 213, 212, 4, 27, 35, 214, 79, 198, 97, 99, 93, 255, 88, 169, 38, 41, 253,
+            166, 173, 203, 111, 138, 3, 145, 135, 250, 220, 58, 135, 173, 142, 37, 244, 251, 227,
+            36, 184, 214, 100, 121, 14, 100, 53, 57, 225, 209, 242, 136, 154, 24, 95, 240, 144,
+            111, 180, 30, 215, 146, 64, 189, 2, 26, 90, 224, 86, 231, 207, 151, 147, 232, 57, 219,
+            32, 135, 0, 91, 207, 185, 15, 72, 146, 240, 12, 212, 172, 147, 185, 17, 1, 180, 121,
+            38, 146, 36, 24, 48, 50, 240, 230, 140, 143, 243, 205, 247, 103, 162, 166, 14, 130, 18,
+            69, 54, 148, 184, 201, 27, 25, 5, 131, 197, 244, 196, 7, 104, 245, 12, 32, 24, 183,
+            219, 165, 214, 144, 163, 9, 157,
+        ];
+
+        let g1_va = 0x100000000;
+        let g2_va = 0x200000000;
+        let result_va = 0x300000000;
+
+        let mut result_buf = [0u8; 576]; // GT size
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&g1_bytes, g1_va),
+                MemoryRegion::new_readonly(&g2_bytes, g2_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_pair_base_cost = invoke_context.get_execution_cost().bls12_381_pair_base_cost;
+        let bls12_381_pair_per_pair_cost = invoke_context
+            .get_execution_cost()
+            .bls12_381_pair_per_pair_cost;
+        let bls12_381_pair_cost = bls12_381_pair_base_cost
+            .checked_add(bls12_381_pair_per_pair_cost)
+            .unwrap();
+        invoke_context.mock_set_remaining(bls12_381_pair_cost);
+
+        let result = SyscallCurvePairingMap::rust(
+            &mut invoke_context,
+            BLS12_381_BE,
+            1,
+            g1_va,
+            g2_va,
+            result_va,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_gt);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_decompress() {
+        use crate::bls12_381_curve_id::BLS12_381_G1_BE;
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+
+        let compressed: [u8; 48] = [
+            175, 159, 245, 68, 142, 96, 188, 154, 113, 143, 70, 58, 193, 2, 189, 111, 135, 114,
+            230, 70, 12, 25, 7, 106, 108, 137, 213, 128, 110, 90, 142, 244, 75, 111, 59, 138, 240,
+            158, 55, 164, 229, 100, 152, 122, 38, 185, 222, 218,
+        ];
+        let expected_affine: [u8; 96] = [
+            15, 159, 245, 68, 142, 96, 188, 154, 113, 143, 70, 58, 193, 2, 189, 111, 135, 114, 230,
+            70, 12, 25, 7, 106, 108, 137, 213, 128, 110, 90, 142, 244, 75, 111, 59, 138, 240, 158,
+            55, 164, 229, 100, 152, 122, 38, 185, 222, 218, 18, 79, 1, 246, 62, 35, 162, 234, 146,
+            109, 7, 85, 44, 104, 10, 250, 158, 31, 181, 244, 117, 193, 27, 53, 184, 79, 160, 237,
+            168, 51, 41, 200, 58, 4, 107, 95, 246, 171, 241, 202, 120, 228, 135, 135, 100, 50, 123,
+            58,
+        ];
+
+        let input_va = 0x100000000;
+        let result_va = 0x200000000;
+        let mut result_buf = [0u8; 96];
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&compressed, input_va),
+                MemoryRegion::new_writable(&mut result_buf, result_va),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g2_decompress_cost = invoke_context
+            .get_execution_cost()
+            .bls12_381_g2_decompress_cost;
+        invoke_context.mock_set_remaining(bls12_381_g2_decompress_cost);
+
+        let result = SyscallCurveDecompress::rust(
+            &mut invoke_context,
+            BLS12_381_G1_BE,
+            input_va,
+            result_va,
+            0,
+            0,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
+        assert_eq!(result_buf, expected_affine);
+    }
+
+    #[test]
+    fn test_syscall_bls12_381_validate() {
+        use crate::bls12_381_curve_id::BLS12_381_G1_BE;
+
+        let config = Config::default();
+        let mut feature_set = SVMFeatureSet::default();
+        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = &feature_set;
+
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
+
+        let point_bytes: [u8; 96] = [
+            22, 163, 250, 67, 197, 168, 103, 201, 128, 33, 170, 96, 74, 40, 45, 90, 105, 181, 244,
+            124, 128, 107, 27, 142, 158, 96, 0, 46, 144, 27, 61, 205, 65, 38, 141, 165, 55, 113,
+            114, 23, 36, 105, 252, 115, 147, 16, 12, 39, 11, 19, 53, 215, 107, 128, 94, 68, 22, 46,
+            74, 179, 236, 232, 220, 30, 48, 169, 85, 16, 70, 112, 26, 37, 73, 104, 203, 189, 42,
+            96, 141, 90, 167, 41, 61, 82, 184, 80, 93, 112, 204, 140, 225, 245, 103, 130, 184, 194,
+        ];
+        let point_va = 0x100000000;
+
+        let mut memory_mapping = MemoryMapping::new(
+            vec![MemoryRegion::new_readonly(&point_bytes, point_va)],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let bls12_381_g2_validate_cost = invoke_context
+            .get_execution_cost()
+            .bls12_381_g2_validate_cost;
+        invoke_context.mock_set_remaining(bls12_381_g2_validate_cost);
+
+        let result = SyscallCurvePointValidation::rust(
+            &mut invoke_context,
+            BLS12_381_G1_BE,
+            point_va,
+            0,
+            0,
+            0,
+            &mut memory_mapping,
+        );
+
+        assert_eq!(0, result.unwrap());
     }
 }
