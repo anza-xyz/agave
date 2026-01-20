@@ -15,6 +15,6 @@ pub mod packet;
 pub mod route_cache;
 
 pub use {
-    packet::{construct_gre_packet, gre_packet_size, GreHeader, PacketError, TunnelInfo},
-    route_cache::GreRouteCache,
+    packet::{construct_gre_packet, gre_packet_size, GreHeader, PacketError},
+    route_cache::{GreRouteCache, InterfaceInfoCache},
 };

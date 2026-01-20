@@ -1,12 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::packet::{
-        write_eth_header, write_ip_header, write_ip_header_for_udp, write_udp_header,
-        ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
+    crate::{
+        netlink::GreTunnelInfo,
+        packet::{
+            write_eth_header, write_ip_header, write_ip_header_for_udp, write_udp_header,
+            ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
+        },
     },
     libc::{ETH_P_IP, IPPROTO_GRE},
-    std::net::Ipv4Addr,
+    std::net::{IpAddr, Ipv4Addr},
     thiserror::Error,
 };
 
@@ -22,25 +25,12 @@ pub const fn gre_packet_size(payload_len: usize) -> usize {
         .saturating_add(payload_len)
 }
 
-/// GRE tunnel configuration for packet construction
-///
-/// Note: Only supports basic GRE header (no optional fields).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TunnelInfo {
-    /// Source IP address for the GRE tunnel header
-    pub local: Ipv4Addr,
-    /// Destination IP address for the GRE tunnel header
-    pub remote: Ipv4Addr,
-    pub ttl: Option<u8>,
-    pub tos: Option<u8>,
-    /// PMTU discovery setting (IFLA_GRE_PMTUDISC)
-    pub pmtudisc: Option<u8>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum PacketError {
     #[error("packet buffer too small: need {needed} bytes, have {have} bytes")]
     BufferTooSmall { needed: usize, have: usize },
+    #[error("invalid GRE tunnel endpoints")]
+    InvalidTunnelEndpoints,
 }
 
 /// GRE header structure
@@ -74,43 +64,6 @@ impl GreHeader {
     }
 }
 
-impl TunnelInfo {
-    pub fn new(local: Ipv4Addr, remote: Ipv4Addr) -> Self {
-        Self {
-            local,
-            remote,
-            ttl: None,
-            tos: None,
-            pmtudisc: None,
-        }
-    }
-}
-
-/// Conversion from netlink's GreTunnelInfo to GreConfig
-///
-/// This allows GRE packet construction to work with tunnel info discovered via netlink,
-/// while keeping the core GRE module independent of netlink.
-impl TryFrom<&crate::netlink::GreTunnelInfo> for TunnelInfo {
-    type Error = ();
-
-    fn try_from(info: &crate::netlink::GreTunnelInfo) -> Result<Self, Self::Error> {
-        let Some(std::net::IpAddr::V4(local)) = info.local else {
-            return Err(());
-        };
-        let Some(std::net::IpAddr::V4(remote)) = info.remote else {
-            return Err(());
-        };
-
-        Ok(Self {
-            local,
-            remote,
-            ttl: info.ttl,
-            tos: info.tos,
-            pmtudisc: info.pmtudisc,
-        })
-    }
-}
-
 /// Write outer headers for L3 GRE encapsulation.
 ///
 /// This function assumes the buffer has reserved space for the inner packet
@@ -122,27 +75,34 @@ fn write_gre_outer_headers(
     gre_dst_mac: &MacAddrBytes,
     inner_packet_len: usize,
     gre_header: &GreHeader,
-    config: &TunnelInfo,
-) {
+    config: &GreTunnelInfo,
+) -> Result<(), PacketError> {
     write_eth_header(packet, gre_src_mac, gre_dst_mac);
 
     let dont_fragment = config.pmtudisc.map(|v| v != 0).unwrap_or(true);
 
     // Write outer IP header (protocol = GRE = 47)
     let gre_payload_len = GRE_HEADER_BASE_SIZE + inner_packet_len;
+    let outer_ttl = config.ttl.and_then(|ttl| (ttl != 0).then_some(ttl));
+    let (Some(IpAddr::V4(outer_local)), Some(IpAddr::V4(outer_remote))) =
+        (config.local, config.remote)
+    else {
+        return Err(PacketError::InvalidTunnelEndpoints);
+    };
     write_ip_header(
         &mut packet[ETH_HEADER_SIZE..],
-        &config.local,
-        &config.remote,
+        &outer_local,
+        &outer_remote,
         gre_payload_len as u16,
         IPPROTO_GRE as u8,
         dont_fragment,
-        config.ttl,
+        outer_ttl,
         config.tos,
     );
 
     // Write GRE header
     gre_header.write_to_packet(&mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..]);
+    Ok(())
 }
 
 /// Construct an L3 GRE packet from a UDP payload
@@ -161,7 +121,7 @@ pub fn construct_gre_packet(
     payload: &[u8],
     src_mac: &MacAddrBytes,
     dst_mac: &MacAddrBytes,
-    config: &TunnelInfo,
+    config: &GreTunnelInfo,
 ) -> Result<(), PacketError> {
     let payload_len = payload.len();
 
@@ -185,7 +145,7 @@ pub fn construct_gre_packet(
         inner_packet_len,
         &gre_header,
         config,
-    );
+    )?;
 
     let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE;
 

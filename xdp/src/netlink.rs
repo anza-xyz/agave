@@ -339,12 +339,18 @@ impl std::fmt::Display for MacAddress {
     }
 }
 
+/// GRE tunnel information from netlink
+///
+/// Note: Only supports basic GRE header (no optional fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreTunnelInfo {
+    /// Source IP address for the GRE tunnel header
     pub local: Option<IpAddr>,
+    /// Destination IP address for the GRE tunnel header
     pub remote: Option<IpAddr>,
     pub ttl: Option<u8>,
     pub tos: Option<u8>,
+    /// PMTU discovery setting (IFLA_GRE_PMTUDISC)
     pub pmtudisc: Option<u8>,
 }
 
