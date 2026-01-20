@@ -385,48 +385,13 @@ pub fn check_min_slot_is_rooted(
     }
 }
 
-pub fn check_for_new_roots(
-    num_new_roots: usize,
+fn check_for_new_slots_with_commitment(
+    num_new_slots: usize,
     contact_infos: &[ContactInfo],
     connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
-) {
-    let mut roots = vec![HashSet::new(); contact_infos.len()];
-    let mut done = false;
-    let mut last_print = Instant::now();
-    let loop_start = Instant::now();
-    let loop_timeout = Duration::from_secs(180);
-    let mut num_roots_map = HashMap::new();
-    while !done {
-        assert!(loop_start.elapsed() < loop_timeout);
-
-        for (i, ingress_node) in contact_infos.iter().enumerate() {
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            let root_slot = client
-                .rpc_client()
-                .get_slot_with_commitment(CommitmentConfig::finalized())
-                .unwrap_or(0);
-            roots[i].insert(root_slot);
-            num_roots_map.insert(*ingress_node.pubkey(), roots[i].len());
-            let num_roots = roots.iter().map(|r| r.len()).min().unwrap();
-            done = num_roots >= num_new_roots;
-            if done || last_print.elapsed().as_secs() > 3 {
-                info!(
-                    "{test_name} waiting for {num_new_roots} new roots.. observed: \
-                     {num_roots_map:?}"
-                );
-                last_print = Instant::now();
-            }
-        }
-        sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
-    }
-}
-
-pub fn check_for_new_processed(
-    num_new_processed: usize,
-    contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
-    test_name: &str,
+    commitment: CommitmentConfig,
+    slot_type: &str,
 ) {
     let mut slots = vec![HashSet::new(); contact_infos.len()];
     let mut done = false;
@@ -441,15 +406,15 @@ pub fn check_for_new_processed(
             let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
             let slot = client
                 .rpc_client()
-                .get_slot_with_commitment(CommitmentConfig::processed())
+                .get_slot_with_commitment(commitment)
                 .unwrap_or(0);
             slots[i].insert(slot);
             num_slots_map.insert(*ingress_node.pubkey(), slots[i].len());
             let num_slots = slots.iter().map(|r| r.len()).min().unwrap();
-            done = num_slots >= num_new_processed;
+            done = num_slots >= num_new_slots;
             if done || last_print.elapsed().as_secs() > 3 {
                 info!(
-                    "{test_name} waiting for {num_new_processed} new processed slots.. observed: \
+                    "{test_name} waiting for {num_new_slots} new {slot_type}.. observed: \
                      {num_slots_map:?}"
                 );
                 last_print = Instant::now();
@@ -457,6 +422,38 @@ pub fn check_for_new_processed(
         }
         sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
     }
+}
+
+pub fn check_for_new_roots(
+    num_new_roots: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+) {
+    check_for_new_slots_with_commitment(
+        num_new_roots,
+        contact_infos,
+        connection_cache,
+        test_name,
+        CommitmentConfig::finalized(),
+        "roots",
+    );
+}
+
+pub fn check_for_new_processed(
+    num_new_processed: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+) {
+    check_for_new_slots_with_commitment(
+        num_new_processed,
+        contact_infos,
+        connection_cache,
+        test_name,
+        CommitmentConfig::processed(),
+        "processed slots",
+    );
 }
 
 /// Start a QUIC streamer to listen for votes and certificates.
