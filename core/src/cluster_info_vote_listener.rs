@@ -375,14 +375,14 @@ impl ClusterInfoVoteListener {
             );
             match confirmed_slots {
                 Ok(confirmed_slots) => {
-                    let confirmed_slots = confirmed_slots
-                        .into_iter()
-                        .filter(|(slot, _)| {
-                            migration_status.should_report_commitment_or_root(*slot)
-                        })
-                        .collect();
+                    let mut new_oc_slots = Vec::with_capacity(confirmed_slots.len());
+                    confirmed_slots.into_iter().for_each(|(slot, hash)| {
+                        if migration_status.should_report_commitment_or_root(slot) {
+                            new_oc_slots.push((slot, hash));
+                        }
+                    });
                     confirmation_verifier
-                        .add_new_optimistic_confirmed_slots(confirmed_slots, &blockstore);
+                        .add_new_optimistic_confirmed_slots(new_oc_slots, &blockstore);
                 }
                 Err(e) => match e {
                     Error::RecvTimeout(RecvTimeoutError::Disconnected) => {
