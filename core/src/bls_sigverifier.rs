@@ -6,10 +6,7 @@ use {
     },
     crossbeam_channel::{Receiver, Sender, TrySendError},
     solana_clock::Slot,
-    solana_perf::{
-        deduper::{dedup_packets_and_count_discards, Deduper},
-        packet::PacketBatch,
-    },
+    solana_perf::packet::PacketBatch,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_streamer::streamer,
@@ -17,7 +14,6 @@ use {
         collections::HashMap,
         sync::Arc,
         thread::{self, Builder},
-        time::Duration,
     },
 };
 
@@ -61,18 +57,9 @@ impl BLSSigVerifier {
     }
 
     fn run(mut self, receiver: Receiver<PacketBatch>) {
-        const DEDUPER_NUM_BITS: u64 = 63_999_979;
-        const DEDUPER_RESET_INTERVAL: Duration = Duration::from_secs(2);
-
-        let mut rng = rand::rng();
-        let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
-
         loop {
-            deduper.maybe_reset(&mut rng, 0.001, DEDUPER_RESET_INTERVAL);
-
             match streamer::recv_packet_batches(&receiver) {
-                Ok((mut batches, _, _)) => {
-                    dedup_packets_and_count_discards(&deduper, &mut batches);
+                Ok((batches, _, _)) => {
                     if self.process_batches(batches).is_err() {
                         break;
                     }
