@@ -60,7 +60,7 @@ use {
         u64_align,
         utils::{self, create_account_shared_data},
     },
-    agave_fs::buffered_reader::RequiredLenBufFileRead,
+    agave_fs::{buffered_reader::RequiredLenBufFileRead, io_setup::IoSetupState},
     dashmap::{DashMap, DashSet},
     log::*,
     rand::{rng, Rng},
@@ -980,6 +980,9 @@ pub struct AccountsDb {
     /// This feature tracks obsolete accounts in the account storage entry allowing
     /// for earlier cleaning of obsolete accounts in the storages and index.
     pub mark_obsolete_accounts: MarkObsoleteAccounts,
+
+    /// Enables optimized use of buffers by io-uring
+    use_registered_io_uring_buffers: bool,
 }
 
 pub fn quarter_thread_count() -> usize {
@@ -1131,6 +1134,7 @@ impl AccountsDb {
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
             mark_obsolete_accounts: accounts_db_config.mark_obsolete_accounts,
+            use_registered_io_uring_buffers: accounts_db_config.use_registered_io_uring_buffers,
         };
 
         {
@@ -6389,6 +6393,9 @@ impl AccountsDb {
         let exit_logger = AtomicBool::new(false);
         let num_processed = AtomicU64::new(0);
         let num_threads = num_cpus::get();
+        let io_setup =
+            IoSetupState::default().with_buffers_registered(self.use_registered_io_uring_buffers);
+        let reader_buf_size = TOTAL_IO_URING_BUFFERS_SIZE_LIMIT / (num_threads + 1);
         let mut index_time = Measure::start("index");
         thread::scope(|s| {
             let thread_handles = (0..num_threads)
@@ -6397,7 +6404,9 @@ impl AccountsDb {
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::new();
-                            let mut reader = append_vec::new_scan_accounts_reader();
+                            let mut reader =
+                                append_vec::full_scan_accounts_reader(reader_buf_size, &io_setup)
+                                    .expect("create reader");
                             while let Some(next_item) = storages_orderer.next() {
                                 self.maybe_throttle_index_generation();
                                 let storage = next_item.storage;
