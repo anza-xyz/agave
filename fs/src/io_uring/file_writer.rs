@@ -1,0 +1,461 @@
+#![allow(clippy::arithmetic_side_effects)]
+
+use {
+    super::{
+        memory::{IoBufferChunk, PageAlignedMemory},
+        IO_PRIO_BE_HIGHEST,
+    },
+    crate::{
+        io_uring::{
+            file_creator::{CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT, DEFAULT_WRITE_SIZE},
+            sqpoll,
+        },
+        FileSize, IoSize,
+    },
+    agave_io_uring::{Completion, Ring, RingOp},
+    io_uring::{opcode, squeue, types, IoUring},
+    std::{
+        collections::VecDeque,
+        fs::{File, OpenOptions},
+        io::{self, Cursor},
+        mem,
+        os::{
+            fd::{AsRawFd, BorrowedFd},
+            unix::fs::OpenOptionsExt,
+        },
+        path::Path,
+    },
+};
+// For large file we don't really use workers as few regularly submitted requests get handled
+// within sqpoll thread. Allow some workers just in case, but limit them.
+const DEFAULT_MAX_IOWQ_WORKERS: u32 = 2;
+
+/// Utility for building `SequentialFileReader` with specified tuning options.
+pub struct IoUringFileWriterBuilder<'sp> {
+    write_size: IoSize,
+    max_iowq_workers: u32,
+    ring_squeue_size: Option<u32>,
+    shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
+    /// Register buffer as fixed with the kernel
+    register_buffer: bool,
+}
+
+impl<'sp> IoUringFileWriterBuilder<'sp> {
+    pub fn new() -> Self {
+        Self {
+            write_size: DEFAULT_WRITE_SIZE,
+            max_iowq_workers: DEFAULT_MAX_IOWQ_WORKERS,
+            ring_squeue_size: None,
+            shared_sqpoll_fd: None,
+            register_buffer: false,
+        }
+    }
+
+    /// Override the default size of a single IO write operation
+    ///
+    /// This influences the concurrency, since buffer is divided into chunks of this size.
+    #[cfg(test)]
+    pub fn write_size(mut self, write_size: IoSize) -> Self {
+        self.write_size = write_size;
+        self
+    }
+
+    /// Set whether to register buffer with `io_uring` for improved performance.
+    ///
+    /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
+    pub fn _use_registered_buffers(mut self, register_buffers: bool) -> Self {
+        self.register_buffer = register_buffers;
+        self
+    }
+
+    /// Use (or remove) a shared kernel thread to drain submission queue for IO operations
+    pub fn _shared_sqpoll(mut self, shared_sqpoll_fd: Option<BorrowedFd<'sp>>) -> Self {
+        self.shared_sqpoll_fd = shared_sqpoll_fd;
+        self
+    }
+
+    /// Build a new `IoUringFileWriter` with internally allocated buffer.
+    ///
+    /// Buffer will hold at least `buf_capacity` bytes (increased to `write_size` if it's lower).
+    pub fn build(
+        self,
+        path: impl AsRef<Path>,
+        buf_capacity: usize,
+    ) -> io::Result<IoUringFileWriter> {
+        let buf_capacity = buf_capacity.max(self.write_size as usize);
+        let buffer = PageAlignedMemory::new(buf_capacity)?;
+        self.build_with_buffer(path, buffer)
+    }
+
+    /// Build a new `SequentialFileWriter` with a user-supplied buffer
+    ///
+    /// `buffer` is the internal buffer used for writing. It must be at least `write_size` long.
+    ///
+    /// The writer will execute multiple `write_size` writes in parallel to fill the buffer.
+    fn build_with_buffer(
+        self,
+        path: impl AsRef<Path>,
+        mut buffer: PageAlignedMemory,
+    ) -> io::Result<IoUringFileWriter> {
+        // Align buffer capacity to read capacity, so we always read equally sized chunks
+        let buf_capacity =
+            buffer.as_mut().len() / self.write_size as usize * self.write_size as usize;
+        assert_ne!(buf_capacity, 0, "write size aligned buffer is too small");
+        let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
+
+        // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
+        // dropped before `backing_buffer` in `SequentialFileReader` is dropped.
+        let buffers = unsafe {
+            IoBufferChunk::split_buffer_chunks(buf_slice_mut, self.write_size, self.register_buffer)
+        }
+        .map(Cursor::new)
+        .collect();
+
+        let state = IoUringFileWriterState::new(path, buffers)?;
+
+        let io_uring = self.create_io_uring(buf_capacity)?;
+        let ring = Ring::new(io_uring, state);
+
+        if self.register_buffer {
+            // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
+            // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
+            unsafe { IoBufferChunk::register(buf_slice_mut, &ring)? };
+        }
+
+        let writer = IoUringFileWriter {
+            ring,
+            num_bytes_dispatched: 0,
+            _backing_buffer: buffer,
+        };
+        Ok(writer)
+    }
+
+    fn create_io_uring(&self, buf_capacity: usize) -> io::Result<IoUring> {
+        // Let all buffers be submitted for reading at any time
+        let max_inflight_ops = (buf_capacity / self.write_size as usize) as u32;
+
+        // Completions arrive in bursts (batching done by the disk controller and the kernel).
+        // By submitting smaller chunks we decrease the likelihood that we stall on a full completion queue.
+        let ring_squeue_size = self
+            .ring_squeue_size
+            .unwrap_or((max_inflight_ops / 2).max(1));
+        // agave io_uring uses cqsize to define state slab size, so cqsize == max inflight ops
+        let ring = sqpoll::io_uring_builder_with(self.shared_sqpoll_fd)
+            .setup_cqsize(max_inflight_ops)
+            .build(ring_squeue_size)?;
+
+        // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
+        // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
+        ring.submitter()
+            .register_iowq_max_workers(&mut [self.max_iowq_workers, 1])?;
+        Ok(ring)
+    }
+}
+
+/// Writer that uses io_uring.
+pub struct IoUringFileWriter {
+    // Note: state is tied to `backing_buffer` and contains unsafe pointer references to it
+    ring: Ring<IoUringFileWriterState, WriteOp>,
+    // How many bytes have been dispatched
+    // Compared with `num_bytes_written` in `IoUringFileWriterState` to
+    // determine when all written bytes have been actually written to disk
+    num_bytes_dispatched: u64,
+    /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
+    /// (should get dropped last)
+    _backing_buffer: PageAlignedMemory,
+}
+
+impl IoUringFileWriter {
+    /// Flush the provided buffer and write it to disk
+    fn internal_flush(&mut self, cursor: Cursor<IoBufferChunk>) -> io::Result<()> {
+        let context = self.ring.context_mut();
+        let fd = io_uring::types::Fd(context.file.as_raw_fd());
+        let offset = context.offset;
+        // write only the portion of the buffer that we have written to
+        let write_len = cursor.position();
+        context.offset = offset + write_len;
+        let op = WriteOp {
+            fd,
+            offset,
+            buf: cursor.into_inner(),
+            buf_offset: 0,
+            write_len: write_len as u32,
+        };
+        self.ring.push(op)?;
+        self.num_bytes_dispatched += write_len;
+        self.ring.submit()?;
+
+        Ok(())
+    }
+
+    /// Blocking flush that waits for all pending writes to complete.
+    /// This ensures all buffered writes are persisted to disk before returning.
+    fn drain(&mut self) -> io::Result<()> {
+        let res = self.ring.drain();
+        res
+    }
+}
+
+impl io::Write for IoUringFileWriter {
+    /// Write bytes to a buffer
+    /// No guarantee that the bytes will be flushed to disk --
+    /// you need to call `flush_all` once you are done writing
+    /// and want to close the file
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut num_bytes_already_written: usize = 0;
+        loop {
+            let state = self.ring.context_mut();
+            if let Some(cursor) = state.buffers.front_mut() {
+                let cursor_position = cursor.position();
+                // copy as many bytes as we can into the buffer without overflowing
+                let write_len: usize = std::cmp::min(
+                    (cursor.get_ref().len() as usize - cursor_position as usize) as usize,
+                    buf.len() - num_bytes_already_written as usize,
+                );
+                cursor.get_mut().as_mut()
+                    [cursor_position as usize..cursor_position as usize + write_len]
+                    .copy_from_slice(
+                        &buf[num_bytes_already_written..num_bytes_already_written + write_len],
+                    );
+                cursor.set_position(cursor_position + write_len as u64);
+                num_bytes_already_written += write_len;
+
+                // if buffer is full, flush the buffer
+                if cursor.position() == cursor.get_ref().len() as u64 {
+                    // take the buffer on the front of the queue
+                    let cursor = state.buffers.pop_front().unwrap();
+                    self.internal_flush(cursor)?;
+                }
+
+                // if finished writing bytes, then break
+                // otherwise, find the next free buffer to keep writing bytes
+                if num_bytes_already_written as usize == buf.len() {
+                    break;
+                }
+            } else {
+                // only submit and wait if we were unable to obtain a free buffer
+                self.ring.process_completions()?;
+                self.ring
+                    .submit_and_wait(1, CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT)?;
+            }
+        }
+
+        Ok(num_bytes_already_written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // Flush any partial buffer (current write target)
+        let state = self.ring.context_mut();
+        if let Some(cursor) = state.buffers.front() {
+            if cursor.position() > 0 {
+                let cursor = state.buffers.pop_front().unwrap();
+                self.internal_flush(cursor)?;
+            }
+        }
+
+        self.drain()?;
+
+        Ok(())
+    }
+}
+
+impl io::Seek for IoUringFileWriter {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        // Flush any partial buffer (current write target)
+        let state = self.ring.context_mut();
+        if let Some(cursor) = state.buffers.front() {
+            if cursor.position() > 0 {
+                let cursor = state.buffers.pop_front().unwrap();
+                self.internal_flush(cursor)?;
+            }
+        }
+
+        let state = self.ring.context_mut();
+        let old_offset = state.offset;
+        match pos {
+            io::SeekFrom::Start(new_offset) => state.offset = new_offset,
+            io::SeekFrom::End(end_offset) => {
+                state.offset = (state.file.metadata()?.len() as i64 + end_offset) as u64
+            }
+            io::SeekFrom::Current(offset_delta) => {
+                state.offset = (state.offset as i64 + offset_delta) as u64
+            }
+        };
+        return Ok(old_offset);
+    }
+}
+
+/// Holds the state of the writer.
+struct IoUringFileWriterState {
+    file: File,
+    offset: FileSize,
+    num_bytes_written: u64,
+    buffers: VecDeque<Cursor<IoBufferChunk>>,
+}
+
+impl IoUringFileWriterState {
+    fn new(path: impl AsRef<Path>, buffers: VecDeque<Cursor<IoBufferChunk>>) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NOATIME)
+            .open(path)?;
+        Ok(Self {
+            file,
+            offset: 0,
+            num_bytes_written: 0,
+            buffers,
+        })
+    }
+
+    fn mark_write_completed(&mut self, buf: IoBufferChunk) {
+        // Push to back to avoid interrupting the buffer currently being filled at the front
+        self.buffers.push_back(Cursor::new(buf));
+    }
+}
+
+#[derive(Debug)]
+struct WriteOp {
+    fd: types::Fd,
+    offset: FileSize,
+    buf: IoBufferChunk,
+    buf_offset: IoSize,
+    write_len: IoSize,
+}
+
+impl RingOp<IoUringFileWriterState> for WriteOp {
+    fn entry(&mut self) -> squeue::Entry {
+        let WriteOp {
+            fd,
+            offset,
+            buf,
+            buf_offset,
+            write_len,
+        } = self;
+
+        // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
+        // reclaimed after completion passed in a call to `mark_write_completed`.
+        let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset as usize) };
+        let write_len = *write_len;
+
+        let entry = match buf.io_buf_index() {
+            Some(io_buf_index) => opcode::WriteFixed::new(*fd, buf_ptr, write_len, io_buf_index)
+                .offset(*offset)
+                .ioprio(IO_PRIO_BE_HIGHEST)
+                .build(),
+            None => opcode::Write::new(*fd, buf_ptr, write_len)
+                .offset(*offset)
+                .ioprio(IO_PRIO_BE_HIGHEST)
+                .build(),
+        };
+        entry.flags(squeue::Flags::ASYNC)
+    }
+
+    fn complete(
+        &mut self,
+        ring: &mut Completion<'_, IoUringFileWriterState, WriteOp>,
+        res: io::Result<i32>,
+    ) -> io::Result<()>
+    where
+        Self: Sized,
+    {
+        let written = match res {
+            // Fail fast if no progress. FS should report an error (e.g. `StorageFull`) if the
+            // condition isn't transient, but it's hard to verify without extra tracking.
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(res) => res as IoSize,
+            Err(err) => return Err(err),
+        };
+
+        let WriteOp {
+            fd,
+            offset,
+            buf,
+            buf_offset,
+            write_len,
+        } = self;
+
+        let buf = mem::replace(buf, IoBufferChunk::empty());
+        let total_written = *buf_offset + written;
+        ring.context_mut().num_bytes_written += written as u64;
+
+        if written < *write_len {
+            log::warn!("short write ({written}/{})", *write_len);
+            ring.push(WriteOp {
+                fd: *fd,
+                offset: *offset + written as FileSize,
+                buf,
+                buf_offset: total_written,
+                write_len: *write_len - written,
+            });
+            return Ok(());
+        }
+
+        ring.context_mut().mark_write_completed(buf);
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::io::{Read, Write},
+        tempfile::NamedTempFile,
+    };
+    fn check_writing_file(file_size: FileSize, backing_buffer_size: usize, write_size: IoSize) {
+        let pattern: Vec<u8> = (0..251).collect();
+        // Create a temp file and write the pattern to it repeatedly
+        let mut temp_file = NamedTempFile::new().unwrap();
+
+        let buf = PageAlignedMemory::new(backing_buffer_size).unwrap();
+        let mut writer = IoUringFileWriterBuilder::new()
+            .write_size(write_size)
+            .build_with_buffer(temp_file.path(), buf)
+            .unwrap();
+        for _ in 0..file_size as usize / pattern.len() {
+            writer.write(&pattern).unwrap();
+        }
+        writer
+            .write(&pattern[..file_size as usize % pattern.len()])
+            .unwrap();
+        writer.flush().unwrap();
+
+        // Read contents and verify length
+        let mut all_read_data = Vec::new();
+        temp_file.read_to_end(&mut all_read_data).unwrap();
+        assert_eq!(all_read_data.len() as FileSize, file_size);
+
+        // Verify the contents
+        for (i, byte) in all_read_data.iter().enumerate() {
+            assert_eq!(*byte, pattern[i % pattern.len()], "Mismatch - pos {i}");
+        }
+    }
+
+    /// Test with buffer larger than the whole file
+    #[test]
+    fn test_writing_small_file() {
+        check_writing_file(2500, 4096, 1024);
+        check_writing_file(2500, 4096, 2048);
+        check_writing_file(2500, 4096, 4096);
+    }
+
+    /// Test with buffer smaller than the whole file
+    #[test]
+    fn test_writing_file_in_chunks() {
+        check_writing_file(25_000, 16384, 1024);
+        check_writing_file(25_000, 4096, 1024);
+        check_writing_file(25_000, 4096, 2048);
+        check_writing_file(25_000, 4096, 4096);
+    }
+
+    /// Test with buffer much smaller than the whole file
+    #[test]
+    fn test_writing_large_file() {
+        check_writing_file(250_000, 32768, 1024);
+        check_writing_file(250_000, 16384, 1024);
+        check_writing_file(250_000, 4096, 1024);
+        check_writing_file(250_000, 4096, 2048);
+        check_writing_file(250_000, 4096, 4096);
+    }
+}
