@@ -41,7 +41,6 @@ pub struct SVMFeatureSet {
     pub simplify_alt_bn128_syscall_error_codes: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub increase_tx_account_lock_limit: bool,
-    pub enable_extend_program_checked: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
@@ -55,6 +54,7 @@ pub struct SVMFeatureSet {
     pub alt_bn128_little_endian: bool,
     pub create_account_allow_prefund: bool,
     pub bls_pubkey_management_in_vote_account: bool,
+    pub loader_v3_permissioned_extend_program: bool,
 }
 
 impl SVMFeatureSet {
@@ -92,7 +92,6 @@ impl SVMFeatureSet {
             simplify_alt_bn128_syscall_error_codes: true,
             fix_alt_bn128_multiplication_input_length: true,
             increase_tx_account_lock_limit: true,
-            enable_extend_program_checked: true,
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
@@ -106,6 +105,7 @@ impl SVMFeatureSet {
             alt_bn128_little_endian: true,
             create_account_allow_prefund: true,
             bls_pubkey_management_in_vote_account: true,
+            loader_v3_permissioned_extend_program: true,
         }
     }
 }

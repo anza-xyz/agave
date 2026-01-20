@@ -1502,7 +1502,7 @@ async fn test_cli_program_extend_program() {
     let new_max_len = new_program_data.len();
     let additional_bytes = (new_max_len - max_len) as u32;
     config.signers = vec![&keypair, &upgrade_authority];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
         program_pubkey: program_keypair.pubkey(),
         authority_signer_index: 1,
         additional_bytes: additional_bytes - 1,
@@ -1556,7 +1556,7 @@ async fn test_cli_program_extend_program() {
 
     // Extend 1 last byte
     config.signers = vec![&keypair, &upgrade_authority];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
         program_pubkey: program_keypair.pubkey(),
         authority_signer_index: 1,
         additional_bytes: 1,
