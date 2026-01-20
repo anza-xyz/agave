@@ -167,6 +167,8 @@ pub(crate) struct ComputedBankState {
     pub total_stake: Stake,
     pub fork_stake: Stake,
 
+    /// For Alpenglow migration - a block in `N` is super OC when there is at least
+    /// 82% of stake voting for `N` in `N + 1`
     pub parent_is_super_oc: bool,
 
     /// Flat list of intervals of lockouts of the form {voter, start, end}
@@ -475,8 +477,7 @@ impl Tower {
                     true,
                 );
 
-                // For migration - a block is super OC there are 82% of votes in the direct child
-                // on the very next slot
+                // For migration - a block is super OC there are 82% of votes for slot N in N + 1
                 if last_landed_voted_slot == parent_slot {
                     super_oc_stake += voted_stake;
                 }
@@ -539,6 +540,7 @@ impl Tower {
             total_stake += voted_stake;
         }
 
+        debug_assert!(total_stake > 0);
         let parent_is_super_oc = bank_slot == parent_slot + 1
             && super_oc_stake as f64 / total_stake as f64 > GENESIS_VOTE_THRESHOLD;
 
