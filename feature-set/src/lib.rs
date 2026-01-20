@@ -1121,10 +1121,17 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-    use {solana_keypair::Keypair, std::sync::LazyLock};
+    #[cfg(feature = "dev-context-only-utils")]
+    use {
+        solana_keypair::{Keypair, Signer},
+        std::sync::LazyLock,
+    };
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
-        Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR")
+        let keypair = Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR");
+        assert_eq!(keypair.pubkey(), super::alpenglow::id());
+        keypair
     });
 
     #[cfg(not(feature = "dev-context-only-utils"))]
