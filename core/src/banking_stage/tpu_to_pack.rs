@@ -18,6 +18,7 @@ use {
         thread::JoinHandle,
         time::Duration,
     },
+    tokio_util::sync::CancellationToken,
 };
 
 pub struct BankingPacketReceivers {
@@ -29,6 +30,7 @@ pub struct BankingPacketReceivers {
 /// Spawns a thread to receive packets from TPU and send them to the external scheduler.
 pub fn spawn(
     exit: Arc<AtomicBool>,
+    shutdown_signal: CancellationToken,
     receivers: BankingPacketReceivers,
     AgaveTpuToPackSession {
         allocator,
@@ -38,13 +40,14 @@ pub fn spawn(
     std::thread::Builder::new()
         .name("solTpu2Pack".to_string())
         .spawn(move || {
-            tpu_to_pack(exit, receivers, allocator, producer);
+            tpu_to_pack(exit, shutdown_signal, receivers, allocator, producer);
         })
         .unwrap()
 }
 
 fn tpu_to_pack(
     exit: Arc<AtomicBool>,
+    shutdown_signal: CancellationToken,
     receivers: BankingPacketReceivers,
     allocator: Allocator,
     mut producer: shaq::Producer<TpuToPackMessage>,
@@ -68,7 +71,9 @@ fn tpu_to_pack(
         } {
             Ok(packet_batches) => packet_batches,
             Err(crossbeam_channel::RecvError) => {
-                // Senders have been dropped, exit the loop.
+                // Senders have been dropped, signal shutdown and exit.
+                shutdown_signal.cancel();
+
                 break;
             }
         };
