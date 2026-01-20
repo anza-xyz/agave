@@ -547,7 +547,7 @@ mod tests {
 
         // Create our staked validators cache - set include_self to false
         let mut svc =
-            StakedValidatorsCache::new(bank_forks.clone(), Duration::from_secs(5), 5, false, None);
+            StakedValidatorsCache::new(bank_forks, Duration::from_secs(5), 5, false, None);
 
         let (sockets, _) =
             svc.get_staked_validators_by_slot(slot_num, &cluster_info, Instant::now());
@@ -567,7 +567,7 @@ mod tests {
 
         // Create our staked validators cache - set include_self to false
         let mut svc = StakedValidatorsCache::new(
-            bank_forks.clone(),
+            bank_forks,
             Duration::from_secs(5),
             5,
             false,

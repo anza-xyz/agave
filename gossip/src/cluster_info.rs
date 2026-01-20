@@ -3033,7 +3033,7 @@ mod tests {
         let refresh_ix = vote_instruction::vote(
             &Pubkey::new_unique(), // vote_pubkey
             &Pubkey::new_unique(), // authorized_voter_pubkey
-            refresh_vote.clone(),
+            refresh_vote,
         );
         let refresh_tx = Transaction::new_with_payer(
             &[refresh_ix], // instructions
@@ -3050,7 +3050,7 @@ mod tests {
         let refresh_ix = vote_instruction::vote(
             &Pubkey::new_unique(), // vote_pubkey
             &Pubkey::new_unique(), // authorized_voter_pubkey
-            refresh_vote.clone(),
+            refresh_vote,
         );
         let refresh_tx = Transaction::new_with_payer(
             &[refresh_ix], // instructions
@@ -3092,7 +3092,7 @@ mod tests {
         // Now construct vote for the slot to be refreshed later.
         let refresh_slot = unrefresh_slot + 1;
         let refresh_tower = vec![1, 3, unrefresh_slot, refresh_slot];
-        let refresh_vote = Vote::new(refresh_tower.clone(), Hash::new_unique());
+        let refresh_vote = Vote::new(refresh_tower, Hash::new_unique());
         let refresh_ix = vote_instruction::vote(
             &Pubkey::new_unique(), // vote_pubkey
             &Pubkey::new_unique(), // authorized_voter_pubkey
