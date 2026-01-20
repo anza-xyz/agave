@@ -1419,7 +1419,7 @@ mod tests {
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 4, &program_id),
                 ), // readonly
-                (Pubkey::new_unique(), shared_account.clone()), // writable shared
+                (Pubkey::new_unique(), shared_account), // writable shared
                 (
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 0, &program_id),
@@ -1440,7 +1440,7 @@ mod tests {
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 0x3000, &program_id),
                 ), // writable dummy to burn accounts_resize_delta
-                (program_id, AccountSharedData::default()),     // program
+                (program_id, AccountSharedData::default()), // program
             ],
             Rent::default(),
             /* max_instruction_stack_depth */ 1,

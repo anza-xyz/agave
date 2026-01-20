@@ -118,7 +118,7 @@ impl VoteAccount {
         let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         let account = AccountSharedData::new_data(
             rng.random(), // lamports
-            &VoteStateVersions::new_v4(vote_state.clone()),
+            &VoteStateVersions::new_v4(vote_state),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
@@ -485,7 +485,7 @@ mod tests {
         let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         AccountSharedData::new_data(
             rng.random(), // lamports
-            &VoteStateVersions::new_v4(vote_state.clone()),
+            &VoteStateVersions::new_v4(vote_state),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap()
@@ -712,7 +712,7 @@ mod tests {
         let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
             panic!("should not be called")
         });
-        assert_eq!(ret, Some(vote_account1.clone()));
+        assert_eq!(ret, Some(vote_account1));
         assert_eq!(vote_accounts.get(&pubkey), Some(&vote_account2));
         // stake is unchanged
         assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 42);
@@ -722,10 +722,8 @@ mod tests {
         let new_node_pubkey = Pubkey::new_unique();
         let account3 = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
         let vote_account3 = VoteAccount::try_from(account3).unwrap();
-        let ret = vote_accounts.insert(pubkey, vote_account3.clone(), || {
-            panic!("should not be called")
-        });
-        assert_eq!(ret, Some(vote_account2.clone()));
+        let ret = vote_accounts.insert(pubkey, vote_account3, || panic!("should not be called"));
+        assert_eq!(ret, Some(vote_account2));
         assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), None);
         assert_eq!(
             vote_accounts.staked_nodes().get(&new_node_pubkey),
@@ -755,9 +753,7 @@ mod tests {
         let new_node_pubkey = Pubkey::new_unique();
         let account2 = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
         let vote_account2 = VoteAccount::try_from(account2).unwrap();
-        let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
-            panic!("should not be called")
-        });
+        let ret = vote_accounts.insert(pubkey, vote_account2, || panic!("should not be called"));
         assert_eq!(ret, Some(vote_account1));
         assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 0);
         assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), None);

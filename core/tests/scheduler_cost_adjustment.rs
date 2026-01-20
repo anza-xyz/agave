@@ -282,7 +282,7 @@ fn test_builtin_ix_cost_adjustment_with_memo_no_cu_limit() {
     };
     assert_eq!(
         expected,
-        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix.clone()],)
+        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix],)
     );
 }
 
@@ -310,7 +310,7 @@ fn test_builtin_ix_cost_adjustment_with_memo_and_cu_limit() {
         expected,
         test_setup.execute_test_transaction(&[
             test_setup.transfer_ix(),
-            memo_ix.clone(),
+            memo_ix,
             test_setup.set_cu_limit_ix(cu_limit)
         ],)
     );

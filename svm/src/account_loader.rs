@@ -1886,7 +1886,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
         let load_result = load_transaction(
             &mut account_loader,
-            &sanitized_tx.clone(),
+            &sanitized_tx,
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
@@ -2048,7 +2048,7 @@ mod tests {
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_transaction,
-            validation_result.clone(),
+            validation_result,
             &mut TransactionErrorMetrics::default(),
             &rent,
         );

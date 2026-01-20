@@ -888,10 +888,10 @@ mod tests {
                 features,
                 &instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
+                    (vote_pubkey, vote_account),
                     (sysvar::rent::id(), create_default_rent_account()),
                     (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account.clone()),
+                    (node_pubkey, node_account),
                 ],
                 instruction_accounts.clone(),
                 Err(InstructionError::InvalidInstructionData),
@@ -971,10 +971,10 @@ mod tests {
             features,
             &instruction_data,
             vec![
-                (vote_pubkey, vote_account.clone()),
+                (vote_pubkey, vote_account),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
+                (node_pubkey, node_account),
             ],
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
@@ -1058,10 +1058,10 @@ mod tests {
                 features,
                 &instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
+                    (vote_pubkey, vote_account),
                     (sysvar::rent::id(), create_default_rent_account()),
                     (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account.clone()),
+                    (node_pubkey, node_account),
                 ],
                 instruction_accounts.clone(),
                 Err(InstructionError::InvalidInstructionData),
@@ -1120,10 +1120,10 @@ mod tests {
             features,
             &instruction_data,
             vec![
-                (vote_pubkey, vote_account.clone()),
+                (vote_pubkey, vote_account),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
+                (node_pubkey, node_account),
             ],
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
@@ -2072,8 +2072,8 @@ mod tests {
                 features,
                 &instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (vote_pubkey, vote_account),
+                    (sysvar::clock::id(), clock_account),
                     (authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 instruction_accounts.clone(),
@@ -2096,8 +2096,8 @@ mod tests {
                 features,
                 &bad_instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (vote_pubkey, vote_account),
+                    (sysvar::clock::id(), clock_account),
                     (authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 instruction_accounts.clone(),
@@ -2304,7 +2304,7 @@ mod tests {
                 &old_instruction_data,
                 vec![
                     (new_vote_pubkey, vote_account_with_bls_key),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (sysvar::clock::id(), clock_account),
                     (new_authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 vec![
@@ -2338,8 +2338,8 @@ mod tests {
                 features,
                 &bad_instruction_data,
                 vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::clock::id(), clock_account.clone()),
+                    (vote_pubkey, vote_account),
+                    (sysvar::clock::id(), clock_account),
                     (authorized_voter_pubkey, AccountSharedData::default()),
                 ],
                 instruction_accounts.clone(),
@@ -2467,8 +2467,8 @@ mod tests {
         };
         let clock_account = account::create_account_shared_data_for_test(&clock);
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::clock::id(), clock_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::clock::id(), clock_account),
             (authorized_voter_pubkey, AccountSharedData::default()),
         ];
         let instruction_accounts = vec![
@@ -2500,8 +2500,8 @@ mod tests {
                 ..Default::default()
             },
             &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
+            transaction_accounts,
+            instruction_accounts,
             Err(InstructionError::InvalidArgument),
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );

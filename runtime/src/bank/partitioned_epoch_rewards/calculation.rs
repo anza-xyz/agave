@@ -1970,7 +1970,7 @@ mod tests {
         accumulator1.add_reward(
             vote_pubkey_a,
             VoteReward {
-                vote_account: vote_account_a.clone(),
+                vote_account: vote_account_a,
                 commission_bps: 1_000,
                 vote_rewards: 50,
             },
