@@ -963,7 +963,8 @@ use {
     tempfile::{tempdir, NamedTempFile},
 };
 
-pub fn test_process_distribute_tokens_with_client(
+/// Helper used by integration/unit tests to exercise `process_allocations()` end-to-end.
+pub fn process_distribute_tokens_with_client(
     client: &RpcClient,
     sender_keypair: Keypair,
     transfer_amount: Option<u64>,
@@ -1050,7 +1051,18 @@ pub fn test_process_distribute_tokens_with_client(
     check_output_file(&output_path, &db::open_db(&transaction_db, true).unwrap());
 }
 
-pub fn test_process_create_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
+#[deprecated(note = "Use `process_distribute_tokens_with_client` instead.")]
+#[doc(hidden)]
+pub fn test_process_distribute_tokens_with_client(
+    client: &RpcClient,
+    sender_keypair: Keypair,
+    transfer_amount: Option<u64>,
+) {
+    process_distribute_tokens_with_client(client, sender_keypair, transfer_amount)
+}
+
+/// Helper used by integration/unit tests to exercise stake creation via `process_allocations()`.
+pub fn process_create_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
     let exit = Arc::new(AtomicBool::default());
     let fee_payer = Keypair::new();
     let transaction = transfer(
@@ -1172,7 +1184,14 @@ pub fn test_process_create_stake_with_client(client: &RpcClient, sender_keypair:
     check_output_file(&output_path, &db::open_db(&transaction_db, true).unwrap());
 }
 
-pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
+#[deprecated(note = "Use `process_create_stake_with_client` instead.")]
+#[doc(hidden)]
+pub fn test_process_create_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
+    process_create_stake_with_client(client, sender_keypair)
+}
+
+/// Helper used by integration/unit tests to exercise stake distribution via `process_allocations()`.
+pub fn process_distribute_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
     let exit = Arc::new(AtomicBool::default());
     let fee_payer = Keypair::new();
     let transaction = transfer(
@@ -1304,6 +1323,12 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
     check_output_file(&output_path, &db::open_db(&transaction_db, true).unwrap());
 }
 
+#[deprecated(note = "Use `process_distribute_stake_with_client` instead.")]
+#[doc(hidden)]
+pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keypair: Keypair) {
+    process_distribute_stake_with_client(client, sender_keypair)
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -1338,7 +1363,7 @@ mod tests {
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_tokens_with_client(&client, alice, None);
+        process_distribute_tokens_with_client(&client, alice, None);
     }
 
     #[test]
@@ -1348,7 +1373,7 @@ mod tests {
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_tokens_with_client(&client, alice, sol_str_to_lamports("1.5"));
+        process_distribute_tokens_with_client(&client, alice, sol_str_to_lamports("1.5"));
     }
 
     fn simple_test_validator_no_fees(pubkey: Pubkey) -> TestValidator {
@@ -1362,7 +1387,7 @@ mod tests {
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_create_stake_with_client(&client, alice);
+        process_create_stake_with_client(&client, alice);
     }
 
     #[test]
@@ -1372,7 +1397,7 @@ mod tests {
         let url = test_validator.rpc_url();
 
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
-        test_process_distribute_stake_with_client(&client, alice);
+        process_distribute_stake_with_client(&client, alice);
     }
 
     #[test]
