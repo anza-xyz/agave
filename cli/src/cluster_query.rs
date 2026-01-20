@@ -745,35 +745,37 @@ pub async fn process_catchup(
     progress_bar.set_message("Connecting...");
 
     if let Some(our_localhost_port) = our_localhost_port {
-        let gussed_default = Some(format!("http://localhost:{our_localhost_port}"));
-        if node_json_rpc_url.is_some() && node_json_rpc_url != gussed_default {
-            // go to new line to leave this message on console
-            println!(
-                "Preferring explicitly given rpc ({}) as us, although --our-localhost is given\n",
-                node_json_rpc_url.as_ref().unwrap()
-            );
-        } else {
-            node_json_rpc_url = gussed_default;
+        let gussed_default = format!("http://localhost:{our_localhost_port}");
+        match node_json_rpc_url.as_ref() {
+            Some(node_json_rpc_url) if node_json_rpc_url != &gussed_default => {
+                // go to new line to leave this message on console
+                println!(
+                    "Preferring explicitly given rpc ({node_json_rpc_url}) as us, although \
+                     --our-localhost is given\n"
+                )
+            }
+            _ => {
+                node_json_rpc_url = Some(gussed_default);
+            }
         }
     }
 
     let (node_client, node_pubkey) = if our_localhost_port.is_some() {
         let client = RpcClient::new(node_json_rpc_url.unwrap());
-        let guessed_default = Some(client.get_identity().await?);
+        let guessed_default = client.get_identity().await?;
         (
             client,
-            (if node_pubkey.is_some() && node_pubkey != guessed_default {
-                // go to new line to leave this message on console
-                println!(
-                    "Preferring explicitly given node pubkey ({}) as us, although --our-localhost \
-                     is given\n",
-                    node_pubkey.unwrap()
-                );
-                node_pubkey
-            } else {
-                guessed_default
-            })
-            .unwrap(),
+            (match node_pubkey {
+                Some(node_pubkey) if node_pubkey != guessed_default => {
+                    // go to new line to leave this message on console
+                    println!(
+                        "Preferring explicitly given node pubkey ({node_pubkey}) as us, although \
+                         --our-localhost is given\n"
+                    );
+                    node_pubkey
+                }
+                _ => guessed_default,
+            }),
         )
     } else if let Some(node_pubkey) = node_pubkey {
         if let Some(node_json_rpc_url) = node_json_rpc_url {
