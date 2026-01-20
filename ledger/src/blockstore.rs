@@ -76,7 +76,7 @@ use {
         rc::Rc,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, Mutex, RwLock,
+            Arc, Mutex, MutexGuard, RwLock,
         },
     },
     tar,
@@ -1351,15 +1351,9 @@ impl Blockstore {
         self.completed_slots_senders.lock().unwrap().clear();
     }
 
-    /// Clear `slot` from the Blockstore, see ``Blockstore::purge_slot_cleanup_chaining`
-    /// for more details.
-    ///
-    /// This function currently requires `insert_shreds_lock`, as both
-    /// `clear_unconfirmed_slot()` and `insert_shreds_handle_duplicate()`
-    /// try to perform read-modify-write operation on [`cf::SlotMeta`] column
-    /// family.
-    pub fn clear_unconfirmed_slot(&self, slot: Slot) {
-        let _lock = self.insert_shreds_lock.lock().unwrap();
+    /// Helper to purge a slot and relevant chaining while handling missing slots and other blockstore errors
+    /// Requires the shred lock to be held
+    fn purge_slot_and_chaining_locked(&self, slot: Slot, _lock: &MutexGuard<()>) {
         // Purge the slot and insert an empty `SlotMeta` with only the `next_slots` field preserved.
         // Shreds inherently know their parent slot, and a parent's SlotMeta `next_slots` list
         // will be updated when the child is inserted (see `Blockstore::handle_chaining()`).
@@ -1375,18 +1369,24 @@ impl Blockstore {
         }
     }
 
+    /// Clear `slot` from the Blockstore, see ``Blockstore::purge_slot_cleanup_chaining`
+    /// for more details.
+    ///
+    /// This function currently requires `insert_shreds_lock`, as both
+    /// `clear_unconfirmed_slot()` and `insert_shreds_handle_duplicate()`
+    /// try to perform read-modify-write operation on [`cf::SlotMeta`] column
+    /// family.
+    pub fn clear_unconfirmed_slot(&self, slot: Slot) {
+        let lock = self.insert_shreds_lock.lock().unwrap();
+        self.purge_slot_and_chaining_locked(slot, &lock);
+    }
+
     /// Atomically clear a range of `slot` inclusive, similar to `Blockstore::clear_unconfirmed_slot`
     /// Holds the shred lock during the entire purge.
     pub fn clear_unconfirmed_slots(&self, start: Slot, end: Slot) {
-        let _lock = self.insert_shreds_lock.lock().unwrap();
+        let lock = self.insert_shreds_lock.lock().unwrap();
         for slot in start..=end {
-            match self.purge_slot_cleanup_chaining(slot) {
-                Ok(_) => {}
-                Err(BlockstoreError::SlotUnavailable) => {
-                    error!("clear_unconfirmed_slots() called on slot {slot} with no SlotMeta")
-                }
-                Err(e) => panic!("Purge database operations failed {e}"),
-            }
+            self.purge_slot_and_chaining_locked(slot, &lock);
         }
     }
 
