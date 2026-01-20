@@ -47,21 +47,33 @@ pub(crate) const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
 // bytes: 8192 bytes for the maximum table size plus 56 bytes for metadata.
 const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 
-// for the load instructions
+// Result of pre-SVM (runtime) transaction checks.
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
-type TransactionValidationResult = Result<ValidatedTransactionDetails>;
+
+// Combined result of runtime, fee-payer, and nonce checks.
+// HANA idk if i want to box or not. probably not
+#[allow(clippy::large_enum_variant)]
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub(crate) enum TransactionValidationResult {
+    Loadable(ValidatedTransactionDetails),
+    NoOp(NoOpTransaction),
+    Unprocessable(TransactionError),
+}
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum TransactionLoadResult {
-    /// All transaction accounts were loaded successfully
+    /// All transaction accounts were loaded successfully.
     Loaded(LoadedTransaction),
     /// Some transaction accounts needed for execution were unable to be loaded
     /// but the fee payer and any nonce account needed for fee collection were
-    /// loaded successfully
+    /// loaded successfully.
     FeesOnly(FeesOnlyTransaction),
-    /// Some transaction accounts needed for fee collection were unable to be
-    /// loaded
-    NotLoaded(TransactionError),
+    /// This transaction will be processed but entail no account state changes.
+    /// If SIMD-0290 is enabled, invalid fee-payers are processable.
+    /// If SIMD-0297 is enabled, invalid nonce accounts are processable.
+    NoOp(NoOpTransaction),
+    /// Mandatory checks failed; this transaction will be discarded as unprocessable.
+    Unprocessable(TransactionError),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -153,6 +165,13 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct NoOpTransaction {
+    pub validation_error: TransactionError,
+    pub fee_payer_balance: Option<u64>,
+    pub fee_details: FeeDetails,
+}
+
 // This is an internal SVM type that tracks account changes throughout a
 // transaction batch and obviates the need to load accounts from accounts-db
 // more than once. It effectively wraps an `impl TransactionProcessingCallback`
@@ -163,7 +182,6 @@ pub struct FeesOnlyTransaction {
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     loaded_accounts: AHashMap<Pubkey, (AccountSharedData, Slot)>,
     callbacks: &'a CB,
-    #[allow(unused)]
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
 
@@ -408,8 +426,9 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     rent: &Rent,
 ) -> TransactionLoadResult {
     match validation_result {
-        Err(e) => TransactionLoadResult::NotLoaded(e),
-        Ok(tx_details) => {
+        TransactionValidationResult::Unprocessable(e) => TransactionLoadResult::Unprocessable(e),
+        TransactionValidationResult::NoOp(tx_details) => TransactionLoadResult::NoOp(tx_details),
+        TransactionValidationResult::Loadable(tx_details) => {
             let load_result = load_transaction_accounts(
                 account_loader,
                 message,
@@ -770,7 +789,7 @@ mod tests {
         load_transaction(
             &mut account_loader,
             &sanitized_tx,
-            Ok(ValidatedTransactionDetails {
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     account: fee_payer_account,
                     ..LoadedTransactionAccount::default()
@@ -963,7 +982,8 @@ mod tests {
                 assert_eq!(loaded_transaction.program_indices[0], 1);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1024,7 +1044,8 @@ mod tests {
                 assert_eq!(loaded_transaction.program_indices[1], 2);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1054,7 +1075,7 @@ mod tests {
         load_transaction(
             &mut account_loader,
             &tx,
-            Ok(ValidatedTransactionDetails::default()),
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
         )
@@ -1124,7 +1145,8 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts[1].1.lamports(), 42);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1880,7 +1902,7 @@ mod tests {
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_tx.clone(),
-            Ok(ValidatedTransactionDetails::default()),
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
         );
@@ -1966,13 +1988,14 @@ mod tests {
             false,
         );
 
-        let validation_result = Ok(ValidatedTransactionDetails {
-            loaded_fee_payer_account: LoadedTransactionAccount {
-                account: fee_payer_account,
-                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
-            },
-            ..ValidatedTransactionDetails::default()
-        });
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: fee_payer_account,
+                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
+                },
+                ..ValidatedTransactionDetails::default()
+            });
 
         let load_result = load_transaction(
             &mut account_loader,
@@ -2037,7 +2060,9 @@ mod tests {
             false,
         );
 
-        let validation_result = Ok(ValidatedTransactionDetails::default());
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default());
+
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_transaction,
@@ -2054,7 +2079,8 @@ mod tests {
             }),
         ));
 
-        let validation_result = Err(TransactionError::InvalidWritableAccount);
+        let validation_result =
+            TransactionValidationResult::Unprocessable(TransactionError::InvalidWritableAccount);
 
         let load_result = load_transaction(
             &mut account_loader,
@@ -2066,7 +2092,7 @@ mod tests {
 
         assert!(matches!(
             load_result,
-            TransactionLoadResult::NotLoaded(TransactionError::InvalidWritableAccount),
+            TransactionLoadResult::Unprocessable(TransactionError::InvalidWritableAccount),
         ));
     }
 
@@ -2160,13 +2186,14 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let validation_result = Ok(ValidatedTransactionDetails {
-            loaded_fee_payer_account: LoadedTransactionAccount {
-                account: account0.clone(),
-                ..LoadedTransactionAccount::default()
-            },
-            ..ValidatedTransactionDetails::default()
-        });
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: account0.clone(),
+                    ..LoadedTransactionAccount::default()
+                },
+                ..ValidatedTransactionDetails::default()
+            });
         let _load_results = load_transaction(
             &mut account_loader,
             &sanitized_transaction,
