@@ -5322,6 +5322,12 @@ impl Bank {
         &self.reserved_account_keys.active
     }
 
+    /// Get the Arc-wrapped reserved account keys. This is useful for caching
+    /// the reserved keys without cloning the underlying HashSet.
+    pub fn get_reserved_account_keys_arc(&self) -> Arc<ReservedAccountKeys> {
+        Arc::clone(&self.reserved_account_keys)
+    }
+
     /// Compute and apply all activated features, initialize the transaction
     /// processor, and recalculate partitioned rewards if needed
     fn initialize_after_snapshot_restore<F, TP>(&mut self, rewards_thread_pool_builder: F)

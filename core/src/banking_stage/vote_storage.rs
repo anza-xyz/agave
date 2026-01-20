@@ -1,7 +1,10 @@
 use {
     super::latest_validator_vote_packet::{LatestValidatorVote, VoteSource},
-    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
+    crate::banking_stage::transaction_scheduler::transaction_state_container::{
+        RuntimeTransactionView, SharedBytes,
+    },
     agave_feature_set as feature_set,
+    agave_reserved_account_keys::ReservedAccountKeys,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
@@ -10,8 +13,10 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sysvar::{self as sysvar, slot_hashes::SlotHashes},
-    std::cmp,
+    solana_transaction::sanitized::MessageHash,
+    std::{cmp, collections::HashSet, sync::Arc},
 };
 
 /// Maximum number of votes a single receive call will accept
@@ -42,6 +47,7 @@ pub struct VoteStorage {
     latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVote>,
     num_unprocessed_votes: usize,
     cached_epoch_stakes: VersionedEpochStakes,
+    cached_reserved_account_keys: Arc<ReservedAccountKeys>,
     deprecate_legacy_vote_ixs: bool,
     current_epoch: Epoch,
 }
@@ -52,11 +58,16 @@ impl VoteStorage {
             latest_vote_per_vote_pubkey: HashMap::default(),
             num_unprocessed_votes: 0,
             cached_epoch_stakes: bank.current_epoch_stakes().clone(),
+            cached_reserved_account_keys: bank.get_reserved_account_keys_arc(),
             current_epoch: bank.epoch(),
             deprecate_legacy_vote_ixs: bank
                 .feature_set
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id()),
         }
+    }
+
+    pub fn reserved_account_keys(&self) -> &HashSet<Pubkey> {
+        &self.cached_reserved_account_keys.active
     }
 
     #[cfg(test)]
@@ -73,6 +84,7 @@ impl VoteStorage {
             latest_vote_per_vote_pubkey: HashMap::default(),
             num_unprocessed_votes: 0,
             cached_epoch_stakes: epoch_stakes,
+            cached_reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             current_epoch: 0,
             deprecate_legacy_vote_ixs: true,
         }
@@ -96,10 +108,26 @@ impl VoteStorage {
         votes: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) -> VoteBatchInsertionMetrics {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
+        // Clone the Arc to avoid borrow conflict with insert_batch_with_replenish
+        let reserved_account_keys = Arc::clone(&self.cached_reserved_account_keys);
         self.insert_batch_with_replenish(
             votes.filter_map(|vote| {
-                LatestValidatorVote::new_from_view(
+                let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                     vote,
+                    MessageHash::Compute,
+                    None,
+                )
+                .ok()?;
+                // Resolve the transaction (votes don't have LUTs)
+                let loaded_addresses = None;
+                let resolved_tx = RuntimeTransactionView::try_new(
+                    static_tx,
+                    loaded_addresses,
+                    &reserved_account_keys.active,
+                )
+                .ok()?;
+                LatestValidatorVote::new_from_runtime_tx(
+                    resolved_tx,
                     vote_source,
                     should_deprecate_legacy_vote_ixs,
                 )
@@ -112,12 +140,12 @@ impl VoteStorage {
     // Re-insert re-tryable packets.
     pub(crate) fn reinsert_packets(
         &mut self,
-        packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
+        packets: impl Iterator<Item = RuntimeTransactionView>,
     ) {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
             packets.filter_map(|packet| {
-                LatestValidatorVote::new_from_view(
+                LatestValidatorVote::new_from_runtime_tx(
                     packet,
                     VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
                     should_deprecate_legacy_vote_ixs,
@@ -128,7 +156,7 @@ impl VoteStorage {
         );
     }
 
-    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<SharedBytes>> {
+    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<RuntimeTransactionView> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| from_account::<SlotHashes, _>(&account));
@@ -172,6 +200,7 @@ impl VoteStorage {
         }
         {
             self.cached_epoch_stakes = bank.current_epoch_stakes().clone();
+            self.cached_reserved_account_keys = bank.get_reserved_account_keys_arc();
             self.current_epoch = bank.epoch();
             self.deprecate_legacy_vote_ixs = bank
                 .feature_set

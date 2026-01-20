@@ -1,13 +1,11 @@
-#[cfg(test)]
-use solana_perf::packet::PacketRef;
 use {
-    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
-    agave_transaction_view::transaction_view::SanitizedTransactionView,
+    crate::banking_stage::transaction_scheduler::transaction_state_container::RuntimeTransactionView,
     solana_bincode::limited_deserialize,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
+    solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_vote_program::vote_instruction::VoteInstruction,
     thiserror::Error,
 };
@@ -24,15 +22,15 @@ pub struct LatestValidatorVote {
     vote_source: VoteSource,
     vote_pubkey: Pubkey,
     authorized_voter_pubkey: Pubkey,
-    vote: Option<SanitizedTransactionView<SharedBytes>>,
+    vote: Option<RuntimeTransactionView>,
     slot: Slot,
     hash: Hash,
     timestamp: Option<UnixTimestamp>,
 }
 
 impl LatestValidatorVote {
-    pub fn new_from_view(
-        vote: SanitizedTransactionView<SharedBytes>,
+    pub fn new_from_runtime_tx(
+        vote: RuntimeTransactionView,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -98,21 +96,40 @@ impl LatestValidatorVote {
 
     #[cfg(test)]
     pub fn new(
-        packet: PacketRef,
+        packet: solana_perf::packet::PacketRef,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
+        use {
+            agave_transaction_view::transaction_view::SanitizedTransactionView,
+            solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+            solana_transaction::sanitized::MessageHash, std::collections::HashSet,
+        };
+
         if !packet.meta().is_simple_vote_tx() {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
-        let vote = SanitizedTransactionView::try_new_sanitized(
+        let view = SanitizedTransactionView::try_new_sanitized(
             std::sync::Arc::new(packet.data(..).unwrap().to_vec()),
             false,
         )
         .unwrap();
 
-        Self::new_from_view(vote, vote_source, deprecate_legacy_vote_ixs)
+        let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            view,
+            MessageHash::Compute,
+            None,
+        )
+        .map_err(|_| DeserializedPacketError::VoteTransaction)?;
+
+        // Resolve the transaction (votes don't have LUTs)
+        let loaded_addresses = None;
+        let vote =
+            RuntimeTransactionView::try_new(static_tx, loaded_addresses, &HashSet::default())
+                .map_err(|_| DeserializedPacketError::VoteTransaction)?;
+
+        Self::new_from_runtime_tx(vote, vote_source, deprecate_legacy_vote_ixs)
     }
 
     pub fn vote_pubkey(&self) -> Pubkey {
@@ -143,7 +160,7 @@ impl LatestValidatorVote {
         self.vote.is_none()
     }
 
-    pub fn take_vote(&mut self) -> Option<SanitizedTransactionView<SharedBytes>> {
+    pub fn take_vote(&mut self) -> Option<RuntimeTransactionView> {
         self.vote.take()
     }
 }
