@@ -81,7 +81,9 @@ impl AggregateCommitmentService {
             Sender<TowerCommitmentAggregationData>,
             Receiver<TowerCommitmentAggregationData>,
         ) = unbounded();
-        // This channel should not grow unbounded, cap at 1000 messages for now
+        // This channel should not grow unbounded, we expect at most 2 events per slot (`Notarize` and `Finalize`)
+        // Although unlikely, we could send out a lot of `Notariaze` votes during catchup, overprovision at 1000 to account
+        // for any such weirdness.
         let (ag_sender, ag_receiver): (
             Sender<AlpenglowCommitmentAggregationData>,
             Receiver<AlpenglowCommitmentAggregationData>,
