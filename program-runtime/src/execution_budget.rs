@@ -210,9 +210,9 @@ pub struct SVMTransactionExecutionCost {
     /// Number of compute units consumed to validate a bls12_381 g2 point.
     pub bls12_381_g2_validate_cost: u64,
     /// Base number of compute units consumed to perform a bls12_381 pairing.
-    pub bls12_381_pair_base_cost: u64,
+    pub bls12_381_one_pair_cost: u64,
     /// Incremental number of compute units consumed per pair in a bls12_381 pairing.
-    pub bls12_381_pair_per_pair_cost: u64,
+    pub bls12_381_additional_pair_cost: u64,
 }
 
 impl Default for SVMTransactionExecutionCost {
@@ -273,8 +273,8 @@ impl SVMTransactionExecutionCost {
             bls12_381_g2_decompress_cost: 3_050,
             bls12_381_g1_validate_cost: 1_565,
             bls12_381_g2_validate_cost: 1_968,
-            bls12_381_pair_base_cost: 12_422,
-            bls12_381_pair_per_pair_cost: 13_023,
+            bls12_381_one_pair_cost: 25_445,
+            bls12_381_additional_pair_cost: 13_023,
         }
     }
 

@@ -1827,11 +1827,11 @@ declare_builtin_function!(
             BLS12_381_LE | BLS12_381_BE => {
                 let execution_cost = invoke_context.get_execution_cost();
                 let cost = execution_cost
-                    .bls12_381_pair_base_cost
+                    .bls12_381_one_pair_cost
                     .saturating_add(
                         execution_cost
-                            .bls12_381_pair_per_pair_cost
-                            .saturating_mul(num_pairs),
+                            .bls12_381_additional_pair_cost
+                            .saturating_mul(num_pairs.saturating_sub(1)),
                     );
                 consume_compute_meter(invoke_context, cost)?;
 
@@ -6385,14 +6385,8 @@ mod tests {
         )
         .unwrap();
 
-        let bls12_381_pair_base_cost = invoke_context.get_execution_cost().bls12_381_pair_base_cost;
-        let bls12_381_pair_per_pair_cost = invoke_context
-            .get_execution_cost()
-            .bls12_381_pair_per_pair_cost;
-        let bls12_381_pair_cost = bls12_381_pair_base_cost
-            .checked_add(bls12_381_pair_per_pair_cost)
-            .unwrap();
-        invoke_context.mock_set_remaining(bls12_381_pair_cost);
+        let bls12_381_one_pair_cost = invoke_context.get_execution_cost().bls12_381_one_pair_cost;
+        invoke_context.mock_set_remaining(bls12_381_one_pair_cost);
 
         let result = SyscallCurvePairingMap::rust(
             &mut invoke_context,
