@@ -571,4 +571,26 @@ pub mod test {
             QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
         );
     }
+
+    #[test]
+    fn test_max_allowed_uni_streams_with_rtt() {
+        assert_eq!(
+            compute_max_allowed_uni_streams_with_rtt(
+                REFERENCE_RTT_MS / 2,
+                ConnectionPeerType::Unstaked,
+                10000
+            ),
+            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
+            "Max streams should not be less than normal for low RTT"
+        );
+        assert_eq!(
+            compute_max_allowed_uni_streams_with_rtt(
+                REFERENCE_RTT_MS + REFERENCE_RTT_MS / 2,
+                ConnectionPeerType::Unstaked,
+                10000
+            ),
+            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS + QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS / 2,
+            "Max streams should scale with BDP in high-RTT connections"
+        );
+    }
 }
