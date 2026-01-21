@@ -1346,7 +1346,9 @@ impl ReplayStage {
                         select_forks_time.as_us(),
                         compute_slot_stats_time.as_us(),
                         heaviest_fork_failures_time.as_us(),
-                        u64::from(did_complete_bank),
+                        u64::try_from(new_frozen_slots.len()).expect(
+                            "something is very wrong, froze more than u64::MAX banks at once",
+                        ),
                         process_ancestor_hashes_duplicate_slots_time.as_us(),
                         process_duplicate_confirmed_slots_time.as_us(),
                         process_unfrozen_gossip_verified_vote_hashes_time.as_us(),
