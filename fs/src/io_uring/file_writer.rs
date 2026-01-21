@@ -6,10 +6,7 @@ use {
         IO_PRIO_BE_HIGHEST,
     },
     crate::{
-        io_uring::{
-            file_creator::{CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT, DEFAULT_WRITE_SIZE},
-            sqpoll,
-        },
+        io_uring::{file_creator::CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT, sqpoll},
         FileSize, IoSize,
     },
     agave_io_uring::{Completion, Ring, RingOp},
@@ -26,9 +23,18 @@ use {
         path::Path,
     },
 };
+
+// Based on benches done with sequential writes
+// This value returned the best write speed on a modern SSD
+// with the EXT4 fs
+pub const DEFAULT_WRITE_SIZE: IoSize = 1024 * 1024;
 // For large file we don't really use workers as few regularly submitted requests get handled
 // within sqpoll thread. Allow some workers just in case, but limit them.
 const DEFAULT_MAX_IOWQ_WORKERS: u32 = 2;
+// In testing, the blocksize returned by metadata is always 4096, even when the actual
+// blocksize of the filesystem is 512. We can't tell without using statx, which is
+// currently not supported, so we just always use 4096 to be safe.
+const DEFAULT_FS_BLOCK_SIZE: usize = 4096;
 
 /// Utility for building `SequentialFileReader` with specified tuning options.
 pub struct IoUringFileWriterBuilder<'sp> {
@@ -38,6 +44,8 @@ pub struct IoUringFileWriterBuilder<'sp> {
     shared_sqpoll_fd: Option<BorrowedFd<'sp>>,
     /// Register buffer as fixed with the kernel
     register_buffer: bool,
+    /// Toggle option for opening files with the O_DIRECT flag
+    use_direct_io: bool,
 }
 
 impl<'sp> IoUringFileWriterBuilder<'sp> {
@@ -48,6 +56,7 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
             ring_squeue_size: None,
             shared_sqpoll_fd: None,
             register_buffer: false,
+            use_direct_io: false,
         }
     }
 
@@ -65,6 +74,16 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
     /// Enabling requires available memlock ulimit to be higher than sizes of registered buffers.
     pub fn _use_registered_buffers(mut self, register_buffers: bool) -> Self {
         self.register_buffer = register_buffers;
+        self
+    }
+
+    /// Set whether to use directio when writing
+    ///
+    /// Enabling requires the filesystem to support directio and subbuffers to be a multiple
+    /// of the fs block size
+    #[cfg(test)]
+    pub fn use_direct_io(mut self, use_direct_io: bool) -> Self {
+        self.use_direct_io = use_direct_io;
         self
     }
 
@@ -111,7 +130,17 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
         .map(Cursor::new)
         .collect();
 
-        let state = IoUringFileWriterState::new(path, buffers)?;
+        #[cfg(debug_assertions)]
+        if self.use_direct_io {
+            // O_DIRECT reads have size and alignment restrictions and must be into a sub-buffer of
+            // some multiple of the fs block size (see https://man7.org/linux/man-pages/man2/open.2.html#NOTES).
+            assert!(
+                self.write_size.is_multiple_of(DEFAULT_FS_BLOCK_SIZE as u32),
+                "write size is not multiple of fs block size={DEFAULT_FS_BLOCK_SIZE}"
+            );
+        }
+
+        let state = IoUringFileWriterState::new(path, buffers, self.use_direct_io)?;
 
         let io_uring = self.create_io_uring(buf_capacity)?;
         let ring = Ring::new(io_uring, state);
@@ -164,10 +193,21 @@ impl IoUringFileWriter {
     /// Flush the provided buffer and begin writing it
     fn internal_flush(&mut self, cursor: Cursor<IoBufferChunk>) -> io::Result<()> {
         let context = self.ring.context_mut();
-        let fd = io_uring::types::Fd(context.file.as_raw_fd());
         let offset = context.offset;
         // write only the portion of the buffer with data
         let write_len = cursor.position();
+        // use direct io if possible
+        let fd = if write_len.is_multiple_of(DEFAULT_FS_BLOCK_SIZE as u64)
+            && context.direct_io_file.is_some()
+        {
+            context.stats.direct_io_write_count += 1;
+            io_uring::types::Fd(context.direct_io_file.as_ref().unwrap().as_raw_fd())
+        } else {
+            context.stats.regular_io_write_count += 1;
+            io_uring::types::Fd(context.file.as_raw_fd())
+        };
+        context.stats.num_writes_total += 1;
+        context.stats.num_buffers_free_total += context.buffers.len();
         context.offset = offset + write_len;
         let op = WriteOp {
             fd,
@@ -184,6 +224,7 @@ impl IoUringFileWriter {
 
     fn drain(&mut self) -> io::Result<()> {
         let res = self.ring.drain();
+        self.ring.context().log_stats();
         res
     }
 }
@@ -196,6 +237,7 @@ impl io::Write for IoUringFileWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut num_bytes_already_written: usize = 0;
         loop {
+            self.ring.process_completions()?;
             let state = self.ring.context_mut();
             if let Some(cursor) = state.buffers.front_mut() {
                 let cursor_position = cursor.position();
@@ -226,7 +268,6 @@ impl io::Write for IoUringFileWriter {
                 }
             } else {
                 // only submit and wait if we were unable to obtain a free buffer
-                self.ring.process_completions()?;
                 self.ring
                     .submit_and_wait(1, CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT)?;
             }
@@ -286,28 +327,68 @@ impl io::Seek for IoUringFileWriter {
 /// Holds the state of the writer.
 struct IoUringFileWriterState {
     file: File,
+    direct_io_file: Option<File>,
     offset: FileSize,
-    num_bytes_written: u64,
     buffers: VecDeque<Cursor<IoBufferChunk>>,
+    stats: FileWriterStats,
 }
 
 impl IoUringFileWriterState {
-    fn new(path: impl AsRef<Path>, buffers: VecDeque<Cursor<IoBufferChunk>>) -> io::Result<Self> {
+    fn new(
+        path: impl AsRef<Path>,
+        buffers: VecDeque<Cursor<IoBufferChunk>>,
+        use_direct_io: bool,
+    ) -> io::Result<Self> {
         let file = OpenOptions::new()
             .write(true)
             .custom_flags(libc::O_NOATIME)
-            .open(path)?;
+            .open(&path)?;
+        let direct_io_file = if use_direct_io {
+            Some(
+                OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NOATIME | libc::O_DIRECT)
+                    .open(path)?,
+            )
+        } else {
+            None
+        };
         Ok(Self {
             file,
+            direct_io_file,
             offset: 0,
-            num_bytes_written: 0,
             buffers,
+            stats: FileWriterStats::default(),
         })
     }
 
     fn mark_write_completed(&mut self, buf: IoBufferChunk) {
         // Push to back to avoid interrupting the buffer currently being filled at the front
         self.buffers.push_back(Cursor::new(buf));
+    }
+
+    fn log_stats(&self) {
+        self.stats.log();
+    }
+}
+
+#[derive(Debug, Default)]
+struct FileWriterStats {
+    direct_io_write_count: usize,
+    regular_io_write_count: usize,
+    num_buffers_free_total: usize,
+    num_writes_total: usize,
+}
+
+impl FileWriterStats {
+    fn log(&self) {
+        println!(
+            "files writer stats - num_direct_io_writes: {} num_regular_io_writes: {} \
+             avg_num_buffers_free_during_write: {}",
+            self.direct_io_write_count,
+            self.regular_io_write_count,
+            self.num_buffers_free_total as f64 / self.num_writes_total as f64
+        );
     }
 }
 
@@ -365,21 +446,21 @@ impl RingOp<IoUringFileWriterState> for WriteOp {
         };
 
         let WriteOp {
-            fd,
             offset,
             buf,
             buf_offset,
             write_len,
+            ..
         } = self;
 
         let buf = mem::replace(buf, IoBufferChunk::empty());
         let total_written = *buf_offset + written;
-        ring.context_mut().num_bytes_written += written as u64;
 
         if written < *write_len {
             log::warn!("short write ({written}/{})", *write_len);
+            // partial writes always use regular file without direct io
             ring.push(WriteOp {
-                fd: *fd,
+                fd: io_uring::types::Fd(ring.context().file.as_raw_fd()),
                 offset: *offset + written as FileSize,
                 buf,
                 buf_offset: total_written,
@@ -401,13 +482,19 @@ mod tests {
         std::io::{Read, Write},
         tempfile::NamedTempFile,
     };
-    fn check_writing_file(file_size: FileSize, backing_buffer_size: usize, write_size: IoSize) {
+    fn check_writing_file(
+        file_size: FileSize,
+        backing_buffer_size: usize,
+        write_size: IoSize,
+        use_direct_io: bool,
+    ) {
         let pattern: Vec<u8> = (0..251).collect();
         // Create a temp file and write the pattern to it repeatedly
         let mut temp_file = NamedTempFile::new().unwrap();
 
         let buf = PageAlignedMemory::new(backing_buffer_size).unwrap();
         let mut writer = IoUringFileWriterBuilder::new()
+            .use_direct_io(use_direct_io)
             .write_size(write_size)
             .build_with_buffer(temp_file.path(), buf)
             .unwrap();
@@ -433,28 +520,42 @@ mod tests {
     /// Test with buffer larger than the whole file
     #[test]
     fn test_writing_small_file() {
-        check_writing_file(2500, 4096, 1024);
-        check_writing_file(2500, 4096, 2048);
-        check_writing_file(2500, 4096, 4096);
+        check_writing_file(2500, 4096, 1024, false);
+        check_writing_file(2500, 4096, 2048, false);
+        check_writing_file(2500, 4096, 4096, false);
     }
 
     /// Test with buffer smaller than the whole file
     #[test]
     fn test_writing_file_in_chunks() {
-        check_writing_file(25_000, 16384, 1024);
-        check_writing_file(25_000, 4096, 1024);
-        check_writing_file(25_000, 4096, 2048);
-        check_writing_file(25_000, 4096, 4096);
+        check_writing_file(25_000, 16384, 1024, false);
+        check_writing_file(25_000, 4096, 1024, false);
+        check_writing_file(25_000, 4096, 2048, false);
+        check_writing_file(25_000, 4096, 4096, false);
     }
 
     /// Test with buffer much smaller than the whole file
     #[test]
     fn test_writing_large_file() {
-        check_writing_file(250_000, 32768, 1024);
-        check_writing_file(250_000, 16384, 1024);
-        check_writing_file(250_000, 4096, 1024);
-        check_writing_file(250_000, 4096, 2048);
-        check_writing_file(250_000, 4096, 4096);
+        check_writing_file(250_000, 32768, 1024, false);
+        check_writing_file(250_000, 16384, 1024, false);
+        check_writing_file(250_000, 4096, 1024, false);
+        check_writing_file(250_000, 4096, 2048, false);
+        check_writing_file(250_000, 4096, 4096, false);
+    }
+
+    #[test]
+    fn test_direct_io_write() {
+        check_writing_file(2_500, 4096, 4096, true);
+        check_writing_file(2_500, 16384, 4096, true);
+        check_writing_file(25_000, 4096, 4096, true);
+        check_writing_file(25_000, 16384, 4096, true);
+        check_writing_file(250_000, 4096, 4096, true);
+        check_writing_file(250_000, 16384, 4096, true);
+        check_writing_file(4096, 4096, 4096, true);
+        check_writing_file(4096, 16384, 4096, true);
+        check_writing_file(16384, 4096, 4096, true);
+        check_writing_file(16384, 16384, 4096, true);
     }
 
     #[test]
