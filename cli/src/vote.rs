@@ -8,13 +8,17 @@ use {
         compute_budget::{
             simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
+        feature::get_feature_is_active,
         memo::WithMemo,
         nonce::check_nonce_account,
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
         stake::check_current_authority,
     },
+    agave_feature_set::bls_pubkey_management_in_vote_account,
+    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -42,7 +46,10 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{VoteAuthorize, VoteInit, VoteStateV4, VOTE_CREDITS_MAXIMUM_PER_SLOT},
+        vote_state::{
+            create_bls_proof_of_possession, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        },
     },
     std::rc::Rc,
 };
@@ -96,6 +103,122 @@ impl VoteSubCommands for App<'_, '_> {
                         .long("authorized-voter")
                         .value_name("VOTER_PUBKEY"),
                     "Authorized voter [default: validator identity pubkey]."
+                ))
+                .arg(
+                    Arg::with_name("allow_unsafe_authorized_withdrawer")
+                        .long("allow-unsafe-authorized-withdrawer")
+                        .takes_value(false)
+                        .help(
+                            "Allow an authorized withdrawer pubkey to be identical to the \
+                             validator identity account pubkey or vote account pubkey, which is \
+                             normally an unsafe configuration and should be avoided.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("seed")
+                        .long("seed")
+                        .value_name("STRING")
+                        .takes_value(true)
+                        .help(
+                            "Seed for address generation; if specified, the resulting account \
+                             will be at a derived address of the VOTE ACCOUNT pubkey",
+                        ),
+                )
+                .offline_args()
+                .nonce_args(false)
+                .arg(fee_payer_arg())
+                .arg(memo_arg())
+                .arg(compute_unit_price_arg()),
+        )
+        .subcommand(
+            SubCommand::with_name("create-vote-account-with-bls")
+                .about(
+                    "Create a vote account with BLS key support (SIMD-0387). Use this command \
+                     instead of 'create-vote-account' once SIMD-0387 is active.",
+                )
+                .arg(
+                    Arg::with_name("vote_account")
+                        .index(1)
+                        .value_name("ACCOUNT_KEYPAIR")
+                        .takes_value(true)
+                        .required(true)
+                        .validator(is_valid_signer)
+                        .help("Vote account keypair to create"),
+                )
+                .arg(
+                    Arg::with_name("identity_account")
+                        .index(2)
+                        .value_name("IDENTITY_KEYPAIR")
+                        .takes_value(true)
+                        .required(true)
+                        .validator(is_valid_signer)
+                        .help("Keypair of validator that will vote with this account"),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("authorized_withdrawer")
+                        .index(3)
+                        .value_name("WITHDRAWER_PUBKEY")
+                        .takes_value(true)
+                        .required(true)
+                        .long("authorized-withdrawer"),
+                    "Authorized withdrawer."
+                ))
+                .arg(pubkey!(
+                    Arg::with_name("authorized_voter")
+                        .long("authorized-voter")
+                        .value_name("VOTER_PUBKEY"),
+                    "Authorized voter [default: validator identity pubkey]."
+                ))
+                .arg(
+                    Arg::with_name("bls_keypair")
+                        .long("bls-keypair")
+                        .value_name("BLS_KEYPAIR_FILE")
+                        .takes_value(true)
+                        .validator(is_bls_keypair)
+                        .help(
+                            "Path to a BLS keypair file for proof of possession. If not provided, \
+                             a BLS keypair will be derived from the vote keypair.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("inflation_rewards_commission_bps")
+                        .long("inflation-rewards-commission-bps")
+                        .value_name("BASIS_POINTS")
+                        .takes_value(true)
+                        .default_value("10000")
+                        .validator(is_valid_basis_points)
+                        .help(
+                            "Commission rate in basis points (0-10000) for inflation rewards. 100 \
+                             basis points = 1%. [default: 10000 (100%)]",
+                        ),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("inflation_rewards_collector")
+                        .long("inflation-rewards-collector")
+                        .value_name("COLLECTOR_PUBKEY")
+                        .takes_value(true),
+                    "Account to collect inflation rewards commission. [default: vote account \
+                     address]"
+                ))
+                .arg(
+                    Arg::with_name("block_revenue_commission_bps")
+                        .long("block-revenue-commission-bps")
+                        .value_name("BASIS_POINTS")
+                        .takes_value(true)
+                        .default_value("10000")
+                        .validator(is_valid_basis_points)
+                        .help(
+                            "Commission rate in basis points (0-10000) for block revenue. 100 \
+                             basis points = 1%. [default: 10000 (100%)]",
+                        ),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("block_revenue_collector")
+                        .long("block-revenue-collector")
+                        .value_name("COLLECTOR_PUBKEY")
+                        .takes_value(true),
+                    "Account to collect block revenue commission. [default: identity account \
+                     address]"
                 ))
                 .arg(
                     Arg::with_name("allow_unsafe_authorized_withdrawer")
@@ -518,6 +641,89 @@ pub fn parse_create_vote_account(
     })
 }
 
+pub fn parse_create_vote_account_with_bls(
+    matches: &ArgMatches<'_>,
+    default_signer: &DefaultSigner,
+    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
+) -> Result<CliCommandInfo, CliError> {
+    let (vote_account, vote_account_pubkey) = signer_of(matches, "vote_account", wallet_manager)?;
+    let seed = matches.value_of("seed").map(|s| s.to_string());
+    let (identity_account, identity_pubkey) =
+        signer_of(matches, "identity_account", wallet_manager)?;
+    let authorized_voter = pubkey_of_signer(matches, "authorized_voter", wallet_manager)?;
+    let authorized_withdrawer =
+        pubkey_of_signer(matches, "authorized_withdrawer", wallet_manager)?.unwrap();
+    let bls_keypair = bls_keypair_of(matches, "bls_keypair");
+    let inflation_rewards_commission_bps =
+        value_t_or_exit!(matches, "inflation_rewards_commission_bps", u16);
+    let inflation_rewards_collector =
+        pubkey_of_signer(matches, "inflation_rewards_collector", wallet_manager)?
+            .unwrap_or(vote_account_pubkey.unwrap());
+    let block_revenue_commission_bps =
+        value_t_or_exit!(matches, "block_revenue_commission_bps", u16);
+    let block_revenue_collector =
+        pubkey_of_signer(matches, "block_revenue_collector", wallet_manager)?
+            .unwrap_or(identity_pubkey.unwrap());
+    let allow_unsafe = matches.is_present("allow_unsafe_authorized_withdrawer");
+    let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
+    let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
+    let blockhash_query = BlockhashQuery::new_from_matches(matches);
+    let nonce_account = pubkey_of_signer(matches, NONCE_ARG.name, wallet_manager)?;
+    let memo = matches.value_of(MEMO_ARG.name).map(String::from);
+    let (nonce_authority, nonce_authority_pubkey) =
+        signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
+    let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
+    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+
+    if !allow_unsafe {
+        if authorized_withdrawer == vote_account_pubkey.unwrap() {
+            return Err(CliError::BadParameter(
+                "Authorized withdrawer pubkey is identical to vote account pubkey, an unsafe \
+                 configuration"
+                    .to_owned(),
+            ));
+        }
+        if authorized_withdrawer == identity_pubkey.unwrap() {
+            return Err(CliError::BadParameter(
+                "Authorized withdrawer pubkey is identical to identity account pubkey, an unsafe \
+                 configuration"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let mut bulk_signers = vec![fee_payer, vote_account, identity_account];
+    if nonce_account.is_some() {
+        bulk_signers.push(nonce_authority);
+    }
+    let signer_info =
+        default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
+
+    Ok(CliCommandInfo {
+        command: CliCommand::CreateVoteAccountWithBls {
+            vote_account: signer_info.index_of(vote_account_pubkey).unwrap(),
+            seed,
+            identity_account: signer_info.index_of(identity_pubkey).unwrap(),
+            authorized_voter,
+            authorized_withdrawer,
+            bls_keypair,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority: signer_info.index_of(nonce_authority_pubkey).unwrap(),
+            memo,
+            fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
+            compute_unit_price,
+        },
+        signers: signer_info.signers,
+    })
+}
+
 pub fn parse_vote_authorize(
     matches: &ArgMatches<'_>,
     default_signer: &DefaultSigner,
@@ -807,6 +1013,24 @@ pub async fn process_create_vote_account(
     fee_payer: SignerIndex,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
+    if !sign_only {
+        // Check SIMD-0387 feature gate status.
+        // If active, legacy `InitializeAccount` instruction is disabled.
+        let is_bls_feature_active =
+            get_feature_is_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
+                .await
+                .unwrap_or(false);
+        if is_bls_feature_active {
+            return Err(CliError::BadParameter(
+                "SIMD-0387 (BLS Pubkey Management in Vote Account) is active on this cluster. The \
+                 legacy 'create-vote-account' command is no longer supported. Please use \
+                 'create-vote-account-with-bls' instead."
+                    .to_owned(),
+            )
+            .into());
+        }
+    }
+
     let vote_account = config.signers[vote_account];
     let vote_account_pubkey = vote_account.pubkey();
     let vote_account_address = if let Some(seed) = seed {
@@ -859,6 +1083,207 @@ pub async fn process_create_vote_account(
         };
 
         let ixs = vote_instruction::create_account_with_config(
+            &config.signers[0].pubkey(),
+            to,
+            &vote_init,
+            lamports,
+            create_vote_account_config,
+        )
+        .with_memo(memo)
+        .with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit,
+        });
+
+        if let Some(nonce_account) = &nonce_account {
+            Message::new_with_nonce(
+                ixs,
+                Some(&fee_payer.pubkey()),
+                nonce_account,
+                &nonce_authority.pubkey(),
+            )
+        } else {
+            Message::new(&ixs, Some(&fee_payer.pubkey()))
+        }
+    };
+
+    let recent_blockhash = blockhash_query
+        .get_blockhash(rpc_client, config.commitment)
+        .await?;
+
+    let (message, _) = resolve_spend_tx_and_check_account_balances(
+        rpc_client,
+        sign_only,
+        amount,
+        &recent_blockhash,
+        &config.signers[0].pubkey(),
+        &fee_payer.pubkey(),
+        compute_unit_limit,
+        build_message,
+        config.commitment,
+    )
+    .await?;
+
+    if !sign_only {
+        if let Ok(response) = rpc_client
+            .get_account_with_commitment(&vote_account_address, config.commitment)
+            .await
+        {
+            if let Some(vote_account) = response.value {
+                let err_msg = if vote_account.owner == solana_vote_program::id() {
+                    format!("Vote account {vote_account_address} already exists")
+                } else {
+                    format!(
+                        "Account {vote_account_address} already exists and is not a vote account"
+                    )
+                };
+                return Err(CliError::BadParameter(err_msg).into());
+            }
+        }
+
+        if let Some(nonce_account) = &nonce_account {
+            let nonce_account =
+                solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
+                    rpc_client,
+                    nonce_account,
+                    config.commitment,
+                )
+                .await?;
+            check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
+        }
+    }
+
+    let mut tx = Transaction::new_unsigned(message);
+    if sign_only {
+        tx.try_partial_sign(&config.signers, recent_blockhash)?;
+        return_signers_with_config(
+            &tx,
+            &config.output_format,
+            &ReturnSignersConfig {
+                dump_transaction_message,
+            },
+        )
+    } else {
+        tx.try_sign(&config.signers, recent_blockhash)?;
+        let result = rpc_client
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &tx,
+                config.commitment,
+                config.send_transaction_config,
+            )
+            .await;
+        log_instruction_custom_error::<SystemError>(result, config)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn process_create_vote_account_with_bls(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+    vote_account: SignerIndex,
+    seed: &Option<String>,
+    identity_account: SignerIndex,
+    authorized_voter: &Option<Pubkey>,
+    authorized_withdrawer: Pubkey,
+    bls_keypair: Option<&BLSKeypair>,
+    inflation_rewards_commission_bps: u16,
+    inflation_rewards_collector: Pubkey,
+    block_revenue_commission_bps: u16,
+    block_revenue_collector: Pubkey,
+    sign_only: bool,
+    dump_transaction_message: bool,
+    blockhash_query: &BlockhashQuery,
+    nonce_account: Option<&Pubkey>,
+    nonce_authority: SignerIndex,
+    memo: Option<&String>,
+    fee_payer: SignerIndex,
+    compute_unit_price: Option<u64>,
+) -> ProcessResult {
+    if !sign_only {
+        // Check SIMD-0387 feature gate status.
+        // If inactive, `InitializeAccountV2` instruction is disabled.
+        let is_feature_active =
+            get_feature_is_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
+                .await
+                .unwrap_or(false);
+        if !is_feature_active {
+            return Err(CliError::BadParameter(
+                "SIMD-0387 (BLS Pubkey Management in Vote Account) is not yet active on this \
+                 cluster. Use 'create-vote-account' instead until the feature is activated."
+                    .to_owned(),
+            )
+            .into());
+        }
+    }
+
+    let vote_account = config.signers[vote_account];
+    let vote_account_pubkey = vote_account.pubkey();
+    let vote_account_address = if let Some(seed) = seed {
+        Pubkey::create_with_seed(&vote_account_pubkey, seed, &solana_vote_program::id())?
+    } else {
+        vote_account_pubkey
+    };
+    check_unique_pubkeys(
+        (&config.signers[0].pubkey(), "cli keypair".to_string()),
+        (&vote_account_address, "vote_account".to_string()),
+    )?;
+
+    let identity_account = config.signers[identity_account];
+    let identity_pubkey = identity_account.pubkey();
+    check_unique_pubkeys(
+        (&vote_account_address, "vote_account".to_string()),
+        (&identity_pubkey, "identity_pubkey".to_string()),
+    )?;
+
+    // Generate or use provided BLS keypair and create proof of possession.
+    let (bls_pubkey, bls_proof_of_possession) = if let Some(bls_keypair) = bls_keypair {
+        create_bls_proof_of_possession(&vote_account_address, bls_keypair)
+    } else {
+        let derived_bls_keypair =
+            BLSKeypair::derive_from_signer(vote_account, BLS_KEYPAIR_DERIVE_SEED).map_err(|e| {
+                CliError::BadParameter(format!("Failed to derive BLS keypair: {e}"))
+            })?;
+        create_bls_proof_of_possession(&vote_account_address, &derived_bls_keypair)
+    };
+
+    let required_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())
+        .await?
+        .max(1);
+    let amount = SpendAmount::Some(required_balance);
+
+    let fee_payer = config.signers[fee_payer];
+    let nonce_authority = config.signers[nonce_authority];
+    let space = VoteStateV4::size_of() as u64;
+
+    let compute_unit_limit = match blockhash_query {
+        BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
+        BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
+    };
+    let build_message = |lamports| {
+        let vote_init = VoteInitV2 {
+            node_pubkey: identity_pubkey,
+            authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            authorized_withdrawer,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
+        };
+        let mut create_vote_account_config = CreateVoteAccountConfig {
+            space,
+            ..CreateVoteAccountConfig::default()
+        };
+        let to = if let Some(seed) = seed {
+            create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
+            &vote_account_address
+        } else {
+            &vote_account_pubkey
+        };
+
+        let ixs = vote_instruction::create_account_with_config_v2(
             &config.signers[0].pubkey(),
             to,
             &vote_init,
@@ -2140,6 +2565,236 @@ mod tests {
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
                     Box::new(read_keypair_file(&identity_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // Test CreateVoteAccountWithBls SubCommand
+        let (keypair_file, mut tmp_file) = make_tmp_file();
+        let vote_account_keypair = Keypair::new();
+        write_keypair(&vote_account_keypair, tmp_file.as_file_mut()).unwrap();
+        let inflation_rewards_collector = Keypair::new().pubkey();
+        let block_revenue_collector = Keypair::new().pubkey();
+
+        // Basic test with required arguments only (uses defaults)
+        let test_create_vote_account_with_bls = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account-with-bls",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+        ]);
+        assert_eq!(
+            parse_command(
+                &test_create_vote_account_with_bls,
+                &default_signer,
+                &mut None
+            )
+            .unwrap(),
+            CliCommandInfo {
+                command: CliCommand::CreateVoteAccountWithBls {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: 10000, // default: 100%
+                    inflation_rewards_collector: vote_account_keypair.pubkey(), // default: vote account
+                    block_revenue_commission_bps: 10000,                        // default: 100%
+                    block_revenue_collector: identity_keypair.pubkey(), // default: identity account
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&identity_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // Test with all optional arguments specified
+        let (keypair_file, mut tmp_file) = make_tmp_file();
+        let keypair = Keypair::new();
+        write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();
+        let (bls_keypair_file, _tmp_file) = make_tmp_file();
+        let bls_keypair = BLSKeypair::new();
+        bls_keypair.write_json_file(&bls_keypair_file).unwrap();
+
+        let test_create_vote_account_with_bls_full = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account-with-bls",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--authorized-voter",
+            &authed.to_string(),
+            "--bls-keypair",
+            &bls_keypair_file,
+            "--inflation-rewards-commission-bps",
+            "500",
+            "--inflation-rewards-collector",
+            &inflation_rewards_collector.to_string(),
+            "--block-revenue-commission-bps",
+            "1000",
+            "--block-revenue-collector",
+            &block_revenue_collector.to_string(),
+        ]);
+        assert_eq!(
+            parse_command(
+                &test_create_vote_account_with_bls_full,
+                &default_signer,
+                &mut None
+            )
+            .unwrap(),
+            CliCommandInfo {
+                command: CliCommand::CreateVoteAccountWithBls {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: Some(authed),
+                    authorized_withdrawer,
+                    bls_keypair: Some(bls_keypair),
+                    inflation_rewards_commission_bps: 500,
+                    inflation_rewards_collector,
+                    block_revenue_commission_bps: 1000,
+                    block_revenue_collector,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&identity_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // Test with sign-only mode
+        let (keypair_file, mut tmp_file) = make_tmp_file();
+        let sign_only_vote_keypair = Keypair::new();
+        write_keypair(&sign_only_vote_keypair, tmp_file.as_file_mut()).unwrap();
+
+        let test_create_vote_account_with_bls_sign_only =
+            test_commands.clone().get_matches_from(vec![
+                "test",
+                "create-vote-account-with-bls",
+                &keypair_file,
+                &identity_keypair_file,
+                &authorized_withdrawer.to_string(),
+                "--blockhash",
+                &blockhash_string,
+                "--sign-only",
+            ]);
+        assert_eq!(
+            parse_command(
+                &test_create_vote_account_with_bls_sign_only,
+                &default_signer,
+                &mut None
+            )
+            .unwrap(),
+            CliCommandInfo {
+                command: CliCommand::CreateVoteAccountWithBls {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: 10000,
+                    inflation_rewards_collector: sign_only_vote_keypair.pubkey(), // default: vote account
+                    block_revenue_commission_bps: 10000,
+                    block_revenue_collector: identity_keypair.pubkey(), // default: identity account
+                    sign_only: true,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Static(blockhash),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&identity_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // Test with nonce
+        let (keypair_file, mut tmp_file) = make_tmp_file();
+        let nonce_vote_keypair = Keypair::new();
+        write_keypair(&nonce_vote_keypair, tmp_file.as_file_mut()).unwrap();
+
+        let test_create_vote_account_with_bls_nonce = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account-with-bls",
+            &keypair_file,
+            &identity_keypair.pubkey().to_string(),
+            &authorized_withdrawer.to_string(),
+            "--blockhash",
+            &blockhash_string,
+            "--signer",
+            &identity_signer,
+            "--signer",
+            &signer2,
+            "--fee-payer",
+            &default_keypair_file,
+            "--nonce",
+            &nonce_account.to_string(),
+            "--nonce-authority",
+            &pubkey2_string,
+        ]);
+        assert_eq!(
+            parse_command(
+                &test_create_vote_account_with_bls_nonce,
+                &default_signer,
+                &mut None
+            )
+            .unwrap(),
+            CliCommandInfo {
+                command: CliCommand::CreateVoteAccountWithBls {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: 10000,
+                    inflation_rewards_collector: nonce_vote_keypair.pubkey(), // default: vote account
+                    block_revenue_commission_bps: 10000,
+                    block_revenue_collector: identity_keypair.pubkey(), // default: identity account
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Validated(
+                        Source::NonceAccount(nonce_account),
+                        blockhash
+                    ),
+                    nonce_account: Some(nonce_account),
+                    nonce_authority: 3,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(Presigner::new(&identity_keypair.pubkey(), &identity_sig)),
+                    Box::new(Presigner::new(&pubkey2, &sig2)),
                 ],
             }
         );

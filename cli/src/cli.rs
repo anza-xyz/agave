@@ -6,6 +6,7 @@ use {
     clap::{crate_description, crate_name, value_t_or_exit, ArgMatches, Shell},
     num_traits::FromPrimitive,
     serde_json::{self, Value},
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_utils::{self, input_parsers::*, keypair::*},
     solana_cli_config::ConfigInput,
     solana_cli_output::{
@@ -327,6 +328,26 @@ pub enum CliCommand {
         authorized_voter: Option<Pubkey>,
         authorized_withdrawer: Pubkey,
         commission: u8,
+        sign_only: bool,
+        dump_transaction_message: bool,
+        blockhash_query: BlockhashQuery,
+        nonce_account: Option<Pubkey>,
+        nonce_authority: SignerIndex,
+        memo: Option<String>,
+        fee_payer: SignerIndex,
+        compute_unit_price: Option<u64>,
+    },
+    CreateVoteAccountWithBls {
+        vote_account: SignerIndex,
+        seed: Option<String>,
+        identity_account: SignerIndex,
+        authorized_voter: Option<Pubkey>,
+        authorized_withdrawer: Pubkey,
+        bls_keypair: Option<BLSKeypair>,
+        inflation_rewards_commission_bps: u16,
+        inflation_rewards_collector: Pubkey,
+        block_revenue_commission_bps: u16,
+        block_revenue_collector: Pubkey,
         sign_only: bool,
         dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
@@ -756,6 +777,9 @@ pub fn parse_command(
         // Vote Commands
         ("create-vote-account", Some(matches)) => {
             parse_create_vote_account(matches, default_signer, wallet_manager)
+        }
+        ("create-vote-account-with-bls", Some(matches)) => {
+            parse_create_vote_account_with_bls(matches, default_signer, wallet_manager)
         }
         ("vote-update-validator", Some(matches)) => {
             parse_vote_update_validator(matches, default_signer, wallet_manager)
@@ -1595,6 +1619,50 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             )
             .await
         }
+        CliCommand::CreateVoteAccountWithBls {
+            vote_account,
+            seed,
+            identity_account,
+            authorized_voter,
+            authorized_withdrawer,
+            bls_keypair,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
+            sign_only,
+            dump_transaction_message,
+            blockhash_query,
+            nonce_account,
+            nonce_authority,
+            memo,
+            fee_payer,
+            compute_unit_price,
+        } => {
+            process_create_vote_account_with_bls(
+                &rpc_client,
+                config,
+                *vote_account,
+                seed,
+                *identity_account,
+                authorized_voter,
+                *authorized_withdrawer,
+                bls_keypair.as_ref(),
+                *inflation_rewards_commission_bps,
+                *inflation_rewards_collector,
+                *block_revenue_commission_bps,
+                *block_revenue_collector,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                nonce_account.as_ref(),
+                *nonce_authority,
+                memo.as_ref(),
+                *fee_payer,
+                *compute_unit_price,
+            )
+            .await
+        }
         CliCommand::ShowVoteAccount {
             pubkey: vote_account_pubkey,
             use_lamports_unit,
@@ -1935,7 +2003,7 @@ mod tests {
         solana_keypair::{keypair_from_seed, read_keypair_file, write_keypair_file, Keypair},
         solana_presigner::Presigner,
         solana_pubkey::Pubkey,
-        solana_rpc_client::mock_sender_for_cli::SIGNATURE,
+        solana_rpc_client::{mock_sender::MocksMap, mock_sender_for_cli::SIGNATURE},
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcResponseContext},
@@ -2261,6 +2329,14 @@ mod tests {
         let bob_keypair = Keypair::new();
         let bob_pubkey = bob_keypair.pubkey();
         let identity_keypair = Keypair::new();
+        // Feature check response: null value means feature is not active.
+        let feature_check_response = json!(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
+            value: serde_json::Value::Null,
+        });
         let vote_account_info_response = json!(Response {
             context: RpcResponseContext {
                 slot: 1,
@@ -2274,9 +2350,13 @@ mod tests {
                 "rentEpoch": 1,
             }),
         });
-        let mut mocks = HashMap::new();
+        // Use MocksMap to queue multiple GetAccountInfo responses:
+        // 1. SIMD-0387 feature account (returns null = feature inactive)
+        // 2. Vote account
+        let mut mocks = MocksMap::default();
+        mocks.insert(RpcRequest::GetAccountInfo, feature_check_response);
         mocks.insert(RpcRequest::GetAccountInfo, vote_account_info_response);
-        let rpc_client = Some(Arc::new(RpcClient::new_mock_with_mocks(
+        let rpc_client = Some(Arc::new(RpcClient::new_mock_with_mocks_map(
             "".to_string(),
             mocks,
         )));
