@@ -309,6 +309,7 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
     let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
     let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
+    let enable_bls12_381_syscall = feature_set.enable_bls12_381_syscall;
     let disable_fees_sysvar = feature_set.disable_fees_sysvar;
     let disable_deploy_of_alloc_free_syscall =
         reject_deployment_of_broken_elfs && feature_set.disable_deploy_of_alloc_free_syscall;
@@ -419,13 +420,13 @@ pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
     )?;
     register_feature_gated_function!(
         result,
-        enable_alt_bn128_syscall,
+        enable_bls12_381_syscall,
         "sol_curve_decompress",
         SyscallCurveDecompress::vm,
     )?;
     register_feature_gated_function!(
         result,
-        enable_alt_bn128_syscall,
+        enable_bls12_381_syscall,
         "sol_curve_pairing_map",
         SyscallCurvePairingMap::vm,
     )?;
