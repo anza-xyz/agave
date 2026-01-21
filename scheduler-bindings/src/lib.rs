@@ -350,6 +350,17 @@ pub mod worker_message_types {
     )]
     #[repr(C)]
     pub struct ExecutionResponse {
+        /// The slot this transaction was executed.
+        ///
+        /// # Note
+        ///
+        /// The current semantics are:
+        ///
+        /// - If we successfully get a bank and try your request, this slot is the latest
+        ///   bank we attempted (during a slot roll we can try 2 banks ).
+        /// - If we do not attempt or attemp and fail to get a bank, this field will be
+        ///   zero.
+        pub execution_slot: u64,
         /// Indicates if the transaction was included in the block or not.
         /// If [`not_included_reasons::NONE`], the transaction was included.
         pub not_included_reason: u8,
