@@ -149,8 +149,6 @@ macro_rules! define_accounts_db_test {
     };
 }
 
-pub(crate) use define_accounts_db_test;
-
 fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
     let slot0 = 0;
 

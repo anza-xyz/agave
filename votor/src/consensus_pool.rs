@@ -20,7 +20,7 @@ use {
         vote::{Vote, VoteType},
     },
     certificate_builder::{BuildError as CertificateBuildError, CertificateBuilder},
-    log::{error, trace},
+    log::trace,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
