@@ -233,7 +233,6 @@ impl io::Write for IoUringFileWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut num_bytes_already_written: usize = 0;
         loop {
-            self.ring.process_completions()?;
             let state = self.ring.context_mut();
             if let Some(cursor) = state.buffers.front_mut() {
                 let cursor_position = cursor.position();
@@ -263,7 +262,11 @@ impl io::Write for IoUringFileWriter {
                     break;
                 }
             } else {
-                // only submit and wait if we were unable to obtain a free buffer
+                // only process completions + submit and wait if we were unable to obtain a free buffer
+                // process completions is quite expensive if there's a lot of small writes, and we don't
+                // actually need to run it every time we write, only when we want some buffers to be freed
+                // back into the free buffer queue
+                self.ring.process_completions()?;
                 self.ring
                     .submit_and_wait(1, CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT)?;
             }
