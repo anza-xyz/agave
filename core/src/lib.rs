@@ -53,6 +53,7 @@ pub mod tpu;
 mod tpu_entry_notifier;
 pub mod tvu;
 pub mod unfrozen_gossip_verified_vote_hashes;
+mod upcoming_leaders_cache;
 pub mod validator;
 mod vortexor_receiver_adapter;
 pub mod vote_simulator;

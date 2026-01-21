@@ -632,13 +632,18 @@ impl PohRecorder {
     }
 
     /// Return the slot that PoH is currently ticking through.
-    fn current_poh_slot(&self) -> Slot {
+    pub fn current_poh_slot(&self) -> Slot {
         // The tick_height field is initialized to the last tick of the start
         // bank and generally indicates what tick height has already been
         // reached so use the next tick height to determine which slot poh is
         // ticking through.
         let next_tick_height = self.tick_height().saturating_add(1);
         self.slot_for_tick_height(next_tick_height)
+    }
+
+    pub fn leader_of_slot(&self, slot: Slot) -> Option<Pubkey> {
+        self.leader_schedule_cache
+            .slot_leader_at(slot, None)
     }
 
     pub fn leader_after_n_slots(&self, slots: u64) -> Option<Pubkey> {

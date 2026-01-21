@@ -13,6 +13,7 @@ use {
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
+    solana_tpu_client_next::{Client, TransactionSender},
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
@@ -22,6 +23,14 @@ use {
     },
     thiserror::Error,
 };
+
+// Attempt to send our vote transaction to this amount of leaders.
+pub(crate) const UPCOMING_LEADER_FANOUT: usize = 2;
+
+pub enum VoteSender {
+    UDP(Arc<ConnectionCache>),
+    QUIC(TransactionSender, Client)
+}
 
 pub enum VoteOp {
     PushVote {
@@ -86,7 +95,7 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
-        connection_cache: Arc<ConnectionCache>,
+        mut vote_sender: VoteSender,
         alpenglow_socket: Option<UdpSocket>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
@@ -117,7 +126,7 @@ impl VotingService {
                             &poh_recorder,
                             tower_storage.as_ref(),
                             vote_op,
-                            connection_cache.clone(),
+                            &mut vote_sender,
                         );
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = vote_slot {
@@ -141,7 +150,7 @@ impl VotingService {
         poh_recorder: &RwLock<PohRecorder>,
         tower_storage: &dyn TowerStorage,
         vote_op: VoteOp,
-        connection_cache: Arc<ConnectionCache>,
+        vote_sender: &mut VoteSender,
     ) {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
@@ -153,32 +162,43 @@ impl VotingService {
             trace!("{measure}");
         }
 
-        // Attempt to send our vote transaction to the leaders for the next few
-        // slots. From the current slot to the forwarding slot offset
-        // (inclusive).
-        const UPCOMING_LEADER_FANOUT_SLOTS: u64 =
-            FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET.saturating_add(1);
-        #[cfg(test)]
-        static_assertions::const_assert_eq!(UPCOMING_LEADER_FANOUT_SLOTS, 3);
-        let upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
-            cluster_info,
-            poh_recorder,
-            UPCOMING_LEADER_FANOUT_SLOTS,
-            connection_cache.protocol(),
-        );
-
-        if !upcoming_leader_sockets.is_empty() {
-            for tpu_vote_socket in upcoming_leader_sockets {
-                let _ = send_vote_transaction(
+        match vote_sender {
+            VoteSender::UDP(connection_cache) => {
+                // Attempt to send our vote transaction to the leaders for the next few
+                // slots. From the current slot to the forwarding slot offset
+                // (inclusive).
+                const UPCOMING_LEADER_FANOUT_SLOTS: u64 =
+                    FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET.saturating_add(1);
+                #[cfg(test)]
+                static_assertions::const_assert_eq!(UPCOMING_LEADER_FANOUT_SLOTS, 3);
+                let upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
                     cluster_info,
-                    vote_op.tx(),
-                    Some(tpu_vote_socket),
-                    &connection_cache,
+                    poh_recorder,
+                    UPCOMING_LEADER_FANOUT_SLOTS,
+                    connection_cache.protocol(),
                 );
+
+                if !upcoming_leader_sockets.is_empty() {
+                    for tpu_vote_socket in upcoming_leader_sockets {
+                        let _ = send_vote_transaction(
+                            cluster_info,
+                            vote_op.tx(),
+                            Some(tpu_vote_socket),
+                            &connection_cache,
+                        );
+                    }
+                } else {
+                    // Send to our own tpu vote socket if we cannot find a leader to send to
+                    let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, &connection_cache);
+                }
             }
-        } else {
-            // Send to our own tpu vote socket if we cannot find a leader to send to
-            let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, &connection_cache);
+            VoteSender::QUIC(sender, _) => {
+                if let Ok(serialized) = serialize(vote_op.tx()) {
+                    sender.try_send_transactions_in_batch(vec![serialized]).unwrap();
+                } else {
+                    warn!("Failed to serialize vote");
+                }
+            }
         }
 
         match vote_op {

@@ -564,8 +564,8 @@ impl ForwardingClient for ConnectionCacheClient {
 
 #[async_trait]
 impl LeaderUpdater for ForwardAddressGetter {
-    fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
-        self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC)
+    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
+        self.get_non_vote_forwarding_addresses(lookahead_leaders as u64, Protocol::QUIC)
     }
 
     async fn stop(&mut self) {}

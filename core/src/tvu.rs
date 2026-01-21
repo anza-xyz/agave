@@ -16,7 +16,7 @@ use {
         repair::repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
         shred_fetch_stage::{ShredFetchStage, SHRED_FETCH_CHANNEL_SIZE},
-        voting_service::VotingService,
+        voting_service::{VotingService, VoteSender},
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::{WindowService, WindowServiceChannels},
     },
@@ -76,7 +76,6 @@ pub struct Tvu {
     blockstore_cleanup_service: Option<BlockstoreCleanupService>,
     cost_update_service: CostUpdateService,
     voting_service: VotingService,
-    warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
 }
@@ -170,7 +169,7 @@ impl Tvu {
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
-        vote_connection_cache: Arc<ConnectionCache>,
+        vote_sender: VoteSender,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
@@ -350,17 +349,9 @@ impl Tvu {
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
-            vote_connection_cache.clone(),
+            vote_sender,
             alpenglow_socket,
             bank_forks.clone(),
-        );
-
-        let warm_quic_cache_service = create_cache_warmer_if_needed(
-            None,
-            vote_connection_cache,
-            cluster_info,
-            poh_recorder,
-            &exit,
         );
 
         let cost_update_service = CostUpdateService::new(cost_update_receiver);
@@ -403,7 +394,6 @@ impl Tvu {
             blockstore_cleanup_service,
             cost_update_service,
             voting_service,
-            warm_quic_cache_service,
             drop_bank_service,
             duplicate_shred_listener,
         })
@@ -423,9 +413,6 @@ impl Tvu {
         }
         self.cost_update_service.join()?;
         self.voting_service.join()?;
-        if let Some(warmup_service) = self.warm_quic_cache_service {
-            warmup_service.join()?;
-        }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
         Ok(())
@@ -604,7 +591,7 @@ pub mod tests {
             cluster_slots,
             wen_restart_repair_slots,
             None,
-            Arc::new(connection_cache),
+            VoteSender::UDP(Arc::new(connection_cache)),
         )
         .expect("assume success");
         if enable_wen_restart {

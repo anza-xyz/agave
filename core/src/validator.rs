@@ -32,6 +32,8 @@ use {
         },
         tpu::{ForwardingClientOption, Tpu, TpuSockets},
         tvu::{Tvu, TvuConfig, TvuSockets},
+        upcoming_leaders_cache::UpcomingLeadersCache,
+        voting_service,
     },
     agave_snapshots::{
         snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
@@ -138,6 +140,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client_next::ClientBuilder,
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
@@ -1160,30 +1163,6 @@ impl Validator {
         let mut tpu_transactions_forwards_client_sockets =
             Some(node.sockets.tpu_transaction_forwarding_clients);
 
-        let vote_connection_cache = if vote_use_quic {
-            let vote_connection_cache = ConnectionCache::new_with_client_options(
-                "connection_cache_vote_quic",
-                tpu_connection_pool_size,
-                Some(node.sockets.quic_vote_client),
-                Some((
-                    &identity_keypair,
-                    node.info
-                        .tpu_vote(Protocol::QUIC)
-                        .ok_or_else(|| {
-                            ValidatorError::Other(String::from("Invalid QUIC address for TPU Vote"))
-                        })?
-                        .ip(),
-                )),
-                Some((&staked_nodes, &identity_keypair.pubkey())),
-            );
-            Arc::new(vote_connection_cache)
-        } else {
-            Arc::new(ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                tpu_connection_pool_size,
-            ))
-        };
-
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
         // runtime will cause panic at drop. Outside test-validator crate, we
@@ -1198,6 +1177,31 @@ impl Validator {
                 .build()
                 .unwrap()
         });
+        let runtime_handle = tpu_client_next_runtime
+            .as_ref()
+            .map(TokioRuntime::handle)
+            .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+
+        let vote_sender = if vote_use_quic {
+            let upcoming_leader_cache = Box::new(UpcomingLeadersCache::new(
+                poh_recorder.clone(),
+                cluster_info.clone(),
+                if vote_use_quic { Protocol::QUIC } else { Protocol::UDP }
+            ));
+            let mut builder = ClientBuilder::new(upcoming_leader_cache)
+                .bind_socket(node.sockets.quic_vote_client)
+                .leader_send_fanout(voting_service::UPCOMING_LEADER_FANOUT)
+                .identity(Arc::as_ref(&identity_keypair));
+            builder = builder.runtime_handle(runtime_handle.clone());
+            let (sender, client) = builder.build()?;
+            voting_service::VoteSender::QUIC(sender, client)
+        } else {
+            voting_service::VoteSender::UDP(
+            Arc::new(ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                tpu_connection_pool_size,
+            )))
+        };
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1225,11 +1229,6 @@ impl Validator {
             };
 
             let rpc_tpu_client_args = {
-                let runtime_handle = tpu_client_next_runtime
-                    .as_ref()
-                    .map(TokioRuntime::handle)
-                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-
                 RpcTpuClientArgs(
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
@@ -1633,7 +1632,7 @@ impl Validator {
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
             slot_status_notifier,
-            vote_connection_cache,
+            vote_sender,
         )
         .map_err(ValidatorError::Other)?;
 
