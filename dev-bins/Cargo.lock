@@ -131,7 +131,7 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
- "agave-syscalls",
+ "agave-syscalls 4.0.0-alpha.0",
  "assert_cmd",
  "bs58",
  "chrono",
@@ -319,6 +319,48 @@ name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-bls12-381",
+ "bincode",
+ "libsecp256k1",
+ "num-traits",
+ "solana-account",
+ "solana-account-info",
+ "solana-big-mod-exp",
+ "solana-blake3-hasher",
+ "solana-bn254",
+ "solana-clock",
+ "solana-cpi",
+ "solana-curve25519 4.0.0",
+ "solana-hash 3.1.0",
+ "solana-instruction",
+ "solana-keccak-hasher",
+ "solana-loader-v3-interface",
+ "solana-poseidon",
+ "solana-program-entrypoint",
+ "solana-program-runtime",
+ "solana-pubkey 4.0.0",
+ "solana-sbpf",
+ "solana-sdk-ids",
+ "solana-secp256k1-recover",
+ "solana-sha256-hasher",
+ "solana-stable-layout",
+ "solana-stake-interface",
+ "solana-svm-callback",
+ "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-measure",
+ "solana-svm-timings",
+ "solana-svm-type-overrides",
+ "solana-sysvar",
+ "solana-sysvar-id",
+ "solana-transaction-context",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "agave-syscalls"
+version = "4.0.0-alpha.0"
+source = "git+https://github.com/anza-xyz/agave?rev=003f1e21a5#003f1e21a5acf1e276064648ff59bb90b0e38166"
+dependencies = [
  "bincode",
  "libsecp256k1",
  "num-traits",
@@ -6532,9 +6574,11 @@ dependencies = [
 [[package]]
 name = "solana-bpf-loader-program"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
- "agave-syscalls",
+ "agave-syscalls 4.0.0-alpha.0 (git+https://github.com/anza-xyz/agave?rev=003f1e21a5)",
  "bincode",
+ "cfg-if 1.0.4",
  "qualifier_attr",
  "solana-account",
  "solana-bincode",
@@ -7828,6 +7872,7 @@ dependencies = [
 [[package]]
 name = "solana-loader-v4-program"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "log",
  "solana-account",
@@ -8233,10 +8278,10 @@ dependencies = [
 [[package]]
 name = "solana-program-runtime"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "base64 0.22.1",
  "bincode",
- "cfg-if 1.0.4",
  "itertools 0.14.0",
  "log",
  "percentage",
@@ -8649,7 +8694,7 @@ dependencies = [
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",
- "agave-syscalls",
+ "agave-syscalls 4.0.0-alpha.0",
  "agave-votor-messages",
  "ahash 0.8.12",
  "aquamarine",
@@ -9186,6 +9231,7 @@ dependencies = [
 [[package]]
 name = "solana-svm"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "ahash 0.8.12",
  "log",
@@ -9228,6 +9274,7 @@ dependencies = [
 [[package]]
 name = "solana-svm-callback"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "solana-account",
  "solana-clock",
@@ -9238,10 +9285,12 @@ dependencies = [
 [[package]]
 name = "solana-svm-feature-set"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 
 [[package]]
 name = "solana-svm-log-collector"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "log",
 ]
@@ -9249,10 +9298,12 @@ dependencies = [
 [[package]]
 name = "solana-svm-measure"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 
 [[package]]
 name = "solana-svm-timings"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "eager",
  "enum-iterator",
@@ -9262,6 +9313,7 @@ dependencies = [
 [[package]]
 name = "solana-svm-transaction"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "solana-hash 3.1.0",
  "solana-message",
@@ -9274,6 +9326,7 @@ dependencies = [
 [[package]]
 name = "solana-svm-type-overrides"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "rand 0.9.2",
 ]
@@ -9574,6 +9627,7 @@ dependencies = [
 [[package]]
 name = "solana-transaction-context"
 version = "4.0.0-alpha.0"
+source = "git+https://github.com/mircea-c/svm?branch=copy-files-and-history#1d5a7abe88c5e5a503fadf949986f8e370230cd3"
 dependencies = [
  "bincode",
  "serde",

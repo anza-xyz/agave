@@ -87,7 +87,7 @@ solana-account = "3.3.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bench-tps = { path = "../bench-tps", version = "=4.0.0-alpha.0" }
-solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-bpf-loader-program = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history", features = ["agave-unstable-api"] }
 solana-clap-utils = { path = "../clap-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-cli-config = { path = "../cli-config", version = "=4.0.0-alpha.0" }
 solana-cli-output = { path = "../cli-output", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -124,7 +124,7 @@ solana-net-utils = { path = "../net-utils", version = "=4.0.0-alpha.0", features
 solana-nonce = "3.0.0"
 solana-perf = { path = "../perf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "../poh", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-program-runtime = { path = "../program-runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-program-runtime = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history", features = ["agave-unstable-api"] }
 solana-pubkey = { version = "4.0.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rent = "3.0.0"
@@ -142,10 +142,10 @@ solana-signer = "3.0.0"
 solana-stake-interface = "2.0.2"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-svm-callback = { path = "../svm-callback", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-svm-feature-set = { path = "../svm-feature-set", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-svm-log-collector = { path = "../svm-log-collector", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-svm-type-overrides = { path = "../svm-type-overrides", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-svm-callback = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history", features = ["agave-unstable-api"] }
+solana-svm-feature-set = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history", features = ["agave-unstable-api"] }
+solana-svm-log-collector = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history", features = ["agave-unstable-api"] }
+solana-svm-type-overrides = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history", features = ["agave-unstable-api"] }
 solana-system-interface = "3.0"
 solana-system-transaction = "3.0.0"
 solana-test-validator = { path = "../test-validator", version = "=4.0.0-alpha.0" }
@@ -153,7 +153,7 @@ solana-time-utils = "3.0.0"
 solana-tps-client = { path = "../tps-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-tpu-client = { path = "../tpu-client", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-transaction = "3.0.2"
-solana-transaction-context = { path = "../transaction-context", version = "=4.0.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
+solana-transaction-context = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-status = { path = "../transaction-status", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-version = { path = "../version", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -162,6 +162,20 @@ solana-vote-program = { path = "../programs/vote", version = "=4.0.0-alpha.0", d
 tempfile = "3.23.0"
 thiserror = "2.0.17"
 tokio = "1.48.0"
+
+[patch."https://github.com/anza-xyz/agave"]
+solana-program-runtime = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-callback = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-feature-set = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-log-collector = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-measure = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-timings = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-transaction = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-type-overrides = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-transaction-context = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-bpf-loader-program = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-loader-v4-program = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
 
 [profile.release-with-debug]
 inherits = "release"

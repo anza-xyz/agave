@@ -62,7 +62,6 @@ update_solana_dependencies() {
     solana-storage-proto
     solana-streamer
     solana-svm-rent-calculator
-    solana-svm-transaction
     solana-test-validator
     solana-tpu-client
     solana-transaction-status
@@ -117,17 +116,13 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-gossip gossip")
   crates_map+=("solana-lattice-hash lattice-hash")
   crates_map+=("solana-ledger ledger")
-  crates_map+=("solana-log-collector log-collector")
   crates_map+=("solana-measure measure")
   crates_map+=("solana-merkle-tree merkle-tree")
   crates_map+=("solana-metrics metrics")
   crates_map+=("solana-net-utils net-utils")
   crates_map+=("solana-perf perf")
   crates_map+=("solana-poh poh")
-  crates_map+=("solana-program-runtime program-runtime")
   crates_map+=("solana-program-test program-test")
-  crates_map+=("solana-bpf-loader-program programs/bpf_loader")
-  crates_map+=("solana-compute-budget-program programs/compute-budget")
   crates_map+=("solana-stake-program programs/stake")
   crates_map+=("solana-system-program programs/system")
   crates_map+=("solana-vote-program programs/vote")
@@ -148,7 +143,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-storage-proto storage-proto")
   crates_map+=("solana-streamer streamer")
   crates_map+=("solana-svm-rent-collector svm-rent-collector")
-  crates_map+=("solana-svm-transaction svm-transaction")
   crates_map+=("solana-test-validator test-validator")
   crates_map+=("solana-tpu-client tpu-client")
   crates_map+=("solana-transaction-status transaction-status")
