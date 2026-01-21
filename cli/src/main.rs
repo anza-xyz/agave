@@ -202,8 +202,6 @@ pub fn parse_args<'a>(
 
     let skip_preflight = matches.is_present("skip_preflight");
 
-    let use_tpu_client = matches.is_present("use_tpu_client");
-
     Ok((
         CliConfig {
             command,
@@ -223,7 +221,6 @@ pub fn parse_args<'a>(
             },
             confirm_transaction_initial_timeout,
             address_labels,
-            use_tpu_client,
         },
         signers,
     ))

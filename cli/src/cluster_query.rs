@@ -1,24 +1,13 @@
 use {
     crate::{
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
-        compute_budget::{
-            ComputeUnitConfig, WithComputeUnitConfig, simulate_for_compute_unit_limit,
-        },
         feature::get_feature_activation_epoch,
-        spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
     console::style,
-    crossbeam_channel::unbounded,
     serde::{Deserialize, Serialize},
     solana_account::{from_account, state_traits::StateMut},
-    solana_clap_utils::{
-        compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
-        input_parsers::*,
-        input_validators::*,
-        keypair::DefaultSigner,
-        offline::{BLOCKHASH_ARG, blockhash_arg},
-    },
+    solana_clap_utils::{input_parsers::*, input_validators::*},
     solana_cli_output::{
         cli_clientid::CliClientId,
         cli_version::CliVersion,
@@ -30,11 +19,6 @@ use {
     },
     solana_clock::{self as clock, Clock, Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
-    solana_connection_cache::connection_cache::{
-        ConnectionManager, ConnectionPool, NewConnectionConfig,
-    },
-    solana_hash::Hash,
-    solana_message::Message,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -58,15 +42,13 @@ use {
     solana_signature::Signature,
     solana_slot_history::{self as slot_history, SlotHistory},
     solana_stake_interface::{self as stake, state::StakeStateV2},
-    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, instruction as system_instruction},
-    solana_tpu_client::nonblocking::tpu_client::TpuClient,
-    solana_transaction::Transaction,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
     },
     solana_vote_program::vote_state::VoteStateV4,
     std::{
-        collections::{BTreeMap, HashMap, HashSet, VecDeque},
+        collections::{BTreeMap, HashMap, HashSet},
         fmt,
         num::Saturating,
         rc::Rc,
@@ -76,7 +58,7 @@ use {
             atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
-        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -255,49 +237,6 @@ impl ClusterQuerySubCommands for App<'_, '_> {
             SubCommand::with_name("transaction-count")
                 .about("Get current transaction count")
                 .alias("get-transaction-count"),
-        )
-        .subcommand(
-            SubCommand::with_name("ping")
-                .about("Submit transactions sequentially")
-                .setting(AppSettings::Hidden)
-                .arg(
-                    Arg::with_name("interval")
-                        .short("i")
-                        .long("interval")
-                        .value_name("SECONDS")
-                        .takes_value(true)
-                        .default_value("2")
-                        .help("Wait interval seconds between submitting the next transaction"),
-                )
-                .arg(
-                    Arg::with_name("count")
-                        .short("c")
-                        .long("count")
-                        .value_name("NUMBER")
-                        .takes_value(true)
-                        .help("Stop after submitting count transactions"),
-                )
-                .arg(
-                    Arg::with_name("print_timestamp")
-                        .short("D")
-                        .long("print-timestamp")
-                        .takes_value(false)
-                        .help(
-                            "Print timestamp (unix time + microseconds as in gettimeofday) before \
-                             each line",
-                        ),
-                )
-                .arg(
-                    Arg::with_name("timeout")
-                        .short("t")
-                        .long("timeout")
-                        .value_name("SECONDS")
-                        .takes_value(true)
-                        .default_value("15")
-                        .help("Wait up to timeout seconds for transaction confirmation"),
-                )
-                .arg(compute_unit_price_arg())
-                .arg(blockhash_arg()),
         )
         .subcommand(
             SubCommand::with_name("live-slots")
@@ -546,34 +485,6 @@ pub fn parse_catchup(
         our_localhost_port,
         log,
     }))
-}
-
-pub fn parse_cluster_ping(
-    matches: &ArgMatches<'_>,
-    default_signer: &DefaultSigner,
-    wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
-) -> Result<CliCommandInfo, CliError> {
-    let interval = Duration::from_secs(value_t_or_exit!(matches, "interval", u64));
-    let count = if matches.is_present("count") {
-        Some(value_t_or_exit!(matches, "count", u64))
-    } else {
-        None
-    };
-    let timeout = Duration::from_secs(value_t_or_exit!(matches, "timeout", u64));
-    let blockhash = value_of(matches, BLOCKHASH_ARG.name);
-    let print_timestamp = matches.is_present("print_timestamp");
-    let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
-    Ok(CliCommandInfo {
-        command: CliCommand::Ping {
-            interval,
-            count,
-            timeout,
-            blockhash,
-            print_timestamp,
-            compute_unit_price,
-        },
-        signers: vec![default_signer.signer_from_path(matches, wallet_manager)?],
-    })
 }
 
 pub fn parse_get_block(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
@@ -1506,246 +1417,6 @@ pub async fn process_get_transaction_count(
     Ok(transaction_count.to_string())
 }
 
-pub async fn process_ping<P, M, C>(
-    tpu_client: Option<&TpuClient<P, M, C>>,
-    config: &CliConfig<'_>,
-    interval: &Duration,
-    count: &Option<u64>,
-    timeout: &Duration,
-    fixed_blockhash: &Option<Hash>,
-    print_timestamp: bool,
-    compute_unit_price: Option<u64>,
-    rpc_client: &RpcClient,
-) -> ProcessResult
-where
-    P: ConnectionPool<NewConnectionConfig = C>,
-    M: ConnectionManager<ConnectionPool = P, NewConnectionConfig = C>,
-    C: NewConnectionConfig,
-{
-    let (signal_sender, signal_receiver) = unbounded();
-    let handler = move || {
-        let _ = signal_sender.send(());
-    };
-    match ctrlc::try_set_handler(handler) {
-        // It's possible to set the ctrl-c handler more than once in testing
-        // situations, so let that case through
-        Err(ctrlc::Error::MultipleHandlers) => {}
-        result => result.expect("Error setting Ctrl-C handler"),
-    }
-
-    let mut cli_pings = vec![];
-
-    let mut submit_count: u32 = 0;
-    let mut confirmed_count: u32 = 0;
-    let mut confirmation_time: VecDeque<u64> = VecDeque::with_capacity(1024);
-
-    let mut blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut lamports: u64 = 0;
-    let mut blockhash_acquired = Instant::now();
-    let mut blockhash_from_cluster = false;
-    if let Some(fixed_blockhash) = fixed_blockhash {
-        if *fixed_blockhash != Hash::default() {
-            blockhash = *fixed_blockhash;
-        } else {
-            blockhash_from_cluster = true;
-        }
-    }
-
-    let to = config.signers[0].pubkey();
-    let compute_unit_limit = if compute_unit_price.is_some() {
-        let ixs = vec![system_instruction::transfer(
-            &config.signers[0].pubkey(),
-            &to,
-            lamports,
-        )]
-        .with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
-        });
-        let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
-        ComputeUnitLimit::Static(simulate_for_compute_unit_limit(rpc_client, &message).await?)
-    } else {
-        ComputeUnitLimit::Default
-    };
-
-    'mainloop: for seq in 0..count.unwrap_or(u64::MAX) {
-        let now = Instant::now();
-        if fixed_blockhash.is_none() && now.duration_since(blockhash_acquired).as_secs() > 60 {
-            // Fetch a new blockhash every minute
-            let new_blockhash = rpc_client.get_new_latest_blockhash(&blockhash).await?;
-            blockhash = new_blockhash;
-            lamports = 0;
-            blockhash_acquired = Instant::now();
-        }
-
-        lamports = lamports.saturating_add(1);
-
-        let build_message = |lamports| {
-            let ixs = vec![system_instruction::transfer(
-                &config.signers[0].pubkey(),
-                &to,
-                lamports,
-            )]
-            .with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            });
-            Message::new(&ixs, Some(&config.signers[0].pubkey()))
-        };
-        let (message, _) = resolve_spend_tx_and_check_account_balance(
-            rpc_client,
-            false,
-            SpendAmount::Some(lamports),
-            &blockhash,
-            &config.signers[0].pubkey(),
-            compute_unit_limit,
-            build_message,
-            config.commitment,
-        )
-        .await?;
-        let mut tx = Transaction::new_unsigned(message);
-        tx.try_sign(&config.signers, blockhash)?;
-
-        let timestamp = || {
-            let micros = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_micros();
-            format!("[{}.{:06}] ", micros / 1_000_000, micros % 1_000_000)
-        };
-
-        let send_result = if let Some(tpu_client) = tpu_client {
-            match tpu_client.try_send_transaction(&tx).await {
-                Ok(()) => Ok(*tx.signatures.first().unwrap()),
-                Err(err) => Err(format!("TPU send error: {err}")),
-            }
-        } else {
-            rpc_client
-                .send_transaction(&tx)
-                .await
-                .map_err(|err| err.to_string())
-        };
-
-        match send_result {
-            Ok(signature) => {
-                let transaction_sent = Instant::now();
-                loop {
-                    let signature_status = rpc_client.get_signature_status(&signature).await?;
-                    let elapsed_time = Instant::now().duration_since(transaction_sent);
-                    if let Some(transaction_status) = signature_status {
-                        match transaction_status {
-                            Ok(()) => {
-                                let elapsed_time_millis = elapsed_time.as_millis() as u64;
-                                confirmation_time.push_back(elapsed_time_millis);
-                                let cli_ping_data = CliPingData {
-                                    success: true,
-                                    signature: Some(signature.to_string()),
-                                    ms: Some(elapsed_time_millis),
-                                    error: None,
-                                    timestamp: timestamp(),
-                                    print_timestamp,
-                                    sequence: seq,
-                                    lamports: Some(lamports),
-                                };
-                                eprint!("{cli_ping_data}");
-                                cli_pings.push(cli_ping_data);
-                                confirmed_count = confirmed_count.saturating_add(1);
-                            }
-                            Err(err) => {
-                                let cli_ping_data = CliPingData {
-                                    success: false,
-                                    signature: Some(signature.to_string()),
-                                    ms: None,
-                                    error: Some(err.to_string()),
-                                    timestamp: timestamp(),
-                                    print_timestamp,
-                                    sequence: seq,
-                                    lamports: None,
-                                };
-                                eprint!("{cli_ping_data}");
-                                cli_pings.push(cli_ping_data);
-                            }
-                        }
-                        break;
-                    }
-
-                    if elapsed_time >= *timeout {
-                        let cli_ping_data = CliPingData {
-                            success: false,
-                            signature: Some(signature.to_string()),
-                            ms: None,
-                            error: None,
-                            timestamp: timestamp(),
-                            print_timestamp,
-                            sequence: seq,
-                            lamports: None,
-                        };
-                        eprint!("{cli_ping_data}");
-                        cli_pings.push(cli_ping_data);
-                        break;
-                    }
-
-                    // Sleep for half a slot
-                    if signal_receiver
-                        .recv_timeout(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2))
-                        .is_ok()
-                    {
-                        break 'mainloop;
-                    }
-                }
-            }
-            Err(err) => {
-                let cli_ping_data = CliPingData {
-                    success: false,
-                    signature: None,
-                    ms: None,
-                    error: Some(err.to_string()),
-                    timestamp: timestamp(),
-                    print_timestamp,
-                    sequence: seq,
-                    lamports: None,
-                };
-                eprint!("{cli_ping_data}");
-                cli_pings.push(cli_ping_data);
-            }
-        }
-        submit_count = submit_count.saturating_add(1);
-
-        if signal_receiver.recv_timeout(*interval).is_ok() {
-            break 'mainloop;
-        }
-    }
-
-    let transaction_stats = CliPingTxStats {
-        num_transactions: submit_count,
-        num_transaction_confirmed: confirmed_count,
-    };
-    let confirmation_stats = if !confirmation_time.is_empty() {
-        let samples: Vec<f64> = confirmation_time.iter().map(|t| *t as f64).collect();
-        let dist = criterion_stats::Distribution::from(samples.into_boxed_slice());
-        let mean = dist.mean();
-        Some(CliPingConfirmationStats {
-            min: dist.min(),
-            mean,
-            max: dist.max(),
-            std_dev: dist.std_dev(Some(mean)),
-        })
-    } else {
-        None
-    };
-
-    let cli_ping = CliPing {
-        source_pubkey: config.signers[0].pubkey().to_string(),
-        fixed_blockhash: fixed_blockhash.map(|_| blockhash.to_string()),
-        blockhash_from_cluster,
-        pings: cli_pings,
-        transaction_stats,
-        confirmation_stats,
-    };
-
-    Ok(config.output_format.formatted_string(&cli_ping))
-}
-
 pub fn parse_logs(
     matches: &ArgMatches<'_>,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
@@ -2476,7 +2147,6 @@ mod tests {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
         solana_keypair::{Keypair, write_keypair},
-        std::str::FromStr,
         tempfile::NamedTempFile,
     };
 
@@ -2491,7 +2161,8 @@ mod tests {
         let default_keypair = Keypair::new();
         let (default_keypair_file, mut tmp_file) = make_tmp_file();
         write_keypair(&default_keypair, tmp_file.as_file_mut()).unwrap();
-        let default_signer = DefaultSigner::new("", default_keypair_file);
+        let default_signer =
+            solana_clap_utils::keypair::DefaultSigner::new("", default_keypair_file);
 
         let test_cluster_version = test_commands
             .clone()
@@ -2563,36 +2234,6 @@ mod tests {
         assert_eq!(
             parse_command(&test_transaction_count, &default_signer, &mut None).unwrap(),
             CliCommandInfo::without_signers(CliCommand::GetTransactionCount)
-        );
-
-        let test_ping = test_commands.clone().get_matches_from(vec![
-            "test",
-            "ping",
-            "-i",
-            "1",
-            "-c",
-            "2",
-            "-t",
-            "3",
-            "-D",
-            "--blockhash",
-            "4CCNp28j6AhGq7PkjPDP4wbQWBS8LLbQin2xV5n8frKX",
-        ]);
-        assert_eq!(
-            parse_command(&test_ping, &default_signer, &mut None).unwrap(),
-            CliCommandInfo {
-                command: CliCommand::Ping {
-                    interval: Duration::from_secs(1),
-                    count: Some(2),
-                    timeout: Duration::from_secs(3),
-                    blockhash: Some(
-                        Hash::from_str("4CCNp28j6AhGq7PkjPDP4wbQWBS8LLbQin2xV5n8frKX").unwrap()
-                    ),
-                    print_timestamp: true,
-                    compute_unit_price: None,
-                },
-                signers: vec![Box::new(default_keypair)],
-            }
         );
     }
 }
