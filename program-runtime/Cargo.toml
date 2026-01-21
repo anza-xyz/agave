@@ -22,11 +22,14 @@ dev-context-only-utils = []
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
+sbpf-debugger = ["solana-sbpf/debugger"]
 shuttle-test = ["solana-sbpf/shuttle-test", "solana-svm-type-overrides/shuttle-test"]
+svm-internal = []
 
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
+cfg-if = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
