@@ -124,7 +124,6 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
 
         let writer = IoUringFileWriter {
             ring,
-            num_bytes_dispatched: 0,
             _backing_buffer: buffer,
         };
         Ok(writer)
@@ -156,22 +155,18 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
 pub struct IoUringFileWriter {
     // Note: state is tied to `backing_buffer` and contains unsafe pointer references to it
     ring: Ring<IoUringFileWriterState, WriteOp>,
-    // How many bytes have been dispatched
-    // Compared with `num_bytes_written` in `IoUringFileWriterState` to
-    // determine when all written bytes have been actually written to disk
-    num_bytes_dispatched: u64,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
     _backing_buffer: PageAlignedMemory,
 }
 
 impl IoUringFileWriter {
-    /// Flush the provided buffer and write it to disk
+    /// Flush the provided buffer and begin writing it
     fn internal_flush(&mut self, cursor: Cursor<IoBufferChunk>) -> io::Result<()> {
         let context = self.ring.context_mut();
         let fd = io_uring::types::Fd(context.file.as_raw_fd());
         let offset = context.offset;
-        // write only the portion of the buffer that we have written to
+        // write only the portion of the buffer with data
         let write_len = cursor.position();
         context.offset = offset + write_len;
         let op = WriteOp {
@@ -182,14 +177,11 @@ impl IoUringFileWriter {
             write_len: write_len as u32,
         };
         self.ring.push(op)?;
-        self.num_bytes_dispatched += write_len;
         self.ring.submit()?;
 
         Ok(())
     }
 
-    /// Blocking flush that waits for all pending writes to complete.
-    /// This ensures all buffered writes are persisted to disk before returning.
     fn drain(&mut self) -> io::Result<()> {
         let res = self.ring.drain();
         res
@@ -270,6 +262,12 @@ impl io::Seek for IoUringFileWriter {
             }
         }
 
+        // For SeekFrom::End, we need to wait for all pending writes to complete
+        // so that file.metadata().len() returns the correct file size
+        if matches!(pos, io::SeekFrom::End(_)) {
+            self.drain()?;
+        }
+
         let state = self.ring.context_mut();
         let old_offset = state.offset;
         match pos {
@@ -281,7 +279,7 @@ impl io::Seek for IoUringFileWriter {
                 state.offset = (state.offset as i64 + offset_delta) as u64
             }
         };
-        return Ok(old_offset);
+        Ok(old_offset)
     }
 }
 
@@ -457,5 +455,140 @@ mod tests {
         check_writing_file(250_000, 4096, 1024);
         check_writing_file(250_000, 4096, 2048);
         check_writing_file(250_000, 4096, 4096);
+    }
+
+    #[test]
+    fn test_seek_from_start() {
+        use std::io::Seek;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let buf = PageAlignedMemory::new(4096).unwrap();
+        let mut writer = IoUringFileWriterBuilder::new()
+            .write_size(1024)
+            .build_with_buffer(temp_file.path(), buf)
+            .unwrap();
+
+        // Write some data
+        writer.write_all(b"hello").unwrap();
+
+        // Seek to start and overwrite
+        let old_pos = writer.seek(io::SeekFrom::Start(0)).unwrap();
+        assert_eq!(old_pos, 5); // was at position 5 after writing "hello"
+
+        writer.write_all(b"HELLO").unwrap();
+        writer.flush().unwrap();
+
+        // Verify the file contains "HELLO"
+        let mut contents = String::new();
+        temp_file.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "HELLO");
+    }
+
+    #[test]
+    fn test_seek_from_current() {
+        use std::io::Seek;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let buf = PageAlignedMemory::new(4096).unwrap();
+        let mut writer = IoUringFileWriterBuilder::new()
+            .write_size(1024)
+            .build_with_buffer(temp_file.path(), buf)
+            .unwrap();
+
+        // Write initial data
+        writer.write_all(b"0123456789").unwrap();
+
+        // Seek back 5 bytes from current position
+        let old_pos = writer.seek(io::SeekFrom::Current(-5)).unwrap();
+        assert_eq!(old_pos, 10);
+
+        // Overwrite last 5 bytes
+        writer.write_all(b"ABCDE").unwrap();
+        writer.flush().unwrap();
+
+        let mut contents = String::new();
+        temp_file.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "01234ABCDE");
+    }
+
+    #[test]
+    fn test_seek_from_end() {
+        use std::io::Seek;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let buf = PageAlignedMemory::new(4096).unwrap();
+        let mut writer = IoUringFileWriterBuilder::new()
+            .write_size(1024)
+            .build_with_buffer(temp_file.path(), buf)
+            .unwrap();
+
+        // Write initial data
+        writer.write_all(b"hello world").unwrap();
+
+        // Seek to 5 bytes before end
+        let old_pos = writer.seek(io::SeekFrom::End(-5)).unwrap();
+        assert_eq!(old_pos, 11);
+
+        // Overwrite "world" with "WORLD"
+        writer.write_all(b"WORLD").unwrap();
+        writer.flush().unwrap();
+
+        let mut contents = String::new();
+        temp_file.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "hello WORLD");
+    }
+
+    #[test]
+    fn test_seek_flushes_partial_buffer() {
+        use std::io::Seek;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let buf = PageAlignedMemory::new(4096).unwrap();
+        let mut writer = IoUringFileWriterBuilder::new()
+            .write_size(1024)
+            .build_with_buffer(temp_file.path(), buf)
+            .unwrap();
+
+        // Write less than buffer size (should stay in buffer)
+        writer.write_all(b"partial").unwrap();
+
+        // Seek should flush the partial buffer
+        writer.seek(io::SeekFrom::Start(0)).unwrap();
+
+        // Write at the start
+        writer.write_all(b"PARTIAL").unwrap();
+        writer.flush().unwrap();
+
+        let mut contents = String::new();
+        temp_file.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "PARTIAL");
+    }
+
+    #[test]
+    fn test_seek_and_extend_file() {
+        use std::io::Seek;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let buf = PageAlignedMemory::new(4096).unwrap();
+        let mut writer = IoUringFileWriterBuilder::new()
+            .write_size(1024)
+            .build_with_buffer(temp_file.path(), buf)
+            .unwrap();
+
+        // Write initial data
+        writer.write_all(b"start").unwrap();
+        writer.flush().unwrap();
+
+        // Seek past end and write (creates a hole)
+        writer.seek(io::SeekFrom::Start(10)).unwrap();
+        writer.write_all(b"end").unwrap();
+        writer.flush().unwrap();
+
+        let mut contents = vec![];
+        temp_file.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents.len(), 13);
+        assert_eq!(&contents[0..5], b"start");
+        assert_eq!(&contents[10..13], b"end");
+        // Bytes 5-9 are undefined (sparse or zeros depending on filesystem)
     }
 }
