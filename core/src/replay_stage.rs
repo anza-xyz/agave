@@ -3424,7 +3424,7 @@ impl ReplayStage {
                         .parent()
                         .map(|bank| bank.last_blockhash())
                         .unwrap_or_default();
-                    let commission_bps_enabled = bank
+                    let commission_rate_in_basis_points = bank
                         .feature_set
                         .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
                     block_metadata_notifier.notify_block_metadata(
@@ -3437,7 +3437,7 @@ impl ReplayStage {
                         Some(bank.block_height()),
                         bank.executed_transaction_count(),
                         r_replay_progress.num_entries as u64,
-                        commission_bps_enabled,
+                        commission_rate_in_basis_points,
                     )
                 }
                 bank_complete_time.stop();

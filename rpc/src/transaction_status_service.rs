@@ -288,7 +288,7 @@ impl TransactionStatusService {
                 keyed_rewards,
                 num_partitions,
             } = rewards;
-            let commission_bps_enabled = bank
+            let commission_rate_in_basis_points = bank
                 .feature_set
                 .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
             let rewards = keyed_rewards
@@ -298,12 +298,12 @@ impl TransactionStatusService {
                     lamports: reward_info.lamports,
                     post_balance: reward_info.post_balance,
                     reward_type: Some(reward_info.reward_type),
-                    commission: if commission_bps_enabled {
+                    commission: if commission_rate_in_basis_points {
                         None
                     } else {
                         reward_info.commission_bps.map(|bps| (bps / 100) as u8)
                     },
-                    commission_bps: if commission_bps_enabled {
+                    commission_bps: if commission_rate_in_basis_points {
                         reward_info.commission_bps
                     } else {
                         None

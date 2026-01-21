@@ -441,7 +441,7 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
-        commission_in_basis_points: bool,
+        commission_rate_in_basis_points: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -469,7 +469,7 @@ impl Bank {
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
         // full epoch.
-        // When `commission_in_basis_points` is true, use the new field
+        // When `commission_rate_in_basis_points` is true, use the new field
         // `inflation_rewards_commission_bps`; otherwise use the legacy
         // percentage field and convert to basis points by multiplying by 100.
         let commission_bps = if delay_commission_updates {
@@ -478,12 +478,12 @@ impl Bank {
                 .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
                 .map(|vote_account| vote_account.vote_state_view())
                 .unwrap_or(vote_state);
-            if commission_in_basis_points {
+            if commission_rate_in_basis_points {
                 vote_state_for_commission.inflation_rewards_commission()
             } else {
                 vote_state_for_commission.commission() as u16 * 100
             }
-        } else if commission_in_basis_points {
+        } else if commission_rate_in_basis_points {
             vote_state.inflation_rewards_commission()
         } else {
             vote_state.commission() as u16 * 100
@@ -498,7 +498,7 @@ impl Bank {
             stake_history,
             reward_calc_tracer,
             new_rate_activation_epoch,
-            commission_in_basis_points,
+            commission_rate_in_basis_points,
         ) {
             Ok((stake_reward, vote_rewards, stake)) => {
                 let stake_reward = PartitionedStakeReward {
@@ -543,7 +543,7 @@ impl Bank {
         let delay_commission_updates = self
             .feature_set
             .is_active(&agave_feature_set::delay_commission_updates::id());
-        let commission_in_basis_points = self
+        let commission_rate_in_basis_points = self
             .feature_set
             .is_active(&feature_set::commission_rate_in_basis_points::id());
 
@@ -576,7 +576,7 @@ impl Bank {
                                 reward_calc_tracer.as_ref(),
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
-                                commission_in_basis_points,
+                                commission_rate_in_basis_points,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
