@@ -1,7 +1,7 @@
 use {
     super::{stake_weighted_slot_leaders, IdentityKeyedLeaderSchedule, LeaderScheduleVariant},
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, ops::Index},
 };
@@ -80,7 +80,7 @@ impl LeaderScheduleVariant for LeaderSchedule {
         self.identity_keyed_leader_schedule.get_slot_leaders()
     }
 
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>> {
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>, PubkeyHasherBuilder> {
         self.identity_keyed_leader_schedule.get_leader_slots_map()
     }
 
