@@ -1192,18 +1192,17 @@ impl Validator {
                 .bind_socket(node.sockets.quic_vote_client)
                 .leader_send_fanout(voting_service::UPCOMING_LEADER_FANOUT)
                 .identity(Arc::as_ref(&identity_keypair))
-                 .metric_reporter(|stats: Arc<solana_tpu_client_next::send_transaction_stats::SendTransactionStats>, cancel: CancellationToken| async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(10));
-                cancel
-                    .run_until_cancelled(async {
-                        loop {
-                            interval.tick().await;
-                            info!("{:?}", stats.read_and_reset());
-                        }
-                    })
-                    .await;
-            }
-        );
+                .metric_reporter(|stats: Arc<solana_tpu_client_next::send_transaction_stats::SendTransactionStats>, cancel: CancellationToken| async move {
+                    let mut interval = tokio::time::interval(Duration::from_secs(10));
+                    cancel
+                        .run_until_cancelled(async {
+                            loop {
+                                interval.tick().await;
+                                info!("{:?}", stats.read_and_reset());
+                            }
+                        })
+                        .await;
+                });
             builder = builder.runtime_handle(runtime_handle.clone());
             let (sender, client) = builder.build()?;
             voting_service::VoteSender::QUIC(sender, client)
