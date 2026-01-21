@@ -514,9 +514,12 @@ mod tests {
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 &vote_pubkey,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 &vote_pubkey,
-                None,
                 0,
+                &vote_pubkey,
+                0,
+                &vote_pubkey,
                 balance,
             )
         } else {
@@ -564,9 +567,12 @@ mod tests {
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 authorized_voter,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 authorized_withdrawer,
-                None,
                 0,
+                authorized_withdrawer,
+                0,
+                authorized_withdrawer,
                 100,
             )
         } else {
@@ -604,9 +610,12 @@ mod tests {
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 &authorized_voter,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 &authorized_withdrawer,
-                None,
                 0,
+                &authorized_withdrawer,
+                0,
+                &authorized_withdrawer,
                 100,
             )
         } else {

@@ -197,6 +197,7 @@ mod tests {
         serde::Deserialize,
         solana_rent::Rent,
         solana_stake_interface::state::Delegation,
+        solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
     };
 
@@ -213,9 +214,12 @@ mod tests {
                 &vote_state::create_v4_account_with_authorized(
                     &node_pubkey,
                     &vote_pubkey,
+                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                     &vote_pubkey,
-                    None,
                     0,
+                    &vote_pubkey,
+                    0,
+                    &vote_pubkey,
                     1_000_000_000,
                 ),
                 &Rent::default(),
@@ -272,9 +276,12 @@ mod tests {
             let vote_account = vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 &vote_pubkey,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 &vote_pubkey,
-                None,
                 commission_bps,
+                &vote_pubkey,
+                0,
+                &vote_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);

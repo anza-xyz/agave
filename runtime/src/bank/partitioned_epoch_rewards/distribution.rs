@@ -333,6 +333,7 @@ mod tests {
             state::{Meta, Stake},
         },
         solana_sysvar as sysvar,
+        solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
         std::sync::Arc,
     };
@@ -409,9 +410,12 @@ mod tests {
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
             &validator_vote_pubkey,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &validator_vote_pubkey,
-            None,
             1000,
+            &validator_vote_pubkey,
+            0,
+            &validator_vote_pubkey,
             20,
         );
 

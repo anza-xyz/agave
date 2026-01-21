@@ -1234,22 +1234,31 @@ pub fn create_v3_account_with_authorized(
 pub fn create_v4_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
+    authorized_voter_bls_pubkey: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
     authorized_withdrawer: &Pubkey,
-    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
     inflation_rewards_commission_bps: u16,
+    inflation_rewards_collector: &Pubkey,
+    block_revenue_commission_bps: u16,
+    block_revenue_collector: &Pubkey,
     lamports: u64,
 ) -> AccountSharedData {
     let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
+
+    // PoP is stubbed here, since creation of an account assumes the account
+    // was already initialized via `IntializeAccount` or `InitializeAccountV2`.
+    let authorized_voter_bls_proof_of_possession = [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE];
 
     let vote_state = VoteStateV4::new(
         &VoteInitV2 {
             node_pubkey: *node_pubkey,
             authorized_voter: *authorized_voter,
+            authorized_voter_bls_pubkey,
+            authorized_voter_bls_proof_of_possession,
             authorized_withdrawer: *authorized_withdrawer,
-            authorized_voter_bls_pubkey: bls_pubkey_compressed
-                .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
             inflation_rewards_commission_bps,
-            ..Default::default()
+            inflation_rewards_collector: *inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector: *block_revenue_collector,
         },
         &Clock::default(),
     );
@@ -4028,9 +4037,12 @@ mod tests {
         let vote_account = create_v4_account_with_authorized(
             &node_pubkey,
             &authorized_voter,
+            bls_pubkey_compressed,
             &authorized_withdrawer,
-            Some(bls_pubkey_compressed),
             inflation_rewards_commission_bps,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             lamports,
         );
         assert_eq!(vote_account.lamports(), lamports);
@@ -4142,9 +4154,12 @@ mod tests {
         let vote_account = create_v4_account_with_authorized(
             &node_pubkey,
             &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
-            None,
             inflation_rewards_commission_bps,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             lamports,
         );
         assert_eq!(vote_account.lamports(), lamports);

@@ -8597,6 +8597,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status",
  "solana-vote",
+ "solana-vote-interface",
  "solana-vote-program",
  "test-case",
 ]

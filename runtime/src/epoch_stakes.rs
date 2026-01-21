@@ -279,6 +279,7 @@ pub(crate) mod tests {
         super::*, solana_account::AccountSharedData,
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_vote::vote_account::VoteAccount,
+        solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state::create_v4_account_with_authorized, std::iter,
         test_case::test_case,
     };
@@ -310,25 +311,22 @@ pub(crate) mod tests {
                                 .try_into()
                                 .unwrap();
 
-                        let account = if is_alpenglow {
-                            create_v4_account_with_authorized(
-                                &node_id,
-                                &authorized_voter,
-                                &node_id,
-                                Some(bls_pubkey_compressed_serialized),
-                                0,
-                                100,
-                            )
+                        let bls_pubkey = if is_alpenglow {
+                            bls_pubkey_compressed_serialized
                         } else {
-                            create_v4_account_with_authorized(
-                                &node_id,
-                                &authorized_voter,
-                                &node_id,
-                                None,
-                                0,
-                                100,
-                            )
+                            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
                         };
+                        let account = create_v4_account_with_authorized(
+                            &node_id,
+                            &authorized_voter,
+                            bls_pubkey,
+                            &node_id,
+                            0,
+                            &node_id,
+                            0,
+                            &node_id,
+                            100,
+                        );
                         VoteAccountInfo {
                             vote_account: solana_pubkey::new_rand(),
                             account,

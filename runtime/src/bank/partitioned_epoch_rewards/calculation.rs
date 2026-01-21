@@ -804,7 +804,9 @@ mod tests {
             stake_flags::StakeFlags,
             state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
-        solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
+        solana_vote_interface::state::{
+            VoteInit, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+        },
         solana_vote_program::vote_state,
         std::{
             collections::HashSet,
@@ -1938,9 +1940,12 @@ mod tests {
         let vote_account_a = vote_state::create_v4_account_with_authorized(
             &node_pubkey_a,
             &vote_pubkey_a,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey_a,
-            None,
             2000,
+            &vote_pubkey_a,
+            0,
+            &vote_pubkey_a,
             100,
         );
         let vote_pubkey_b = Pubkey::new_unique();
@@ -1948,9 +1953,12 @@ mod tests {
         let vote_account_b = vote_state::create_v4_account_with_authorized(
             &node_pubkey_b,
             &vote_pubkey_b,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey_b,
-            None,
             2000,
+            &vote_pubkey_b,
+            0,
+            &vote_pubkey_b,
             100,
         );
         let vote_pubkey_c = Pubkey::new_unique();
@@ -1958,9 +1966,12 @@ mod tests {
         let vote_account_c = vote_state::create_v4_account_with_authorized(
             &node_pubkey_c,
             &vote_pubkey_c,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey_c,
-            None,
             2000,
+            &vote_pubkey_c,
+            0,
+            &vote_pubkey_c,
             100,
         );
 
@@ -2048,10 +2059,13 @@ mod tests {
                 vote_pubkey,
                 vote_state::create_v4_account_with_authorized(
                     &vote_pubkey,
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    None,
+                    &vote_pubkey,
+                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    &vote_pubkey,
                     0,
+                    &vote_pubkey,
+                    0,
+                    &vote_pubkey,
                     100_000_000_000,
                 )
                 .into(),
@@ -2063,10 +2077,13 @@ mod tests {
                 &vote_pubkey,
                 &vote_state::create_v4_account_with_authorized(
                     &vote_pubkey,
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    None,
+                    &vote_pubkey,
+                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    &vote_pubkey,
                     0,
+                    &vote_pubkey,
+                    0,
+                    &vote_pubkey,
                     100_000_000_000,
                 ),
                 &genesis_config.rent,

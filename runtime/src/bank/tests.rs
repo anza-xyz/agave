@@ -114,7 +114,7 @@ use {
         sanitized::SanitizedTransaction, Transaction, TransactionVerificationMode,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote_interface::state::TowerSync,
+    solana_vote_interface::state::{TowerSync, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
     solana_vote_program::{
         vote_instruction,
         vote_state::{
@@ -154,9 +154,12 @@ impl VoteReward {
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
             &validator_voting_keypair.pubkey(),
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &validator_voting_keypair.pubkey(),
-            None,
             commission_bps,
+            &validator_voting_keypair.pubkey(),
+            0,
+            &validator_voting_keypair.pubkey(),
             validator_stake_lamports,
         );
 
@@ -904,9 +907,12 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     let mut vote_account = vote_state::create_v4_account_with_authorized(
         &node_pubkey,
         &vote_id,
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &vote_id,
-        None,
         0,
+        &vote_id,
+        0,
+        &vote_id,
         100,
     );
     let stake_id1 = solana_pubkey::new_rand();
@@ -1798,25 +1804,34 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let vote_account0 = vote_state::create_v4_account_with_authorized(
         &vote_pubkey0,
         &authorized_voter.pubkey(),
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
-        None,
         0,
+        &authorized_voter.pubkey(),
+        0,
+        &authorized_voter.pubkey(),
         100,
     );
     let vote_account1 = vote_state::create_v4_account_with_authorized(
         &vote_pubkey1,
         &authorized_voter.pubkey(),
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
-        None,
         0,
+        &authorized_voter.pubkey(),
+        0,
+        &authorized_voter.pubkey(),
         100,
     );
     let vote_account2 = vote_state::create_v4_account_with_authorized(
         &vote_pubkey2,
         &authorized_voter.pubkey(),
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &authorized_voter.pubkey(),
-        None,
         0,
+        &authorized_voter.pubkey(),
+        0,
+        &authorized_voter.pubkey(),
         100,
     );
     bank.store_account(&vote_pubkey0, &vote_account0);
@@ -9876,9 +9891,12 @@ fn test_rent_state_changes_sysvars() {
     let validator_vote_account = vote_state::create_v4_account_with_authorized(
         &validator_pubkey,
         &validator_voting_keypair.pubkey(),
+        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         &validator_voting_keypair.pubkey(),
-        None,
         0,
+        &validator_voting_keypair.pubkey(),
+        0,
+        &validator_voting_keypair.pubkey(),
         validator_stake_lamports,
     );
 
@@ -12077,9 +12095,12 @@ fn test_bank_epoch_stakes() {
                     let vote_account = VoteAccount::try_from(create_v4_account_with_authorized(
                         &node_id,
                         &authorized_voter,
+                        [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                         &node_id,
-                        None,
                         0,
+                        &node_id,
+                        0,
+                        &node_id,
                         100,
                     ))
                     .unwrap();
