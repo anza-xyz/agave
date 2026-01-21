@@ -27,3 +27,6 @@ pub use skip_server_verification::SkipServerVerification;
 
 mod skip_client_verification;
 pub use skip_client_verification::SkipClientVerification;
+
+pub mod notify_key_update;
+pub use notify_key_update::NotifyKeyUpdate;

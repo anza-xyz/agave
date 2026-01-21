@@ -10,8 +10,8 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
-    solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::streamer::StakedNodes,
+    solana_tls_utils::NotifyKeyUpdate,
     solana_transaction_error::TransportResult,
     solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
     std::{
@@ -173,8 +173,6 @@ macro_rules! dispatch {
         }
     };
 }
-
-pub(crate) use dispatch;
 
 impl ClientConnection for BlockingClientConnection {
     dispatch!(fn server_addr(&self) -> &SocketAddr);

@@ -1,16 +1,18 @@
 use {
     crate::{home_dir, utils::spawn, Config},
     bzip2::bufread::BzDecoder,
-    log::{debug, error, warn},
+    log::{debug, error, info, warn},
     regex::Regex,
     serde::{Deserialize, Serialize},
     solana_file_download::{download_file, download_file_with_headers},
     std::{
         env,
+        ffi::OsString,
         fs::{self, File},
-        io::BufReader,
+        io::{BufRead, BufReader, ErrorKind},
         path::{Path, PathBuf},
-        process::exit,
+        process::{exit, Command},
+        sync::OnceLock,
     },
     tar::Archive,
 };
@@ -126,17 +128,16 @@ pub(crate) fn validate_platform_tools_version(
     }
 }
 
-fn make_platform_tools_path_for_version(package: &str, version: &str) -> PathBuf {
+pub(crate) fn make_platform_tools_path_for_version(version: &str) -> PathBuf {
     home_dir()
         .join(".cache")
         .join("solana")
         .join(version)
-        .join(package)
+        .join("platform-tools")
 }
 
 pub(crate) fn get_base_rust_version(platform_tools_version: &str) -> String {
-    let target_path =
-        make_platform_tools_path_for_version("platform-tools", platform_tools_version);
+    let target_path = make_platform_tools_path_for_version(platform_tools_version);
     let rustc = target_path.join("rust").join("bin").join("rustc");
     if !rustc.exists() {
         return String::from("");
@@ -240,24 +241,14 @@ fn download_platform_tools(
 // Check whether a package is installed and install it if missing.
 pub(crate) fn install_if_missing(
     config: &Config,
-    package: &str,
     platform_tools_version: &str,
     target_path: &Path,
     use_rest_api: bool,
 ) -> Result<(), String> {
-    if config.force_tools_install {
-        if target_path.is_dir() {
-            debug!("Remove directory {target_path:?}");
-            fs::remove_dir_all(target_path).map_err(|err| err.to_string())?;
-        }
-        let source_base = config.sbf_sdk.join("dependencies");
-        if source_base.exists() {
-            let source_path = source_base.join(package);
-            if source_path.exists() {
-                debug!("Remove file {source_path:?}");
-                fs::remove_file(source_path).map_err(|err| err.to_string())?;
-            }
-        }
+    if config.force_tools_install && target_path.is_dir() {
+        debug!("Remove directory {target_path:?}");
+        fs::remove_dir_all(target_path)
+            .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
     }
     // Check whether the target path is an empty directory. This can
     // happen if package download failed on previous run of
@@ -271,7 +262,8 @@ pub(crate) fn install_if_missing(
             .is_none()
     {
         debug!("Remove directory {target_path:?}");
-        fs::remove_dir(target_path).map_err(|err| err.to_string())?;
+        fs::remove_dir(target_path)
+            .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
     }
 
     // Check whether the package is already in ~/.cache/solana.
@@ -284,10 +276,12 @@ pub(crate) fn install_if_missing(
     {
         if target_path.exists() {
             debug!("Remove file {target_path:?}");
-            fs::remove_file(target_path).map_err(|err| err.to_string())?;
+            fs::remove_file(target_path)
+                .map_err(|err| format!("could not remove {target_path:?}: {err}"))?;
         }
 
-        fs::create_dir_all(target_path).map_err(|err| err.to_string())?;
+        fs::create_dir_all(target_path)
+            .map_err(|err| format!("could not create {target_path:?}: {err}"))?;
         let arch = if cfg!(target_arch = "aarch64") {
             "aarch64"
         } else {
@@ -303,7 +297,8 @@ pub(crate) fn install_if_missing(
 
         let download_file_path = target_path.join(&platform_tools_download_file_name);
         if download_file_path.exists() {
-            fs::remove_file(&download_file_path).map_err(|err| err.to_string())?;
+            fs::remove_file(&download_file_path)
+                .map_err(|err| format!("could not remove {download_file_path:?}: {err}"))?;
         }
 
         download_platform_tools(
@@ -315,46 +310,27 @@ pub(crate) fn install_if_missing(
         let zip = File::open(&download_file_path).map_err(|err| err.to_string())?;
         let tar = BzDecoder::new(BufReader::new(zip));
         let mut archive = Archive::new(tar);
-        archive.unpack(target_path).map_err(|err| err.to_string())?;
-        fs::remove_file(download_file_path).map_err(|err| err.to_string())?;
-    }
-    // Make a symbolic link source_path -> target_path in the
-    // platform-tools-sdk/sbf/dependencies directory if no valid link found.
-    let source_base = config.sbf_sdk.join("dependencies");
-    if !source_base.exists() {
-        fs::create_dir_all(&source_base).map_err(|err| err.to_string())?;
-    }
-    let source_path = source_base.join(package);
-    // Check whether the correct symbolic link exists.
-    let invalid_link = if let Ok(link_target) = source_path.read_link() {
-        if link_target.ne(target_path) {
-            fs::remove_file(&source_path).map_err(|err| err.to_string())?;
-            true
-        } else {
-            false
+        archive
+            .unpack(target_path)
+            .map_err(|err| format!("could not unpack downloaded archive: {err}"))?;
+        fs::remove_file(download_file_path)
+            .map_err(|err| format!("could not remove downloaded archive: {err}"))?;
+        if should_nix_patch_bins_and_dylibs(config) {
+            if let Err(e) = nix_patch_all_bins_and_dylibs(target_path) {
+                error!(
+                    "patching for nix failed ({e};) will continue, but tools might not work \
+                     out-of-box"
+                )
+            }
         }
-    } else {
-        true
-    };
-    if invalid_link {
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(target_path, source_path).map_err(|err| err.to_string())?;
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(target_path, source_path)
-            .map_err(|err| err.to_string())?;
     }
     Ok(())
 }
 
 // Check if we have all binaries in place to execute the build command.
 // If the download failed or the binaries were somehow deleted, inform the user how to fix it.
-pub(crate) fn corrupted_toolchain(config: &Config) -> bool {
-    let toolchain_path = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
-        .join("rust");
-
+pub(crate) fn corrupted_toolchain(platform_tools_dir: &Path) -> bool {
+    let toolchain_path = platform_tools_dir.join("rust");
     let binaries = toolchain_path.join("bin");
 
     let rustc = binaries.join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
@@ -384,12 +360,12 @@ pub(crate) fn generate_toolchain_name(requested_toolchain_version: &str) -> Stri
 }
 
 // check whether custom solana toolchain is linked, and link it if it is not.
-fn link_solana_toolchain(config: &Config, requested_toolchain_version: &str) {
-    let toolchain_path = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
-        .join("rust");
+fn link_solana_toolchain(
+    config: &Config,
+    platform_tools_dir: &Path,
+    requested_toolchain_version: &str,
+) {
+    let toolchain_path = platform_tools_dir.join("rust");
     let rustup = PathBuf::from("rustup");
     let rustup_args = vec!["toolchain", "list", "-v"];
     let rustup_output = spawn(
@@ -447,32 +423,26 @@ fn link_solana_toolchain(config: &Config, requested_toolchain_version: &str) {
 }
 
 pub(crate) fn install_tools(config: &Config, platform_tools_version: &str, use_rest_api: bool) {
-    let package = "platform-tools";
-    let target_path = make_platform_tools_path_for_version(package, platform_tools_version);
-    install_if_missing(
-        config,
-        package,
-        platform_tools_version,
-        &target_path,
-        use_rest_api,
-    )
-    .unwrap_or_else(|err| {
-        // The package version directory doesn't contain a valid
-        // installation, and it should be removed.
-        let target_path_parent = target_path.parent().expect("Invalid package path");
-        if target_path_parent.exists() {
-            fs::remove_dir_all(target_path_parent).unwrap_or_else(|err| {
-                error!(
-                    "Failed to remove {} while recovering from installation failure: {}",
-                    target_path_parent.to_string_lossy(),
-                    err,
-                );
-                exit(1);
-            });
-        }
-        error!("Failed to install platform-tools: {err}");
-        exit(1);
-    });
+    let target_path = make_platform_tools_path_for_version(platform_tools_version);
+    install_if_missing(config, platform_tools_version, &target_path, use_rest_api).unwrap_or_else(
+        |err| {
+            // The package version directory doesn't contain a valid
+            // installation, and it should be removed.
+            let target_path_parent = target_path.parent().expect("Invalid package path");
+            if target_path_parent.exists() {
+                fs::remove_dir_all(target_path_parent).unwrap_or_else(|err| {
+                    error!(
+                        "Failed to remove {} while recovering from installation failure: {}",
+                        target_path_parent.to_string_lossy(),
+                        err,
+                    );
+                    exit(1);
+                });
+            }
+            error!("Failed to install platform-tools: {err}");
+            exit(1);
+        },
+    );
 }
 
 pub(crate) fn install_and_link_tools(
@@ -521,7 +491,8 @@ pub(crate) fn install_and_link_tools(
         let target_triple = rust_target_triple(config);
         check_solana_target_installed(&target_triple);
     } else {
-        link_solana_toolchain(config, &platform_tools_version);
+        let platform_tools_dir = make_platform_tools_path_for_version(&platform_tools_version);
+        link_solana_toolchain(config, &platform_tools_dir, &platform_tools_version);
         // RUSTC variable overrides cargo +<toolchain> mechanism of
         // selecting the rust compiler and makes cargo run a rust compiler
         // other than the one linked in Solana toolchain. We have to prevent
@@ -531,7 +502,8 @@ pub(crate) fn install_and_link_tools(
                 "Removed RUSTC from cargo environment, because it overrides +solana cargo command \
                  line option."
             );
-            env::remove_var("RUSTC")
+            // Safety: cargo-build-sbf doesn't spawn any threads until final child process is spawned
+            unsafe { env::remove_var("RUSTC") }
         }
     }
 
@@ -568,4 +540,156 @@ pub(crate) fn rust_target_triple(config: &Config) -> String {
     } else {
         format!("sbpf{}-solana-solana", config.arch)
     }
+}
+
+fn nix_patch_all_bins_and_dylibs(path: &Path) -> Result<(), std::io::Error> {
+    for libdir in [path.join("llvm/lib"), path.join("rust/lib")] {
+        for candidate in std::fs::read_dir(libdir)? {
+            let Ok(candidate) = candidate else { continue };
+            if path_is_dylib(&candidate.path()) {
+                nix_patch_bin_or_dylib(path, &candidate.path());
+            }
+        }
+    }
+    for bindir in [path.join("llvm/bin"), path.join("rust/bin")] {
+        for candidate in std::fs::read_dir(bindir)? {
+            let Ok(candidate) = candidate else { continue };
+            nix_patch_bin_or_dylib(path, &candidate.path());
+        }
+    }
+    for targetdir in std::fs::read_dir(path.join("rust/lib/rustlib"))? {
+        let targetdir = targetdir?;
+        for bindir in ["bin", "bin/gcc-ld"] {
+            let Ok(bindir_candidates) = std::fs::read_dir(targetdir.path().join(bindir)) else {
+                continue;
+            };
+            for candidate in bindir_candidates {
+                let Ok(candidate) = candidate else { continue };
+                nix_patch_bin_or_dylib(path, &candidate.path());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn nix_patch_bin_or_dylib(out: &Path, fname: &Path) {
+    debug!("attempting to patch {}", fname.display());
+    // Only build `.nix-deps` once.
+    static NIX_DEPS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let mut nix_build_succeeded = true;
+    let nix_deps_dir = NIX_DEPS_DIR.get_or_init(|| {
+        // Run `nix-build` to "build" each dependency (which will likely reuse the existing
+        // `/nix/store` copy, or at most download a pre-built copy).
+        //
+        // Importantly, we create a gc-root called `.nix-deps` in the target directory, but still
+        // reference the actual `/nix/store` path in the rpath as it makes it significantly more
+        // robust against changes to the location of the `.nix-deps` location.
+        //
+        // bintools: Needed for the path of `ld-linux.so` (via `nix-support/dynamic-linker`).
+        // zlib: Needed as a system dependency of various LLVM tools.
+        // patchelf: Needed for patching ELF binaries.
+        // libgcc.lib: libstdc++
+        let nix_deps_dir = out.join(".nix-deps");
+        const NIX_EXPR: &str = "
+        with (import <nixpkgs> {});
+        symlinkJoin {
+            name = \"solana-sbf-dependencies\";
+            paths = [
+                libedit
+                python310
+                ncurses
+                zlib
+                xz.out
+                libxml2.out
+                patchelf
+                stdenv.cc.bintools
+                libgcc.lib
+            ];
+        }
+        ";
+        nix_build_succeeded = Command::new("nix-build")
+            .args([
+                Path::new("-E"),
+                Path::new(NIX_EXPR),
+                Path::new("-o"),
+                &nix_deps_dir,
+            ])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        nix_deps_dir
+    });
+    if !nix_build_succeeded {
+        return;
+    }
+
+    let mut patchelf = Command::new(nix_deps_dir.join("bin/patchelf"));
+    patchelf.args(&[
+        OsString::from("--add-rpath"),
+        OsString::from(fs::canonicalize(nix_deps_dir).unwrap().join("lib")),
+    ]);
+    if !path_is_dylib(fname) {
+        // Finally, set the correct .interp for binaries
+        let dynamic_linker_path = nix_deps_dir.join("nix-support/dynamic-linker");
+        let dynamic_linker = fs::read_to_string(dynamic_linker_path).unwrap();
+        patchelf.args(["--set-interpreter", dynamic_linker.trim_end()]);
+    }
+    // Adjustments for lldb (which references debian/ubuntu specific sonames.)
+    patchelf.args(["--replace-needed", "libedit.so.2", "libedit.so"]);
+    patchelf.args(["--replace-needed", "libxml2.so.2", "libxml2.so"]);
+    patchelf.arg(fname);
+    let _ = patchelf.output();
+}
+
+fn path_is_dylib(path: &Path) -> bool {
+    // The .so is not necessarily the extension, it might be libLLVM.so.18.1
+    path.to_str().is_some_and(|path| path.contains(".so"))
+}
+
+fn should_nix_patch_bins_and_dylibs(config: &Config) -> bool {
+    static SHOULD_FIX_BINS_AND_DYLIBS: OnceLock<bool> = OnceLock::new();
+    let val = *SHOULD_FIX_BINS_AND_DYLIBS.get_or_init(|| {
+        let uname = Command::new("uname").arg("-s").output();
+        let Ok(output) = uname else {
+            return false;
+        };
+        let output = output.stdout;
+        if !output.starts_with(b"Linux") {
+            return false;
+        }
+        // If the user has asked binaries to be patched for Nix, then
+        // don't check for NixOS or `/lib`.
+        // NOTE: this intentionally comes after the Linux check:
+        // - patchelf only works with ELF files, so no need to run it on Mac or Windows
+        // - On other Unix systems, there is no stable syscall interface, so Nix doesn't manage the
+        // global libc.
+        if let Some(explicit_value) = config.patch_binaries_for_nix {
+            return explicit_value;
+        }
+
+        // Use `/etc/os-release` instead of `/etc/NIXOS`.
+        // The latter one does not exist on NixOS when using tmpfs as root.
+        let is_nixos = match File::open("/etc/os-release") {
+            Err(e) if e.kind() == ErrorKind::NotFound => false,
+            Err(e) => panic!("failed to access /etc/os-release: {e}"),
+            Ok(os_release) => BufReader::new(os_release).lines().any(|l| {
+                let l = l.expect("reading /etc/os-release");
+                matches!(l.trim(), "ID=nixos" | "ID='nixos'" | "ID=\"nixos\"")
+            }),
+        };
+        if !is_nixos {
+            let in_nix_shell = env::var("IN_NIX_SHELL");
+            if let Ok(in_nix_shell) = in_nix_shell {
+                warn!(
+                    "The IN_NIX_SHELL environment variable is `{in_nix_shell}`; you may need to \
+                     set the --patch-binaries-for-nix argument"
+                );
+            }
+        }
+        is_nixos
+    });
+    if val {
+        info!("You seem to be using Nix.");
+    }
+    val
 }

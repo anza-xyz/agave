@@ -40,7 +40,7 @@ pub fn verify_shred_cpu(
         return false;
     };
     trace!("signature {signature}");
-    let Some(data) = shred::layout::get_signed_data(shred) else {
+    let Some(data) = shred::layout::get_merkle_root(shred) else {
         return false;
     };
 
@@ -78,7 +78,7 @@ pub fn verify_shreds(
 fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketRefMut) {
     let sig = shred::layout::get_signature_range();
     let msg = shred::layout::get_shred(packet.as_ref())
-        .and_then(shred::layout::get_signed_data)
+        .and_then(shred::layout::get_merkle_root)
         .unwrap();
     assert!(
         packet.meta().size >= sig.end,
@@ -339,7 +339,7 @@ mod tests {
             let slot = shred::layout::get_slot(shred).unwrap();
             let signature = shred::layout::get_signature(shred).unwrap();
             let pubkey = keypairs[&slot].pubkey();
-            let data = shred::layout::get_signed_data(shred).unwrap();
+            let data = shred::layout::get_merkle_root(shred).unwrap();
             assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
         }
         shreds

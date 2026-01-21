@@ -220,7 +220,6 @@ pub fn state_from_account<T: ReadableAccount + StateMut<Versions>>(
 pub fn data_from_account<T: ReadableAccount + StateMut<Versions>>(
     account: &T,
 ) -> Result<Data, Error> {
-    account_identity_ok(account)?;
     state_from_account(account).and_then(|ref s| data_from_state(s).cloned())
 }
 

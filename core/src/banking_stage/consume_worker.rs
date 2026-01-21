@@ -357,7 +357,7 @@ pub(crate) mod external {
             // If we began execution when a slot was still in process, and could
             // not record at the end because the slot has ended, we will retry
             // on the next slot.
-            for _ in 0..1 {
+            for _ in 0..2 {
                 let Some(leader_state) =
                     active_leader_state_with_timeout(&self.shared_leader_state)
                 else {
@@ -1027,7 +1027,9 @@ pub(crate) mod external {
 
         fn validate_message_flags(flags: u16) -> bool {
             if flags & pack_message_flags::EXECUTE != 0 {
-                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE;
+                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING;
 
                 flags & !ALLOWED_EXECUTE_FLAGS == 0
             } else {
@@ -1120,9 +1122,27 @@ pub(crate) mod external {
 
         #[test]
         fn test_validate_message_flags() {
+            // Execute flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::EXECUTE
             ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::DROP_ON_FAILURE
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::ALL_OR_NOTHING
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING
+            ));
+            // Invalid execute flag
+            assert!(!ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | (1 << 15)
+            ));
+
+            // Check flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::CHECK
                     | agave_scheduler_bindings::pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES
@@ -2122,8 +2142,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-            vote_sender_types::ReplayVoteReceiver,
+            bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver,
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
@@ -2184,11 +2203,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
+        let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 

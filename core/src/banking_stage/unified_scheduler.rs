@@ -60,7 +60,6 @@ use {
     },
 };
 
-#[allow(dead_code)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn ensure_banking_stage_setup(
     pool: &DefaultSchedulerPool,
@@ -70,8 +69,12 @@ pub(crate) fn ensure_banking_stage_setup(
     transaction_recorder: TransactionRecorder,
     num_threads: NonZeroUsize,
 ) {
+    if !pool.block_production_supported() {
+        return;
+    }
+
     let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-    let unified_receiver = channels.unified_receiver().clone();
+    let banking_packet_receiver = channels.receiver_for_unified_scheduler().clone();
 
     let (is_exited, decision_maker) = {
         let poh_recorder = poh_recorder.read().unwrap();
@@ -81,8 +84,11 @@ pub(crate) fn ensure_banking_stage_setup(
         )
     };
 
-    let banking_stage_monitor =
-        Box::new(DecisionMakerWrapper::new(is_exited, decision_maker.clone()));
+    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(
+        channels.clone_is_unified_for_unified_scheduler(),
+        is_exited,
+        decision_maker.clone(),
+    ));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();
@@ -109,8 +115,6 @@ pub(crate) fn ensure_banking_stage_setup(
                     )
                     .ok()?;
 
-                    // WARN: Ignoring deactivation slot here can lead to the production of invalid
-                    // blocks. Currently, this code is not used in prod.
                     let (loaded_addresses, deactivation_slot) =
                         resolve_addresses_with_deactivation(&tx, &bank).ok()?;
                     let tx = RuntimeTransaction::<SanitizedTransaction>::try_from(
@@ -152,7 +156,7 @@ pub(crate) fn ensure_banking_stage_setup(
 
     pool.register_banking_stage(
         Some(num_threads.get()),
-        unified_receiver,
+        banking_packet_receiver,
         banking_packet_handler,
         transaction_recorder,
         banking_stage_monitor,

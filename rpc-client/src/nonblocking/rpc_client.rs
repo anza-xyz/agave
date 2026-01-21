@@ -4441,7 +4441,7 @@ impl RpcClient {
         };
 
         self.send(
-            RpcRequest::GetTokenAccountsByOwner,
+            RpcRequest::GetTokenAccountsByDelegate,
             json!([delegate.to_string(), token_account_filter, config]),
         )
         .await
@@ -4964,4 +4964,44 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     mocks.insert(get_account_request, get_account_response);
 
     mocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_token_accounts_by_delegate_uses_correct_rpc_method() {
+        let delegate = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let pubkey = Pubkey::new_unique();
+        let account = mock_encoded_account(&pubkey);
+        let keyed_account = RpcKeyedAccount {
+            pubkey: pubkey.to_string(),
+            account,
+        };
+
+        let get_account_request = RpcRequest::GetTokenAccountsByDelegate;
+        let get_account_response = serde_json::to_value(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None,
+            },
+            value: { [keyed_account.clone()] },
+        })
+        .unwrap();
+
+        let mut mocks = crate::mock_sender::Mocks::default();
+        mocks.insert(get_account_request, get_account_response);
+        let client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
+        let resp = client
+            .get_token_accounts_by_delegate_with_commitment(
+                &delegate,
+                TokenAccountsFilter::Mint(mint),
+                CommitmentConfig::processed(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(&resp.value, &[keyed_account]);
+    }
 }

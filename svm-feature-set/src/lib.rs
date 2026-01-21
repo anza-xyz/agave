@@ -45,6 +45,7 @@ pub struct SVMFeatureSet {
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
+    pub delay_commission_updates: bool,
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub increase_cpi_account_info_limit: bool,
@@ -52,6 +53,10 @@ pub struct SVMFeatureSet {
     pub poseidon_enforce_padding: bool,
     pub fix_alt_bn128_pairing_length_check: bool,
     pub alt_bn128_little_endian: bool,
+    pub create_account_allow_prefund: bool,
+    pub bls_pubkey_management_in_vote_account: bool,
+    pub enable_alt_bn128_g2_syscalls: bool,
+    pub commission_rate_in_basis_points: bool,
 }
 
 impl SVMFeatureSet {
@@ -93,6 +98,7 @@ impl SVMFeatureSet {
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
+            delay_commission_updates: true,
             raise_cpi_nesting_limit_to_8: true,
             provide_instruction_data_offset_in_vm_r2: true,
             increase_cpi_account_info_limit: true,
@@ -100,6 +106,10 @@ impl SVMFeatureSet {
             poseidon_enforce_padding: true,
             fix_alt_bn128_pairing_length_check: true,
             alt_bn128_little_endian: true,
+            create_account_allow_prefund: true,
+            bls_pubkey_management_in_vote_account: true,
+            enable_alt_bn128_g2_syscalls: true,
+            commission_rate_in_basis_points: true,
         }
     }
 }

@@ -165,6 +165,7 @@ impl FeatureSet {
                 .is_active(&disable_zk_elgamal_proof_program::id()),
             reenable_zk_elgamal_proof_program: self
                 .is_active(&reenable_zk_elgamal_proof_program::id()),
+            delay_commission_updates: self.is_active(&delay_commission_updates::id()),
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
@@ -174,6 +175,11 @@ impl FeatureSet {
             fix_alt_bn128_pairing_length_check: self
                 .is_active(&fix_alt_bn128_pairing_length_check::id()),
             alt_bn128_little_endian: self.is_active(&alt_bn128_little_endian::id()),
+            create_account_allow_prefund: self.is_active(&create_account_allow_prefund::id()),
+            bls_pubkey_management_in_vote_account: self
+                .is_active(&bls_pubkey_management_in_vote_account::id()),
+            enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
+            commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
         }
     }
 }
@@ -769,11 +775,11 @@ pub mod apply_cost_tracker_during_replay {
 }
 
 pub mod stricter_abi_and_runtime_constraints {
-    solana_pubkey::declare_id!("Eoh7e1sDqtyPtuiWAhBNSJinvtJWTTDgeUMRi3RF8zWS");
+    solana_pubkey::declare_id!("StricterAbiAndRuntimeConstraints11111111111");
 }
 
 pub mod account_data_direct_mapping {
-    solana_pubkey::declare_id!("6f2qai82RU7Dutj1WJfRzLJKYA36QWvTa89CR1imgj7N");
+    solana_pubkey::declare_id!("AccountDataDirectMapping1111111111111111111");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1033,7 +1039,7 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 }
 
 pub mod enable_sbpf_v3_deployment_and_execution {
-    solana_pubkey::declare_id!("BUwGLeF3Lxyfv1J1wY8biFHBB2hrk2QhbNftQf3VV3cC");
+    solana_pubkey::declare_id!("HMVQjrdGk6UvC66bRe4XZ9PeEKbto71zXMMxHVFpHFTF");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -1081,7 +1087,7 @@ pub mod drop_unchained_merkle_shreds {
 }
 
 pub mod relax_intrabatch_account_locks {
-    solana_pubkey::declare_id!("ENTRYnPAoT5Swwx73YDGzMp3XnNH1kxacyvLosRHza1i");
+    solana_pubkey::declare_id!("4WeHX6QoXCCwqbSFgi6dxnB6QsPo6YApaNTH7P4MLQ99");
 }
 
 pub mod create_slashing_program {
@@ -1129,7 +1135,7 @@ pub mod disable_zk_elgamal_proof_program {
 }
 
 pub mod reenable_zk_elgamal_proof_program {
-    solana_pubkey::declare_id!("zkesAyFB19sTkX8i9ReoKaMNDA4YNTPYJpZKPDt7FMW");
+    solana_pubkey::declare_id!("zkexuyPRdyTVbZqEAREueqL2xvvoBhRgth9xGSc1tMN");
 }
 
 pub mod raise_block_limits_to_100m {
@@ -1138,6 +1144,10 @@ pub mod raise_block_limits_to_100m {
 
 pub mod raise_account_cu_limit {
     solana_pubkey::declare_id!("htsptAwi2yRoZH83SKaUXykeZGtZHgxkS2QwW1pssR8");
+}
+
+pub mod delay_commission_updates {
+    solana_pubkey::declare_id!("BRUoCu28xjjPkDcNm7iY9a8LqgftZko99ioXz84wivXh");
 }
 
 pub mod raise_cpi_nesting_limit_to_8 {
@@ -1150,6 +1160,10 @@ pub mod enforce_fixed_fec_set {
 
 pub mod provide_instruction_data_offset_in_vm_r2 {
     solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
+}
+
+pub mod create_account_allow_prefund {
+    solana_pubkey::declare_id!("caapcFpbcsJTMQMEMcpyx1m27DcXVp4MH6faHM5h5Z5");
 }
 
 pub mod static_instruction_limit {
@@ -1191,17 +1205,33 @@ pub mod fix_alt_bn128_pairing_length_check {
 pub mod replace_spl_token_with_p_token {
     use super::Pubkey;
 
-    solana_pubkey::declare_id!("ptokEXBPT9HuYdAQRysaStZNTY9bHsAcQzNscEoA6HC");
+    solana_pubkey::declare_id!("ptokFjwyJtrwCa9Kgo9xoDS59V4QccBGEaRFnRPnSdP");
 
     pub const SPL_TOKEN_PROGRAM_ID: Pubkey =
         Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
     pub const PTOKEN_PROGRAM_BUFFER: Pubkey =
-        Pubkey::from_str_const("ptokNfvuU7terQ2r2452RzVXB3o4GT33yPWo1fUkkZ2");
+        Pubkey::from_str_const("ptok6rngomXrDbWf5v5Mkmu5CEbB51hzSCPDoj9DrvF");
 }
 
 pub mod alt_bn128_little_endian {
-    solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+    solana_pubkey::declare_id!("bn2oPgpkzQPT3tohMaAsMVGjhDmmDa4jCaVPqCFmtxM");
+}
+
+pub mod bls_pubkey_management_in_vote_account {
+    solana_pubkey::declare_id!("2uxQgtKa2ECHGs67Zdj7dgmzn2w9HiqhdcedwCWfYzzq");
+}
+
+pub mod relax_programdata_account_check_migration {
+    solana_pubkey::declare_id!("rexav5eNTUSNT1K2N7cfRjnthwhcP5BC25v2tA4rW4h");
+}
+
+pub mod enable_alt_bn128_g2_syscalls {
+    solana_pubkey::declare_id!("bn1hKNURMGQaQoEVxahcEAcqiX3NwRs6hgKKNSLeKxH");
+}
+
+pub mod commission_rate_in_basis_points {
+    solana_pubkey::declare_id!("Eg7tXEwMZzS98xaZ1YHUbdRHsaYZiCsSaR6sKgxreoaj");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2122,6 +2152,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0321: Provide instruction data offset in VM r2",
         ),
         (
+            create_account_allow_prefund::id(),
+            "SIMD-0312: Enable CreateAccountAllowPrefund system program instruction",
+        ),
+        (
             static_instruction_limit::id(),
             "SIMD-0160: static instruction limit",
         ),
@@ -2134,6 +2168,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             switch_to_chacha8_turbine::id(),
             "SIMD-0332: Reduce ChaCha rounds for Turbine from 20 to 8",
+        ),
+        (
+            delay_commission_updates::id(),
+            "SIMD-0249: Delay Commission Updates",
         ),
         (
             increase_cpi_account_info_limit::id(),
@@ -2158,6 +2196,22 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alt_bn128_little_endian::id(),
             "SIMD-0284: Add little-endian compatibility for alt_bn128",
+        ),
+        (
+            bls_pubkey_management_in_vote_account::id(),
+            "SIMD-0387: BLS Pubkey Management in Vote Account",
+        ),
+        (
+            relax_programdata_account_check_migration::id(),
+            "SIMD-0444: Relax program data account check in migration",
+        ),
+        (
+            enable_alt_bn128_g2_syscalls::id(),
+            "SIMD-302: Add alt_bn128 G2 syscalls",
+        ),
+        (
+            commission_rate_in_basis_points::id(),
+            "SIMD-0291: Commission rate in basis points",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

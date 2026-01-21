@@ -39,6 +39,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_time_utils::AtomicInterval,
+    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
@@ -399,7 +400,7 @@ impl BankingStage {
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -447,26 +448,24 @@ impl BankingStage {
     }
 
     async fn run(mut self, initial_args: BankingControlMsg) -> std::thread::Result<()> {
-        self.spawn_scheduler(initial_args);
+        self.spawn_scheduler(initial_args).unwrap();
 
         loop {
             tokio::select! {
                 biased;
 
                 _ = self.banking_shutdown_signal.cancelled() => break,
-                Some(args) = self.banking_control_receiver.recv() => self.cycle_threads(args).await,
-                opt = self.threads.next() => {
-                    let (name, res) = opt.unwrap();
+                Some(args) = self.banking_control_receiver.recv() => {
+                    if self.cycle_threads(args).await.is_err() {
+                        self.cycle_threads_fallback().await.unwrap();
+                    }
+                },
+                Some((name, res)) = self.threads.next() => {
                     match res.unwrap() {
                         Ok(()) => error!("Banking worker exited unexpectedly; name={name}"),
                         Err(err) => error!("Banking worker exited with error; name={name}; err={err:?}"),
                     };
-
-                    self.cycle_threads(BankingControlMsg::Internal {
-                        block_production_method: BlockProductionMethod::default(),
-                        num_workers: BankingStage::default_num_workers(),
-                        config: SchedulerConfig::default(),
-                    }).await;
+                    self.cycle_threads_fallback().await.unwrap();
                 },
             }
         }
@@ -480,7 +479,7 @@ impl BankingStage {
         Ok(())
     }
 
-    async fn cycle_threads(&mut self, args: BankingControlMsg) {
+    async fn cycle_threads(&mut self, args: BankingControlMsg) -> Result<(), ()> {
         // Shutdown all current threads.
         self.worker_exit_signal.store(true, Ordering::Relaxed);
         while let Some((name, res)) = self.threads.next().await {
@@ -494,26 +493,38 @@ impl BankingStage {
         self.worker_exit_signal.store(false, Ordering::Relaxed);
 
         // Spawn the requested threads.
-        self.spawn_scheduler(args);
+        self.spawn_scheduler(args)
     }
 
-    fn spawn_scheduler(&mut self, args: BankingControlMsg) {
-        let threads = match args {
+    async fn cycle_threads_fallback(&mut self) -> Result<(), ()> {
+        error!("Spawning the default block production method as a fallback...");
+
+        self.cycle_threads(BankingControlMsg::Internal {
+            block_production_method: BlockProductionMethod::default(),
+            num_workers: BankingStage::default_num_workers(),
+            config: SchedulerConfig::default(),
+        })
+        .await
+    }
+
+    fn spawn_scheduler(&mut self, args: BankingControlMsg) -> Result<(), ()> {
+        let threads = (match args {
             BankingControlMsg::Internal {
                 block_production_method,
                 num_workers,
                 config,
-            } => self.spawn_internal(
-                matches!(
-                    block_production_method,
-                    BlockProductionMethod::CentralSchedulerGreedy
-                ),
-                num_workers,
-                config,
-            ),
+            } => match block_production_method {
+                BlockProductionMethod::CentralScheduler => {
+                    self.spawn_internal_central(false, num_workers, config)
+                }
+                BlockProductionMethod::CentralSchedulerGreedy => {
+                    self.spawn_internal_central(true, num_workers, config)
+                }
+                BlockProductionMethod::UnifiedScheduler => self.spawn_internal_unified(),
+            },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
-        };
+        })?;
 
         self.threads.extend(threads.into_iter().map(|handle| {
             let name = handle.thread().name().unwrap().to_string();
@@ -522,15 +533,20 @@ impl BankingStage {
         }));
 
         info!("Scheduler spawned");
+        Ok(())
     }
 
-    fn spawn_internal(
+    fn spawn_internal_central(
         &self,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
-    ) -> Vec<JoinHandle<()>> {
-        info!("Spawning internal scheduler");
+    ) -> Result<Vec<JoinHandle<()>>, ()> {
+        info!("Spawning internal central scheduler");
+        // Toggling unified scheduler into the disabled state should always be a safe and idempotent
+        // operation.
+        assert!(self.toggle_internal_unified(false));
+
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
 
@@ -539,7 +555,7 @@ impl BankingStage {
         // Setup receive & buffer.
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver: self.non_vote_receiver.clone(),
-            bank_forks: self.bank_forks.clone(),
+            sharable_banks: self.bank_forks.read().unwrap().sharable_banks(),
         };
 
         // Spawn vote worker.
@@ -634,7 +650,25 @@ impl BankingStage {
             spawn_scheduler!(scheduler);
         }
 
-        threads
+        Ok(threads)
+    }
+
+    fn spawn_internal_unified(&self) -> Result<Vec<JoinHandle<()>>, ()> {
+        info!("Spawning internal unified scheduler");
+        if self.toggle_internal_unified(true) {
+            // All unified scheduler threads are managed by itself. So, return none here.
+            Ok(vec![])
+        } else {
+            error!("Spawning unified scheduler failed");
+            Err(())
+        }
+    }
+
+    fn toggle_internal_unified(&self, enable: bool) -> bool {
+        self.bank_forks
+            .read()
+            .unwrap()
+            .toggle_unified_scheduler_block_production_mode(enable)
     }
 
     fn spawn_vote_worker(&self) -> JoinHandle<()> {
@@ -702,8 +736,12 @@ mod external {
                 progress_tracker,
                 workers,
             }: AgaveSession,
-        ) -> Vec<JoinHandle<()>> {
+        ) -> Result<Vec<JoinHandle<()>>, ()> {
             info!("Spawning external scheduler");
+            // Toggling unified scheduler into the disabled state should always be a safe and
+            // idempotent operation.
+            assert!(self.toggle_internal_unified(false));
+
             static_assertions::const_assert!(
                 agave_scheduling_utils::handshake::MAX_WORKERS
                     == BankingStage::max_num_workers().get()
@@ -789,7 +827,7 @@ mod external {
                 ticks_per_slot,
             ));
 
-            threads
+            Ok(threads)
         }
     }
 }
@@ -824,10 +862,23 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     poh_controller: &mut PohController,
     tpu_bank: Bank,
 ) {
-    let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-    if poh_controller.set_bank(tpu_bank).is_err() {
+    let tpu_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
+    let tpu_bank_for_poh = tpu_bank.clone_with_scheduler();
+    let set_bank_res = if tpu_bank.has_installed_active_bp_scheduler() {
+        // Waiting here is needed because unified scheduler assumes bank exists in poh immediately
+        // after calling unpause_new_block_production_scheduler(). Otherwise, it wrongly thinks poh
+        // reached to the max tick height.
+        poh_controller.set_bank_sync(tpu_bank_for_poh)
+    } else {
+        poh_controller.set_bank(tpu_bank_for_poh)
+    };
+    if set_bank_res.is_err() {
         warn!("Failed to set poh bank, poh service is disconnected");
     }
+    tpu_bank.unpause_new_block_production_scheduler();
 }
 
 #[derive(Debug)]
@@ -924,7 +975,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -956,7 +1007,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -984,7 +1035,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1020,7 +1071,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
         trace!("sending bank");
         drop(non_vote_sender);
@@ -1062,7 +1113,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1094,7 +1145,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
 
         // good tx, and no verify
@@ -1192,7 +1243,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
 
         // Process a batch that includes a transaction that receives two lamports.
         let alice = Keypair::new();
@@ -1246,7 +1297,7 @@ mod tests {
                 replay_vote_sender,
                 None,
                 bank_forks,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
             );
 
             // wait for banking_stage to eat the packets
@@ -1367,7 +1418,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1399,7 +1450,7 @@ mod tests {
             replay_vote_sender,
             None,
             bank_forks,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
+            None,
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

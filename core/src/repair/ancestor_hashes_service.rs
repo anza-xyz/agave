@@ -525,12 +525,12 @@ impl AncestorHashesService {
         for update in ancestor_hashes_replay_update_receiver.try_iter() {
             let slot = update.slot();
             if slot <= root_slot || ancestor_hashes_request_statuses.contains_key(&slot) {
-                return;
+                continue;
             }
             match update {
                 AncestorHashesReplayUpdate::Dead(dead_slot) => {
                     if repairable_dead_slot_pool.contains(&dead_slot) {
-                        return;
+                        continue;
                     } else if popular_pruned_slot_pool.contains(&dead_slot) {
                         // If `dead_slot` is also part of a popular pruned fork, this implies that the slot has
                         // become `EpochSlotsFrozen` as 52% had to have frozen some version of this slot in order
@@ -2251,5 +2251,44 @@ mod test {
         assert!(dead_slot_pool.is_empty());
         assert!(repairable_dead_slot_pool.is_empty());
         assert!(popular_pruned_slot_pool.contains(&request_slot));
+    }
+
+    #[test]
+    fn test_process_replay_updates_continue_after_skipped_update() {
+        let (sender, receiver) = unbounded();
+        let ancestor_hashes_request_statuses = DashMap::new();
+        let mut dead_slot_pool = HashSet::new();
+        let mut repairable_dead_slot_pool = HashSet::new();
+        let mut popular_pruned_slot_pool = HashSet::new();
+
+        let root_slot: Slot = 15;
+        let skipped_slot = root_slot; // should be skipped due to slot <= root
+        let actionable_slot = root_slot + 2; // should be processed
+
+        sender
+            .send(AncestorHashesReplayUpdate::Dead(skipped_slot))
+            .unwrap();
+        sender
+            .send(AncestorHashesReplayUpdate::DeadDuplicateConfirmed(
+                actionable_slot,
+            ))
+            .unwrap();
+
+        // Run processing; previously, an early return would have aborted after the first
+        // (skipped) update and ignored the actionable second update in the same batch.
+        AncestorHashesService::process_replay_updates(
+            &receiver,
+            &ancestor_hashes_request_statuses,
+            &mut dead_slot_pool,
+            &mut repairable_dead_slot_pool,
+            &mut popular_pruned_slot_pool,
+            root_slot,
+        );
+
+        // The skipped update should not pollute pools
+        assert!(!dead_slot_pool.contains(&skipped_slot));
+
+        // The actionable update must have been processed in the same call
+        assert!(repairable_dead_slot_pool.contains(&actionable_slot));
     }
 }

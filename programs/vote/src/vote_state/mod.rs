@@ -11,6 +11,7 @@ use {
     handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
+    solana_bls_signatures::{keypair::Keypair as BLSKeypair, VerifiableProofOfPossession},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -22,7 +23,7 @@ use {
         instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
         IndexOfAccount,
     },
-    solana_vote_interface::{error::VoteError, program::id},
+    solana_vote_interface::{error::VoteError, instruction::CommissionKind, program::id},
     std::{
         cmp::Ordering,
         collections::{HashSet, VecDeque},
@@ -721,6 +722,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
     vote_authorize: VoteAuthorize,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
+    is_bls_pubkey_feature_enabled: bool,
 ) -> Result<(), InstructionError> {
     let mut vote_state = get_vote_state_handler_checked(
         vote_account,
@@ -729,6 +731,9 @@ pub fn authorize<S: std::hash::BuildHasher>(
 
     match vote_authorize {
         VoteAuthorize::Voter => {
+            if is_bls_pubkey_feature_enabled && vote_state.has_bls_pubkey() {
+                return Err(InstructionError::InvalidInstructionData);
+            }
             let authorized_withdrawer_signer =
                 verify_authorized_signer(vote_state.authorized_withdrawer(), signers).is_ok();
 
@@ -739,6 +744,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
                     .leader_schedule_epoch
                     .checked_add(1)
                     .ok_or(InstructionError::InvalidAccountData)?,
+                None,
                 |epoch_authorized_voter| {
                     // current authorized withdrawer or authorized voter must say "yay"
                     if authorized_withdrawer_signer {
@@ -753,6 +759,37 @@ pub fn authorize<S: std::hash::BuildHasher>(
             // current authorized withdrawer must say "yay"
             verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
             vote_state.set_authorized_withdrawer(*authorized);
+        }
+        VoteAuthorize::VoterWithBLS(args) => {
+            if !is_bls_pubkey_feature_enabled {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+            let authorized_withdrawer_signer =
+                verify_authorized_signer(vote_state.authorized_withdrawer(), signers).is_ok();
+
+            verify_bls_proof_of_possession(
+                vote_account.get_key(),
+                &args.bls_pubkey,
+                &args.bls_proof_of_possession,
+            )?;
+
+            vote_state.set_new_authorized_voter(
+                authorized,
+                clock.epoch,
+                clock
+                    .leader_schedule_epoch
+                    .checked_add(1)
+                    .ok_or(InstructionError::InvalidAccountData)?,
+                Some(&args.bls_pubkey),
+                |epoch_authorized_voter| {
+                    // current authorized withdrawer or authorized voter must say "yay"
+                    if authorized_withdrawer_signer {
+                        Ok(())
+                    } else {
+                        verify_authorized_signer(&epoch_authorized_voter, signers)
+                    }
+                },
+            )?;
         }
     }
 
@@ -793,16 +830,17 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
+    disable_commission_update_rule: bool,
 ) -> Result<(), InstructionError> {
     let vote_state_result = get_vote_state_handler_checked(
         vote_account,
         PreserveBehaviorInHandlerHelper::new(target_version, false),
     );
-    let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
-        commission > decoded_vote_state.commission()
-    } else {
-        true
-    };
+    let enforce_commission_update_rule = !disable_commission_update_rule
+        && match vote_state_result.as_ref() {
+            Ok(decoded_vote_state) => commission > decoded_vote_state.commission(),
+            Err(_) => true,
+        };
 
     if enforce_commission_update_rule && !is_commission_update_allowed(clock.slot, epoch_schedule) {
         return Err(VoteError::CommissionUpdateTooLate.into());
@@ -814,6 +852,35 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
     vote_state.set_commission(commission);
+
+    vote_state.set_vote_account_state(vote_account)
+}
+
+/// Update the vote account's commission in basis points (SIMD-0291).
+pub fn update_commission_bps<S: std::hash::BuildHasher>(
+    vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
+    commission_bps: u16,
+    kind: CommissionKind,
+    signers: &HashSet<Pubkey, S>,
+) -> Result<(), InstructionError> {
+    // Per SIMD-0291: BlockRevenue returns InvalidInstructionData
+    // (Block revenue commission updates will be enabled in a future SIMD)
+    if matches!(kind, CommissionKind::BlockRevenue) {
+        return Err(InstructionError::InvalidInstructionData);
+    }
+
+    let mut vote_state = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, false),
+    )?;
+
+    // No commission update rule, per SIMD-0249 and SIMD-0291.
+
+    // Require authorized withdrawer to sign.
+    verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
+
+    vote_state.set_inflation_rewards_commission_bps(commission_bps);
 
     vote_state.set_vote_account_state(vote_account)
 }
@@ -843,6 +910,50 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
     } else {
         Err(InstructionError::MissingRequiredSignature)
     }
+}
+
+// The message size is fixed:
+// "ALPENGLOW" (9) + Vote Pubkey (32) + BLS Pubkey (48) = 89 bytes
+const POP_MESSAGE_SIZE: usize = 9 + size_of::<Pubkey>() + BLS_PUBLIC_KEY_COMPRESSED_SIZE;
+
+pub(crate) fn generate_pop_message(
+    vote_account_pubkey: &Pubkey,
+    bls_pubkey_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+) -> [u8; POP_MESSAGE_SIZE] {
+    const LABEL_LEN: usize = 9;
+    const PUBKEY_LEN: usize = size_of::<Pubkey>();
+    const BLS_LEN: usize = BLS_PUBLIC_KEY_COMPRESSED_SIZE;
+
+    const LABEL_START: usize = 0;
+    const LABEL_END: usize = LABEL_START + LABEL_LEN;
+
+    const PUBKEY_START: usize = LABEL_END;
+    const PUBKEY_END: usize = PUBKEY_START + PUBKEY_LEN;
+
+    const BLS_START: usize = PUBKEY_END;
+    const BLS_END: usize = BLS_START + BLS_LEN;
+
+    // Make sure POP_MESSAGE_SIZE matches the layout at compile time
+    const _: () = assert!(BLS_END == POP_MESSAGE_SIZE);
+
+    let mut message = [0u8; POP_MESSAGE_SIZE];
+
+    message[LABEL_START..LABEL_END].copy_from_slice(b"ALPENGLOW");
+    message[PUBKEY_START..PUBKEY_END].copy_from_slice(vote_account_pubkey.as_ref());
+    message[BLS_START..BLS_END].copy_from_slice(bls_pubkey_bytes);
+
+    message
+}
+
+pub fn verify_bls_proof_of_possession(
+    vote_account_pubkey: &Pubkey,
+    bls_pubkey_compressed_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+    bls_proof_of_possession_compressed_bytes: &[u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+) -> Result<(), InstructionError> {
+    let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
+    bls_proof_of_possession_compressed_bytes
+        .verify(bls_pubkey_compressed_bytes, Some(&message))
+        .map_err(|_| InstructionError::InvalidArgument)
 }
 
 /// Withdraw funds from the vote account
@@ -901,6 +1012,37 @@ pub fn withdraw<S: std::hash::BuildHasher>(
     let mut to_account = instruction_context.try_borrow_instruction_account(to_account_index)?;
     to_account.checked_add_lamports(lamports)?;
     Ok(())
+}
+
+/// Initialize the vote_state for a vote account using VoteInitV2
+/// Assumes that the account is being init as part of a account creation or balance transfer and
+/// that the transaction must be signed by the staker's keys
+/// It also verifies the BLS proof of possession for the authorized voter BLS pubkey
+pub fn initialize_account_v2<S: std::hash::BuildHasher>(
+    vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
+    vote_init: &VoteInitV2,
+    signers: &HashSet<Pubkey, S>,
+    clock: &Clock,
+) -> Result<(), InstructionError> {
+    VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
+    let versioned = vote_account.get_state::<VoteStateVersions>()?;
+
+    if !versioned.is_uninitialized() {
+        return Err(InstructionError::AccountAlreadyInitialized);
+    }
+
+    // node must agree to accept this vote account
+    verify_authorized_signer(&vote_init.node_pubkey, signers)?;
+
+    // verify the BLS pubkey proof of possession
+    verify_bls_proof_of_possession(
+        vote_account.get_key(),
+        &vote_init.authorized_voter_bls_pubkey,
+        &vote_init.authorized_voter_bls_proof_of_possession,
+    )?;
+
+    VoteStateHandler::init_vote_account_state_v2(vote_account, vote_init, clock, target_version)
 }
 
 /// Initialize the vote_state for a vote account
@@ -1061,8 +1203,7 @@ fn do_process_tower_sync(
     )
 }
 
-#[cfg(test)]
-pub fn create_account_with_authorized(
+pub fn create_v3_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
     authorized_withdrawer: &Pubkey,
@@ -1100,12 +1241,17 @@ pub fn create_v4_account_with_authorized(
 ) -> AccountSharedData {
     let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
 
-    let vote_state = handler::create_new_vote_state_v4_for_tests(
-        node_pubkey,
-        authorized_voter,
-        authorized_withdrawer,
-        bls_pubkey_compressed,
-        inflation_rewards_commission_bps,
+    let vote_state = VoteStateV4::new(
+        &VoteInitV2 {
+            node_pubkey: *node_pubkey,
+            authorized_voter: *authorized_voter,
+            authorized_withdrawer: *authorized_withdrawer,
+            authorized_voter_bls_pubkey: bls_pubkey_compressed
+                .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
+            inflation_rewards_commission_bps,
+            ..Default::default()
+        },
+        &Clock::default(),
     );
 
     VoteStateV4::serialize(
@@ -1115,6 +1261,32 @@ pub fn create_v4_account_with_authorized(
     .unwrap();
 
     vote_account
+}
+
+pub fn create_bls_pubkey_and_proof_of_possession(
+    vote_account_pubkey: &Pubkey,
+) -> (
+    [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+    [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+) {
+    let bls_keypair = BLSKeypair::new();
+    create_bls_proof_of_possession(vote_account_pubkey, &bls_keypair)
+}
+
+pub fn create_bls_proof_of_possession(
+    vote_account_pubkey: &Pubkey,
+    bls_keypair: &BLSKeypair,
+) -> (
+    [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+    [u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+) {
+    let bls_pubkey_bytes = bls_keypair.public.to_bytes_compressed();
+    let message = generate_pop_message(vote_account_pubkey, &bls_pubkey_bytes);
+
+    let proof_of_possession = bls_keypair.proof_of_possession(Some(&message));
+    let proof_of_possession_bytes = proof_of_possession.to_bytes_compressed();
+
+    (bls_pubkey_bytes, proof_of_possession_bytes)
 }
 
 #[allow(clippy::arithmetic_side_effects)]
@@ -1130,7 +1302,7 @@ mod tests {
             instruction_accounts::InstructionAccount, TransactionContext,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     const MAX_RECENT_VOTES: usize = 16;
@@ -1152,9 +1324,11 @@ mod tests {
             VoteStateTargetVersion::V3 => {
                 VoteStateHandler::new_v3(VoteStateV3::new(&vote_init, &clock))
             }
-            VoteStateTargetVersion::V4 => VoteStateHandler::new_v4(
-                handler::create_new_vote_state_v4(vote_pubkey, &vote_init, &clock),
-            ),
+            VoteStateTargetVersion::V4 => VoteStateHandler::new_v4(VoteStateV4::new_with_defaults(
+                vote_pubkey,
+                &vote_init,
+                &clock,
+            )),
         }
     }
 
@@ -1167,17 +1341,35 @@ mod tests {
         // Simulate prior epochs completed with credits and each setting a new authorized voter
         vote_state.increment_credits(0, 100);
         assert_eq!(
-            vote_state.set_new_authorized_voter(&solana_pubkey::new_rand(), 0, 1, |_pubkey| Ok(())),
+            vote_state.set_new_authorized_voter(
+                &solana_pubkey::new_rand(),
+                0,
+                1,
+                None,
+                |_pubkey| Ok(())
+            ),
             Ok(())
         );
         vote_state.increment_credits(1, 200);
         assert_eq!(
-            vote_state.set_new_authorized_voter(&solana_pubkey::new_rand(), 1, 2, |_pubkey| Ok(())),
+            vote_state.set_new_authorized_voter(
+                &solana_pubkey::new_rand(),
+                1,
+                2,
+                None,
+                |_pubkey| Ok(())
+            ),
             Ok(())
         );
         vote_state.increment_credits(2, 300);
         assert_eq!(
-            vote_state.set_new_authorized_voter(&solana_pubkey::new_rand(), 2, 3, |_pubkey| Ok(())),
+            vote_state.set_new_authorized_voter(
+                &solana_pubkey::new_rand(),
+                2,
+                3,
+                None,
+                |_pubkey| Ok(())
+            ),
             Ok(())
         );
 
@@ -1234,6 +1426,7 @@ mod tests {
             rent.clone(),
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -1375,9 +1568,14 @@ mod tests {
         assert_eq!(vote_state.votes().len(), 2);
     }
 
-    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
-    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
-    fn test_update_commission(target_version: VoteStateTargetVersion) {
+    #[test_matrix(
+        [VoteStateTargetVersion::V3, VoteStateTargetVersion::V4],
+        [true, false]
+    )]
+    fn test_update_commission(
+        target_version: VoteStateTargetVersion,
+        disable_commission_update_rule: bool,
+    ) {
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
         let node_pubkey = *vote_state.node_pubkey();
         let withdrawer_pubkey = *vote_state.authorized_withdrawer();
@@ -1400,6 +1598,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -1448,6 +1647,7 @@ mod tests {
                 &signers,
                 &epoch_schedule,
                 &first_half_clock,
+                disable_commission_update_rule,
             ),
             Ok(())
         );
@@ -1461,29 +1661,31 @@ mod tests {
             11
         );
 
-        // Increase commission in second half of epoch -- disallowed
-        assert_matches!(
-            update_commission(
-                &mut borrowed_account,
-                target_version,
-                12,
-                &signers,
-                &epoch_schedule,
-                &second_half_clock,
-            ),
-            Err(_)
+        // Increase commission in second half of epoch -- disallowed if update rule is enabled
+        let result = update_commission(
+            &mut borrowed_account,
+            target_version,
+            12,
+            &signers,
+            &epoch_schedule,
+            &second_half_clock,
+            disable_commission_update_rule,
         );
-        assert_eq!(
-            get_vote_state_handler_checked(
-                &borrowed_account,
-                PreserveBehaviorInHandlerHelper::new(target_version, true),
-            )
-            .unwrap()
-            .commission(),
-            11
-        );
+        let state_commission = get_vote_state_handler_checked(
+            &borrowed_account,
+            PreserveBehaviorInHandlerHelper::new(target_version, true),
+        )
+        .unwrap()
+        .commission();
+        if disable_commission_update_rule {
+            assert_matches!(result, Ok(()));
+            assert_eq!(state_commission, 12);
+        } else {
+            assert_matches!(result, Err(_));
+            assert_eq!(state_commission, 11);
+        }
 
-        // Decrease commission in first half of epoch -- allowed
+        // Decrease commission in first half of epoch -- always allowed
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
@@ -1492,6 +1694,7 @@ mod tests {
                 &signers,
                 &epoch_schedule,
                 &first_half_clock,
+                disable_commission_update_rule,
             ),
             Ok(())
         );
@@ -1515,6 +1718,7 @@ mod tests {
             10
         );
 
+        // Decrease commission in second half of epoch -- always allowed
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
@@ -1523,6 +1727,7 @@ mod tests {
                 &signers,
                 &epoch_schedule,
                 &second_half_clock,
+                disable_commission_update_rule,
             ),
             Ok(())
         );
@@ -1535,6 +1740,120 @@ mod tests {
             .commission(),
             9
         );
+    }
+
+    /// Test update_commission_bps (SIMD-0291).
+    ///
+    /// Unlike test_update_commission, SIMD-0291 has no timing restrictions
+    /// (per SIMD-0249). Updates are always allowed regardless of epoch position.
+    ///
+    /// This test only uses V4 since SIMD-0291 depends on SIMD-0185 (VoteStateV4).
+    #[test]
+    fn test_update_commission_bps() {
+        let target_version = VoteStateTargetVersion::V4;
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
+        let withdrawer_pubkey = *vote_state.authorized_withdrawer();
+        let node_pubkey = *vote_state.node_pubkey();
+
+        // Set initial commission.
+        vote_state.set_commission(10); // 10%
+
+        let serialized = vote_state.serialize();
+        let serialized_len = serialized.len();
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(serialized_len);
+        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
+        vote_account.set_data_from_slice(&serialized);
+
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![(id(), processor_account), (node_pubkey, vote_account)],
+            rent,
+            0,
+            0,
+            1,
+        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
+        let non_signers: HashSet<Pubkey> = HashSet::new();
+
+        // `CommissionKind::BlockRevenue` returns `InvalidInstructionData`.
+        assert_eq!(
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                500,
+                CommissionKind::BlockRevenue,
+                &signers,
+            ),
+            Err(InstructionError::InvalidInstructionData)
+        );
+
+        // Missing signature returns `MissingRequiredSignature`.
+        assert_eq!(
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                500,
+                CommissionKind::InflationRewards,
+                &non_signers,
+            ),
+            Err(InstructionError::MissingRequiredSignature)
+        );
+
+        // Incorrect signature for withdraw authority returns `MissingRequiredSignature`.
+        let wrong_signers: HashSet<Pubkey> = vec![Pubkey::new_unique()].into_iter().collect();
+        assert_eq!(
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                500,
+                CommissionKind::InflationRewards,
+                &wrong_signers,
+            ),
+            Err(InstructionError::MissingRequiredSignature)
+        );
+
+        let mut commission_bps_roundtrip = |new_commission_bps: u16| {
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                new_commission_bps,
+                CommissionKind::InflationRewards,
+                &signers,
+            )
+            .unwrap();
+            let handler = get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap();
+            let commission_bps = handler.as_ref_v4().inflation_rewards_commission_bps;
+            assert_eq!(commission_bps, new_commission_bps);
+        };
+
+        // There's no timing check for SIMD-0291, so just go back and forth
+        // with new values.
+
+        commission_bps_roundtrip(1_100); // Increase to 11%
+        commission_bps_roundtrip(5_000); // Increase to 50%
+        commission_bps_roundtrip(4_400); // Decrease to 44%
+        commission_bps_roundtrip(4_600); // Increase to 46%
+
+        // Values > 10,000 bps are allowed at program level.
+        commission_bps_roundtrip(15_000); // 150%
+        commission_bps_roundtrip(50_000); // 500%
     }
 
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
@@ -3754,6 +4073,7 @@ mod tests {
             rent,
             0,
             0,
+            1,
         );
         transaction_context
             .configure_next_instruction_for_tests(
@@ -3805,5 +4125,134 @@ mod tests {
             VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
         assert_eq!(vote_state.node_pubkey, new_node_pubkey);
         assert_eq!(vote_state.block_revenue_collector, new_node_pubkey);
+    }
+
+    #[test]
+    fn test_get_and_update_authorized_voter_v4_with_bls() {
+        let vote_account_pubkey = Pubkey::new_unique();
+        let (bls_pubkey, bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&vote_account_pubkey);
+        let node_pubkey = Pubkey::new_unique();
+        let authorized_voter = Pubkey::new_unique();
+        let authorized_withdrawer = Pubkey::new_unique();
+        let inflation_rewards_commission_bps = 10000;
+        let rent = Rent::default();
+        let lamports = rent.minimum_balance(VoteStateV4::size_of());
+        // Create a VoteStateV4 account without BLS pubkey
+        let vote_account = create_v4_account_with_authorized(
+            &node_pubkey,
+            &authorized_voter,
+            &authorized_withdrawer,
+            None,
+            inflation_rewards_commission_bps,
+            lamports,
+        );
+        assert_eq!(vote_account.lamports(), lamports);
+        assert_eq!(vote_account.owner(), &id());
+        assert_eq!(vote_account.data().len(), VoteStateV4::size_of());
+
+        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![
+                (id(), processor_account),
+                (vote_account_pubkey, vote_account),
+            ],
+            rent,
+            0,
+            0,
+            1,
+        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut borrowed_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        let new_node_pubkey = solana_pubkey::new_rand();
+        let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_node_pubkey]
+            .into_iter()
+            .collect();
+        let clock = Clock::default();
+        assert!(authorize(
+            &mut borrowed_account,
+            VoteStateTargetVersion::V4,
+            &new_node_pubkey,
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession
+            }),
+            &signers,
+            &clock,
+            true,
+        )
+        .is_ok());
+        let vote_state =
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
+        assert_eq!(vote_state.bls_pubkey_compressed, Some(bls_pubkey));
+        assert!(vote_state.has_bls_pubkey());
+
+        // Test replay attack, can't use someone else's BLS pubkey and PoP
+        let clock = Clock {
+            epoch: 3,
+            ..Clock::default()
+        };
+        let (others_bls_pubkey, others_bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&Pubkey::new_unique());
+        let new_node_pubkey = solana_pubkey::new_rand();
+        let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_node_pubkey]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            authorize(
+                &mut borrowed_account,
+                VoteStateTargetVersion::V4,
+                &new_node_pubkey,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: others_bls_pubkey,
+                    bls_proof_of_possession: others_bls_proof_of_possession
+                }),
+                &signers,
+                &clock,
+                true,
+            ),
+            Err(InstructionError::InvalidArgument),
+        );
+
+        // Test updating to a new BLS pubkey, can only do it in next epoch.
+        let clock = Clock {
+            epoch: 5,
+            ..Clock::default()
+        };
+        let (new_bls_pubkey, new_bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&vote_account_pubkey);
+        let new_authorized_voter = solana_pubkey::new_rand();
+        let signers: HashSet<Pubkey> = vec![authorized_withdrawer, new_authorized_voter]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            authorize(
+                &mut borrowed_account,
+                VoteStateTargetVersion::V4,
+                &new_authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: new_bls_pubkey,
+                    bls_proof_of_possession: new_bls_proof_of_possession
+                }),
+                &signers,
+                &clock,
+                true,
+            ),
+            Ok(())
+        );
+        let vote_state =
+            VoteStateV4::deserialize(borrowed_account.get_data(), &new_authorized_voter).unwrap();
+        assert_eq!(vote_state.bls_pubkey_compressed, Some(new_bls_pubkey));
+        assert!(vote_state.has_bls_pubkey());
     }
 }

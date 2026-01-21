@@ -18,7 +18,7 @@ extern crate test;
 use {
     crossbeam_channel::{unbounded, Receiver},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::*,
     solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
     solana_entry::entry::{next_hash, Entry},
@@ -35,9 +35,7 @@ use {
     solana_perf::packet::to_packet_batches,
     solana_poh::poh_recorder::{create_test_recorder, WorkingBankEntry},
     solana_pubkey as pubkey,
-    solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-    },
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
@@ -76,7 +74,7 @@ fn make_accounts_txs(txes: usize, mint_keypair: &Keypair, hash: Hash) -> Vec<Tra
         .into_par_iter()
         .map(|_| {
             let mut new = dummy.clone();
-            let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+            let sig: [u8; 64] = std::array::from_fn(|_| rng().random::<u8>());
             new.message.account_keys[0] = pubkey::new_rand();
             new.message.account_keys[1] = pubkey::new_rand();
             new.signatures = vec![Signature::from(sig)];
@@ -165,7 +163,7 @@ fn bench_banking(
         tpu_vote_receiver,
         gossip_vote_sender,
         gossip_vote_receiver,
-    } = banking_tracer.create_channels(false);
+    } = banking_tracer.create_channels();
 
     let mut bank = Bank::new_for_benches(&genesis_config);
     // Allow arbitrary transaction processing time for the purposes of this bench
@@ -252,7 +250,7 @@ fn bench_banking(
         s,
         None,
         bank_forks,
-        Arc::new(PrioritizationFeeCache::new(0u64)),
+        None,
     );
 
     let chunk_len = verified.len() / CHUNKS;

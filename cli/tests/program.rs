@@ -1700,15 +1700,11 @@ async fn test_cli_program_write_buffer() {
     file.read_to_end(&mut program_data).unwrap();
     let max_len = program_data.len();
     let minimum_balance_for_buffer = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-            max_len,
-        ))
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(max_len))
         .await
         .unwrap();
     let minimum_balance_for_buffer_default = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-            max_len,
-        ))
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(max_len))
         .await
         .unwrap();
 
@@ -2105,9 +2101,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     file.read_to_end(&mut program_data).unwrap();
     let max_len = program_data.len();
     let minimum_balance_for_buffer = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-            max_len,
-        ))
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(max_len))
         .await
         .unwrap();
 

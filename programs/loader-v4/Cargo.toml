@@ -6,7 +6,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = { workspace = true }
+edition = "2024"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -16,7 +16,9 @@ crate-type = ["lib"]
 name = "solana_loader_v4_program"
 
 [features]
+default = ["metrics"]
 agave-unstable-api = []
+metrics = ["solana-program-runtime/metrics"]
 shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",

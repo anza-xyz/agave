@@ -385,7 +385,7 @@ fn record_and_complete_block(
 
     trace!(
         "{}: bank {} has reached block timeout, ticking",
-        bank.collector_id(),
+        bank.leader_id(),
         bank.slot()
     );
 

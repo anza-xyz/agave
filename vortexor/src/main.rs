@@ -31,6 +31,11 @@ use {
 const DEFAULT_CHANNEL_SIZE: usize = 100_000;
 
 pub fn main() {
+    // Default to RUST_BACKTRACE=1 for more informative validator logs
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        // Safety: env update is made before any spawned threads might access the environment
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
+    }
     agave_logger::setup();
 
     let args = Cli::parse();

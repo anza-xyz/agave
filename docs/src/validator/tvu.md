@@ -37,13 +37,10 @@ let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
 
  `multi_bind_in_range_with_config` sets `SO_REUSEPORT`. This means that other nodes only need to know about the one ip/port pair for TVU (similar principle applies in the case of TPU UDP sockets). The kernel distributes the incoming packets to all sockets bound to that port, and each socket can be serviced by a different thread.
 
-> **NOTE:** TVU QUIC socket does not use `SO_REUSEPORT`, but otherwise works similarly to UDP
-
 The TVU socket information is published via Gossip and is available in the `ContactInfo` struct.
 To set a TVU socket, the node calls `set_tvu(...)`. The `set_tvu()` method is created by the macro `set_socket!`. For example:
 
 ```rust
-info.set_tvu(QUIC, (addr, tvu_quic_port)).unwrap();
 info.set_tvu(UDP, (addr, tvu_udp_port)).unwrap();
 ```
 
@@ -53,7 +50,6 @@ In the `ContactInfo` struct, all sockets are identified by a tag/key, e.g.:
 
 ```rust
 const SOCKET_TAG_TVU: u8 = 10;       // For UDP
-const SOCKET_TAG_TVU_QUIC: u8 = 11;  // For QUIC
 ```
 
  * `set_socket()` creates a `SocketEntry` and stores that into `ContactInfo::sockets`
@@ -67,5 +63,5 @@ cache: [SocketAddr; SOCKET_CACHE_SIZE]
 `SocketEntry` is serialized and sent to peer nodes within the gossip message type `CrdsData::ContactInfo`. Upon receiving the `ContactInfo`, the peer node calls the `get_socket!` macro to retrieve the TVU port associated with the node.
 For example, to retrieve the TVU ports of the remote node, the peer node calls:
 ```rust
-get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
+get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_UDP);
 ```
