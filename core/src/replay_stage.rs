@@ -1494,7 +1494,7 @@ impl ReplayStage {
         );
     }
 
-    /// If we have an eligble genesis block, send out a genesis vote
+    /// If we have an eligible genesis block, send out a genesis vote
     /// Returns false if no eligible block was found
     fn maybe_send_genesis_vote(
         migration_status: &MigrationStatus,
