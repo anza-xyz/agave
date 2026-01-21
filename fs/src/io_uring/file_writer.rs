@@ -36,7 +36,7 @@ const DEFAULT_MAX_IOWQ_WORKERS: u32 = 2;
 // currently not supported, so we just always use 4096 to be safe.
 const DEFAULT_FS_BLOCK_SIZE: usize = 4096;
 
-/// Utility for building `SequentialFileReader` with specified tuning options.
+/// Utility for building `IoUringFileWriter` with specified tuning options.
 pub struct IoUringFileWriterBuilder<'sp> {
     write_size: IoSize,
     max_iowq_workers: u32,
@@ -106,7 +106,7 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
         self.build_with_buffer(path, buffer)
     }
 
-    /// Build a new `SequentialFileWriter` with a user-supplied buffer
+    /// Build a new `IoUringFileWriter` with a user-supplied buffer
     ///
     /// `buffer` is the internal buffer used for writing. It must be at least `write_size` long.
     ///
@@ -116,14 +116,14 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
         path: impl AsRef<Path>,
         mut buffer: PageAlignedMemory,
     ) -> io::Result<IoUringFileWriter> {
-        // Align buffer capacity to read capacity, so we always read equally sized chunks
+        // Align buffer capacity to write capacity, so we always write equally sized chunks
         let buf_capacity =
             buffer.as_mut().len() / self.write_size as usize * self.write_size as usize;
         assert_ne!(buf_capacity, 0, "write size aligned buffer is too small");
         let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
 
         // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
-        // dropped before `backing_buffer` in `SequentialFileReader` is dropped.
+        // dropped before `backing_buffer` in `IoUringFileWriter` is dropped.
         let buffers = unsafe {
             IoBufferChunk::split_buffer_chunks(buf_slice_mut, self.write_size, self.register_buffer)
         }
@@ -132,7 +132,7 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
 
         #[cfg(debug_assertions)]
         if self.use_direct_io {
-            // O_DIRECT reads have size and alignment restrictions and must be into a sub-buffer of
+            // O_DIRECT writes have size and alignment restrictions and must be into a sub-buffer of
             // some multiple of the fs block size (see https://man7.org/linux/man-pages/man2/open.2.html#NOTES).
             assert!(
                 self.write_size.is_multiple_of(DEFAULT_FS_BLOCK_SIZE as u32),
@@ -159,7 +159,7 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
     }
 
     fn create_io_uring(&self, buf_capacity: usize) -> io::Result<IoUring> {
-        // Let all buffers be submitted for reading at any time
+        // Let all buffers be submitted for writing at any time
         let max_inflight_ops = (buf_capacity / self.write_size as usize) as u32;
 
         // Completions arrive in bursts (batching done by the disk controller and the kernel).
@@ -184,7 +184,7 @@ impl<'sp> IoUringFileWriterBuilder<'sp> {
 pub struct IoUringFileWriter {
     // Note: state is tied to `backing_buffer` and contains unsafe pointer references to it
     ring: Ring<IoUringFileWriterState, WriteOp>,
-    /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
+    /// Owned buffer used (chunked into `IoBufferChunk` items) across lifespan of `inner`
     /// (should get dropped last)
     _backing_buffer: PageAlignedMemory,
 }
@@ -230,10 +230,6 @@ impl IoUringFileWriter {
 }
 
 impl io::Write for IoUringFileWriter {
-    /// Write bytes to a buffer
-    /// No guarantee that the bytes will be flushed to disk --
-    /// you need to call `flush_all` once you are done writing
-    /// and want to close the file
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut num_bytes_already_written: usize = 0;
         loop {
@@ -263,7 +259,7 @@ impl io::Write for IoUringFileWriter {
 
                 // if finished writing bytes, then break
                 // otherwise, find the next free buffer to keep writing bytes
-                if num_bytes_already_written as usize == buf.len() {
+                if num_bytes_already_written == buf.len() {
                     break;
                 }
             } else {
@@ -382,12 +378,17 @@ struct FileWriterStats {
 
 impl FileWriterStats {
     fn log(&self) {
-        println!(
+        let avg_num_buffers_free_during_write = if self.num_writes_total == 0 {
+            0.0
+        } else {
+            self.num_buffers_free_total as f64 / self.num_writes_total as f64
+        };
+        log::info!(
             "files writer stats - num_direct_io_writes: {} num_regular_io_writes: {} \
              avg_num_buffers_free_during_write: {}",
             self.direct_io_write_count,
             self.regular_io_write_count,
-            self.num_buffers_free_total as f64 / self.num_writes_total as f64
+            avg_num_buffers_free_during_write
         );
     }
 }
