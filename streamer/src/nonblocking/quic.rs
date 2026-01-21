@@ -61,6 +61,10 @@ const CONNECTION_CLOSE_REASON_DROPPED_ENTRY: &[u8] = b"dropped";
 pub(crate) const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
 pub(crate) const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
 
+pub(crate) const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
+pub(crate) const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] =
+    b"exceed_max_stream_count";
+
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 
@@ -408,6 +412,7 @@ pub fn get_connection_stake(
 #[derive(Debug)]
 pub(crate) enum ConnectionHandlerError {
     ConnectionAddError,
+    MaxStreamError,
 }
 
 pub(crate) fn update_open_connections_stat<S: OpaqueStreamerCounter>(
