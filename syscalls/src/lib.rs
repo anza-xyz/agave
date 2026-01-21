@@ -5827,8 +5827,10 @@ mod tests {
         };
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
 
@@ -5898,8 +5900,10 @@ mod tests {
         };
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
 
@@ -5971,8 +5975,10 @@ mod tests {
         };
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
 
@@ -6034,12 +6040,16 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_g2_add() {
-        use crate::bls12_381_curve_id::BLS12_381_G2_BE;
-        use solana_curve25519::curve_syscall_traits::ADD;
+        use {
+            crate::bls12_381_curve_id::BLS12_381_G2_BE,
+            solana_curve25519::curve_syscall_traits::ADD,
+        };
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
 
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
@@ -6125,8 +6135,10 @@ mod tests {
         };
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
 
@@ -6214,8 +6226,10 @@ mod tests {
         };
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
 
@@ -6291,8 +6305,10 @@ mod tests {
         use crate::bls12_381_curve_id::BLS12_381_BE;
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
 
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
@@ -6396,8 +6412,10 @@ mod tests {
         use crate::bls12_381_curve_id::BLS12_381_G1_BE;
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
 
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
@@ -6454,8 +6472,10 @@ mod tests {
         use crate::bls12_381_curve_id::BLS12_381_G1_BE;
 
         let config = Config::default();
-        let mut feature_set = SVMFeatureSet::default();
-        feature_set.enable_bls12_381_syscall = true;
+        let feature_set = SVMFeatureSet {
+            enable_bls12_381_syscall: true,
+            ..Default::default()
+        };
         let feature_set = &feature_set;
 
         prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set,);
