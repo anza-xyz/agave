@@ -5337,6 +5337,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64 0.22.1",
+ "serde_core",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6059,6 +6069,19 @@ dependencies = [
 [[package]]
 name = "rbpf-cli"
 version = "4.0.0-alpha.0"
+
+[[package]]
+name = "rcgen"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
+dependencies = [
+ "pem 3.0.6",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
+]
 
 [[package]]
 name = "rdrand"
@@ -10979,7 +11002,7 @@ dependencies = [
  "log",
  "nix",
  "num_cpus",
- "pem",
+ "pem 1.1.1",
  "percentage",
  "quinn",
  "quinn-proto",
@@ -11891,7 +11914,7 @@ dependencies = [
  "libc",
  "log",
  "nix",
- "pem",
+ "pem 1.1.1",
  "percentage",
  "quinn",
  "quinn-proto",
@@ -13551,6 +13574,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
+name = "votor-quic"
+version = "3.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "bytes",
+ "crossbeam-channel",
+ "futures-util",
+ "pem 1.1.1",
+ "quinn",
+ "rcgen",
+ "rustls 0.23.34",
+ "solana-address",
+ "solana-keypair",
+ "solana-net-utils",
+ "solana-pubkey",
+ "solana-tls-utils",
+ "tokio",
+]
+
+[[package]]
 name = "wait-timeout"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14325,6 +14369,15 @@ name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+dependencies = [
+ "time",
+]
 
 [[package]]
 name = "yoke"
