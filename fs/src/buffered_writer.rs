@@ -10,7 +10,7 @@ use {
 /// Default buffer size for writing large files to disks. Since current implementation does not do
 /// background writing, this size is set above minimum reasonable SSD write sizes to also reduce
 /// number of syscalls.
-const DEFAULT_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+const DEFAULT_BUFFER_SIZE: usize = 4 * crate::io_uring::file_writer::DEFAULT_WRITE_SIZE as usize;
 
 /// Return a buffered writer for creating a new file at `path`
 ///
