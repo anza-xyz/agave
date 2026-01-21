@@ -10,7 +10,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
-    solana_commitment_config::CommitmentConfig,
+    solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::{self, Entry, EntrySlice},
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
@@ -391,7 +391,6 @@ fn check_for_new_slots_with_commitment(
     connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
     commitment: CommitmentConfig,
-    slot_type: &str,
 ) {
     let mut slots = vec![HashSet::new(); contact_infos.len()];
     let mut done = false;
@@ -399,6 +398,11 @@ fn check_for_new_slots_with_commitment(
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
     let mut num_slots_map = HashMap::new();
+    let slot_type = match commitment.commitment {
+        CommitmentLevel::Processed => "processed slots",
+        CommitmentLevel::Confirmed => "confirmed slots",
+        CommitmentLevel::Finalized => "roots",
+    };
     while !done {
         assert!(loop_start.elapsed() < loop_timeout);
 
@@ -436,7 +440,6 @@ pub fn check_for_new_roots(
         connection_cache,
         test_name,
         CommitmentConfig::finalized(),
-        "roots",
     );
 }
 
@@ -452,7 +455,6 @@ pub fn check_for_new_processed(
         connection_cache,
         test_name,
         CommitmentConfig::processed(),
-        "processed slots",
     );
 }
 
