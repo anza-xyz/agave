@@ -8,13 +8,16 @@ use {
         compute_budget::{
             simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
+        feature::get_feature_is_active,
         memo::WithMemo,
         nonce::check_nonce_account,
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
         stake::check_current_authority,
     },
+    agave_feature_set::bls_pubkey_management_in_vote_account,
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -42,7 +45,10 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{VoteAuthorize, VoteInit, VoteStateV4, VOTE_CREDITS_MAXIMUM_PER_SLOT},
+        vote_state::{
+            create_bls_proof_of_possession, create_bls_pubkey_and_proof_of_possession,
+            VoteAuthorize, VoteInit, VoteStateV4, VoterWithBLSArgs, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        },
     },
     std::rc::Rc,
 };
@@ -148,6 +154,28 @@ impl VoteSubCommands for App<'_, '_> {
                         .required(true),
                     "New authorized vote signer."
                 ))
+                .arg(
+                    Arg::with_name("use_v2_input")
+                        .long("use-v2-input")
+                        .takes_value(false)
+                        .help(
+                            "Force use of VoterWithBLS (SIMD-0387). Required in sign-only mode \
+                             after feature activation. In normal mode, input variant is \
+                             auto-detected based on feature status.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("bls_keypair")
+                        .long("bls-keypair")
+                        .value_name("BLS_KEYPAIR_FILE")
+                        .takes_value(true)
+                        .validator(is_bls_keypair)
+                        .help(
+                            "Path to a BLS keypair file for proof of possession. If not provided, \
+                             a new BLS keypair will be generated. Only valid with VoterWithBLS \
+                             (--use-v2-input or when SIMD-0387 feature is active).",
+                        ),
+                )
                 .offline_args()
                 .nonce_args(false)
                 .arg(fee_payer_arg())
@@ -213,6 +241,28 @@ impl VoteSubCommands for App<'_, '_> {
                         .required(true)
                         .validator(is_valid_signer)
                         .help("New authorized vote signer."),
+                )
+                .arg(
+                    Arg::with_name("use_v2_input")
+                        .long("use-v2-input")
+                        .takes_value(false)
+                        .help(
+                            "Force use of VoterWithBLS (SIMD-0387). Required in sign-only mode \
+                             after feature activation. In normal mode, input variant is \
+                             auto-detected based on feature status.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("bls_keypair")
+                        .long("bls-keypair")
+                        .value_name("BLS_KEYPAIR_FILE")
+                        .takes_value(true)
+                        .validator(is_bls_keypair)
+                        .help(
+                            "Path to a BLS keypair file for proof of possession. If not provided, \
+                             a new BLS keypair will be generated. Only valid with VoterWithBLS \
+                             (--use-v2-input or when SIMD-0387 feature is active).",
+                        ),
                 )
                 .offline_args()
                 .nonce_args(false)
@@ -529,6 +579,19 @@ pub fn parse_vote_authorize(
         pubkey_of_signer(matches, "vote_account_pubkey", wallet_manager)?.unwrap();
     let (authorized, authorized_pubkey) = signer_of(matches, "authorized", wallet_manager)?;
 
+    // SIMD-0387 VoterWithBLS args (only valid for Voter authorization).
+    let use_v2_input = matches.is_present("use_v2_input");
+    let bls_keypair = bls_keypair_of(matches, "bls_keypair");
+
+    // Validate BLS args are only used with Voter authorization.
+    if !matches!(vote_authorize, VoteAuthorize::Voter) && (use_v2_input || bls_keypair.is_some()) {
+        return Err(CliError::BadParameter(
+            "--use-v2-input and --bls-keypair are only valid for voter authorization, not \
+             withdrawer authorization."
+                .to_owned(),
+        ));
+    }
+
     let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
     let dump_transaction_message = matches.is_present(DUMP_TRANSACTION_MESSAGE.name);
     let blockhash_query = BlockhashQuery::new_from_matches(matches);
@@ -560,6 +623,8 @@ pub fn parse_vote_authorize(
             vote_account_pubkey,
             new_authorized_pubkey,
             vote_authorize,
+            use_v2_input,
+            bls_keypair,
             sign_only,
             dump_transaction_message,
             blockhash_query,
@@ -959,6 +1024,8 @@ pub async fn process_vote_authorize(
     vote_account_pubkey: &Pubkey,
     new_authorized_pubkey: &Pubkey,
     vote_authorize: VoteAuthorize,
+    use_v2_input: bool,
+    bls_keypair: Option<&BLSKeypair>,
     authorized: SignerIndex,
     new_authorized: Option<SignerIndex>,
     sign_only: bool,
@@ -973,6 +1040,7 @@ pub async fn process_vote_authorize(
     let authorized = config.signers[authorized];
     let new_authorized_signer = new_authorized.map(|index| config.signers[index]);
 
+    // Fetch vote state first (needed for BLS key check).
     let vote_state = if !sign_only {
         Some(
             get_vote_account(rpc_client, vote_account_pubkey, config.commitment)
@@ -981,6 +1049,36 @@ pub async fn process_vote_authorize(
         )
     } else {
         None
+    };
+
+    // Determine whether to use Voter or VoterWithBLS for voter authorization.
+    // 1. If not VoteAuthorize::Voter → false (Withdrawer doesn't use BLS)
+    // 2. If --use-v2-input OR --bls-keypair provided: true (explicit request)
+    // 3. If sign_only (no flag): false (default to v1)
+    // 4. If vote account has BLS key: true (must use VoterWithBLS, Voter will fail)
+    // 5. If feature active: true
+    // 6. Otherwise: false
+    let use_bls = if !matches!(vote_authorize, VoteAuthorize::Voter) {
+        // Withdrawer authorization doesn't use BLS.
+        false
+    } else if use_v2_input || bls_keypair.is_some() {
+        // Explicit request via flags.
+        true
+    } else if sign_only {
+        // Sign-only without explicit flag, default to Voter (v1).
+        false
+    } else if vote_state
+        .as_ref()
+        .map(|vs| vs.bls_pubkey_compressed.is_some())
+        .unwrap_or(false)
+    {
+        // Account has BLS key - must use VoterWithBLS (Voter will fail).
+        true
+    } else {
+        // Check SIMD-0387 feature gate status.
+        get_feature_is_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
+            .await
+            .unwrap_or(false)
     };
     match vote_authorize {
         VoteAuthorize::Voter => {
@@ -1019,26 +1117,40 @@ pub async fn process_vote_authorize(
             }
         }
         VoteAuthorize::VoterWithBLS(_) => {
-            return Err(CliError::BadParameter(
-                "VoterWithBLS authorization not yet supported".to_string(),
-            )
-            .into());
+            // We should never reach here.
+            // This variant is constructed below, not passed in.
+            unreachable!("VoterWithBLS should not be passed as vote_authorize parameter");
         }
     }
 
+    // Generate BLS keypair and proof of possession for VoterWithBLS.
+    let effective_vote_authorize = if use_bls {
+        let (bls_pubkey, bls_proof_of_possession) = if let Some(bls_kp) = bls_keypair {
+            create_bls_proof_of_possession(new_authorized_pubkey, bls_kp)
+        } else {
+            create_bls_pubkey_and_proof_of_possession(vote_account_pubkey)
+        };
+        VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+            bls_pubkey,
+            bls_proof_of_possession,
+        })
+    } else {
+        vote_authorize
+    };
+
     let vote_ix = if new_authorized_signer.is_some() {
         vote_instruction::authorize_checked(
-            vote_account_pubkey,   // vote account to update
-            &authorized.pubkey(),  // current authorized
-            new_authorized_pubkey, // new vote signer/withdrawer
-            vote_authorize,        // vote or withdraw
+            vote_account_pubkey,
+            &authorized.pubkey(),
+            new_authorized_pubkey,
+            effective_vote_authorize,
         )
     } else {
         vote_instruction::authorize(
-            vote_account_pubkey,   // vote account to update
-            &authorized.pubkey(),  // current authorized
-            new_authorized_pubkey, // new vote signer/withdrawer
-            vote_authorize,        // vote or withdraw
+            vote_account_pubkey,
+            &authorized.pubkey(),
+            new_authorized_pubkey,
+            effective_vote_authorize,
         )
     };
 
@@ -1672,6 +1784,8 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
                     vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: false,
+                    bls_keypair: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -1705,6 +1819,8 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
                     vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: false,
+                    bls_keypair: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -1740,6 +1856,8 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
                     vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: false,
+                    bls_keypair: None,
                     sign_only: true,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Static(blockhash),
@@ -1786,6 +1904,8 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: pubkey2,
                     vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: false,
+                    bls_keypair: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Validated(
@@ -1829,6 +1949,8 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: voter_keypair.pubkey(),
                     vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: false,
+                    bls_keypair: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -1861,6 +1983,8 @@ mod tests {
                     vote_account_pubkey: pubkey,
                     new_authorized_pubkey: voter_keypair.pubkey(),
                     vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: false,
+                    bls_keypair: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -1888,6 +2012,144 @@ mod tests {
             &pubkey2_string,
         ]);
         assert!(parse_command(&test_authorize_voter, &default_signer, &mut None).is_err());
+
+        // Test vote-authorize-voter with --use-v2-input flag.
+        let new_voter_pubkey = Keypair::new().pubkey();
+        let (bls_keypair_file, _tmp_file) = make_tmp_file();
+        let bls_keypair = BLSKeypair::new();
+        bls_keypair.write_json_file(&bls_keypair_file).unwrap();
+
+        let test_authorize_voter_with_bls = test_commands.clone().get_matches_from(vec![
+            "test",
+            "vote-authorize-voter",
+            &pubkey_string,
+            &default_keypair_file,
+            &new_voter_pubkey.to_string(),
+            "--use-v2-input",
+            "--bls-keypair",
+            &bls_keypair_file,
+        ]);
+        assert_eq!(
+            parse_command(&test_authorize_voter_with_bls, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::VoteAuthorize {
+                    vote_account_pubkey: pubkey,
+                    new_authorized_pubkey: new_voter_pubkey,
+                    vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: true,
+                    bls_keypair: Some(bls_keypair),
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    authorized: 0,
+                    new_authorized: None,
+                    compute_unit_price: None,
+                },
+                signers: vec![Box::new(read_keypair_file(&default_keypair_file).unwrap()),],
+            }
+        );
+
+        // Test vote-authorize-voter-checked with --use-v2-input flag.
+        let (new_voter_keypair_file, mut tmp_file) = make_tmp_file();
+        let new_voter_keypair = Keypair::new();
+        write_keypair(&new_voter_keypair, tmp_file.as_file_mut()).unwrap();
+
+        let test_authorize_voter_checked_with_bls = test_commands.clone().get_matches_from(vec![
+            "test",
+            "vote-authorize-voter-checked",
+            &pubkey_string,
+            &authorized_keypair_file,
+            &new_voter_keypair_file,
+            "--use-v2-input",
+        ]);
+        assert_eq!(
+            parse_command(
+                &test_authorize_voter_checked_with_bls,
+                &default_signer,
+                &mut None
+            )
+            .unwrap(),
+            CliCommandInfo {
+                command: CliCommand::VoteAuthorize {
+                    vote_account_pubkey: pubkey,
+                    new_authorized_pubkey: new_voter_keypair.pubkey(),
+                    vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: true,
+                    bls_keypair: None,
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    authorized: 1,
+                    new_authorized: Some(2),
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authorized_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&new_voter_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // Test vote-authorize-voter-checked with explicit --bls-keypair.
+        let (new_voter_keypair_file2, mut tmp_file) = make_tmp_file();
+        let new_voter_keypair2 = Keypair::new();
+        write_keypair(&new_voter_keypair2, tmp_file.as_file_mut()).unwrap();
+        let (bls_keypair_file2, _tmp_file) = make_tmp_file();
+        let bls_keypair2 = BLSKeypair::new();
+        bls_keypair2.write_json_file(&bls_keypair_file2).unwrap();
+
+        let test_authorize_voter_checked_with_bls_explicit =
+            test_commands.clone().get_matches_from(vec![
+                "test",
+                "vote-authorize-voter-checked",
+                &pubkey_string,
+                &authorized_keypair_file,
+                &new_voter_keypair_file2,
+                "--use-v2-input",
+                "--bls-keypair",
+                &bls_keypair_file2,
+            ]);
+        assert_eq!(
+            parse_command(
+                &test_authorize_voter_checked_with_bls_explicit,
+                &default_signer,
+                &mut None
+            )
+            .unwrap(),
+            CliCommandInfo {
+                command: CliCommand::VoteAuthorize {
+                    vote_account_pubkey: pubkey,
+                    new_authorized_pubkey: new_voter_keypair2.pubkey(),
+                    vote_authorize: VoteAuthorize::Voter,
+                    use_v2_input: true,
+                    bls_keypair: Some(bls_keypair2),
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    authorized: 1,
+                    new_authorized: Some(2),
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authorized_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&new_voter_keypair_file2).unwrap()),
+                ],
+            }
+        );
 
         // Test CreateVoteAccount SubCommand
         let (identity_keypair_file, mut tmp_file) = make_tmp_file();
