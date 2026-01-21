@@ -1,4 +1,3 @@
-#![cfg(not(target_os = "solana"))]
 #![cfg_attr(
     not(feature = "agave-unstable-api"),
     deprecated(

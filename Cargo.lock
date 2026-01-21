@@ -86,10 +86,6 @@ dependencies = [
  "group",
  "hex-literal",
  "pairing",
- "serde",
- "serde_derive",
- "serde_json",
- "solana-define-syscall 5.0.0",
 ]
 
 [[package]]

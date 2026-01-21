@@ -16,24 +16,16 @@ targets = ["x86_64-unknown-linux-gnu"]
 agave-unstable-api = []
 
 [dependencies]
-bytemuck = { workspace = true, features = ["min_const_generics"] }
-bytemuck_derive = { workspace = true }
-
-[target.'cfg(not(target_os = "solana"))'.dependencies]
 blst = { workspace = true }
 blstrs = { workspace = true }
+bytemuck = { workspace = true, features = ["min_const_generics"] }
+bytemuck_derive = { workspace = true }
 group = { workspace = true }
 pairing = { workspace = true }
-
-[target.'cfg(target_os = "solana")'.dependencies]
-solana-define-syscall = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 hex-literal = { workspace = true }
-serde = { workspace = true }
-serde_derive = { workspace = true }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true
