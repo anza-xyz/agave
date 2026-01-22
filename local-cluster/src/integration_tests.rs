@@ -248,7 +248,7 @@ pub fn run_kill_partition_switch_threshold<C>(
         .iter()
         .map(|k| k.node_keypair.pubkey())
         .collect();
-    info!("Validator ids: {:?}", validator_pubkeys);
+    info!("Validator ids: {validator_pubkeys:?}");
     let on_partition_start = |cluster: &mut LocalCluster, partition_context: &mut C| {
         let dead_validator_infos: Vec<ClusterValidatorInfo> = validator_pubkeys
             [0..stakes_to_kill.len()]
