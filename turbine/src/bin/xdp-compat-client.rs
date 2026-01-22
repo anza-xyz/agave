@@ -13,6 +13,7 @@ use {
         tx_loop::tx_loop,
     },
     crossbeam_channel::bounded,
+    solana_turbine::xdp::master_ip_if_bonded,
 };
 
 #[cfg(target_os = "linux")]
@@ -115,10 +116,15 @@ fn main() {
     };
     let iface = dev.name().to_string();
 
-    let local_ip = dev.ipv4_addr().unwrap_or_else(|e| {
-        eprintln!("Failed to get IPv4 address for {iface}: {e}");
-        std::process::exit(1);
-    });
+    let local_ip = dev
+        .ipv4_addr()
+        .or_else(|_| master_ip_if_bonded(&iface).ok_or_else(|| {
+            std::io::Error::other("no IPv4 address on interface or bond master")
+        }))
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to get IPv4 address for {iface}: {e}");
+            std::process::exit(1);
+        });
 
     let _ebpf = if zero_copy {
         for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_PERFMON] {
@@ -253,4 +259,3 @@ fn recv_until_match(udp: &UdpSocket, payload: &[u8], timeout_ms: u64) -> bool {
         }
     }
 }
-
