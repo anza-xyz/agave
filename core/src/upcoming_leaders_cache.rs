@@ -1,11 +1,15 @@
-use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
-use async_trait::async_trait;
-use solana_clock::{NUM_CONSECUTIVE_LEADER_SLOTS, Slot};
-use solana_connection_cache::connection_cache::Protocol;
-use solana_gossip::cluster_info::ClusterInfo;
-use solana_poh::poh_recorder::PohRecorder;
-use solana_tpu_client_next::leader_updater::LeaderUpdater;
+use {
+    async_trait::async_trait,
+    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_connection_cache::connection_cache::Protocol,
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_poh::poh_recorder::PohRecorder,
+    solana_tpu_client_next::leader_updater::LeaderUpdater,
+    std::{
+        net::SocketAddr,
+        sync::{Arc, RwLock},
+    },
+};
 
 // Warning: this module assumes a leader window starts at a slot which is a multiple of NUM_CONSECUTIVE_LEADER_SLOTS.
 // Leader windows are identified by (first slot in window)/NUM_CONSECUTIVE_LEADER_SLOTS.
