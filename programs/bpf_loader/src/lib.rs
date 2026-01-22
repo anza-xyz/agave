@@ -1157,16 +1157,13 @@ fn common_close_account(
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 mod test_utils {
+    #[cfg(all(feature = "svm-internal", feature = "metrics"))]
+    use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*,
-        agave_syscalls::create_program_runtime_environment_v1,
-        solana_account::ReadableAccount,
-        solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::{
-            deploy::load_program_from_bytes, loaded_programs::LoadProgramMetrics,
-        },
-        solana_sdk_ids::loader_v4,
+        super::*, agave_syscalls::create_program_runtime_environment_v1,
+        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
+        solana_program_runtime::deploy::load_program_from_bytes, solana_sdk_ids::loader_v4,
     };
 
     #[cfg(feature = "svm-internal")]
@@ -1180,6 +1177,7 @@ mod test_utils {
     #[cfg(feature = "svm-internal")]
     #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
     fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
+        #[cfg(feature = "metrics")]
         let mut load_program_metrics = LoadProgramMetrics::default();
         let program_runtime_environment = create_program_runtime_environment_v1(
             invoke_context.get_feature_set(),
@@ -1210,6 +1208,7 @@ mod test_utils {
 
                 if let Ok(loaded_program) = load_program_from_bytes(
                     None,
+                    #[cfg(feature = "metrics")]
                     &mut load_program_metrics,
                     account
                         .data()
