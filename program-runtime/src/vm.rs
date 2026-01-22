@@ -1,5 +1,7 @@
 //! SBF virtual machine provisioning and execution.
 
+#[cfg(feature = "svm-internal")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
@@ -23,8 +25,6 @@ use {
     solana_transaction_context::{IndexOfAccount, TransactionContext},
     std::{cell::RefCell, mem},
 };
-#[cfg(feature = "svm-internal")]
-use qualifier_attr::qualifiers;
 
 thread_local! {
     pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
