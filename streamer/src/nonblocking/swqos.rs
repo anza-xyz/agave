@@ -35,29 +35,12 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-<<<<<<< HEAD
-=======
-// Empirically found max number of concurrent streams
-// that seems to maximize TPS on GCE (higher values don't seem to
-// give significant improvement or seem to impact stability)
-pub const QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS: usize = 128;
-pub const QUIC_MIN_STAKED_CONCURRENT_STREAMS: usize = 128;
-
-// Set the maximum concurrent stream numbers to avoid excessive streams.
-// The value was lowered from 2048 to reduce contention of the limited
-// receive_window among the streams which is observed in CI bench-tests with
-// forwarded packets from staked nodes.
-pub const QUIC_MAX_STAKED_CONCURRENT_STREAMS: usize = 512;
-
-pub const QUIC_TOTAL_STAKED_CONCURRENT_STREAMS: usize = 100_000;
-
 /// RTT after which we start BDP scaling
 const REFERENCE_RTT_MS: u64 = 50;
 
 /// Above this RTT we stop scaling for BDP
 const MAX_RTT_MS: u64 = 350;
 
->>>>>>> 25a96c61a (Streamer: add BDP scaling (#10144))
 #[derive(Clone)]
 pub struct SwQosConfig {
     pub max_streams_per_ms: u64,
