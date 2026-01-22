@@ -137,6 +137,7 @@ members = [
     "votor-messages",
     "watchtower",
     "wen-restart",
+    "xdp-compatability",
     "xdp",
     "xdp-ebpf",
 ]
