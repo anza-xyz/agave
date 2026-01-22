@@ -252,7 +252,7 @@ impl<const N: usize> PingCache<N> {
                 } else {
                     // If the pong message is not too recent, generate a new ping
                     // message to extend remote node verification.
-                    (true, age > self.ttl / 8)
+                    (true, age > self.ttl / 4)
                 }
             }
         };
@@ -387,7 +387,7 @@ mod tests {
             assert!(ping.is_none());
         }
 
-        let now = now + ttl / 8;
+        let now = now + ttl / 4 + Duration::from_millis(1);
         // All nodes still have a valid pong packet, but the cache will create
         // a new ping packet to extend verification.
         seen_nodes.clear();
