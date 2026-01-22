@@ -1040,7 +1040,7 @@ pub async fn process_create_vote_account(
                 authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
                 authorized_withdrawer,
                 inflation_rewards_commission_bps: inflation_rewards_commission_bps
-                    .or_else(|| commission.map(|c| c as u16 * 100))
+                    .or_else(|| commission.map(|c| (c as u16).saturating_mul(100))) // u16::MAX > u8::MAX * 100
                     .unwrap_or(10000),
                 inflation_rewards_collector: inflation_rewards_collector
                     .copied()
