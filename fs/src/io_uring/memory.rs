@@ -222,6 +222,10 @@ impl IoBufferChunk {
         self.size
     }
 
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
     /// Safety: while just returning without dereferencing a pointer is safe, this is marked unsafe
     /// so that the callers are encouraged to reason about the lifetime of the buffer.
     pub unsafe fn as_mut_ptr(&self) -> *mut u8 {
@@ -231,16 +235,6 @@ impl IoBufferChunk {
     /// The index of the fixed buffer in the ring. See register_buffers().
     pub fn io_buf_index(&self) -> Option<u16> {
         self.registered_io_buf_index
-    }
-
-    /// Return a clone of `self` reduced to specified `size`
-    pub fn into_shrinked(self, size: IoSize) -> Self {
-        assert!(size <= self.size);
-        Self {
-            ptr: self.ptr,
-            size,
-            registered_io_buf_index: self.registered_io_buf_index,
-        }
     }
 
     /// Register provided buffer as fixed buffer in `io_uring`.
@@ -256,11 +250,5 @@ impl IoBufferChunk {
             })
             .collect::<Vec<_>>();
         unsafe { ring.register_buffers(&iovecs) }
-    }
-}
-
-impl AsRef<[u8]> for IoBufferChunk {
-    fn as_ref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr, self.size as usize) }
     }
 }

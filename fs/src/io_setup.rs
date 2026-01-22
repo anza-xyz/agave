@@ -82,8 +82,9 @@ mod tests {
             .build(1 << 20, move |file_info| {
                 let mut reader = SequentialFileReaderBuilder::new()
                     .shared_sqpoll(io_setup.shared_sqpoll_fd())
-                    .build(file_info.path, 1 << 20)
+                    .build(1 << 20)
                     .unwrap();
+                reader.set_path(file_info.path).unwrap();
                 reader
                     .read_to_end(read_bytes_ref.write().unwrap().as_mut())
                     .unwrap();

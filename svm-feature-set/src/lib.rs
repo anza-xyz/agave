@@ -55,6 +55,7 @@ pub struct SVMFeatureSet {
     pub alt_bn128_little_endian: bool,
     pub create_account_allow_prefund: bool,
     pub bls_pubkey_management_in_vote_account: bool,
+    pub enable_alt_bn128_g2_syscalls: bool,
 }
 
 impl SVMFeatureSet {
@@ -106,6 +107,7 @@ impl SVMFeatureSet {
             alt_bn128_little_endian: true,
             create_account_allow_prefund: true,
             bls_pubkey_management_in_vote_account: true,
+            enable_alt_bn128_g2_syscalls: true,
         }
     }
 }
