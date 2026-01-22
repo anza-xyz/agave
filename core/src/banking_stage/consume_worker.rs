@@ -325,7 +325,7 @@ pub(crate) mod external {
                 .num_messages_processed
                 .fetch_add(1, Ordering::Relaxed);
 
-            if message.flags & pack_message_flags::EXECUTE == 1 {
+            if message.flags & pack_message_flags::EXECUTE != 0 {
                 self.execute_batch(message, should_drain_executes)
             } else {
                 self.check_batch(message).map(|()| false)
