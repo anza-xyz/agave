@@ -1,10 +1,10 @@
-use std::{
-    env,
-    net::{SocketAddr, UdpSocket},
+use {
+    solana_net_utils::sockets::bind_to,
+    std::{env, net::SocketAddr},
 };
 
 fn usage() -> ! {
-    eprintln!("Usage: xdp-compat-server --bind <IP:PORT>");
+    eprintln!("Usage: server --bind <IP:PORT>");
     std::process::exit(2);
 }
 
@@ -24,7 +24,7 @@ fn main() {
         .and_then(|s| s.parse::<SocketAddr>().ok())
         .unwrap_or_else(|| usage());
 
-    let socket = UdpSocket::bind(bind).unwrap_or_else(|e| {
+    let socket = bind_to(bind.ip(), bind.port()).unwrap_or_else(|e| {
         eprintln!("Failed to bind UDP socket on {bind}: {e}");
         std::process::exit(1);
     });

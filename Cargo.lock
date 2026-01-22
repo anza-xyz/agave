@@ -14315,6 +14315,7 @@ dependencies = [
  "agave-xdp",
  "caps",
  "crossbeam-channel",
+ "solana-net-utils",
  "solana-turbine",
 ]
 

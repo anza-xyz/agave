@@ -4,7 +4,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-
 #[cfg(target_os = "linux")]
 use {
     agave_xdp::{
@@ -12,14 +11,13 @@ use {
         route::Router,
         tx_loop::tx_loop,
     },
+    caps::{
+        CapSet,
+        Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
+    },
     crossbeam_channel::bounded,
+    solana_net_utils::sockets::bind_to,
     solana_turbine::xdp::master_ip_if_bonded,
-};
-
-#[cfg(target_os = "linux")]
-use caps::{
-    CapSet,
-    Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
 };
 
 const DEFAULT_COUNT: usize = 5;
@@ -39,8 +37,8 @@ struct Config {
 
 fn usage() -> ! {
     eprintln!(
-        "Usage: xdp-compat-client --server <IP:PORT> [--interface <IFACE>] [--cpu <N>] \
-         [--count <N>] [--timeout-ms <MS>] [--payload-size <N>] [--zero-copy]"
+        "Usage: client --server <IP:PORT> [--interface <IFACE>] [--cpu <N>] [--count <N>] \
+         [--timeout-ms <MS>] [--payload-size <N>] [--zero-copy]"
     );
     std::process::exit(2);
 }
@@ -60,13 +58,22 @@ fn parse_args() -> Config {
             "--interface" => interface = args.next(),
             "--server" => server = args.next(),
             "--cpu" => {
-                cpu = args.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| usage());
+                cpu = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| usage());
             }
             "--count" => {
-                count = args.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| usage());
+                count = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| usage());
             }
             "--timeout-ms" => {
-                timeout_ms = args.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| usage());
+                timeout_ms = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| usage());
             }
             "--payload-size" => {
                 payload_size = args
@@ -118,9 +125,10 @@ fn main() {
 
     let local_ip = dev
         .ipv4_addr()
-        .or_else(|_| master_ip_if_bonded(&iface).ok_or_else(|| {
-            std::io::Error::other("no IPv4 address on interface or bond master")
-        }))
+        .or_else(|_| {
+            master_ip_if_bonded(&iface)
+                .ok_or_else(|| std::io::Error::other("no IPv4 address on interface or bond master"))
+        })
         .unwrap_or_else(|e| {
             eprintln!("Failed to get IPv4 address for {iface}: {e}");
             std::process::exit(1);
@@ -151,7 +159,8 @@ fn main() {
     };
 
     let server = config.server;
-    let udp = UdpSocket::bind(SocketAddr::new(IpAddr::V4(local_ip), 0)).unwrap_or_else(|e| {
+    // Bind a kernel UDP socket to trigger ARP/neighbor resolution before XDP sends.
+    let udp = bind_to(IpAddr::V4(local_ip), 0).unwrap_or_else(|e| {
         eprintln!("Failed to bind UDP socket: {e}");
         std::process::exit(1);
     });
@@ -206,7 +215,7 @@ fn main() {
         sender.send((vec![server], payload.clone())).unwrap();
 
         if recv_until_match(&udp, &payload, config.timeout_ms) {
-            ok += 1;
+            ok = ok.saturating_add(1);
         } else {
             eprintln!("Response mismatch or timeout for seq {seq}");
         }
@@ -241,9 +250,12 @@ fn build_payload(seq: usize, payload_size: usize) -> Vec<u8> {
 }
 
 fn recv_until_match(udp: &UdpSocket, payload: &[u8], timeout_ms: u64) -> bool {
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    let mut buf = vec![0u8; payload.len() + 64];
+    let deadline = Instant::now().checked_add(Duration::from_millis(timeout_ms));
+    let mut buf = vec![0u8; payload.len().saturating_add(64)];
     loop {
+        let Some(deadline) = deadline else {
+            return false;
+        };
         if Instant::now() > deadline {
             return false;
         }
