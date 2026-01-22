@@ -119,8 +119,8 @@ pub(crate) fn new_post_exec(
         .collect()
 }
 
-// Legacy post-exec account state info calculation. Deprecated by SIMD-0392.
-pub(crate) fn new_post_exec_legacy(
+// Legacy post and pre-exec account state info calculation. Deprecated by SIMD-0392.
+pub(crate) fn new_legacy(
     transaction_context: &TransactionContext,
     message: &impl SVMMessage,
     rent: &Rent,
