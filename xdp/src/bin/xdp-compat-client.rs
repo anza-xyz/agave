@@ -1,6 +1,6 @@
 use std::{
     env,
-    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+    net::{IpAddr, SocketAddr, UdpSocket},
     thread,
     time::{Duration, Instant},
 };
@@ -115,42 +115,12 @@ fn main() {
     };
     let iface = dev.name().to_string();
 
-    if let Ok(driver) = dev.driver() {
-        if driver == "i40e" {
-            eprintln!("Warning: driver i40e has known fragment quirks for XDP.");
-        }
-    }
-
-    if !is_interface_up(&iface) {
-        eprintln!("Interface {iface} is not up.");
+    let local_ip = dev.ipv4_addr().unwrap_or_else(|e| {
+        eprintln!("Failed to get IPv4 address for {iface}: {e}");
         std::process::exit(1);
-    }
-
-    let local_ip = dev
-        .ipv4_addr()
-        .or_else(|_| master_ip_if_bonded(&iface).ok_or_else(|| {
-            std::io::Error::other("no IPv4 address on interface or bond master")
-        }))
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to get IPv4 address for {iface}: {e}");
-            std::process::exit(1);
-        });
-
-    let tx_queues = count_tx_queues(&iface).unwrap_or(0);
-    if tx_queues > 0 && config.cpu >= tx_queues {
-        eprintln!(
-            "CPU core {} exceeds available TX queues ({tx_queues}) on {iface}.",
-            config.cpu
-        );
-        std::process::exit(1);
-    }
+    });
 
     let _ebpf = if zero_copy {
-        if NetworkDevice::ring_sizes(&iface).is_err() {
-            eprintln!("Zero-copy requires NIC ring sizes; none found for {iface}.");
-            std::process::exit(1);
-        }
-
         for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_PERFMON] {
             if let Err(e) = caps::raise(None, CapSet::Effective, cap) {
                 eprintln!("Failed to raise {cap:?} capability: {e}");
@@ -284,29 +254,3 @@ fn recv_until_match(udp: &UdpSocket, payload: &[u8], timeout_ms: u64) -> bool {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn is_interface_up(iface: &str) -> bool {
-    let path = format!("/sys/class/net/{iface}/operstate");
-    std::fs::read_to_string(path)
-        .map(|s| s.trim() == "up")
-        .unwrap_or(false)
-}
-
-#[cfg(target_os = "linux")]
-fn count_tx_queues(iface: &str) -> Option<usize> {
-    let path = format!("/sys/class/net/{iface}/queues");
-    let entries = std::fs::read_dir(path).ok()?;
-    let count = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("tx-"))
-        .count();
-    Some(count)
-}
-
-#[cfg(target_os = "linux")]
-fn master_ip_if_bonded(iface: &str) -> Option<Ipv4Addr> {
-    let master_ifindex_path = format!("/sys/class/net/{iface}/master/ifindex");
-    let contents = std::fs::read_to_string(master_ifindex_path).ok()?;
-    let idx: u32 = contents.trim().parse().ok()?;
-    NetworkDevice::new_from_index(idx).ok()?.ipv4_addr().ok()
-}
