@@ -35,6 +35,29 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+<<<<<<< HEAD
+=======
+// Empirically found max number of concurrent streams
+// that seems to maximize TPS on GCE (higher values don't seem to
+// give significant improvement or seem to impact stability)
+pub const QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS: usize = 128;
+pub const QUIC_MIN_STAKED_CONCURRENT_STREAMS: usize = 128;
+
+// Set the maximum concurrent stream numbers to avoid excessive streams.
+// The value was lowered from 2048 to reduce contention of the limited
+// receive_window among the streams which is observed in CI bench-tests with
+// forwarded packets from staked nodes.
+pub const QUIC_MAX_STAKED_CONCURRENT_STREAMS: usize = 512;
+
+pub const QUIC_TOTAL_STAKED_CONCURRENT_STREAMS: usize = 100_000;
+
+/// RTT after which we start BDP scaling
+const REFERENCE_RTT_MS: u64 = 50;
+
+/// Above this RTT we stop scaling for BDP
+const MAX_RTT_MS: u64 = 350;
+
+>>>>>>> 25a96c61a (Streamer: add BDP scaling (#10144))
 #[derive(Clone)]
 pub struct SwQosConfig {
     pub max_streams_per_ms: u64,
@@ -114,8 +137,12 @@ impl SwQos {
     }
 }
 
-fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
-    match peer_type {
+fn compute_max_allowed_uni_streams_with_rtt(
+    rtt_millis: u64,
+    peer_type: ConnectionPeerType,
+    total_stake: u64,
+) -> usize {
+    let streams = match peer_type {
         ConnectionPeerType::Staked(peer_stake) => {
             // No checked math for f64 type. So let's explicitly check for 0 here
             if total_stake == 0 || peer_stake > total_stake {
@@ -138,7 +165,10 @@ fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u
             }
         }
         ConnectionPeerType::Unstaked => QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    }
+    };
+    // scale amount of streams based on RTT if RTT is larger than REFERENCE_RTT_MS
+    // multiply first then divide to avoid rounding errors.
+    (streams * rtt_millis.clamp(REFERENCE_RTT_MS, MAX_RTT_MS) as usize) / REFERENCE_RTT_MS as usize
 }
 
 impl SwQos {
@@ -156,7 +186,10 @@ impl SwQos {
         ),
         ConnectionHandlerError,
     > {
-        if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
+        // get current RTT and limit it to MAX_RTT_MS
+        let rtt_millis = connection.rtt().as_millis() as u64;
+        if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams_with_rtt(
+            rtt_millis,
             conn_context.peer_type(),
             conn_context.total_stake,
         ) as u64)
@@ -488,6 +521,10 @@ impl QosController<SwQosConnectionContext> for SwQos {
 pub mod test {
     use super::*;
 
+    fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
+        compute_max_allowed_uni_streams_with_rtt(REFERENCE_RTT_MS, peer_type, total_stake)
+    }
+
     #[test]
     fn test_max_allowed_uni_streams() {
         assert_eq!(
@@ -512,6 +549,28 @@ pub mod test {
         assert_eq!(
             compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 10000),
             QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
+        );
+    }
+
+    #[test]
+    fn test_max_allowed_uni_streams_with_rtt() {
+        assert_eq!(
+            compute_max_allowed_uni_streams_with_rtt(
+                REFERENCE_RTT_MS / 2,
+                ConnectionPeerType::Unstaked,
+                10000
+            ),
+            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
+            "Max streams should not be less than normal for low RTT"
+        );
+        assert_eq!(
+            compute_max_allowed_uni_streams_with_rtt(
+                REFERENCE_RTT_MS + REFERENCE_RTT_MS / 2,
+                ConnectionPeerType::Unstaked,
+                10000
+            ),
+            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS + QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS / 2,
+            "Max streams should scale with BDP in high-RTT connections"
         );
     }
 }
