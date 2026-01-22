@@ -1210,13 +1210,7 @@ declare_builtin_function!(
                     Ok(1)
                 }
             }
-            _ => {
-                if invoke_context.get_feature_set().abort_on_invalid_curve {
-                    Err(SyscallError::InvalidAttribute.into())
-                } else {
-                    Ok(1)
-                }
-            }
+            _ => Err(SyscallError::InvalidAttribute.into()),
         }
     }
 );
@@ -1883,11 +1877,7 @@ declare_builtin_function!(
                 }
             }
             _ => {
-                if invoke_context.get_feature_set().abort_on_invalid_curve {
-                    Err(SyscallError::InvalidAttribute.into())
-                } else {
-                    Ok(1)
-                }
+                Err(SyscallError::InvalidAttribute.into())
             }
         }
     }
