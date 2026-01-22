@@ -472,6 +472,7 @@ impl RpcSender for MockSender {
                     amount: 2500,
                     post_balance: 499999442500,
                     commission: None,
+                    commission_bps: None,
                 })])?,
             "minimumLedgerSlot" => json![123],
             "getMaxRetransmitSlot" => json![123],

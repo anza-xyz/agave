@@ -17,6 +17,7 @@ pub trait BlockMetadataNotifier {
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
+        commission_rate_in_basis_points: bool,
     );
 }
 

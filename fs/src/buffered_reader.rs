@@ -401,10 +401,12 @@ pub fn large_file_buf_reader(
         assert!(agave_io_uring::io_uring_supported());
         use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 
-        SequentialFileReaderBuilder::new()
+        let mut reader = SequentialFileReaderBuilder::new()
             .shared_sqpoll(io_setup.shared_sqpoll_fd())
             .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
-            .build(path, buf_size)
+            .build(buf_size)?;
+        reader.set_path(path)?;
+        Ok(reader)
     }
     #[cfg(not(target_os = "linux"))]
     {

@@ -1444,7 +1444,7 @@ mod tests {
         solana_signer::Signer,
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
-        solana_vote_interface::state::{TowerSync, Vote},
+        solana_vote_interface::state::{TowerSync, Vote, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
         solana_vote_program::vote_state::create_v4_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},
         tempfile::TempDir,
@@ -1989,9 +1989,12 @@ mod tests {
                         VoteAccount::try_from(create_v4_account_with_authorized(
                             &node_id,
                             &authorized_voter,
+                            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                             &node_id,
-                            None,
                             0,
+                            &node_id,
+                            0,
+                            &node_id,
                             100,
                         ))
                         .unwrap(),

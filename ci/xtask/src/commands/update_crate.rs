@@ -44,7 +44,9 @@ pub fn run(args: CommandArgs) -> Result<()> {
         // update workspace.dependencies
         if let Some(workspace_deps) = doc
             .get_mut("workspace")
+            .and_then(|ws| ws.as_table_mut())
             .and_then(|ws| ws.get_mut("dependencies"))
+            .and_then(|deps| deps.as_table_mut())
             .and_then(|deps| deps.get_mut(&args.package))
         {
             if update_dependency_spec(workspace_deps, &args.from, &args.to) {
@@ -56,6 +58,7 @@ pub fn run(args: CommandArgs) -> Result<()> {
         // update dependencies
         if let Some(deps) = doc
             .get_mut("dependencies")
+            .and_then(|deps| deps.as_table_mut())
             .and_then(|deps| deps.get_mut(&args.package))
         {
             if update_dependency_spec(deps, &args.from, &args.to) {

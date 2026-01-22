@@ -201,15 +201,18 @@ impl IoBufferChunk {
         registered_buffer: bool,
     ) -> impl Iterator<Item = Self> + use<'_> {
         assert!(
-            (buffer.len() / FIXED_BUFFER_LEN as usize) <= u16::MAX as usize,
-            "buffer too large to register in io_uring"
+            chunk_size <= FIXED_BUFFER_LEN,
+            "chunk size {chunk_size} is too large"
+        );
+        assert!(
+            (buffer.len() / chunk_size as usize) <= u16::MAX as usize,
+            "buffer too large (yields too many chunks at size={chunk_size})"
         );
         let buf_start = buffer.as_ptr().addr();
-
         buffer
             .chunks_exact_mut(chunk_size as usize)
             .map(move |buf| {
-                let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN as usize;
+                let io_buf_index = (buf.as_ptr().addr() - buf_start) / FIXED_BUFFER_LEN as usize;
                 Self {
                     ptr: buf.as_mut_ptr(),
                     size: buf.len() as IoSize,
@@ -222,6 +225,10 @@ impl IoBufferChunk {
         self.size
     }
 
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
     /// Safety: while just returning without dereferencing a pointer is safe, this is marked unsafe
     /// so that the callers are encouraged to reason about the lifetime of the buffer.
     pub unsafe fn as_mut_ptr(&self) -> *mut u8 {
@@ -231,16 +238,6 @@ impl IoBufferChunk {
     /// The index of the fixed buffer in the ring. See register_buffers().
     pub fn io_buf_index(&self) -> Option<u16> {
         self.registered_io_buf_index
-    }
-
-    /// Return a clone of `self` reduced to specified `size`
-    pub fn into_shrinked(self, size: IoSize) -> Self {
-        assert!(size <= self.size);
-        Self {
-            ptr: self.ptr,
-            size,
-            registered_io_buf_index: self.registered_io_buf_index,
-        }
     }
 
     /// Register provided buffer as fixed buffer in `io_uring`.
@@ -256,11 +253,5 @@ impl IoBufferChunk {
             })
             .collect::<Vec<_>>();
         unsafe { ring.register_buffers(&iovecs) }
-    }
-}
-
-impl AsRef<[u8]> for IoBufferChunk {
-    fn as_ref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr, self.size as usize) }
     }
 }

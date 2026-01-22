@@ -30,13 +30,14 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
+        commission_rate_in_basis_points: bool,
     ) {
         let plugin_manager = self.plugin_manager.read().unwrap();
         if plugin_manager.plugins.is_empty() {
             return;
         }
 
-        let rewards = Self::build_rewards(rewards);
+        let rewards = Self::build_rewards(rewards, commission_rate_in_basis_points);
         let block_info = Self::build_replica_block_info(
             parent_slot,
             parent_blockhash,
@@ -73,7 +74,10 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
 }
 
 impl BlockMetadataNotifierImpl {
-    fn build_rewards(rewards: &KeyedRewardsAndNumPartitions) -> RewardsAndNumPartitions {
+    fn build_rewards(
+        rewards: &KeyedRewardsAndNumPartitions,
+        commission_rate_in_basis_points: bool,
+    ) -> RewardsAndNumPartitions {
         RewardsAndNumPartitions {
             rewards: rewards
                 .keyed_rewards
@@ -83,7 +87,16 @@ impl BlockMetadataNotifierImpl {
                     lamports: reward.lamports,
                     post_balance: reward.post_balance,
                     reward_type: Some(reward.reward_type),
-                    commission: reward.commission,
+                    commission: if commission_rate_in_basis_points {
+                        None
+                    } else {
+                        reward.commission_bps.map(|bps| (bps / 100) as u8)
+                    },
+                    commission_bps: if commission_rate_in_basis_points {
+                        reward.commission_bps
+                    } else {
+                        None
+                    },
                 })
                 .collect(),
             num_partitions: rewards.num_partitions,
