@@ -150,7 +150,7 @@ fn new_legacy(
 ) -> Vec<Option<RentState>> {
     (0..message.account_keys().len())
         .map(|i| {
-            let rent_state = if message.is_writable(i) {
+            if message.is_writable(i) {
                 let state = if let Ok(account) = transaction_context
                     .accounts()
                     .try_borrow(i as IndexOfAccount)
@@ -170,9 +170,7 @@ fn new_legacy(
                 state
             } else {
                 None
-            };
-
-            rent_state
+            }
         })
         .collect()
 }
@@ -186,7 +184,7 @@ pub(crate) fn verify_changes(
         if let (Some(pre_state_info), Some(post_rent_state)) = exec_state_info {
             check_rent_state(
                 &pre_state_info.rent_state,
-                &post_rent_state,
+                post_rent_state,
                 transaction_context,
                 i as IndexOfAccount,
             )?;
