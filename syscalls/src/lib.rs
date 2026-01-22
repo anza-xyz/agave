@@ -264,8 +264,8 @@ impl HasherImpl for Keccak256Hasher {
     }
 }
 
-// NOTE: These constants are temporarily added here to avoid immediate
-// dependency conflicts.
+// NOTE: These constants are temporarily defined here and will be
+// moved to a dedicated crate in the future.
 mod bls12_381_curve_id {
     /// Curve ID for BLS12-381 pairing operations
     pub(crate) const BLS12_381_LE: u64 = 4;
@@ -986,7 +986,9 @@ declare_builtin_function!(
 declare_builtin_function!(
     // Elliptic Curve Point Validation
     //
-    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    // Currently, the following curves are supported:
+    // - Curve25519 Edwards and Ristretto representations
+    // - BLS12-381
     SyscallCurvePointValidation,
     fn rust(
         invoke_context: &mut InvokeContext,
@@ -1117,7 +1119,10 @@ declare_builtin_function!(
 );
 
 declare_builtin_function!(
-    /// Elliptic Curve Point Decompression
+    // Elliptic Curve Point Decompression
+    //
+    // Currently, the following curves are supported:
+    // - BLS12-381
     SyscallCurveDecompress,
     fn rust(
         invoke_context: &mut InvokeContext,
@@ -1131,9 +1136,8 @@ declare_builtin_function!(
         use {
             crate::bls12_381_curve_id::*,
             agave_bls12_381::{
-                PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
-                PodG1Compressed as PodBLSG1Compressed, PodG2Compressed as
-                PodBLSG2Compressed
+                PodG1Compressed as PodBLSG1Compressed, PodG1Point as PodBLSG1Point,
+                PodG2Compressed as PodBLSG2Compressed, PodG2Point as PodBLSG2Point,
             },
         };
 
@@ -1220,7 +1224,9 @@ declare_builtin_function!(
 declare_builtin_function!(
     // Elliptic Curve Group Operations
     //
-    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    // Currently, the following curves are supported:
+    // - Curve25519 Edwards and Ristretto representations
+    // - BLS12-381
     SyscallCurveGroupOps,
     fn rust(
         invoke_context: &mut InvokeContext,
@@ -1689,7 +1695,8 @@ declare_builtin_function!(
 declare_builtin_function!(
     // Elliptic Curve Multiscalar Multiplication
     //
-    // Currently, only curve25519 Edwards and Ristretto representations are supported
+    // Currently, the following curves are supported:
+    // - Curve25519 Edwards and Ristretto representations
     SyscallCurveMultiscalarMultiplication,
     fn rust(
         invoke_context: &mut InvokeContext,
@@ -1805,6 +1812,9 @@ declare_builtin_function!(
 
 declare_builtin_function!(
     /// Elliptic Curve Pairing Map
+    ///
+    // Currently, the following curves are supported:
+    // - BLS12-381
     SyscallCurvePairingMap,
     fn rust(
         invoke_context: &mut InvokeContext,
