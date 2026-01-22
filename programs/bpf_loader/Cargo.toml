@@ -37,7 +37,6 @@ solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
-solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
 solana-packet = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-runtime = { workspace = true }

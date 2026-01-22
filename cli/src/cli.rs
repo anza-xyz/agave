@@ -1,7 +1,7 @@
 use {
     crate::{
         address_lookup_table::*, clap_app::*, cluster_query::*, feature::*, inflation::*, nonce::*,
-        program::*, program_v4::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
+        program::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
     clap::{crate_description, crate_name, value_t_or_exit, ArgMatches, Shell},
     num_traits::FromPrimitive,
@@ -180,7 +180,6 @@ pub enum CliCommand {
     // Program Deployment
     Deploy,
     Program(ProgramCliCommand),
-    ProgramV4(ProgramV4CliCommand),
     // Stake Commands
     CreateStakeAccount {
         stake_account: SignerIndex,
@@ -700,9 +699,6 @@ pub fn parse_command(
         .exit(),
         ("program", Some(matches)) => {
             parse_program_subcommand(matches, default_signer, wallet_manager)
-        }
-        ("program-v4", Some(matches)) => {
-            parse_program_v4_subcommand(matches, default_signer, wallet_manager)
         }
         ("address-lookup-table", Some(matches)) => {
             parse_address_lookup_table_subcommand(matches, default_signer, wallet_manager)
@@ -1237,11 +1233,6 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         // Deploy a custom program to the chain
         CliCommand::Program(program_subcommand) => {
             process_program_subcommand(rpc_client, config, program_subcommand).await
-        }
-
-        // Deploy a custom program v4 to the chain
-        CliCommand::ProgramV4(program_subcommand) => {
-            process_program_v4_subcommand(rpc_client, config, program_subcommand).await
         }
 
         // Stake Commands

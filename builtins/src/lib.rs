@@ -102,13 +102,6 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
     }),
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
-        name: loader_v4,
-        enable_feature_id: Some(feature_set::enable_loader_v4::id()),
-        program_id: solana_sdk_ids::loader_v4::id(),
-        entrypoint: solana_loader_v4_program::Entrypoint::vm,
-    }),
-    testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: zk_elgamal_proof_program,
         enable_feature_id: Some(feature_set::zk_elgamal_proof_program_enabled::id()),
         program_id: solana_sdk_ids::zk_elgamal_proof_program::id(),
@@ -298,26 +291,6 @@ pub mod test_only {
         };
     }
 
-    pub mod loader_v4 {
-        pub mod feature {
-            solana_pubkey::declare_id!("Cz5JthYp27KR3rwTCtVJhbRgwHCurbwcYX46D8setL22");
-        }
-        pub mod source_buffer {
-            solana_pubkey::declare_id!("EH45pKy1kzjifB93wEJi91js3S4HETdsteywR7ZCNPn5");
-        }
-        pub mod upgrade_authority {
-            solana_pubkey::declare_id!("AWbiYRbFts9GVX5uwUkwV46hTFP85PxCAM8e8ir8Hqtq");
-        }
-        pub const CONFIG: super::CoreBpfMigrationConfig = super::CoreBpfMigrationConfig {
-            source_buffer_address: source_buffer::id(),
-            upgrade_authority_address: Some(upgrade_authority::id()),
-            feature_id: feature::id(),
-            migration_target: super::CoreBpfMigrationTargetType::Builtin,
-            verified_build_hash: None,
-            datapoint_name: "migrate_builtin_to_core_bpf_loader_v4_program",
-        };
-    }
-
     pub mod zk_elgamal_proof_program {
         pub mod feature {
             solana_pubkey::declare_id!("EYtuxScWqGWmcPEDmeUsEt3iPkvWE26EWLfSxUvWP2WN");
@@ -376,10 +349,6 @@ mod tests {
         );
         assert_eq!(
             &super::BUILTINS[7].core_bpf_migration_config,
-            &Some(super::test_only::loader_v4::CONFIG)
-        );
-        assert_eq!(
-            &super::BUILTINS[8].core_bpf_migration_config,
             &Some(super::test_only::zk_elgamal_proof_program::CONFIG)
         );
     }

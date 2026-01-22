@@ -93,14 +93,14 @@ mod test {
         // lookup same `index` will return cached data, will not lookup `program_id`
         // again
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk_ids::loader_v4::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::bpf_loader::id()),
             ProgramKind::NotBuiltin
         );
 
         // not-migrating builtin
         index += 1;
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk_ids::loader_v4::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::bpf_loader::id()),
             ProgramKind::Builtin,
         );
 
