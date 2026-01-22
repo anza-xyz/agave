@@ -1,0 +1,23 @@
+[package]
+name = "xdp-compatability"
+description = "Agave XDP host compatability scripts"
+publish = false
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+agave-logger = { workspace = true }
+agave-xdp = { workspace = true }
+clap = { workspace = true }
+crossbeam-channel = { workspace = true }
+log = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-turbine = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = { workspace = true }

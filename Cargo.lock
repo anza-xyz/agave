@@ -13967,6 +13967,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "xdp-compatability"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-logger",
+ "agave-xdp",
+ "caps",
+ "clap 2.33.3",
+ "crossbeam-channel",
+ "log",
+ "solana-clap-utils",
+ "solana-net-utils",
+ "solana-sha256-hasher",
+ "solana-turbine",
+]
+
+[[package]]
 name = "yaml-rust"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
