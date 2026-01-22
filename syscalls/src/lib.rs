@@ -4122,14 +4122,14 @@ mod tests {
         src_clock.leader_schedule_epoch = 4;
         src_clock.unix_timestamp = 5;
 
-        let clock_id_va = 0x100000000;
+        let clock_id_va = 0x300000000;
         let clock_id = Clock::id().to_bytes();
 
         let mut got_clock_buf_rw = vec![0; Clock::size_of()];
-        let got_clock_buf_rw_va = 0x200000000;
+        let got_clock_buf_rw_va = 0x400000000;
 
         let got_clock_buf_ro = vec![0; Clock::size_of()];
-        let got_clock_buf_ro_va = 0x300000000;
+        let got_clock_buf_ro_va = 0x500000000;
 
         let mut memory_mapping = MemoryMapping::new(
             vec![
