@@ -457,7 +457,7 @@ impl ClusterInfo {
 
     pub fn lookup_contact_infos(
         &self,
-        ids: &Vec<Option<Pubkey>>,
+        ids: &[Option<Pubkey>],
         mut query: impl FnMut(usize, &ContactInfo)
     ) {
         let gossip_crds = self.gossip.crds.read().unwrap();
