@@ -10,7 +10,6 @@ use {
         FileInfo, FileSize, IoSize,
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
-    core::slice,
     io_uring::{opcode, squeue, types, IoUring},
     libc::{O_CREAT, O_DIRECT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
     smallvec::SmallVec,
@@ -212,7 +211,7 @@ impl FileCreator for IoUringFileCreator<'_> {
         contents: &mut dyn Read,
     ) -> io::Result<()> {
         let file_key = self.open(path, mode, parent_dir_handle)?;
-        self.write_and_close(contents, file_key)
+        self.schedule_all_writes(contents, file_key)
     }
 
     fn file_complete(&mut self, file: File, path: PathBuf, size: FileSize) {
@@ -262,38 +261,39 @@ impl IoUringFileCreator<'_> {
         Ok(file_key)
     }
 
-    fn write_and_close(&mut self, mut src: impl Read, file_key: usize) -> io::Result<()> {
+    fn schedule_all_writes(&mut self, mut src: impl Read, file_key: usize) -> io::Result<()> {
         let mut offset = 0;
-        let mut reached_eof = false;
-        while !reached_eof {
-            let buf = self.wait_free_buf()?;
+        loop {
+            let mut buf = self.wait_free_buf()?;
 
-            let state = self.ring.context_mut();
-            let file_state = state.files.get_mut(file_key).unwrap();
+            let write_len = buf.fill_from_read(&mut src)?;
+            let reached_eof = write_len < buf.len();
 
-            // Safety: the buffer points to the valid memory backed by `self._backing_buffer`.
-            // It's obtained from the queue of free buffers and is written to exclusively
-            // here before being handled to the kernel or backlog in `file`.
-            let mut mut_slice =
-                unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len() as usize) };
-            // Fill as much of the buffer as possible to avoid excess IO operations
-            let mut write_len;
-            loop {
-                let len = src.read(mut_slice)?;
-                if len == 0 {
-                    reached_eof = true;
-                    write_len = buf.len() - mut_slice.len() as IoSize;
-                    file_state.size_on_eof = Some(write_len as FileSize + offset);
-                    break;
-                }
-                if len == mut_slice.len() {
-                    write_len = buf.len();
-                    break;
-                }
-                mut_slice = &mut mut_slice[len..];
+            self.schedule_write(file_key, offset, reached_eof, buf, write_len)?;
+
+            if reached_eof {
+                break;
             }
 
-            if self.write_with_direct_io && write_len < buf.len() {
+            offset += write_len as FileSize;
+        }
+        Ok(())
+    }
+
+    fn schedule_write(
+        &mut self,
+        file_key: usize,
+        offset: u64,
+        is_last_write: bool,
+        buf: IoBufferChunk,
+        mut write_len: IoSize,
+    ) -> io::Result<()> {
+        let state = self.ring.context_mut();
+        let file_state = state.files.get_mut(file_key).unwrap();
+        if is_last_write {
+            file_state.size_on_eof = Some(offset + write_len as FileSize);
+
+            if self.write_with_direct_io {
                 let align_truncated_write_len =
                     write_len / DIRECT_IO_WRITE_LEN_ALIGNMENT * DIRECT_IO_WRITE_LEN_ALIGNMENT;
                 if align_truncated_write_len != write_len {
@@ -308,41 +308,37 @@ impl IoUringFileCreator<'_> {
                     write_len = align_truncated_write_len;
                 }
             }
-
-            file_state.writes_started += 1;
-            if let Some(file) = &file_state.open_file {
-                let fd = types::Fd(file.as_raw_fd());
-                if write_len == 0 {
-                    // EOF was reached consuming `src` *and* there isn't any data left to write
-                    // immediately (there might be some stored for non-direct IO mode). Treat it as
-                    // a successful write, perform proper accounting and pass `buf` to the next
-                    // write operation.
-                    //
-                    // Note: this logic might be happening with no pending writes (e.g. if `buf`
-                    // was obtained just before `src` reached EOF), so it's possible that file
-                    // completion will be triggered immediately.
-                    let ring = RingAccess::Ring(&mut self.ring);
-                    return FileCreatorState::mark_write_completed(ring, file_key, fd, true, buf);
-                }
-
-                let op = WriteOp {
-                    file_key,
-                    fd,
-                    offset,
-                    buf,
-                    buf_offset: 0,
-                    write_len,
-                };
-                state.submitted_writes_size += write_len as usize;
-                self.ring.push(FileCreatorOp::Write(op))?;
-            } else {
-                // Note: `write_len` might be 0 here, but it's handled on open op completion
-                file_state.backlog.push((buf, offset, write_len));
+        }
+        file_state.writes_started += 1;
+        if let Some(file) = &file_state.open_file {
+            let fd = types::Fd(file.as_raw_fd());
+            if write_len == 0 {
+                // EOF was reached consuming `src` *and* there isn't any data left to write
+                // immediately (there might be some stored for non-direct IO mode). Treat it as
+                // a successful write, perform proper accounting and pass `buf` to the next
+                // write operation.
+                //
+                // Note: this logic might be happening with no pending writes (e.g. if `buf`
+                // was obtained just before `src` reached EOF), so it's possible that file
+                // completion will be triggered immediately.
+                let ring = RingAccess::Ring(&mut self.ring);
+                return FileCreatorState::mark_write_completed(ring, file_key, fd, true, buf);
             }
 
-            offset += write_len as FileSize;
+            let op = WriteOp {
+                file_key,
+                fd,
+                offset,
+                buf,
+                buf_offset: 0,
+                write_len,
+            };
+            state.submitted_writes_size += write_len as usize;
+            self.ring.push(FileCreatorOp::Write(op))?;
+        } else {
+            // Note: `write_len` might be 0 here, but it's handled on open op completion
+            file_state.backlog.push((buf, offset, write_len));
         }
-
         Ok(())
     }
 
