@@ -9,6 +9,7 @@ edition = { workspace = true }
 publish = true
 
 [features]
+default = ["agave-unstable-api"]
 agave-unstable-api = []
 
 [dependencies]

@@ -209,8 +209,6 @@ fn main() {
         let dev = std::sync::Arc::clone(&dev);
         let router = std::sync::Arc::clone(&router);
         thread::spawn(move || {
-            let route_router = std::sync::Arc::clone(&router);
-            let iface_router = std::sync::Arc::clone(&router);
             tx_loop(
                 cpu_id,
                 &dev,
@@ -221,13 +219,7 @@ fn main() {
                 src_port,
                 receiver,
                 bounded(1).0,
-                move |ip| {
-                    route_router
-                        .route(*ip)
-                        .ok()
-                        .map(|n| (n, route_router.route_version()))
-                },
-                move |if_index| iface_router.interface_info(if_index).ok().cloned(),
+                move |ip| router.route(*ip).ok(),
             );
         })
     };
