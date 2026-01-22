@@ -31,9 +31,9 @@ extern uint64_t entrypoint(const uint8_t *input) {
     static const int INVOKED_PROGRAM_DUP_INDEX = 3;
     sol_assert(sol_deserialize(input, &params, 4));
 
-    SolPubkey loader_v4_id =
+    SolPubkey bpf_loader_upgradeable_id =
       (SolPubkey){.x = {
-        5, 18, 180, 17, 81, 81, 227, 122, 173, 10, 139, 197, 211, 136, 46, 123, 127, 218, 76, 243, 210, 192, 40, 200, 207, 131, 54, 24, 0, 0, 0, 0
+        2, 168, 246, 145, 78, 136, 161, 176, 226, 16, 21, 62, 247, 99, 174, 43, 0, 194, 185, 61, 22, 193, 36, 210, 192, 83, 122, 16, 0, 0, 0, 0
       }};
 
     for (int i = 0; i < params.data_len; i++) {
@@ -63,7 +63,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
     sol_assert(
         SolPubkey_same(accounts[INVOKED_PROGRAM_INDEX].key, params.program_id))
         sol_assert(SolPubkey_same(accounts[INVOKED_PROGRAM_INDEX].owner,
-                                  &loader_v4_id));
+                                  &bpf_loader_upgradeable_id));
     sol_assert(!accounts[INVOKED_PROGRAM_INDEX].is_signer);
     sol_assert(!accounts[INVOKED_PROGRAM_INDEX].is_writable);
     sol_assert(accounts[INVOKED_PROGRAM_INDEX].rent_epoch == UINT64_MAX);

@@ -223,7 +223,6 @@ solana-instruction = { workspace = true }
 solana-keypair = "3.0.0"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
-solana-loader-v4-interface = "3.1.0"
 solana-measure = { workspace = true }
 solana-message = "3.0.0"
 solana-program = { workspace = true }

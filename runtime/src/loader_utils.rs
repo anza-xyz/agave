@@ -8,12 +8,9 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_loader_v4_interface::instruction,
     solana_message::Message,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::loader_v4,
     solana_signer::Signer,
-    solana_system_interface::instruction as system_instruction,
     std::{
         env,
         fs::File,
@@ -118,7 +115,6 @@ pub fn load_upgradeable_buffer<T: Client>(
     program
 }
 
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program(
     bank_client: &BankClient,
     from_keypair: &Keypair,
@@ -166,7 +162,6 @@ pub fn load_upgradeable_program(
     });
 }
 
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program_wrapper(
     bank_client: &BankClient,
     mint_keypair: &Keypair,
@@ -187,7 +182,6 @@ pub fn load_upgradeable_program_wrapper(
     program_keypair.pubkey()
 }
 
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program_and_advance_slot(
     bank_client: &mut BankClient,
     bank_forks: &RwLock<BankForks>,
@@ -261,110 +255,6 @@ pub fn set_upgrade_authority<T: Client>(
     bank_client
         .send_and_confirm_message(&[from_keypair, current_authority_keypair], message)
         .unwrap();
-}
-
-pub fn instructions_to_load_program_of_loader_v4<T: Client>(
-    bank_client: &T,
-    payer_keypair: &Keypair,
-    authority_keypair: &Keypair,
-    name: &str,
-    program_keypair: Option<Keypair>,
-    target_program_id: Option<&Pubkey>,
-) -> (Keypair, Vec<Instruction>) {
-    let mut instructions = Vec::new();
-    let loader_id = &loader_v4::id();
-    let program = load_program_from_file(name);
-    let program_keypair = program_keypair.unwrap_or_else(|| {
-        let program_keypair = Keypair::new();
-        instructions.push(system_instruction::create_account(
-            &payer_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            bank_client
-                .get_minimum_balance_for_rent_exemption(
-                    solana_loader_v4_interface::state::LoaderV4State::program_data_offset()
-                        .saturating_add(program.len()),
-                )
-                .unwrap(),
-            0,
-            loader_id,
-        ));
-        program_keypair
-    });
-    instructions.push(instruction::set_program_length(
-        &program_keypair.pubkey(),
-        &authority_keypair.pubkey(),
-        program.len() as u32,
-        &payer_keypair.pubkey(),
-    ));
-    let chunk_size = CHUNK_SIZE;
-    let mut offset = 0;
-    for chunk in program.chunks(chunk_size) {
-        instructions.push(instruction::write(
-            &program_keypair.pubkey(),
-            &authority_keypair.pubkey(),
-            offset,
-            chunk.to_vec(),
-        ));
-        offset += chunk_size as u32;
-    }
-    if let Some(target_program_id) = target_program_id {
-        instructions.push(instruction::set_program_length(
-            target_program_id,
-            &authority_keypair.pubkey(),
-            program.len() as u32,
-            &payer_keypair.pubkey(),
-        ));
-        instructions.push(instruction::copy(
-            target_program_id,
-            &authority_keypair.pubkey(),
-            &program_keypair.pubkey(),
-            0,
-            0,
-            program.len() as u32,
-        ));
-        instructions.push(instruction::deploy(
-            target_program_id,
-            &authority_keypair.pubkey(),
-        ));
-    } else {
-        instructions.push(instruction::deploy(
-            &program_keypair.pubkey(),
-            &authority_keypair.pubkey(),
-        ));
-    }
-    (program_keypair, instructions)
-}
-
-pub fn load_program_of_loader_v4(
-    bank_client: &mut BankClient,
-    bank_forks: &RwLock<BankForks>,
-    payer_keypair: &Keypair,
-    authority_keypair: &Keypair,
-    name: &str,
-) -> (Arc<Bank>, Pubkey) {
-    let (program_keypair, instructions) = instructions_to_load_program_of_loader_v4(
-        bank_client,
-        payer_keypair,
-        authority_keypair,
-        name,
-        None,
-        None,
-    );
-    let signers: &[&[&Keypair]] = &[
-        &[payer_keypair, &program_keypair],
-        &[payer_keypair, authority_keypair],
-    ];
-    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
-    for (instruction, signers) in instructions.into_iter().zip(signers) {
-        let message = Message::new(&[instruction], Some(&payer_keypair.pubkey()));
-        bank_client
-            .send_and_confirm_message(signers, message)
-            .unwrap();
-    }
-    let bank = bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
-        .expect("Failed to advance the slot");
-    (bank, program_keypair.pubkey())
 }
 
 // Return an Instruction that invokes `program_id` with `data` and required
