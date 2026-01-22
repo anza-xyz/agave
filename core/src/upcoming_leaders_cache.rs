@@ -12,7 +12,7 @@ use {
 };
 
 // Warning: this module assumes a leader window starts at a slot which is a multiple of NUM_CONSECUTIVE_LEADER_SLOTS.
-// Leader windows are identified by (first slot in window)/NUM_CONSECUTIVE_LEADER_SLOTS.
+// Leader windows are identified by (any slot in window)/NUM_CONSECUTIVE_LEADER_SLOTS.
 
 /// Number of leader windows in cache.
 /// Gossip database is queried when less than half of this buffer contains upcoming leaders.
