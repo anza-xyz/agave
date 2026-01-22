@@ -24,7 +24,7 @@ frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
 sbpf-debugger = ["solana-sbpf/debugger"]
 shuttle-test = ["solana-sbpf/shuttle-test", "solana-svm-type-overrides/shuttle-test"]
-svm-internal = []
+svm-internal = ["dep:qualifier_attr"]
 
 [dependencies]
 base64 = { workspace = true }
@@ -33,6 +33,7 @@ cfg-if = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
+qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }

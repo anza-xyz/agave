@@ -23,6 +23,8 @@ use {
     solana_transaction_context::{IndexOfAccount, TransactionContext},
     std::{cell::RefCell, mem},
 };
+#[cfg(feature = "svm-internal")]
+use qualifier_attr::qualifiers;
 
 thread_local! {
     pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
