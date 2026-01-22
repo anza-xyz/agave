@@ -12,7 +12,7 @@ EOF
 fi
 
 # shellcheck source=ci/rust-version.sh
-source "$here"/rust-version.sh nightly
+source "$here"/../rust-version.sh nightly
 
 partition="${1:-1/1}"
 

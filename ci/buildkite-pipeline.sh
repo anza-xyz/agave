@@ -184,16 +184,23 @@ generate_feature_steps() {
   - group: "feature-checks"
     steps:
 EOF
-  total_feature_checks=10
+  total_feature_checks=5
   for i in $(seq 1 $total_feature_checks); do
     cat >> "$output_file" <<EOF
       - name: "feature-check-part-$i"
-        command: "ci/docker-run-default-image.sh ci/test-feature.sh $i/$total_feature_checks"
+        command: "ci/docker-run-default-image.sh ci/feature-check/test-feature.sh $i/$total_feature_checks"
         timeout_in_minutes: 20
         agents:
           queue: "solana"
 EOF
 	done
+	cat >> "$output_file" <<EOF
+      - name: "feature-check-dev-bins"
+        command: "ci/docker-run-default-image.sh ci/feature-check/test-feature-dev-bins.sh"
+        timeout_in_minutes: 20
+        agents:
+          queue: "solana"
+EOF
 }
 
 all_test_steps() {
