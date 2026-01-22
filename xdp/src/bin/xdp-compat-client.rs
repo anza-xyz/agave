@@ -2,7 +2,7 @@ use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(target_os = "linux")]
@@ -229,18 +229,10 @@ fn main() {
         let payload = build_payload(seq, config.payload_size);
         sender.send((vec![server], payload.clone())).unwrap();
 
-        let mut buf = vec![0u8; config.payload_size + 64];
-        match udp.recv(&mut buf) {
-            Ok(n) => {
-                if buf[..n] == payload {
-                    ok += 1;
-                } else {
-                    eprintln!("Response mismatch for seq {seq}");
-                }
-            }
-            Err(e) => {
-                eprintln!("Timeout or recv error for seq {seq}: {e}");
-            }
+        if recv_until_match(&udp, &payload, config.timeout_ms) {
+            ok += 1;
+        } else {
+            eprintln!("Response mismatch or timeout for seq {seq}");
         }
     }
 
@@ -270,6 +262,26 @@ fn build_payload(seq: usize, payload_size: usize) -> Vec<u8> {
         payload.resize(payload_size, b'x');
     }
     payload
+}
+
+fn recv_until_match(udp: &UdpSocket, payload: &[u8], timeout_ms: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut buf = vec![0u8; payload.len() + 64];
+    loop {
+        if Instant::now() > deadline {
+            return false;
+        }
+        match udp.recv(&mut buf) {
+            Ok(n) => {
+                if &buf[..n] == payload {
+                    return true;
+                }
+            }
+            Err(_) => {
+                // Ignore timeout and retry until deadline.
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
