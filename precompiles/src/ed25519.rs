@@ -475,18 +475,8 @@ pub mod tests {
         let message = b"ed25519vectors 3";
         let instruction = new_ed25519_instruction_raw(pubkey, signature, message);
 
-        // removed ed25519 strict verify feature gate. so it will always fail for malleable sig
+        // verify_strict does NOT pass for malleable signature
         let feature_set = FeatureSet::default();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
-
-        // verify_strict does NOT pass
-        let feature_set = FeatureSet::all_enabled();
         assert!(test_verify_with_alignment(
             verify,
             &instruction.data,
