@@ -340,7 +340,7 @@ mod tests {
     }
 
     fn write_optional_fields(format: AccountBlockFormat) {
-        let mut test_epoch = 5432312;
+        let test_epoch = 5432312;
 
         let mut writer = ByteBlockWriter::new(format);
         let mut opt_fields_vec = vec![];
@@ -352,7 +352,6 @@ mod tests {
             some_count += rent_epoch.iter().count();
 
             opt_fields_vec.push(AccountMetaOptionalFields { rent_epoch });
-            test_epoch += 1;
         }
 
         // write all the combinations of the optional fields

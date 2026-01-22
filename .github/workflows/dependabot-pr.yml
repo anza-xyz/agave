@@ -32,9 +32,11 @@ jobs:
           new_version="${BASH_REMATCH[3]}"
           echo "crate_name: $crate_name, old_version: $old_version, new_version: $new_version"
 
-          ./scripts/cargo-for-all-lock-files.sh -- update -p $crate_name:$old_version --precise $new_version || \
-          ./scripts/cargo-for-all-lock-files.sh -- update -p $crate_name --precise $new_version || \
-          ./scripts/cargo-for-all-lock-files.sh -- tree
+          cargo xtask update-crate --package $crate_name --from $old_version --to $new_version
+
+          ./scripts/cargo-for-all-lock-files.sh --ignore-exit-code -- update -p $crate_name:$old_version --precise $new_version
+
+          ./scripts/cargo-for-all-lock-files.sh tree
 
       - name: push
         run: |
@@ -43,7 +45,8 @@ jobs:
           else
             git config user.email "49699333+dependabot[bot]@users.noreply.github.com"
             git config user.name "dependabot[bot]"
+            git add **/Cargo.toml
             git add **/Cargo.lock
-            git commit -am "Update all Cargo files"
+            git commit -am "Update all workspaces"
             git push
           fi

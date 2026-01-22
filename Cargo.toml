@@ -209,7 +209,7 @@ agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.0.
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 agave-thread-manager = { path = "thread-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "transaction-view", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -354,7 +354,7 @@ predicates = "3.1"
 pretty-hex = "0.4.1"
 pretty_assertions = "1.4.1"
 prio-graph = "0.3.0"
-proc-macro2 = "1.0.105"
+proc-macro2 = "1.0.106"
 proptest = "1.9"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -385,7 +385,6 @@ seqlock = "0.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.19"
-serde_derive = "1.0.226"
 serde_json = "1.0.149"
 serde_with = { version = "3.16.1", default-features = false }
 serde_yaml = "0.9.34"
@@ -419,7 +418,7 @@ solana-bloom = { path = "bloom", version = "=4.0.0-alpha.0", features = ["agave-
 solana-bls-signatures = { version = "3.0.0", features = ["serde"] }
 solana-bn254 = "3.2.1"
 solana-borsh = "3.0.0"
-solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-bucket-map = { path = "bucket_map", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-builtins = { path = "builtins", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-builtins-default-costs = { path = "builtins-default-costs", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

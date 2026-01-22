@@ -8,7 +8,7 @@ use {
     },
     crate::{
         bank::{
-            null_tracer, PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent,
+            null_tracer, EpochInflationRewards, RewardCalcTracer, RewardCalculationEvent,
             RewardsMetrics, VoteReward, VoteRewards,
         },
         inflation_rewards::{
@@ -296,12 +296,12 @@ impl Bank {
         metrics: &mut RewardsMetrics,
     ) -> PartitionedRewardsCalculation {
         let capitalization = self.capitalization();
-        let PrevEpochInflationRewards {
-            validator_rewards,
-            prev_epoch_duration_in_years,
+        let EpochInflationRewards {
+            validator_rewards_lamports,
+            epoch_duration_in_years,
             validator_rate,
             foundation_rate,
-        } = self.calculate_previous_epoch_inflation_rewards(capitalization, rewarded_epoch);
+        } = self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
 
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
@@ -313,7 +313,7 @@ impl Bank {
                 stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
-                validator_rewards,
+                validator_rewards_lamports,
                 reward_calc_tracer,
                 thread_pool,
                 metrics,
@@ -330,7 +330,7 @@ impl Bank {
             stake_rewards,
             validator_rate,
             foundation_rate,
-            prev_epoch_duration_in_years,
+            prev_epoch_duration_in_years: epoch_duration_in_years,
             capitalization,
             point_value,
         }
@@ -441,6 +441,7 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
+        commission_rate_in_basis_points: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -467,38 +468,48 @@ impl Bank {
 
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
-        // full epoch
-        let commission = if delay_commission_updates {
-            snapshot_epoch_vote_accounts
+        // full epoch.
+        // When `commission_rate_in_basis_points` is true, use the new field
+        // `inflation_rewards_commission_bps`; otherwise use the legacy
+        // percentage field and convert to basis points by multiplying by 100.
+        let commission_bps = if delay_commission_updates {
+            let vote_state_for_commission = snapshot_epoch_vote_accounts
                 .and_then(|eva| eva.get(&vote_pubkey))
                 .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
                 .map(|vote_account| vote_account.vote_state_view())
-                .unwrap_or(vote_state)
-                .commission()
+                .unwrap_or(vote_state);
+            if commission_rate_in_basis_points {
+                vote_state_for_commission.inflation_rewards_commission()
+            } else {
+                vote_state_for_commission.commission() as u16 * 100
+            }
+        } else if commission_rate_in_basis_points {
+            vote_state.inflation_rewards_commission()
         } else {
-            vote_state.commission()
+            vote_state.commission() as u16 * 100
         };
 
         match redeem_rewards(
             rewarded_epoch,
             stake_state,
-            commission,
+            commission_bps,
             DelegatedVoteState::from(vote_state),
             point_value,
             stake_history,
             reward_calc_tracer,
             new_rate_activation_epoch,
+            commission_rate_in_basis_points,
         ) {
             Ok((stake_reward, vote_rewards, stake)) => {
                 let stake_reward = PartitionedStakeReward {
                     stake_pubkey,
                     stake,
                     stake_reward,
-                    commission,
+                    commission_bps,
                 };
                 let vote_account = vote_account.into();
                 let vote_reward = VoteReward {
-                    commission,
+                    commission_bps,
                     vote_account,
                     vote_rewards,
                 };
@@ -532,6 +543,9 @@ impl Bank {
         let delay_commission_updates = self
             .feature_set
             .is_active(&agave_feature_set::delay_commission_updates::id());
+        let commission_rate_in_basis_points = self
+            .feature_set
+            .is_active(&feature_set::commission_rate_in_basis_points::id());
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -562,6 +576,7 @@ impl Bank {
                                 reward_calc_tracer.as_ref(),
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
+                                commission_rate_in_basis_points,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {
@@ -789,7 +804,9 @@ mod tests {
             stake_flags::StakeFlags,
             state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
-        solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
+        solana_vote_interface::state::{
+            VoteInit, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+        },
         solana_vote_program::vote_state,
         std::{
             collections::HashSet,
@@ -817,7 +834,7 @@ mod tests {
                     reward_type: RewardType::Voting,
                     lamports: vote_reward_info.vote_rewards as i64,
                     post_balance: vote_reward_info.vote_rewards,
-                    commission: Some(vote_reward_info.commission),
+                    commission_bps: Some(vote_reward_info.commission_bps),
                 };
                 vote_rewards_account.accounts_with_rewards.push((
                     *vote_key,
@@ -1148,10 +1165,10 @@ mod tests {
             if let Some(expected_commission) = &expected_commission {
                 let reward_lamports = vote_balance - prev_vote_balance;
                 let expected_vote_reward = RewardInfo {
-                    commission: Some(*expected_commission),
                     reward_type: RewardType::Voting,
                     lamports: reward_lamports as i64,
                     post_balance: vote_balance,
+                    commission_bps: Some(*expected_commission as u16 * 100),
                 };
 
                 assert_eq!(
@@ -1506,7 +1523,7 @@ mod tests {
         let (vote_pubkey_from_result, rewards, account) =
             &vote_rewards_accounts.accounts_with_rewards[0];
         let vote_rewards = 0;
-        let commission = (vote_state.inflation_rewards_commission_bps / 100) as u8;
+        let commission_bps = vote_state.inflation_rewards_commission_bps;
         assert_eq!(account.lamports(), vote_account.lamports());
         assert!(accounts_equal(account, &vote_account));
         assert_eq!(
@@ -1515,7 +1532,7 @@ mod tests {
                 reward_type: RewardType::Voting,
                 lamports: vote_rewards as i64,
                 post_balance: vote_account.lamports(),
-                commission: Some(commission),
+                commission_bps: Some(commission_bps),
             }
         );
         assert_eq!(vote_pubkey_from_result, vote_pubkey);
@@ -1531,7 +1548,7 @@ mod tests {
                 stake,
                 stake_pubkey,
                 stake_reward,
-                commission,
+                commission_bps,
             }
         };
         assert_eq!(
@@ -1923,9 +1940,12 @@ mod tests {
         let vote_account_a = vote_state::create_v4_account_with_authorized(
             &node_pubkey_a,
             &vote_pubkey_a,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey_a,
-            None,
             2000,
+            &vote_pubkey_a,
+            0,
+            &vote_pubkey_a,
             100,
         );
         let vote_pubkey_b = Pubkey::new_unique();
@@ -1933,9 +1953,12 @@ mod tests {
         let vote_account_b = vote_state::create_v4_account_with_authorized(
             &node_pubkey_b,
             &vote_pubkey_b,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey_b,
-            None,
             2000,
+            &vote_pubkey_b,
+            0,
+            &vote_pubkey_b,
             100,
         );
         let vote_pubkey_c = Pubkey::new_unique();
@@ -1943,9 +1966,12 @@ mod tests {
         let vote_account_c = vote_state::create_v4_account_with_authorized(
             &node_pubkey_c,
             &vote_pubkey_c,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey_c,
-            None,
             2000,
+            &vote_pubkey_c,
+            0,
+            &vote_pubkey_c,
             100,
         );
 
@@ -1953,7 +1979,7 @@ mod tests {
             vote_pubkey_a,
             VoteReward {
                 vote_account: vote_account_a.clone(),
-                commission: 10,
+                commission_bps: 1_000,
                 vote_rewards: 50,
             },
             50,
@@ -1962,7 +1988,7 @@ mod tests {
             vote_pubkey_b,
             VoteReward {
                 vote_account: vote_account_b.clone(),
-                commission: 10,
+                commission_bps: 1_000,
                 vote_rewards: 50,
             },
             50,
@@ -1971,7 +1997,7 @@ mod tests {
             vote_pubkey_b,
             VoteReward {
                 vote_account: vote_account_b,
-                commission: 10,
+                commission_bps: 1_000,
                 vote_rewards: 30,
             },
             30,
@@ -1980,7 +2006,7 @@ mod tests {
             vote_pubkey_c,
             VoteReward {
                 vote_account: vote_account_c,
-                commission: 10,
+                commission_bps: 1_000,
                 vote_rewards: 50,
             },
             50,
@@ -1989,17 +2015,17 @@ mod tests {
         assert_eq!(accumulator1.num_stake_rewards, 2);
         assert_eq!(accumulator1.total_stake_rewards_lamports, 100);
         let vote_reward_a_1 = accumulator1.vote_rewards.get(&vote_pubkey_a).unwrap();
-        assert_eq!(vote_reward_a_1.commission, 10);
+        assert_eq!(vote_reward_a_1.commission_bps, 1_000);
         assert_eq!(vote_reward_a_1.vote_rewards, 50);
         let vote_reward_b_1 = accumulator1.vote_rewards.get(&vote_pubkey_b).unwrap();
-        assert_eq!(vote_reward_b_1.commission, 10);
+        assert_eq!(vote_reward_b_1.commission_bps, 1_000);
         assert_eq!(vote_reward_b_1.vote_rewards, 50);
 
         let vote_reward_b_2 = accumulator2.vote_rewards.get(&vote_pubkey_b).unwrap();
-        assert_eq!(vote_reward_b_2.commission, 10);
+        assert_eq!(vote_reward_b_2.commission_bps, 1_000);
         assert_eq!(vote_reward_b_2.vote_rewards, 30);
         let vote_reward_c_2 = accumulator2.vote_rewards.get(&vote_pubkey_c).unwrap();
-        assert_eq!(vote_reward_c_2.commission, 10);
+        assert_eq!(vote_reward_c_2.commission_bps, 1_000);
         assert_eq!(vote_reward_c_2.vote_rewards, 50);
 
         let accumulator = accumulator1.accumulate_into_larger(accumulator2);
@@ -2007,14 +2033,14 @@ mod tests {
         assert_eq!(accumulator.num_stake_rewards, 4);
         assert_eq!(accumulator.total_stake_rewards_lamports, 180);
         let vote_reward_a = accumulator.vote_rewards.get(&vote_pubkey_a).unwrap();
-        assert_eq!(vote_reward_a.commission, 10);
+        assert_eq!(vote_reward_a.commission_bps, 1_000);
         assert_eq!(vote_reward_a.vote_rewards, 50);
         let vote_reward_b = accumulator.vote_rewards.get(&vote_pubkey_b).unwrap();
-        assert_eq!(vote_reward_b.commission, 10);
+        assert_eq!(vote_reward_b.commission_bps, 1_000);
         // sum of the vote rewards from both accumulators
         assert_eq!(vote_reward_b.vote_rewards, 80);
         let vote_reward_c = accumulator.vote_rewards.get(&vote_pubkey_c).unwrap();
-        assert_eq!(vote_reward_c.commission, 10);
+        assert_eq!(vote_reward_c.commission_bps, 1_000);
         assert_eq!(vote_reward_c.vote_rewards, 50);
     }
 
@@ -2033,10 +2059,13 @@ mod tests {
                 vote_pubkey,
                 vote_state::create_v4_account_with_authorized(
                     &vote_pubkey,
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    None,
+                    &vote_pubkey,
+                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    &vote_pubkey,
                     0,
+                    &vote_pubkey,
+                    0,
+                    &vote_pubkey,
                     100_000_000_000,
                 )
                 .into(),
@@ -2048,10 +2077,13 @@ mod tests {
                 &vote_pubkey,
                 &vote_state::create_v4_account_with_authorized(
                     &vote_pubkey,
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
-                    None,
+                    &vote_pubkey,
+                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                    &vote_pubkey,
                     0,
+                    &vote_pubkey,
+                    0,
+                    &vote_pubkey,
                     100_000_000_000,
                 ),
                 &genesis_config.rent,

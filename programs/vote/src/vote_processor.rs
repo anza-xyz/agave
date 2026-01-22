@@ -1,7 +1,7 @@
 //! Vote program processor
 
 use {
-    crate::vote_state::{self, handler::VoteStateTargetVersion},
+    crate::vote_state::{self, handler::VoteStateTargetVersion, NewCommissionCollector},
     log::*,
     solana_bincode::limited_deserialize,
     solana_instruction::error::InstructionError,
@@ -149,7 +149,15 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateValidatorIdentity => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let node_pubkey = instruction_context.get_key_of_instruction_account(1)?;
-            vote_state::update_validator_identity(&mut me, target_version, node_pubkey, &signers)
+            let custom_collector_enabled =
+                invoke_context.get_feature_set().custom_commission_collector;
+            vote_state::update_validator_identity(
+                &mut me,
+                target_version,
+                node_pubkey,
+                &signers,
+                custom_collector_enabled,
+            )
         }
         VoteInstruction::UpdateCommission(commission) => {
             let sysvar_cache = invoke_context.get_sysvar_cache();
@@ -290,10 +298,59 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &clock,
             )
         }
+        VoteInstruction::UpdateCommissionBps {
+            commission_bps,
+            kind,
+        } => {
+            // SIMD-0291: Commission Rate in Basis Points
+            // Requires SIMD-0185: Vote State V4
+            // Requires SIMD-0249: Delay Commission Updates
+            let feature_set = invoke_context.get_feature_set();
+            if !feature_set.commission_rate_in_basis_points
+                || !feature_set.delay_commission_updates
+                || !matches!(target_version, VoteStateTargetVersion::V4)
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+            vote_state::update_commission_bps(
+                &mut me,
+                target_version,
+                commission_bps,
+                kind,
+                &signers,
+            )
+        }
+        VoteInstruction::UpdateCommissionCollector(kind) => {
+            // SIMD-0232: Custom Commission Collector Account
+            // Requires SIMD-0185: Vote State V4
+            let custom_collector_enabled =
+                invoke_context.get_feature_set().custom_commission_collector;
+            if !(custom_collector_enabled && matches!(target_version, VoteStateTargetVersion::V4)) {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+
+            let new_collector = if instruction_context.get_key_of_instruction_account(1)?
+                == me.get_key()
+            {
+                NewCommissionCollector::VoteAccount
+            } else {
+                let collector_account = instruction_context.try_borrow_instruction_account(1)?;
+                NewCommissionCollector::NewAccount(collector_account)
+            };
+
+            let rent = invoke_context.get_sysvar_cache().get_rent()?;
+
+            vote_state::update_commission_collector(
+                &mut me,
+                target_version,
+                new_collector,
+                kind,
+                &signers,
+                &rent,
+            )
+        }
         // New instructions not yet implemented.
-        VoteInstruction::UpdateCommissionCollector(_)
-        | VoteInstruction::UpdateCommissionBps { .. }
-        | VoteInstruction::DepositDelegatorRewards { .. } => {
+        VoteInstruction::DepositDelegatorRewards { .. } => {
             Err(InstructionError::InvalidInstructionData)
         }
     }
@@ -335,7 +392,7 @@ mod tests {
         solana_slot_hashes::SlotHashes,
         solana_svm_feature_set::SVMFeatureSet,
         solana_vote_interface::{
-            instruction::{tower_sync, tower_sync_switch},
+            instruction::{tower_sync, tower_sync_switch, CommissionKind},
             state::{
                 VoterWithBLSArgs, BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE,
                 BLS_PUBLIC_KEY_COMPRESSED_SIZE,
@@ -385,6 +442,8 @@ mod tests {
     struct VoteProgramFeatures {
         vote_state_v4: bool,
         bls_pubkey_management_in_vote_account: bool,
+        commission_rate_in_basis_points: bool,
+        custom_commission_collector: bool,
     }
 
     fn process_instruction(
@@ -397,6 +456,8 @@ mod tests {
         let VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            commission_rate_in_basis_points,
+            custom_commission_collector,
         } = features;
         mock_process_instruction_with_feature_set(
             &id(),
@@ -411,6 +472,8 @@ mod tests {
             &SVMFeatureSet {
                 vote_state_v4,
                 bls_pubkey_management_in_vote_account,
+                commission_rate_in_basis_points,
+                custom_commission_collector,
                 ..SVMFeatureSet::all_enabled()
             },
         )
@@ -490,9 +553,12 @@ mod tests {
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 &vote_pubkey,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 &vote_pubkey,
-                None,
                 0,
+                &vote_pubkey,
+                0,
+                &vote_pubkey,
                 balance,
             )
         } else {
@@ -540,9 +606,12 @@ mod tests {
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 authorized_voter,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 authorized_withdrawer,
-                None,
                 0,
+                authorized_withdrawer,
+                0,
+                authorized_withdrawer,
                 100,
             )
         } else {
@@ -580,9 +649,12 @@ mod tests {
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 &authorized_voter,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 &authorized_withdrawer,
-                None,
                 0,
+                &authorized_withdrawer,
+                0,
+                &authorized_withdrawer,
                 100,
             )
         } else {
@@ -738,6 +810,7 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            ..Default::default()
         };
 
         // processing incompatible instruction should fail
@@ -886,6 +959,7 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            ..Default::default()
         };
 
         // processing incompatible instruction should fail
@@ -1030,6 +1104,7 @@ mod tests {
             VoteProgramFeatures {
                 vote_state_v4: true,
                 bls_pubkey_management_in_vote_account: true,
+                ..Default::default()
             },
             &instruction_with_bad_pop,
             vec![
@@ -1043,11 +1118,26 @@ mod tests {
         );
     }
 
-    #[test_case(false ; "VoteStateV3")]
-    #[test_case(true ; "VoteStateV4")]
-    fn test_vote_update_validator_identity(vote_state_v4: bool) {
+    #[test_matrix([false, true], [false, true])]
+    fn test_vote_update_validator_identity(vote_state_v4: bool, custom_commission_collector: bool) {
         let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
             create_test_account_with_authorized(vote_state_v4);
+
+        let original_block_revenue_collector = {
+            // We only need this check for `vote_state_v4=true`.
+            if vote_state_v4 {
+                let vote_state = deserialize_vote_state_for_test(
+                    vote_state_v4,
+                    vote_account.data(),
+                    &vote_pubkey,
+                );
+                let block_revenue_collector = vote_state.as_ref_v4().block_revenue_collector;
+                Some(block_revenue_collector)
+            } else {
+                None
+            }
+        };
+
         let node_pubkey = solana_pubkey::new_rand();
         let instruction_data = serialize(&VoteInstruction::UpdateValidatorIdentity).unwrap();
         let transaction_accounts = vec![
@@ -1075,6 +1165,7 @@ mod tests {
 
         let features = VoteProgramFeatures {
             vote_state_v4,
+            custom_commission_collector,
             ..Default::default()
         };
 
@@ -1118,7 +1209,19 @@ mod tests {
             deserialize_vote_state_for_test(vote_state_v4, accounts[0].data(), &vote_pubkey);
         assert_eq!(*vote_state.node_pubkey(), node_pubkey);
         if vote_state_v4 {
-            assert_eq!(vote_state.as_ref_v4().block_revenue_collector, node_pubkey,);
+            if custom_commission_collector {
+                // If SIMD-0232 is enabled, block revenue collector should be
+                // unchanged.
+                let original_block_revenue_collector = original_block_revenue_collector.unwrap();
+                assert_eq!(
+                    vote_state.as_ref_v4().block_revenue_collector,
+                    original_block_revenue_collector,
+                );
+            } else {
+                // If SIMD-0232 is disabled, block revenue collector should be
+                // synced with identity.
+                assert_eq!(vote_state.as_ref_v4().block_revenue_collector, node_pubkey);
+            }
         }
     }
 
@@ -1195,6 +1298,520 @@ mod tests {
         let vote_state =
             deserialize_vote_state_for_test(vote_state_v4, accounts[0].data(), &vote_pubkey);
         assert_eq!(vote_state.commission(), 0);
+    }
+
+    #[test]
+    fn test_vote_update_commission_bps() {
+        // Test UpdateCommissionBps instruction (SIMD-0291).
+        // SIMD-0291 depends on vote_state_v4, so we only test with V4.
+        let vote_state_v4 = true;
+        let commission_rate_in_basis_points = true;
+
+        let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
+            create_test_account_with_authorized(vote_state_v4);
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account.clone()),
+            (authorized_withdrawer, AccountSharedData::default()),
+        ];
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        let features = VoteProgramFeatures {
+            vote_state_v4,
+            commission_rate_in_basis_points,
+            ..Default::default()
+        };
+
+        let get_commission_bps = |vote_account: &AccountSharedData| {
+            deserialize_vote_state_for_test(vote_state_v4, vote_account.data(), &vote_pubkey)
+                .as_ref_v4()
+                .inflation_rewards_commission_bps
+        };
+
+        let original_commission_bps = get_commission_bps(&vote_account);
+
+        let commission_bps = 200; // 2%
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionBps {
+            commission_bps,
+            kind: CommissionKind::InflationRewards,
+        })
+        .unwrap();
+
+        // Should pass.
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+        assert_eq!(get_commission_bps(&accounts[0]), commission_bps);
+
+        // Same value - should pass.
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+        assert_eq!(get_commission_bps(&accounts[0]), commission_bps);
+
+        // Should fail - SIMD-0185 disabled.
+        let accounts = process_instruction(
+            VoteProgramFeatures {
+                vote_state_v4: false,
+                commission_rate_in_basis_points,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+        let stored_commission_bps = get_commission_bps(&accounts[0]);
+        assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
+        assert_ne!(stored_commission_bps, commission_bps); // New value not set
+
+        // Should fail - `CommissionKind::BlockRevenue` disallowed.
+        let accounts = process_instruction(
+            features,
+            &serialize(&VoteInstruction::UpdateCommissionBps {
+                commission_bps,
+                kind: CommissionKind::BlockRevenue,
+            })
+            .unwrap(),
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+        let stored_commission_bps = get_commission_bps(&accounts[0]);
+        assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
+        assert_ne!(stored_commission_bps, commission_bps); // New value not set
+
+        // Should fail - authorized withdrawer didn't sign the transaction.
+        let mut unsigned_instruction_accounts = instruction_accounts.clone();
+        unsigned_instruction_accounts[1].is_signer = false;
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            unsigned_instruction_accounts,
+            Err(InstructionError::MissingRequiredSignature),
+        );
+        let stored_commission_bps = get_commission_bps(&accounts[0]);
+        assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
+        assert_ne!(stored_commission_bps, commission_bps); // New value not set
+
+        // Should fail - wrong signature for authorized withdrawer.
+        let wrong_signer = Pubkey::new_unique();
+        let mut wrong_signer_transaction_accounts = transaction_accounts.clone();
+        wrong_signer_transaction_accounts.push((wrong_signer, AccountSharedData::default()));
+        let wrong_signer_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: wrong_signer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            wrong_signer_transaction_accounts,
+            wrong_signer_instruction_accounts,
+            Err(InstructionError::MissingRequiredSignature),
+        );
+        let stored_commission_bps = get_commission_bps(&accounts[0]);
+        assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
+        assert_ne!(stored_commission_bps, commission_bps); // New value not set
+    }
+
+    #[test]
+    fn test_vote_update_commission_collector() {
+        // Test UpdateCommissionCollector instruction (SIMD-0232).
+        // SIMD-0232 depends on vote_state_v4, so we only test with V4.
+        let vote_state_v4 = true;
+        let custom_commission_collector = true;
+
+        let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
+            create_test_account_with_authorized(vote_state_v4);
+
+        // Create a valid collector account: system-owned and rent-exempt.
+        let new_collector_pubkey = Pubkey::new_unique();
+        let rent = Rent::default();
+        let rent_sysvar_account = account::create_account_shared_data_for_test(&rent);
+        let collector_lamports = rent.minimum_balance(0);
+        let new_collector_account =
+            AccountSharedData::new(collector_lamports, 0, &solana_sdk_ids::system_program::id());
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account.clone()),
+            (new_collector_pubkey, new_collector_account.clone()),
+            (authorized_withdrawer, AccountSharedData::default()),
+            (sysvar::rent::id(), rent_sysvar_account),
+        ];
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: new_collector_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        let features = VoteProgramFeatures {
+            vote_state_v4,
+            custom_commission_collector,
+            ..Default::default()
+        };
+
+        let get_commission_collector = |vote_account: &AccountSharedData, kind: CommissionKind| {
+            let vote_state =
+                deserialize_vote_state_for_test(vote_state_v4, vote_account.data(), &vote_pubkey)
+                    .as_ref_v4()
+                    .clone();
+            match kind {
+                CommissionKind::InflationRewards => vote_state.inflation_rewards_collector,
+                CommissionKind::BlockRevenue => vote_state.block_revenue_collector,
+            }
+        };
+
+        let original_inflation_collector =
+            get_commission_collector(&vote_account, CommissionKind::InflationRewards);
+        let original_block_revenue_collector =
+            get_commission_collector(&vote_account, CommissionKind::BlockRevenue);
+
+        // Should pass - InflationRewards kind.
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::InflationRewards,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            new_collector_pubkey,
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should pass - BlockRevenue kind.
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::BlockRevenue,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector, // Unchanged
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            new_collector_pubkey,
+        );
+
+        // Should pass - setting collector to vote account (InflationRewards).
+        let vote_as_collector_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey, // Collector is the vote account.
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::InflationRewards,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            vote_as_collector_instruction_accounts.clone(),
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            vote_pubkey
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should pass - setting collector to vote account (BlockRevenue).
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::BlockRevenue,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            vote_as_collector_instruction_accounts,
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector, // Unchanged
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            vote_pubkey
+        );
+
+        // Should fail - SIMD-0232 disabled.
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::InflationRewards,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            VoteProgramFeatures {
+                vote_state_v4,
+                custom_commission_collector: false,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - SIMD-0185 (vote_state_v4) disabled.
+        let accounts = process_instruction(
+            VoteProgramFeatures {
+                vote_state_v4: false,
+                custom_commission_collector,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - authorized withdrawer didn't sign.
+        let mut unsigned_instruction_accounts = instruction_accounts.clone();
+        unsigned_instruction_accounts[2].is_signer = false;
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            unsigned_instruction_accounts,
+            Err(InstructionError::MissingRequiredSignature),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - wrong signer (not the authorized withdrawer).
+        let wrong_signer = Pubkey::new_unique();
+        let mut wrong_signer_transaction_accounts = transaction_accounts.clone();
+        wrong_signer_transaction_accounts.push((wrong_signer, AccountSharedData::default()));
+        let wrong_signer_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: new_collector_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: wrong_signer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            wrong_signer_transaction_accounts,
+            wrong_signer_instruction_accounts,
+            Err(InstructionError::MissingRequiredSignature),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - new collector not system program owned.
+        let non_system_owner = Pubkey::new_unique();
+        let non_system_collector_pubkey = Pubkey::new_unique();
+        let non_system_collector_account =
+            AccountSharedData::new(collector_lamports, 0, &non_system_owner);
+        let mut non_system_transaction_accounts = transaction_accounts.clone();
+        non_system_transaction_accounts[1] =
+            (non_system_collector_pubkey, non_system_collector_account);
+        let non_system_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: non_system_collector_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            non_system_transaction_accounts,
+            non_system_instruction_accounts,
+            Err(InstructionError::InvalidAccountOwner),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - new collector not rent-exempt.
+        let not_rent_exempt_collector_pubkey = Pubkey::new_unique();
+        let not_rent_exempt_collector_account =
+            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id()); // 0 lamports
+        let mut not_rent_exempt_transaction_accounts = transaction_accounts.clone();
+        not_rent_exempt_transaction_accounts[1] = (
+            not_rent_exempt_collector_pubkey,
+            not_rent_exempt_collector_account,
+        );
+        let not_rent_exempt_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: not_rent_exempt_collector_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            not_rent_exempt_transaction_accounts,
+            not_rent_exempt_instruction_accounts,
+            Err(InstructionError::InsufficientFunds),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - new collector not writable (reserved account check).
+        let mut not_writable_instruction_accounts = instruction_accounts.clone();
+        not_writable_instruction_accounts[1].is_writable = false;
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            not_writable_instruction_accounts,
+            Err(InstructionError::InvalidArgument),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
     }
 
     #[test_case(false ; "VoteStateV3")]
@@ -1375,6 +1992,7 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            ..Default::default()
         };
 
         // processing incompatible instruction should fail
@@ -1567,6 +2185,7 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            ..Default::default()
         };
 
         // processing incompatible instruction should fail
@@ -1804,6 +2423,7 @@ mod tests {
             VoteProgramFeatures {
                 vote_state_v4: true,
                 bls_pubkey_management_in_vote_account: true,
+                ..Default::default()
             },
             &instruction_data,
             transaction_accounts.clone(),
@@ -2132,6 +2752,7 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            ..Default::default()
         };
 
         // Can't change authority unless base key signs.
@@ -2254,6 +2875,7 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            ..Default::default()
         };
 
         // Can't change authority unless base key signs.
@@ -2949,6 +3571,7 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
+            ..Default::default()
         };
 
         // Test with vanilla authorize accounts

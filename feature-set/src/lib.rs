@@ -179,6 +179,8 @@ impl FeatureSet {
             bls_pubkey_management_in_vote_account: self
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
             enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
+            commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
+            custom_commission_collector: self.is_active(&custom_commission_collector::id()),
         }
     }
 }
@@ -774,11 +776,11 @@ pub mod apply_cost_tracker_during_replay {
 }
 
 pub mod stricter_abi_and_runtime_constraints {
-    solana_pubkey::declare_id!("Eoh7e1sDqtyPtuiWAhBNSJinvtJWTTDgeUMRi3RF8zWS");
+    solana_pubkey::declare_id!("StricterAbiAndRuntimeConstraints11111111111");
 }
 
 pub mod account_data_direct_mapping {
-    solana_pubkey::declare_id!("6f2qai82RU7Dutj1WJfRzLJKYA36QWvTa89CR1imgj7N");
+    solana_pubkey::declare_id!("AccountDataDirectMapping1111111111111111111");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1214,7 +1216,7 @@ pub mod replace_spl_token_with_p_token {
 }
 
 pub mod alt_bn128_little_endian {
-    solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+    solana_pubkey::declare_id!("bn2oPgpkzQPT3tohMaAsMVGjhDmmDa4jCaVPqCFmtxM");
 }
 
 pub mod bls_pubkey_management_in_vote_account {
@@ -1227,6 +1229,14 @@ pub mod relax_programdata_account_check_migration {
 
 pub mod enable_alt_bn128_g2_syscalls {
     solana_pubkey::declare_id!("bn1hKNURMGQaQoEVxahcEAcqiX3NwRs6hgKKNSLeKxH");
+}
+
+pub mod commission_rate_in_basis_points {
+    solana_pubkey::declare_id!("Eg7tXEwMZzS98xaZ1YHUbdRHsaYZiCsSaR6sKgxreoaj");
+}
+
+pub mod custom_commission_collector {
+    solana_pubkey::declare_id!("GFZ5U5LUCWNecKMBJDuVR3vdepUMwSkwVUMxWKjJXkC4");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2203,6 +2213,14 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enable_alt_bn128_g2_syscalls::id(),
             "SIMD-302: Add alt_bn128 G2 syscalls",
+        ),
+        (
+            commission_rate_in_basis_points::id(),
+            "SIMD-0291: Commission rate in basis points",
+        ),
+        (
+            custom_commission_collector::id(),
+            "SIMD-0232: Custom Commission Collector Account",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

@@ -82,7 +82,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteStateV4},
+        vote_state::{self, VoteStateV3, VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -2175,6 +2175,15 @@ fn main() {
                             exit(1);
                         });
 
+                    // If we are creating an incremental snapshot, it must be based on a full snapshot
+                    if is_incremental {
+                        assert!(bank
+                            .accounts()
+                            .accounts_db
+                            .latest_full_snapshot_slot()
+                            .is_some());
+                    }
+
                     // Snapshot creation will implicitly perform AccountsDb
                     // flush and clean operations. These operations cannot be
                     // run concurrently, so ensure ABS is stopped to avoid that
@@ -2390,14 +2399,30 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = vote_state::create_v4_account_with_authorized(
-                                identity_pubkey,
-                                identity_pubkey,
-                                identity_pubkey,
-                                None,
-                                10000,
-                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
-                            );
+                            let vote_account = if bank
+                                .feature_set
+                                .is_active(&feature_set::vote_state_v4::id())
+                            {
+                                vote_state::create_v4_account_with_authorized(
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                                    identity_pubkey,
+                                    10000,
+                                    identity_pubkey,
+                                    0,
+                                    identity_pubkey,
+                                    rent.minimum_balance(VoteStateV4::size_of()).max(1),
+                                )
+                            } else {
+                                vote_state::create_v3_account_with_authorized(
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    identity_pubkey,
+                                    100,
+                                    rent.minimum_balance(VoteStateV3::size_of()).max(1),
+                                )
+                            };
 
                             bank.store_account(
                                 stake_pubkey,
@@ -2869,7 +2894,7 @@ fn main() {
                             rent_exempt_reserve: u64,
                             points: Vec<PointDetail>,
                             base_rewards: u64,
-                            commission: u8,
+                            commission_bps: u16,
                             vote_rewards: u64,
                             stake_rewards: u64,
                             activation_epoch: Epoch,
@@ -2931,7 +2956,11 @@ fn main() {
                                     detail.current_effective_stake = *stake;
                                 }
                                 InflationPointCalculationEvent::Commission(commission) => {
-                                    detail.commission = *commission;
+                                    // Convert percentage to basis points.
+                                    detail.commission_bps = *commission as u16 * 100;
+                                }
+                                InflationPointCalculationEvent::CommissionBps(commission_bps) => {
+                                    detail.commission_bps = *commission_bps;
                                 }
                                 InflationPointCalculationEvent::RentExemptReserve(reserve) => {
                                     detail.rent_exempt_reserve = *reserve;
@@ -3104,7 +3133,7 @@ fn main() {
                                         base_rewards: String,
                                         stake_rewards: String,
                                         vote_rewards: String,
-                                        commission: String,
+                                        commission_bps: String,
                                         cluster_rewards: String,
                                         cluster_points: String,
                                         old_capitalization: u64,
@@ -3191,7 +3220,9 @@ fn main() {
                                             vote_rewards: format_or_na(
                                                 detail.map(|d| d.vote_rewards),
                                             ),
-                                            commission: format_or_na(detail.map(|d| d.commission)),
+                                            commission_bps: format_or_na(
+                                                detail.map(|d| d.commission_bps),
+                                            ),
                                             cluster_rewards: format_or_na(cluster_rewards),
                                             cluster_points: format_or_na(cluster_points),
                                             old_capitalization: base_bank.capitalization(),

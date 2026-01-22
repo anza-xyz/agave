@@ -304,6 +304,7 @@ impl From<StoredConfirmedBlockReward> for Reward {
             post_balance: 0,
             reward_type: None,
             commission: None,
+            commission_bps: None,
         }
     }
 }

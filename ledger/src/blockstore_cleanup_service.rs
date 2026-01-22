@@ -259,10 +259,7 @@ impl BlockstoreCleanupService {
 }
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{blockstore::make_many_slot_entries, get_tmp_ledger_path_auto_delete},
-    };
+    use {super::*, crate::blockstore::make_many_slot_entries};
 
     fn flush_blockstore_contents_to_disk(blockstore: Blockstore) -> Blockstore {
         // The find_slots_to_clean() routine uses a method that queries data

@@ -250,7 +250,6 @@ mod tests {
                 bootstrap_validator_stake_lamports, create_genesis_config,
                 create_genesis_config_with_leader, GenesisConfigInfo,
             },
-            get_tmp_ledger_path_auto_delete,
             leader_schedule::IdentityKeyedLeaderSchedule,
             staking_utils::tests::setup_vote_and_stake_accounts,
         },

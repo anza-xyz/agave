@@ -172,6 +172,7 @@ solana-sysvar = "=3.1.1"
 solana-transaction-context = { path = "../../transaction-context", version = "=4.0.0-alpha.0" }
 solana-transaction-status = { path = "../../transaction-status", version = "=4.0.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.0.0-alpha.0" }
+solana-vote-interface = "5.0.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.0.0-alpha.0" }
 test-case = "3.3.1"
 thiserror = "2.0"
@@ -257,6 +258,7 @@ solana-transaction-context = { workspace = true, features = [
 solana-transaction-error = "3.0.0"
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
+solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 test-case = { workspace = true }
 

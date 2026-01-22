@@ -226,7 +226,10 @@ async fn run_transactions_dos(
         return;
     }
 
-    if program_account.is_err() {
+    if let Ok(program_account) = program_account {
+        info!("Found program account. Skipping deploy..");
+        assert!(program_account.executable);
+    } else {
         let mut config = CliConfig::default();
         let (program_keypair, program_location) = program_options
             .expect("If the program doesn't exist, need to provide program keypair to deploy");
@@ -255,9 +258,6 @@ async fn run_transactions_dos(
         });
 
         process_command(&config).await.expect("deploy didn't pass");
-    } else {
-        info!("Found program account. Skipping deploy..");
-        assert!(program_account.unwrap().executable);
     }
 
     let mut tx_sent_count = 0;

@@ -415,14 +415,6 @@ impl TransactionViewReceiveAndBuffer {
             enable_static_instruction_limit,
             transaction_account_lock_limit,
         )?;
-        if validate_account_locks(
-            view.account_keys(),
-            root_bank.get_transaction_account_lock_limit(),
-        )
-        .is_err()
-        {
-            return Err(PacketHandlingError::LockValidation);
-        }
 
         let Ok(compute_budget_limits) = view
             .compute_budget_instruction_details()
@@ -482,6 +474,11 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     ) else {
         return Err(PacketHandlingError::Sanitization);
     };
+
+    // Validate no duplicate accounts (must be after resolution to catch ALT duplicates)
+    if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
+        return Err(PacketHandlingError::LockValidation);
+    }
 
     Ok((view, deactivation_slot))
 }

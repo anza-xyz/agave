@@ -48,7 +48,9 @@ use {
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_vote_program::vote_state::{self, VoteStateV3, VoteStateV4},
+    solana_vote_program::vote_state::{
+        self, VoteStateV3, VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+    },
     std::{
         collections::HashMap,
         error,
@@ -279,14 +281,20 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let bls_pubkey_compressed_bytes = bls_pubkeys_iter.next().map(|bls_pubkey| bls_pubkey.0);
+        let bls_pubkey_compressed_bytes = bls_pubkeys_iter
+            .next()
+            .map(|bls_pubkey| bls_pubkey.0)
+            .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         let vote_account = if vote_state_v4_enabled {
             vote_state::create_v4_account_with_authorized(
                 identity_pubkey,
                 identity_pubkey,
-                identity_pubkey,
                 bls_pubkey_compressed_bytes,
+                identity_pubkey,
                 u16::from(commission) * 100,
+                identity_pubkey,
+                0,
+                identity_pubkey,
                 rent.minimum_balance(VoteStateV4::size_of()).max(1),
             )
         } else {
