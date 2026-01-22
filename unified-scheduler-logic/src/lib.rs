@@ -2293,10 +2293,12 @@ mod tests {
         let sanitized1 = transaction_with_readonly_address(Pubkey::new_unique());
         let sanitized2 = transaction_with_readonly_address(Pubkey::new_unique());
         let sanitized3 = transaction_with_readonly_address(Pubkey::new_unique());
+        let sanitized4 = transaction_with_readonly_address(Pubkey::new_unique());
         let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
         let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
+        let task4 = SchedulingStateMachine::create_task(sanitized4, 104, address_loader);
 
         assert_matches!(
             state_machine
@@ -2323,6 +2325,15 @@ mod tests {
         state_machine.deschedule_task(&task1.clone());
         state_machine.deschedule_task(&task2.clone());
         assert!(state_machine.has_no_active_task());
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task4.clone())
+                .map(|t| t.task_id()),
+            Some(104)
+        );
+        state_machine.deschedule_task(&task4.clone());
+
         assert_eq!(state_machine.dropped_task_count(), 1);
         assert_eq!(state_machine.active_task_count(), 0);
         assert_eq!(state_machine.peak_active_task_count(), 2);
