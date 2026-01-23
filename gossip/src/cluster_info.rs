@@ -462,10 +462,8 @@ impl ClusterInfo {
     ) {
         let gossip_crds = self.gossip.crds.read().unwrap();
         for (idx, id) in ids.iter().enumerate() {
-            if let Some(id) = id {
-                if let Some(ci) = gossip_crds.get(*id) {
-                    query(idx, ci);
-                }
+            if let Some(ci) = id.and_then(|id| gossip_crds.get(id)) {
+                query(idx, ci);
             }
         }
     }
