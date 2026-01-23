@@ -11373,6 +11373,7 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
+ "solana-program-runtime",
  "solana-program-test",
  "solana-pubkey 4.0.0",
  "solana-rent",

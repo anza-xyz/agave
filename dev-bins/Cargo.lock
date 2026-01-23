@@ -9383,6 +9383,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-syscalls",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
@@ -9411,6 +9412,7 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
+ "solana-program-runtime",
  "solana-program-test",
  "solana-pubkey 4.0.0",
  "solana-rent",
@@ -9418,6 +9420,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
  "solana-streamer",

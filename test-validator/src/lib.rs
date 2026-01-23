@@ -49,7 +49,9 @@ use {
     solana_net_utils::{
         find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
     },
-    solana_program_test::InvokeContext,
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -949,13 +951,12 @@ impl TestValidator {
             }
         }
 
-        let mut feature_set = FeatureSet::all_enabled();
-        for feature in &config.deactivate_feature_set {
-            feature_set.deactivate(feature);
-        }
+        let runtime_features = feature_set.runtime_features();
         let program_runtime_environment = create_program_runtime_environment_v1(
-            &feature_set.runtime_features(),
-            &ComputeBudget::default(),
+            &runtime_features,
+            &SVMTransactionExecutionBudget::new_with_defaults(
+                runtime_features.raise_cpi_nesting_limit_to_8,
+            ),
             true,
             false,
         )?;
