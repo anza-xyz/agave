@@ -496,8 +496,7 @@ pub struct RpcConfirmedTransactionStatusWithSignature {
     pub memo: Option<String>,
     pub block_time: Option<UnixTimestamp>,
     pub confirmation_status: Option<TransactionConfirmationStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transaction_index: Option<u32>,
+    pub transaction_index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,7 +555,7 @@ impl From<ConfirmedTransactionStatusWithSignature> for RpcConfirmedTransactionSt
             memo,
             block_time,
             confirmation_status: None,
-            transaction_index: Some(index),
+            transaction_index: index,
         }
     }
 }
@@ -658,6 +657,6 @@ pub mod tests {
         assert_eq!(result.memo, Some("test memo".to_string()));
         assert_eq!(result.block_time, Some(1234567890));
         assert_eq!(result.confirmation_status, None);
-        assert_eq!(result.transaction_index, Some(42));
+        assert_eq!(result.transaction_index, 42);
     }
 }
