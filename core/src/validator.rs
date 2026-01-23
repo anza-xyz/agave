@@ -123,7 +123,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+        bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         dependency_tracker::DependencyTracker,
@@ -1232,7 +1232,7 @@ impl Validator {
             "connection_cache_bls_quic",
             // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
             // we wouldn't expect more than a 100 PPS. 1 connection is enough.
-            MAX_ALPENGLOW_VOTE_ACCOUNTS, /* connection_pool_size */
+            1, /* connection_pool_size */
             Some(node.sockets.quic_alpenglow_client),
             Some((
                 &identity_keypair,
