@@ -34,7 +34,7 @@ use {
         blockstore::{Blockstore, PurgeType},
         blockstore_meta::DuplicateSlotProof,
         blockstore_options::{AccessType, BlockstoreOptions},
-        leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule, LeaderSchedule},
+        leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
     },
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
@@ -62,6 +62,31 @@ pub const RUST_LOG_FILTER: &str =
     "error,solana_core::replay_stage=warn,solana_local_cluster=info,local_cluster=info";
 
 pub const DEFAULT_NODE_STAKE: u64 = 10 * LAMPORTS_PER_SOL;
+
+#[derive(Clone)]
+pub struct ValidatorKeys {
+    pub node_keypair: Arc<Keypair>,
+    pub vote_keypair: Arc<Keypair>,
+}
+
+impl ValidatorKeys {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            node_keypair: Arc::new(Keypair::new()),
+            vote_keypair: Arc::new(Keypair::new()),
+        }
+    }
+}
+
+impl From<&ValidatorKeys> for SlotLeader {
+    fn from(validator_keys: &ValidatorKeys) -> Self {
+        SlotLeader {
+            id: validator_keys.node_keypair.pubkey(),
+            vote_address: validator_keys.vote_keypair.pubkey(),
+        }
+    }
+}
 
 pub fn last_vote_in_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<(Slot, Hash)> {
     restore_tower(tower_path, node_pubkey).map(|tower| tower.last_voted_slot_hash().unwrap())
@@ -219,14 +244,11 @@ pub fn run_kill_partition_switch_threshold<C>(
     let (leader_schedule, validator_keys) =
         create_custom_leader_schedule_with_random_keys(&num_slots_per_validator);
 
-    info!(
-        "Validator ids: {:?}",
-        validator_keys
-            .iter()
-            .map(|k| k.pubkey())
-            .collect::<Vec<_>>()
-    );
-    let validator_pubkeys: Vec<Pubkey> = validator_keys.iter().map(|k| k.pubkey()).collect();
+    let validator_pubkeys: Vec<Pubkey> = validator_keys
+        .iter()
+        .map(|k| k.node_keypair.pubkey())
+        .collect();
+    info!("Validator ids: {validator_pubkeys:?}");
     let on_partition_start = |cluster: &mut LocalCluster, partition_context: &mut C| {
         let dead_validator_infos: Vec<ClusterValidatorInfo> = validator_pubkeys
             [0..stakes_to_kill.len()]
@@ -257,31 +279,29 @@ pub fn run_kill_partition_switch_threshold<C>(
 }
 
 pub fn create_custom_leader_schedule(
-    validator_key_to_slots: impl Iterator<Item = (Pubkey, usize)>,
+    slot_leader_to_slots: impl Iterator<Item = (SlotLeader, usize)>,
 ) -> LeaderSchedule {
     let mut leader_schedule = vec![];
-    for (k, num_slots) in validator_key_to_slots {
+    for (leader, num_slots) in slot_leader_to_slots {
         for _ in 0..num_slots {
-            leader_schedule.push(k)
+            leader_schedule.push(leader)
         }
     }
 
     info!("leader_schedule: {}", leader_schedule.len());
-    Box::new(IdentityKeyedLeaderSchedule::new_from_schedule(
-        leader_schedule,
-    ))
+    LeaderSchedule::new_from_schedule(leader_schedule)
 }
 
 pub fn create_custom_leader_schedule_with_random_keys(
     validator_num_slots: &[usize],
-) -> (LeaderSchedule, Vec<Arc<Keypair>>) {
-    let validator_keys: Vec<_> = iter::repeat_with(|| Arc::new(Keypair::new()))
+) -> (LeaderSchedule, Vec<ValidatorKeys>) {
+    let validator_keys: Vec<_> = iter::repeat_with(ValidatorKeys::new)
         .take(validator_num_slots.len())
         .collect();
     let leader_schedule = create_custom_leader_schedule(
         validator_keys
             .iter()
-            .map(|k| k.pubkey())
+            .map(SlotLeader::from)
             .zip(validator_num_slots.iter().cloned()),
     );
     (leader_schedule, validator_keys)
@@ -302,7 +322,7 @@ pub fn create_custom_leader_schedule_with_random_keys(
 #[allow(clippy::cognitive_complexity)]
 pub fn run_cluster_partition<C>(
     partitions: &[usize],
-    leader_schedule: Option<(LeaderSchedule, Vec<Arc<Keypair>>)>,
+    leader_schedule: Option<(LeaderSchedule, Vec<ValidatorKeys>)>,
     mut context: C,
     on_partition_start: impl FnOnce(&mut LocalCluster, &mut C),
     on_before_partition_resolved: impl FnOnce(&mut LocalCluster, &mut C),
@@ -356,7 +376,7 @@ pub fn run_cluster_partition<C>(
             )
         } else {
             (
-                iter::repeat_with(|| Arc::new(Keypair::new()))
+                iter::repeat_with(ValidatorKeys::new)
                     .take(partitions.len())
                     .collect(),
                 Duration::from_secs(10),
@@ -451,7 +471,7 @@ pub fn run_cluster_partition<C>(
 }
 
 pub struct ValidatorTestConfig {
-    pub validator_keypair: Arc<Keypair>,
+    pub validator_keys: ValidatorKeys,
     pub validator_config: ValidatorConfig,
     pub in_genesis: bool,
 }
@@ -461,19 +481,19 @@ pub fn test_faulty_node(
     node_stakes: Vec<u64>,
     validator_test_configs: Option<Vec<ValidatorTestConfig>>,
     custom_leader_schedule: Option<FixedSchedule>,
-) -> (LocalCluster, Vec<Arc<Keypair>>) {
+) -> (LocalCluster, Vec<ValidatorKeys>) {
     let num_nodes = node_stakes.len();
     let validator_keys = validator_test_configs
         .as_ref()
         .map(|configs| {
             configs
                 .iter()
-                .map(|config| (config.validator_keypair.clone(), config.in_genesis))
+                .map(|config| (config.validator_keys.clone(), config.in_genesis))
                 .collect()
         })
         .unwrap_or_else(|| {
             let mut validator_keys = Vec::with_capacity(num_nodes);
-            validator_keys.resize_with(num_nodes, || (Arc::new(Keypair::new()), true));
+            validator_keys.resize_with(num_nodes, || (ValidatorKeys::new(), true));
             validator_keys
         });
 
@@ -483,7 +503,7 @@ pub fn test_faulty_node(
     let fixed_leader_schedule = custom_leader_schedule.unwrap_or_else(|| {
         // Use a fixed leader schedule so that only the faulty node gets leader slots.
         let validator_to_slots = vec![(
-            validator_keys[0].0.as_ref().pubkey(),
+            SlotLeader::from(&validator_keys[0].0),
             solana_clock::DEFAULT_DEV_SLOTS_PER_EPOCH as usize,
         )];
         let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
@@ -522,10 +542,8 @@ pub fn test_faulty_node(
     };
 
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
-    let validator_keys: Vec<Arc<Keypair>> = validator_keys
-        .into_iter()
-        .map(|(keypair, _)| keypair)
-        .collect();
+    let validator_keys: Vec<ValidatorKeys> =
+        validator_keys.into_iter().map(|(keys, _)| keys).collect();
 
     (cluster, validator_keys)
 }

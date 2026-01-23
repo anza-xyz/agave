@@ -1,5 +1,5 @@
 use {
-    crate::leader_schedule::{LeaderSchedule, VoteKeyedLeaderSchedule},
+    crate::leader_schedule::LeaderSchedule,
     solana_clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -9,12 +9,12 @@ use {
 /// Return the leader schedule for the given epoch.
 pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
     bank.epoch_vote_accounts(epoch).map(|vote_accounts_map| {
-        Box::new(VoteKeyedLeaderSchedule::new(
+        LeaderSchedule::new(
             vote_accounts_map,
             epoch,
             bank.get_slots_in_epoch(epoch),
             NUM_CONSECUTIVE_LEADER_SLOTS,
-        )) as LeaderSchedule
+        )
     })
 }
 
@@ -96,7 +96,6 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let leader_schedule = leader_schedule(0, &bank).unwrap();
 
-        assert!(leader_schedule.get_vote_key_at_slot_index(0).is_some());
         assert_eq!(leader_schedule[0], pubkey);
         assert_eq!(leader_schedule[1], pubkey);
         assert_eq!(leader_schedule[2], pubkey);

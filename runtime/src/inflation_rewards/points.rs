@@ -36,7 +36,11 @@ pub enum InflationPointCalculationEvent {
     EffectiveStakeAtRewardedEpoch(u64),
     RentExemptReserve(u64),
     Delegation(Delegation, Pubkey),
+    /// Commission as a percentage (0-100).
     Commission(u8),
+    /// Commission in basis points (0-10,000 representing 0-100%).
+    /// Used when `commission_rate_in_basis_points` feature is active.
+    CommissionBps(u16),
     CreditsObserved(u64, Option<u64>),
     Skipped(SkippedReason),
 }

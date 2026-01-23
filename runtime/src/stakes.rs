@@ -582,7 +582,7 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_stake_interface::{self as stake, state::StakeStateV2},
-        solana_vote_interface::state::VoteStateV4,
+        solana_vote_interface::state::{VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
         solana_vote_program::vote_state,
     };
 
@@ -595,9 +595,12 @@ pub(crate) mod tests {
         let vote_account = vote_state::create_v4_account_with_authorized(
             &node_pubkey,
             &vote_pubkey,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey,
-            None,
             0,
+            &vote_pubkey,
+            0,
+            &vote_pubkey,
             1,
         );
         let stake_pubkey = solana_pubkey::new_rand();
@@ -623,9 +626,12 @@ pub(crate) mod tests {
             &vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 vote_pubkey,
+                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                 vote_pubkey,
-                None,
                 0,
+                vote_pubkey,
+                0,
+                vote_pubkey,
                 1,
             ),
             &Rent::free(),

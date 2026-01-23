@@ -48,7 +48,9 @@ use {
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_vote_program::vote_state::{self, VoteStateV3, VoteStateV4},
+    solana_vote_program::vote_state::{
+        self, VoteStateV3, VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+    },
     std::{
         collections::HashMap,
         error,
@@ -279,14 +281,20 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let bls_pubkey_compressed_bytes = bls_pubkeys_iter.next().map(|bls_pubkey| bls_pubkey.0);
+        let bls_pubkey_compressed_bytes = bls_pubkeys_iter
+            .next()
+            .map(|bls_pubkey| bls_pubkey.0)
+            .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         let vote_account = if vote_state_v4_enabled {
             vote_state::create_v4_account_with_authorized(
                 identity_pubkey,
                 identity_pubkey,
-                identity_pubkey,
                 bls_pubkey_compressed_bytes,
+                identity_pubkey,
                 u16::from(commission) * 100,
+                identity_pubkey,
+                0,
+                identity_pubkey,
                 rent.minimum_balance(VoteStateV4::size_of()).max(1),
             )
         } else {
@@ -740,9 +748,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             std::process::exit(1);
         });
 
-    // Determine if vote_state_v4 will be active at genesis
-    let vote_state_v4_enabled = !features_to_deactivate.contains(&vote_state_v4::id());
-
     match matches.value_of("hashes_per_tick").unwrap() {
         "auto" => match cluster_type {
             ClusterType::Development => {
@@ -803,18 +808,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let is_alpenglow = matches.is_present("alpenglow");
 
-    add_validator_accounts(
-        &mut genesis_config,
-        &mut bootstrap_validator_pubkeys.iter(),
-        &mut bootstrap_validator_bls_pubkeys.unwrap_or_default().iter(),
-        bootstrap_validator_lamports,
-        bootstrap_validator_stake_lamports,
-        commission,
-        &rent,
-        bootstrap_stake_authorized_pubkey.as_ref(),
-        vote_state_v4_enabled,
-    )?;
-
     if let Some(creation_time) = unix_timestamp_from_rfc3339_datetime(&matches, "creation_time") {
         genesis_config.creation_time = creation_time;
     }
@@ -847,6 +840,34 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             load_genesis_accounts(file, &mut genesis_config)?;
         }
     }
+
+    // After primordial accounts are read in, check to see if vote state v4
+    // was manually deactivated by providing an inactive Feature account.
+    let vote_state_v4_enabled = {
+        use solana_feature_gate_interface::from_account;
+
+        let is_primordial_inactive_feature = genesis_config
+            .accounts
+            .iter()
+            .find(|(key, _)| key.eq(&&vote_state_v4::id()))
+            .is_some_and(|(_, acct)| from_account(acct).is_none());
+
+        let is_explicitly_deactivated = features_to_deactivate.contains(&vote_state_v4::id());
+
+        !is_primordial_inactive_feature && !is_explicitly_deactivated
+    };
+
+    add_validator_accounts(
+        &mut genesis_config,
+        &mut bootstrap_validator_pubkeys.iter(),
+        &mut bootstrap_validator_bls_pubkeys.unwrap_or_default().iter(),
+        bootstrap_validator_lamports,
+        bootstrap_validator_stake_lamports,
+        commission,
+        &rent,
+        bootstrap_stake_authorized_pubkey.as_ref(),
+        vote_state_v4_enabled,
+    )?;
 
     if let Some(files) = matches.values_of("validator_accounts_file") {
         for file in files {

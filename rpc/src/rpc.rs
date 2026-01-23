@@ -876,6 +876,7 @@ impl JsonRpcRequestProcessor {
                         amount: reward.lamports.unsigned_abs(),
                         post_balance: reward.post_balance,
                         commission: reward.commission,
+                        commission_bps: reward.commission_bps,
                     });
                 }
                 None
@@ -988,6 +989,7 @@ impl JsonRpcRequestProcessor {
                     leader_schedule
                         .get_slot_leaders()
                         .iter()
+                        .map(|slot_leader| slot_leader.id)
                         .skip(slot_index as usize)
                         .take(limit.saturating_sub(slot_leaders.len())),
                 );
@@ -2928,7 +2930,11 @@ pub mod rpc_minimal {
                 .map(|leader_schedule| {
                     let mut schedule_by_identity =
                         solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
-                            leader_schedule.get_slot_leaders().iter().enumerate(),
+                            leader_schedule
+                                .get_slot_leaders()
+                                .iter()
+                                .map(|slot_leader| &slot_leader.id)
+                                .enumerate(),
                         );
                     if let Some(identity) = config.identity {
                         schedule_by_identity.retain(|k, _| *k == identity);

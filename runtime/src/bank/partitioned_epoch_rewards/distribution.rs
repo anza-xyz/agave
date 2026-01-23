@@ -229,7 +229,7 @@ impl Bank {
                 reward_type: RewardType::Staking,
                 lamports: i64::try_from(partitioned_stake_reward.stake_reward).unwrap(),
                 post_balance: account.lamports(),
-                commission: Some(partitioned_stake_reward.commission),
+                commission_bps: Some(partitioned_stake_reward.commission_bps),
             },
             stake_account: account,
         })
@@ -333,6 +333,7 @@ mod tests {
             state::{Meta, Stake},
         },
         solana_sysvar as sysvar,
+        solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
         std::sync::Arc,
     };
@@ -409,9 +410,12 @@ mod tests {
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
             &validator_vote_pubkey,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &validator_vote_pubkey,
-            None,
             1000,
+            &validator_vote_pubkey,
+            0,
+            &validator_vote_pubkey,
             20,
         );
 
@@ -622,14 +626,14 @@ mod tests {
             credits_observed: 42,
         };
         let stake_reward = 100;
-        let commission = 42;
+        let commission_bps = 4_200;
 
         let nonexistent_account = Pubkey::new_unique();
         let partitioned_stake_reward = PartitionedStakeReward {
             stake_pubkey: nonexistent_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -660,7 +664,7 @@ mod tests {
             stake_pubkey: overflowing_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -699,7 +703,7 @@ mod tests {
             stake_pubkey: successful_account,
             stake: new_stake,
             stake_reward,
-            commission,
+            commission_bps,
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
@@ -716,6 +720,7 @@ mod tests {
                 StakeFlags::default(),
             ))
             .unwrap();
+
         let expected_stake_reward = StakeReward {
             stake_pubkey: successful_account,
             stake_account: expected_stake_account,
@@ -723,7 +728,7 @@ mod tests {
                 reward_type: RewardType::Staking,
                 lamports: stake_reward as i64,
                 post_balance: expected_lamports,
-                commission: Some(commission),
+                commission_bps: Some(commission_bps),
             },
         };
         assert_eq!(
