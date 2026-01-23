@@ -12,12 +12,16 @@ use {
     solana_streamer::streamer,
     std::{
         collections::HashMap,
-        sync::Arc,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
         thread::{self, Builder},
     },
 };
 
 pub fn spawn_service(
+    exit: Arc<AtomicBool>,
     packet_receiver: Receiver<PacketBatch>,
     banks: SharableBanks,
     vote_sender: VerifiedVoterSlotsSender,
@@ -28,7 +32,7 @@ pub fn spawn_service(
 
     Builder::new()
         .name("solSigVerBLS".to_string())
-        .spawn(move || verifier.run(packet_receiver))
+        .spawn(move || verifier.run(exit, packet_receiver))
         .unwrap()
 }
 
@@ -56,8 +60,9 @@ impl BLSSigVerifier {
         }
     }
 
-    fn run(mut self, receiver: Receiver<PacketBatch>) {
-        loop {
+    fn run(mut self, exit: Arc<AtomicBool>, receiver: Receiver<PacketBatch>) {
+        info!("BLSSigverifier starting");
+        while !exit.load(Ordering::Relaxed) {
             match streamer::recv_packet_batches(&receiver) {
                 Ok((batches, _, _)) => {
                     if self.process_batches(batches).is_err() {
@@ -73,6 +78,7 @@ impl BLSSigVerifier {
                 Err(_) => continue,
             }
         }
+        info!("BLSSigverifier shutting down");
     }
 
     /// Extract votes and certs from the packet batch, verify and send the results
