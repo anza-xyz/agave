@@ -385,7 +385,8 @@ fn can_vote_on_candidate_bank(
         && switch_fork_decision.can_vote()
     {
         info!(
-            "voting: {} {:.1}%",
+            "{}: voting: {} {:.1}%",
+            tower.node_pubkey,
             candidate_vote_bank_slot,
             100.0 * fork_weight
         );

@@ -80,7 +80,7 @@ use {
     solana_vote::vote_transaction::VoteTransaction,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeMap, HashMap, HashSet},
         num::{NonZeroUsize, Saturating},
         result,
         sync::{
@@ -101,6 +101,13 @@ pub const DUPLICATE_THRESHOLD: f64 = 1.0 - SWITCH_FORK_THRESHOLD - DUPLICATE_LIV
 const MAX_VOTE_SIGNATURES: usize = 200;
 const MAX_VOTE_REFRESH_INTERVAL_MILLIS: usize = 5000;
 const MAX_REPAIR_RETRY_LOOP_ATTEMPTS: usize = 10;
+
+/// Block is considered slow if poh has ticked ticks_per_slot * SLOT_TIMEOUT_TICK_FACTOR
+/// past the end of the block at replay completion
+const SLOT_TIMEOUT_TICK_FACTOR: f64 = 0.5;
+
+/// Amount of slots we are locked out from voting on a slow block
+const SLOW_SLOT_LOCKOUT: Slot = 4;
 
 #[cfg(test)]
 static_assertions::const_assert!(REFRESH_VOTE_BLOCKHEIGHT < solana_clock::MAX_PROCESSING_AGE);
@@ -201,6 +208,7 @@ pub struct TowerBFTStructures {
     pub duplicate_confirmed_slots: DuplicateConfirmedSlots,
     pub unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes,
     pub epoch_slots_frozen_slots: EpochSlotsFrozenSlots,
+    pub slow_slots_by_expiry: BTreeMap<Slot, (Slot, Hash)>,
 }
 
 struct PartitionInfo {
@@ -709,6 +717,7 @@ impl ReplayStage {
                 duplicate_confirmed_slots,
                 unfrozen_gossip_verified_vote_hashes,
                 epoch_slots_frozen_slots,
+                slow_slots_by_expiry: BTreeMap::default(),
             };
             let (working_bank, in_vote_only_mode) = {
                 let r_bank_forks = bank_forks.read().unwrap();
@@ -1011,6 +1020,7 @@ impl ReplayStage {
                         Measure::start("heaviest_fork_failures_time");
                     if tower.is_recent(heaviest_bank.slot()) && !heaviest_fork_failures.is_empty() {
                         Self::log_heaviest_fork_failures(
+                            &my_pubkey,
                             &heaviest_fork_failures,
                             &bank_forks,
                             &tower,
@@ -1023,7 +1033,6 @@ impl ReplayStage {
                     heaviest_fork_failures_time.stop();
 
                     let mut voting_time = Measure::start("voting_time");
-                    // Vote on a fork
                     if let Some((ref vote_bank, ref switch_fork_decision)) = vote_bank {
                         if let Some(votable_leader) =
                             leader_schedule_cache.slot_leader_at(vote_bank.slot(), Some(vote_bank))
@@ -3334,16 +3343,83 @@ impl ReplayStage {
                     duplicate_slots_tracker,
                     duplicate_confirmed_slots,
                     epoch_slots_frozen_slots,
+                    slow_slots_by_expiry,
                     ..
                 }) = &mut tbft_structs
                 {
+                    let block = (bank.slot(), bank.hash());
                     // Needs to be updated before `check_slot_agrees_with_cluster()` so that
                     // any updates in `check_slot_agrees_with_cluster()` on fork choice take
                     // effect
-                    heaviest_subtree_fork_choice.add_new_leaf_slot(
-                        (bank.slot(), bank.hash()),
-                        Some((bank.parent_slot(), bank.parent_hash())),
-                    );
+                    heaviest_subtree_fork_choice
+                        .add_new_leaf_slot(block, Some((bank.parent_slot(), bank.parent_hash())));
+
+                    // Check if this block took too long, if so mark it as invalid.
+                    // This prevents voting or building on any blocks in this fork.
+                    // If the fork reaches > 52% votes (DC) or we freeze a bank after SLOW_SLOT_LOCKOUT
+                    // slots we expire this invalid penality.
+                    //
+                    // Notably in slow slot scenarios, a block cannot be marked as invalid
+                    // *AFTER* we have voted for it, avoiding the complexity involved with
+                    // switching to a lower staked fork than the last vote.
+                    let (current_tick_height, timeout_grace_ticks) = {
+                        let poh_recorder_r = poh_recorder.read().unwrap();
+                        let ticks_per_slot = poh_recorder_r.ticks_per_slot();
+
+                        (
+                            poh_recorder_r.tick_height(),
+                            (ticks_per_slot as f64 * SLOT_TIMEOUT_TICK_FACTOR) as u64,
+                        )
+                    };
+                    if !heaviest_subtree_fork_choice
+                        .is_duplicate_confirmed(&block)
+                        .unwrap_or_default()
+                        && current_tick_height > bank.max_tick_height() + timeout_grace_ticks
+                    {
+                        info!(
+                            "{my_pubkey}: Block {block:?} is slow: current tick height \
+                             {current_tick_height} vs bank tick height {} + grace ticks \
+                             {timeout_grace_ticks}. Marking this fork as invalid",
+                            bank.max_tick_height()
+                        );
+
+                        heaviest_subtree_fork_choice.mark_fork_invalid_candidate(&block);
+                        slow_slots_by_expiry.insert(bank.slot() + SLOW_SLOT_LOCKOUT, block);
+
+                        datapoint_info!(
+                            "replay_stage-slow-block",
+                            ("slot", bank.slot() as i64, i64),
+                            (
+                                "ticks_over_allotted",
+                                (current_tick_height - bank.max_tick_height() - timeout_grace_ticks)
+                                    as i64,
+                                i64
+                            )
+                        );
+                    }
+
+                    // Expire any old slow blocks
+                    let new_slow_slots_by_expiry = slow_slots_by_expiry.split_off(&bank.slot());
+                    for block @ (slot, _) in slow_slots_by_expiry.values() {
+                        // Since blocks can also be marked invalid if they are duplicate,
+                        // only mark a slow slot as valid again if either:
+                        // - the slot is not duplicate (it was only marked invalid because slow)
+                        // - OR the block is duplicate confirmed (it would have been marked valid even if duplicate)
+                        if heaviest_subtree_fork_choice
+                            .is_duplicate_confirmed(block)
+                            .unwrap_or_default()
+                            || !duplicate_slots_tracker.contains(slot)
+                        {
+                            info!(
+                                "{my_pubkey}: Marking slow block {block:?} as valid due to \
+                                 freezing {}",
+                                bank.slot(),
+                            );
+                            heaviest_subtree_fork_choice.mark_fork_valid_candidate(block);
+                        }
+                    }
+                    *slow_slots_by_expiry = new_slow_slots_by_expiry;
+
                     heaviest_subtree_fork_choice.maybe_print_state();
                     let bank_frozen_state = BankFrozenState::new_from_state(
                         bank.slot(),
@@ -4182,7 +4258,7 @@ impl ReplayStage {
             duplicate_confirmed_slots,
             unfrozen_gossip_verified_vote_hashes,
             epoch_slots_frozen_slots,
-            ..
+            slow_slots_by_expiry,
         } = tbft_structs;
         heaviest_subtree_fork_choice.set_tree_root((new_root, bank_forks.root_bank().hash()));
         *duplicate_slots_tracker = duplicate_slots_tracker.split_off(&new_root);
@@ -4194,6 +4270,8 @@ impl ReplayStage {
         unfrozen_gossip_verified_vote_hashes.set_root(new_root);
         *epoch_slots_frozen_slots = epoch_slots_frozen_slots.split_off(&new_root);
         // epoch_slots_frozen_slots now only contains entries >= `new_root`
+
+        *slow_slots_by_expiry = slow_slots_by_expiry.split_off(&(new_root + SLOW_SLOT_LOCKOUT));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4353,6 +4431,7 @@ impl ReplayStage {
     }
 
     fn log_heaviest_fork_failures(
+        my_pubkey: &Pubkey,
         heaviest_fork_failures: &Vec<HeaviestForkFailures>,
         bank_forks: &Arc<RwLock<BankForks>>,
         tower: &Tower,
@@ -4362,7 +4441,7 @@ impl ReplayStage {
         last_threshold_failure_slot: &mut Slot,
     ) {
         info!(
-            "Couldn't vote on heaviest fork: {:?}, heaviest_fork_failures: {:?}",
+            "{my_pubkey}: Couldn't vote on heaviest fork: {:?}, heaviest_fork_failures: {:?}",
             heaviest_bank.slot(),
             heaviest_fork_failures
         );
@@ -4764,6 +4843,7 @@ pub(crate) mod tests {
             duplicate_confirmed_slots,
             unfrozen_gossip_verified_vote_hashes,
             epoch_slots_frozen_slots,
+            slow_slots_by_expiry: BTreeMap::default(),
         };
         ReplayStage::handle_new_root(
             root,
@@ -4862,6 +4942,7 @@ pub(crate) mod tests {
                 duplicate_confirmed_slots: DuplicateConfirmedSlots::default(),
                 unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes::default(),
                 epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
+                slow_slots_by_expiry: BTreeMap::default(),
             },
         );
         assert_eq!(bank_forks.read().unwrap().root(), root);

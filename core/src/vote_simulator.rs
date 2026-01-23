@@ -33,7 +33,7 @@ use {
     solana_vote::vote_transaction,
     solana_vote_program::vote_state::{Lockout, TowerSync},
     std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{BTreeMap, HashMap, HashSet, VecDeque},
         sync::{Arc, RwLock},
     },
     trees::{tr, Tree, TreeWalk},
@@ -72,6 +72,7 @@ impl VoteSimulator {
                 duplicate_confirmed_slots: DuplicateConfirmedSlots::default(),
                 unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes::default(),
                 epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
+                slow_slots_by_expiry: BTreeMap::default(),
             },
         }
     }
