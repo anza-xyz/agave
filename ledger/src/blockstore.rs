@@ -3251,7 +3251,7 @@ impl Blockstore {
             if transaction_slot > slot || address != pubkey {
                 break;
             }
-            signatures.push((slot, signature, transaction_index));
+            signatures.push((transaction_slot, signature, transaction_index));
         }
         drop(lock);
         Ok(signatures)
