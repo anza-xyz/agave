@@ -155,7 +155,7 @@ impl<'de> SchemaRead<'de> for VersionedMsg {
 #[cfg(test)]
 mod tests {
     use {
-        crate::entry::{Entry, MAX_VERSIONED_TRANSACTIONS_PREALLOC},
+        crate::entry::{Entry, MAX_DATA_SHREDS_SIZE},
         proptest::prelude::*,
         solana_address::{Address, ADDRESS_BYTES},
         solana_hash::{Hash, HASH_BYTES},
@@ -385,8 +385,7 @@ mod tests {
         };
 
         let mut data = wincode::serialize(&entry).unwrap();
-        let over_limit: usize =
-            MAX_VERSIONED_TRANSACTIONS_PREALLOC / size_of::<VersionedTransaction>() + 1;
+        let over_limit: usize = MAX_DATA_SHREDS_SIZE / size_of::<VersionedTransaction>() + 1;
         let len_offset = 8 + HASH_BYTES;
         // Fudge the length of the vec to be over the limit to trigger the preallocation
         // size limit error.
@@ -397,7 +396,7 @@ mod tests {
         assert!(matches!(
             err,
             wincode::error::ReadError::PreallocationSizeLimit {
-                limit: MAX_VERSIONED_TRANSACTIONS_PREALLOC,
+                limit: MAX_DATA_SHREDS_SIZE,
                 needed,
             } if needed == needed_bytes,
         ));
@@ -426,8 +425,7 @@ mod tests {
         };
 
         let mut data = wincode::serialize(&entry).unwrap();
-        let at_limit: usize =
-            MAX_VERSIONED_TRANSACTIONS_PREALLOC / size_of::<VersionedTransaction>();
+        let at_limit: usize = MAX_DATA_SHREDS_SIZE / size_of::<VersionedTransaction>();
         let len_offset = 8 + HASH_BYTES;
         // Fudge the length of the vec to be at the limit.
         data[len_offset..len_offset + 8].copy_from_slice(&at_limit.to_le_bytes());

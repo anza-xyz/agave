@@ -37,7 +37,7 @@ use {
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{create_ticks, Entry, MaxDataShredsLen},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -82,6 +82,7 @@ use {
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
+    wincode::{containers::Vec as WincodeVec, Deserialize as _},
 };
 
 pub mod blockstore_purge;
@@ -3703,7 +3704,7 @@ impl Blockstore {
                         )))
                     })
                     .and_then(|payload| {
-                        wincode::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
+                        <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
                             BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
                                 format!("could not reconstruct entries: {e:?}"),
                             )))

@@ -83,9 +83,8 @@ pub struct Api<'a> {
 }
 
 const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-pub(crate) const MAX_VERSIONED_TRANSACTIONS_PREALLOC: usize =
-    MAX_DATA_SHREDS_PER_SLOT * solana_packet::PACKET_DATA_SIZE;
-type VersionedTransactionsLen = BincodeLen<MAX_VERSIONED_TRANSACTIONS_PREALLOC>;
+pub const MAX_DATA_SHREDS_SIZE: usize = MAX_DATA_SHREDS_PER_SLOT * solana_packet::PACKET_DATA_SIZE;
+pub type MaxDataShredsLen = BincodeLen<MAX_DATA_SHREDS_SIZE>;
 
 /// Each Entry contains three pieces of data. The `num_hashes` field is the number
 /// of hashes performed since the previous entry.  The `hash` field is the result
@@ -126,7 +125,7 @@ pub struct Entry {
     /// An unordered list of transactions that were observed before the Entry ID was
     /// generated. They may have been observed before a previous Entry ID but were
     /// pushed back into this list to ensure deterministic interpretation of the ledger.
-    #[wincode(with = "WincodeVec<crate::wincode::VersionedTransaction, VersionedTransactionsLen>")]
+    #[wincode(with = "WincodeVec<crate::wincode::VersionedTransaction, MaxDataShredsLen>")]
     pub transactions: Vec<VersionedTransaction>,
 }
 
