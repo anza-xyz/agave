@@ -50,6 +50,7 @@ pub struct SVMFeatureSet {
     pub commission_rate_in_basis_points: bool,
     pub custom_commission_collector: bool,
     pub enable_bls12_381_syscall: bool,
+    pub block_revenue_sharing: bool,
 }
 
 impl SVMFeatureSet {
@@ -104,6 +105,7 @@ impl SVMFeatureSet {
             commission_rate_in_basis_points: true,
             custom_commission_collector: true,
             enable_bls12_381_syscall: true,
+            block_revenue_sharing: true,
         }
     }
 }

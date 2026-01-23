@@ -368,9 +368,24 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &rent,
             )
         }
-        // New instructions not yet implemented.
-        VoteInstruction::DepositDelegatorRewards { .. } => {
-            Err(InstructionError::InvalidInstructionData)
+        VoteInstruction::DepositDelegatorRewards { deposit } => {
+            // SIMD-0123: Deposit delegator rewards.
+            // Requires:
+            // * SIMD-0185: Vote State V4
+            // * SIMD-0291: Commission in Basis Points
+            // * SIMD-0232: Custom Commission Collector
+            let feature_set = invoke_context.get_feature_set();
+            if !feature_set.commission_rate_in_basis_points
+                || !feature_set.custom_commission_collector
+                || !feature_set.block_revenue_sharing
+                || !matches!(target_version, VoteStateTargetVersion::V4)
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+
+            instruction_context.check_number_of_instruction_accounts(2)?;
+            drop(me);
+            vote_state::deposit_delegator_rewards(invoke_context, deposit)
         }
     }
 });
@@ -406,6 +421,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
+            loaded_programs::ProgramCacheEntry,
             solana_sbpf::vm::ContextObject,
         },
         solana_pubkey::Pubkey,
@@ -420,7 +436,7 @@ mod tests {
                 BLS_PUBLIC_KEY_COMPRESSED_SIZE,
             },
         },
-        std::{cell::RefCell, collections::HashSet, str::FromStr},
+        std::{cell::RefCell, collections::HashSet, str::FromStr, sync::Arc},
         test_case::{test_case, test_matrix},
     };
 
@@ -466,6 +482,19 @@ mod tests {
         bls_pubkey_management_in_vote_account: bool,
         commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
+        block_revenue_sharing: bool,
+    }
+
+    impl VoteProgramFeatures {
+        fn all_enabled() -> Self {
+            Self {
+                vote_state_v4: true,
+                bls_pubkey_management_in_vote_account: true,
+                commission_rate_in_basis_points: true,
+                custom_commission_collector: true,
+                block_revenue_sharing: true,
+            }
+        }
     }
 
     fn process_instruction(
@@ -498,6 +527,7 @@ mod tests {
             bls_pubkey_management_in_vote_account,
             commission_rate_in_basis_points,
             custom_commission_collector,
+            block_revenue_sharing,
         } = features;
         let cu_consumed = RefCell::new(0u64);
         let accounts = mock_process_instruction_with_feature_set(
@@ -509,6 +539,15 @@ mod tests {
             expected_result,
             Entrypoint::vm,
             |invoke_context| {
+                // Register system program for CPI support.
+                invoke_context.program_cache_for_tx_batch.replenish(
+                    solana_sdk_ids::system_program::id(),
+                    Arc::new(ProgramCacheEntry::new_builtin(
+                        0,
+                        0,
+                        solana_system_program::system_processor::Entrypoint::vm,
+                    )),
+                );
                 *cu_consumed.borrow_mut() = invoke_context.get_remaining();
             },
             |invoke_context| {
@@ -519,6 +558,7 @@ mod tests {
                 bls_pubkey_management_in_vote_account,
                 commission_rate_in_basis_points,
                 custom_commission_collector,
+                block_revenue_sharing,
                 ..SVMFeatureSet::all_enabled()
             },
         );
@@ -4157,5 +4197,238 @@ mod tests {
                 Err(expected_error),
             );
         }
+    }
+
+    // Test DepositDelegatorRewards instruction (SIMD-0123).
+    #[test]
+    fn test_deposit_delegator_rewards() {
+        let (vote_pubkey, _authorized_voter, _authorized_withdrawer, vote_account_v4) =
+            create_test_account_with_authorized(true);
+        let (vote_pubkey_v3, vote_account_v3) = create_test_account(false);
+
+        // Create source account with enough lamports to transfer.
+        let source_pubkey = Pubkey::new_unique();
+        let source_lamports = 1_000_000;
+        let source_account =
+            AccountSharedData::new(source_lamports, 0, &solana_sdk_ids::system_program::id());
+
+        let deposit_amount = 100_000;
+
+        let instruction_data = serialize(&VoteInstruction::DepositDelegatorRewards {
+            deposit: deposit_amount,
+        })
+        .unwrap();
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: source_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: solana_sdk_ids::system_program::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account_v4.clone()),
+            (source_pubkey, source_account.clone()),
+            (
+                solana_sdk_ids::system_program::id(),
+                AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+            ),
+        ];
+
+        // SIMD-0291: commission_rate_in_basis_points disabled.
+        process_instruction(
+            VoteProgramFeatures {
+                vote_state_v4: true,
+                commission_rate_in_basis_points: false,
+                custom_commission_collector: true,
+                block_revenue_sharing: true,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // SIMD-0232: custom_commission_collector disabled.
+        process_instruction(
+            VoteProgramFeatures {
+                vote_state_v4: true,
+                commission_rate_in_basis_points: true,
+                custom_commission_collector: false,
+                block_revenue_sharing: true,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // SIMD-0123: block_revenue_sharing disabled.
+        process_instruction(
+            VoteProgramFeatures {
+                vote_state_v4: true,
+                commission_rate_in_basis_points: true,
+                custom_commission_collector: true,
+                block_revenue_sharing: false,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // SIMD-0185: vote_state_v4 disabled (target_version is V3).
+        process_instruction(
+            VoteProgramFeatures {
+                vote_state_v4: false,
+                commission_rate_in_basis_points: true,
+                custom_commission_collector: true,
+                block_revenue_sharing: true,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // Not enough accounts (less than 2).
+        let single_account_instruction_accounts = vec![AccountMeta {
+            pubkey: vote_pubkey,
+            is_signer: false,
+            is_writable: true,
+        }];
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            transaction_accounts.clone(),
+            single_account_instruction_accounts,
+            Err(InstructionError::MissingAccount),
+        );
+
+        // Vote account fails to deserialize (zeroed/uninitialized data).
+        let invalid_vote_account = AccountSharedData::new(1_000_000, VoteStateV4::size_of(), &id());
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            vec![
+                (vote_pubkey, invalid_vote_account),
+                (source_pubkey, source_account.clone()),
+            ],
+            instruction_accounts.clone(),
+            Err(InstructionError::UninitializedAccount),
+        );
+
+        // Vote account is initialized but V3 (not V4).
+        let instruction_accounts_v3 = vec![
+            AccountMeta {
+                pubkey: vote_pubkey_v3,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: source_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+        ];
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            vec![
+                (vote_pubkey_v3, vote_account_v3),
+                (source_pubkey, source_account.clone()),
+            ],
+            instruction_accounts_v3,
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        // Success
+        let resulting_accounts = process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            transaction_accounts,
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+
+        // Vote account should have been credited `deposit_amount`.
+        // Source account should have been debited `deposit_amount`.
+        // Vote state's `pending_delegator_rewards` should be updated.
+        let vote_account_starting_lamports = vote_account_v4.lamports();
+        let source_account_starting_lamports = source_lamports;
+        let resulting_vote_account = &resulting_accounts[0];
+        let resulting_source_account = &resulting_accounts[1];
+        let vote_state =
+            deserialize_vote_state_for_test(true, resulting_vote_account.data(), &vote_pubkey);
+        assert_eq!(
+            resulting_vote_account.lamports(),
+            vote_account_starting_lamports + deposit_amount,
+        );
+        assert_eq!(
+            resulting_source_account.lamports(),
+            source_account_starting_lamports - deposit_amount,
+        );
+        assert_eq!(
+            vote_state.as_ref_v4().pending_delegator_rewards,
+            deposit_amount,
+        );
+
+        // Run it again with a new deposit amount.
+        let first_deposit_amount = deposit_amount;
+        let second_deposit_amount = 250_000;
+        let vote_account_starting_lamports = resulting_vote_account.lamports();
+        let source_account_starting_lamports = resulting_source_account.lamports();
+
+        let instruction_data = serialize(&VoteInstruction::DepositDelegatorRewards {
+            deposit: second_deposit_amount,
+        })
+        .unwrap();
+
+        let resulting_accounts = process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            vec![
+                (vote_pubkey, resulting_vote_account.clone()),
+                (source_pubkey, resulting_source_account.clone()),
+                (
+                    solana_sdk_ids::system_program::id(),
+                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                ),
+            ],
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+
+        let resulting_vote_account = &resulting_accounts[0];
+        let resulting_source_account = &resulting_accounts[1];
+        let vote_state =
+            deserialize_vote_state_for_test(true, resulting_vote_account.data(), &vote_pubkey);
+        assert_eq!(
+            resulting_vote_account.lamports(),
+            vote_account_starting_lamports + second_deposit_amount,
+        );
+        assert_eq!(
+            resulting_source_account.lamports(),
+            source_account_starting_lamports - second_deposit_amount,
+        );
+        assert_eq!(
+            vote_state.as_ref_v4().pending_delegator_rewards,
+            first_deposit_amount + second_deposit_amount,
+        );
     }
 }

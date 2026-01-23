@@ -16,10 +16,12 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
+    solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::system_program,
     solana_slot_hashes::SlotHash,
+    solana_system_interface::instruction as system_instruction,
     solana_transaction_context::{
         instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
         IndexOfAccount,
@@ -960,6 +962,57 @@ pub fn update_commission_collector<S: std::hash::BuildHasher>(
     }
 
     vote_state.set_vote_account_state(vote_account)
+}
+
+/// Deposit delegator rewards into a vote account (SIMD-0123).
+pub fn deposit_delegator_rewards(
+    invoke_context: &mut InvokeContext,
+    deposit: u64,
+) -> Result<(), InstructionError> {
+    const VOTE_ACCOUNT_INDEX: IndexOfAccount = 0;
+    const SENDER_ACCOUNT_INDEX: IndexOfAccount = 1;
+
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let vote_address = *instruction_context.get_key_of_instruction_account(VOTE_ACCOUNT_INDEX)?;
+    let source_address =
+        *instruction_context.get_key_of_instruction_account(SENDER_ACCOUNT_INDEX)?;
+
+    // SIMD-0123 states we must validate the vote account deserializes to a v4
+    // *before* attempting CPI, then update the `pending_delegator_rewards`
+    // field *last*.
+    // We can deserialize it, and hold onto the deserialized payload in-memory.
+    // This way, we can drop the account borrow but avoid re-deserializing
+    // later, since we know only lamports will change.
+    let mut vote_state = {
+        let vote_account =
+            instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+
+        // Can't use `get_vote_state_handler_checked`, since it will convert
+        // the underlying vote state to v4.
+        // SIMD-0123 requires an *initialized v4*.
+        let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
+        if let VoteStateVersions::V4(vote_state_v4) = versioned {
+            Ok(VoteStateHandler::new_v4(*vote_state_v4))
+        } else {
+            Err(InstructionError::InvalidAccountData)
+        }
+    }?;
+
+    // CPI to System: Transfer from sender to vote account.
+    invoke_context.native_invoke(
+        system_instruction::transfer(&source_address, &vote_address, deposit),
+        &[source_address],
+    )?;
+
+    // Update `pending_delegator_rewards`.
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let mut vote_account =
+        instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+
+    vote_state.add_pending_delegator_rewards(deposit)?;
+    vote_state.set_vote_account_state(&mut vote_account)
 }
 
 /// Given the current slot and epoch schedule, determine if a commission change

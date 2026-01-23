@@ -172,6 +172,7 @@ impl FeatureSet {
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
             custom_commission_collector: self.is_active(&custom_commission_collector::id()),
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
+            block_revenue_sharing: self.is_active(&block_revenue_sharing::id()),
         }
     }
 }
@@ -1291,6 +1292,10 @@ pub mod limit_instruction_accounts {
     solana_pubkey::declare_id!("DqbnFPASg7tHmZ6qfpdrt2M6MWoSeiicWPXxPhxqFCQ");
 }
 
+pub mod block_revenue_sharing {
+    solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2305,6 +2310,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             limit_instruction_accounts::id(),
             "SIMD-406: Maximum instruction accounts",
+        ),
+        (
+            block_revenue_sharing::id(),
+            "SIMD-0123: Block Revenue Sharing",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

@@ -11988,6 +11988,8 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-svm-feature-set",
+ "solana-system-interface 3.0.0",
+ "solana-system-program",
  "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
