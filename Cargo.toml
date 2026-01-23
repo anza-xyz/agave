@@ -337,7 +337,7 @@ memoffset = "0.9.1"
 min-max-heap = "1.3.0"
 mockall = "0.14.0"
 modular-bitfield = "0.13.1"
-nix = "0.30.1"
+nix = "0.31.1"
 num-bigint = "0.4.6"
 num-derive = "0.4"
 num-traits = "0.2"
@@ -524,7 +524,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=4.0.0-alpha.0
 solana-runtime = { path = "runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
-solana-sbpf = { version = "=0.14.0", default-features = false }
+solana-sbpf = { version = "=0.14.1", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.0"
 solana-secp256k1-recover = "3.1.0"

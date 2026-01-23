@@ -1040,7 +1040,7 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 }
 
 pub mod enable_sbpf_v3_deployment_and_execution {
-    solana_pubkey::declare_id!("HMVQjrdGk6UvC66bRe4XZ9PeEKbto71zXMMxHVFpHFTF");
+    solana_pubkey::declare_id!("NbjPwZcHVKGc3gxtXwjYbr9x2SqMZ694XAhYmqdqvcV");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -2033,7 +2033,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             enable_sbpf_v3_deployment_and_execution::id(),
-            "SIMD-0178, SIMD-0179 and SIMD-0189: Enable deployment and execution of SBPFv3 \
+            "SIMD-0178, SIMD-0189 and SIMD-0377: Enable deployment and execution of SBPFv3 \
              programs",
         ),
         (

@@ -4716,14 +4716,14 @@ impl AccountsDb {
         let mut flush_stats = FlushStats::default();
         for &root in flushed_roots.iter().rev() {
             if let Some(stats) =
-                self.flush_slot_cache_with_clean(root, should_flush_f.as_mut(), max_clean_root)
+                self.flush_slot_cache(root, should_flush_f.as_mut(), max_clean_root)
             {
                 num_roots_flushed += 1;
                 flush_stats.accumulate(&stats);
             }
         }
 
-        // Note that self.flush_slot_cache_with_clean() can return None if the
+        // Note that self.flush_slot_cache() can return None if the
         // slot is already been flushed. This can happen if the cache is
         // overwhelmed and we flushed some yet to be rooted frozen slots.
         // However, independent of whether the last slot was actually flushed
@@ -4869,13 +4869,13 @@ impl AccountsDb {
                 .contains(&slot),
             "slot: {slot}"
         );
-        self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None)
+        self.flush_slot_cache(slot, None::<&mut fn(&_) -> bool>, None)
     }
 
     /// `should_flush_f` is an optional closure that determines whether a given
     /// account should be flushed. Passing `None` will by default flush all
     /// accounts
-    fn flush_slot_cache_with_clean(
+    fn flush_slot_cache(
         &self,
         slot: Slot,
         should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
@@ -7091,7 +7091,7 @@ impl AccountsDb {
                 .contains(&slot),
             "slot: {slot}"
         );
-        self.flush_slot_cache_with_clean(slot, None::<&mut fn(&_) -> bool>, None);
+        self.flush_slot_cache(slot, None::<&mut fn(&_) -> bool>, None);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache

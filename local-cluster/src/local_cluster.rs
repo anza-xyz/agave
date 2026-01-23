@@ -2,7 +2,7 @@ use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient, ValidatorInfo},
         cluster_tests,
-        integration_tests::DEFAULT_NODE_STAKE,
+        integration_tests::{ValidatorKeys, DEFAULT_NODE_STAKE},
         validator_configs::*,
     },
     agave_feature_set::FeatureSet,
@@ -80,11 +80,9 @@ pub struct ClusterConfig {
     //  will be inserted into the genesis block instead of warming up through
     // creating the vote accounts. The first validator (bootstrap leader) automatically
     // is assumed to be `in_genesis` == true.
-    pub validator_keys: Option<Vec<(Arc<Keypair>, bool)>>,
+    pub validator_keys: Option<Vec<(ValidatorKeys, bool)>>,
     /// The stakes of each node
     pub node_stakes: Vec<u64>,
-    /// Optional vote keypairs to use for each node
-    pub node_vote_keys: Option<Vec<Arc<Keypair>>>,
     /// The number of lamports in the mint account
     pub mint_lamports: u64,
     pub ticks_per_slot: u64,
@@ -123,7 +121,6 @@ impl Default for ClusterConfig {
             num_listeners: 0,
             validator_keys: None,
             node_stakes: vec![],
-            node_vote_keys: None,
             mint_lamports: DEFAULT_MINT_LAMPORTS,
             ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
             slots_per_epoch: DEFAULT_DEV_SLOTS_PER_EPOCH,
@@ -229,18 +226,7 @@ impl LocalCluster {
                 assert_eq!(config.validator_configs.len(), keys.len());
                 keys.clone()
             } else {
-                iter::repeat_with(|| (Arc::new(Keypair::new()), false))
-                    .take(config.validator_configs.len())
-                    .collect()
-            }
-        };
-
-        let vote_keys = {
-            if let Some(ref node_vote_keys) = config.node_vote_keys {
-                assert_eq!(config.validator_configs.len(), node_vote_keys.len());
-                node_vote_keys.clone()
-            } else {
-                iter::repeat_with(|| Arc::new(Keypair::new()))
+                iter::repeat_with(|| (ValidatorKeys::new(), false))
                     .take(config.validator_configs.len())
                     .collect()
             }
@@ -262,8 +248,11 @@ impl LocalCluster {
             validator_keys
                 .iter()
                 .zip(&config.node_stakes)
-                .zip(&vote_keys)
-                .filter_map(|(((node_keypair, in_genesis), stake), vote_keypair)| {
+                .filter_map(|((validator_keys, in_genesis), stake)| {
+                    let ValidatorKeys {
+                        node_keypair,
+                        vote_keypair,
+                    } = validator_keys;
                     info!(
                         "STARTING LOCAL CLUSTER: key {} vote_key {} has {} stake",
                         node_keypair.pubkey(),
@@ -339,16 +328,6 @@ impl LocalCluster {
         let leader_keypair = Arc::new(leader_keypair.insecure_clone());
         let leader_vote_keypair = Arc::new(leader_vote_keypair.insecure_clone());
 
-        let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
-            .into_iter()
-            .map(|keypairs| {
-                (
-                    keypairs.node_keypair.pubkey(),
-                    Arc::new(keypairs.vote_keypair.insecure_clone()),
-                )
-            })
-            .collect();
-
         // Check if we should start validators in parallel in order to enable WFSM
         let wait_for_supermajority = config
             .validator_configs
@@ -372,11 +351,15 @@ impl LocalCluster {
                 shred_version: leader_node.info.shred_version(),
             };
 
+            let validator_keys = validator_keys
+                .into_iter()
+                .map(|(keys, _)| keys)
+                .collect::<Vec<ValidatorKeys>>();
+
             // Start all validators in parallel
             cluster.start_all_validators_parallel(
                 &config.validator_configs,
                 &validator_keys,
-                &node_pubkey_to_vote_key,
                 socket_addr_space,
                 (
                     leader_pubkey,
@@ -455,16 +438,17 @@ impl LocalCluster {
                 shred_version: leader_contact_info.shred_version(),
             };
 
-            for (stake, validator_config, (key, _)) in izip!(
+            for (stake, validator_config, (keys, in_genesis)) in izip!(
                 config.node_stakes[1..].iter(),
                 config.validator_configs[1..].iter(),
                 validator_keys[1..].iter(),
             ) {
+                let should_setup_accounts = !*in_genesis;
                 cluster.add_validator(
                     validator_config,
                     *stake,
-                    key.clone(),
-                    node_pubkey_to_vote_key.get(&key.pubkey()).cloned(),
+                    keys,
+                    should_setup_accounts,
                     socket_addr_space,
                 );
             }
@@ -478,8 +462,8 @@ impl LocalCluster {
             cluster.add_validator_listener(
                 &listener_config,
                 0,
-                Arc::new(Keypair::new()),
-                None,
+                &ValidatorKeys::new(),
+                true, // should_setup_accounts
                 socket_addr_space,
             );
         });
@@ -530,16 +514,16 @@ impl LocalCluster {
         &mut self,
         validator_config: &ValidatorConfig,
         stake: u64,
-        validator_keypair: Arc<Keypair>,
-        voting_keypair: Option<Arc<Keypair>>,
+        validator_keys: &ValidatorKeys,
+        should_setup_accounts: bool,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         self.do_add_validator(
             validator_config,
             true,
             stake,
-            validator_keypair,
-            voting_keypair,
+            validator_keys,
+            should_setup_accounts,
             socket_addr_space,
         )
     }
@@ -549,16 +533,16 @@ impl LocalCluster {
         &mut self,
         validator_config: &ValidatorConfig,
         stake: u64,
-        validator_keypair: Arc<Keypair>,
-        voting_keypair: Option<Arc<Keypair>>,
+        validator_keys: &ValidatorKeys,
+        should_setup_accounts: bool,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         self.do_add_validator(
             validator_config,
             false,
             stake,
-            validator_keypair,
-            voting_keypair,
+            validator_keys,
+            should_setup_accounts,
             socket_addr_space,
         )
     }
@@ -568,8 +552,8 @@ impl LocalCluster {
         validator_config: &ValidatorConfig,
         is_listener: bool,
         stake: u64,
-        validator_keypair: Arc<Keypair>,
-        mut voting_keypair: Option<Arc<Keypair>>,
+        validator_keys: &ValidatorKeys,
+        should_setup_accounts: bool,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         let client = self
@@ -577,12 +561,10 @@ impl LocalCluster {
             .expect("tpu_client");
 
         // Must have enough tokens to fund vote account and set delegate
-        let should_create_vote_pubkey = voting_keypair.is_none();
-        if voting_keypair.is_none() {
-            voting_keypair = Some(Arc::new(Keypair::new()));
-        }
+        let validator_keypair = validator_keys.node_keypair.clone();
+        let voting_keypair = validator_keys.vote_keypair.clone();
         let validator_pubkey = validator_keypair.pubkey();
-        let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
+        let validator_node = Node::new_localhost_with_pubkey(&validator_pubkey);
         let contact_info = validator_node.info.clone();
         let (ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
             &self.genesis_config,
@@ -593,7 +575,7 @@ impl LocalCluster {
         if is_listener {
             // setup as a listener
             info!("listener {validator_pubkey} ",);
-        } else if should_create_vote_pubkey {
+        } else if should_setup_accounts {
             Self::transfer_with_client(
                 &client,
                 &self.funding_keypair,
@@ -608,7 +590,7 @@ impl LocalCluster {
             info!("validator {validator_pubkey} balance {validator_balance}");
             Self::setup_vote_and_stake_accounts(
                 &client,
-                voting_keypair.as_ref().unwrap(),
+                &voting_keypair,
                 &validator_keypair,
                 stake,
             )
@@ -621,7 +603,6 @@ impl LocalCluster {
             validator_node.info.rpc_pubsub().unwrap(),
         ));
         Self::sync_ledger_path_across_nested_config_fields(&mut config, &ledger_path);
-        let voting_keypair = voting_keypair.unwrap();
         let validator_server = Validator::new(
             validator_node,
             validator_keypair.clone(),
@@ -661,8 +642,7 @@ impl LocalCluster {
     fn start_all_validators_parallel(
         &mut self,
         validator_configs: &[ValidatorConfig],
-        validator_keys: &[(Arc<Keypair>, bool)],
-        node_pubkey_to_vote_key: &HashMap<Pubkey, Arc<Keypair>>,
+        validator_keys: &[ValidatorKeys],
         socket_addr_space: SocketAddrSpace,
         leader_data: (
             Pubkey,
@@ -722,16 +702,13 @@ impl LocalCluster {
         handles.push(handle);
 
         // Start remaining validators
-        for (i, ((key, _), validator_config)) in validator_keys[1..]
+        for (i, (keys, validator_config)) in validator_keys[1..]
             .iter()
             .zip(validator_configs[1..].iter())
             .enumerate()
         {
-            let validator_keypair = key.clone();
-            let voting_keypair = node_pubkey_to_vote_key
-                .get(&validator_keypair.pubkey())
-                .expect("All vote accounts must be setup in genesis for WFSM")
-                .clone();
+            let validator_keypair = keys.node_keypair.clone();
+            let voting_keypair = keys.vote_keypair.clone();
             let validator_config = safe_clone_config(validator_config);
             let genesis_config = self.genesis_config.clone();
             let entry_points = vec![self.entry_point_info.clone()];
