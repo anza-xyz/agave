@@ -1941,17 +1941,21 @@ impl JsonRpcRequestProcessor {
             } else {
                 // Long-term storage is not enabled.
                 // Return an error to the user if either before/until were provided but not found.
-                if before.is_some() && !found_before {
-                    return Err(RpcCustomError::FilterTransactionNotFound {
-                        signature: before.unwrap().to_string(),
+                if !found_before {
+                    if let Some(signature) = before {
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: signature.to_string(),
+                        }
+                        .into());
                     }
-                    .into());
                 }
-                if until.is_some() && !found_until {
-                    return Err(RpcCustomError::FilterTransactionNotFound {
-                        signature: until.unwrap().to_string(),
+                if !found_until {
+                    if let Some(signature) = until {
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: signature.to_string(),
+                        }
+                        .into());
                     }
-                    .into());
                 }
             }
         }
