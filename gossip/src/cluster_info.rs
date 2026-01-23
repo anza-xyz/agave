@@ -1162,7 +1162,7 @@ impl ClusterInfo {
             .get_nodes_contact_info()
             .filter(|node| {
                 node.pubkey() != &self_pubkey
-                    && self.check_socket_addr_space(&node.tpu(contact_info::Protocol::UDP))
+                    && self.check_socket_addr_space(&node.tpu(contact_info::Protocol::QUIC))
             })
             .cloned()
             .collect()
