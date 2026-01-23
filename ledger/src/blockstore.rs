@@ -76,7 +76,7 @@ use {
         rc::Rc,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, Mutex, MutexGuard, RwLock,
+            Arc, Mutex, RwLock,
         },
     },
     tar,
@@ -1351,42 +1351,34 @@ impl Blockstore {
         self.completed_slots_senders.lock().unwrap().clear();
     }
 
-    /// Helper to purge a slot and relevant chaining while handling missing slots and other blockstore errors
-    /// Requires the shred lock to be held
-    fn purge_slot_and_chaining_locked(&self, slot: Slot, _lock: &MutexGuard<()>) {
-        // Purge the slot and insert an empty `SlotMeta` with only the `next_slots` field preserved.
-        // Shreds inherently know their parent slot, and a parent's SlotMeta `next_slots` list
-        // will be updated when the child is inserted (see `Blockstore::handle_chaining()`).
-        // However, we are only purging and repairing the parent slot here. Since the child will not be
-        // reinserted the chaining will be lost. In order for bank forks discovery to ingest the child,
-        // we must retain the chain by preserving `next_slots`.
-        match self.purge_slot_cleanup_chaining(slot) {
-            Ok(_) => {}
-            Err(BlockstoreError::SlotUnavailable) => {
-                error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
-            }
-            Err(e) => panic!("Purge database operations failed {e}"),
-        }
-    }
-
-    /// Clear `slot` from the Blockstore, see ``Blockstore::purge_slot_cleanup_chaining`
-    /// for more details.
+    /// Clear `slot` from the Blockstore
     ///
     /// This function currently requires `insert_shreds_lock`, as both
     /// `clear_unconfirmed_slot()` and `insert_shreds_handle_duplicate()`
     /// try to perform read-modify-write operation on [`cf::SlotMeta`] column
     /// family.
     pub fn clear_unconfirmed_slot(&self, slot: Slot) {
-        let lock = self.insert_shreds_lock.lock().unwrap();
-        self.purge_slot_and_chaining_locked(slot, &lock);
+        self.clear_unconfirmed_slots(slot, slot);
     }
 
     /// Atomically clear a range of `slot` inclusive, similar to `Blockstore::clear_unconfirmed_slot`
     /// Holds the shred lock during the entire purge.
     pub fn clear_unconfirmed_slots(&self, start: Slot, end: Slot) {
-        let lock = self.insert_shreds_lock.lock().unwrap();
+        let _lock = self.insert_shreds_lock.lock().unwrap();
         for slot in start..=end {
-            self.purge_slot_and_chaining_locked(slot, &lock);
+            // Purge the slot and insert an empty `SlotMeta` with only the `next_slots` field preserved.
+            // Shreds inherently know their parent slot, and a parent's SlotMeta `next_slots` list
+            // will be updated when the child is inserted (see `Blockstore::handle_chaining()`).
+            // However, we are only purging and repairing the parent slot here. Since the child will not be
+            // reinserted the chaining will be lost. In order for bank forks discovery to ingest the child,
+            // we must retain the chain by preserving `next_slots`.
+            match self.purge_slot_cleanup_chaining(slot) {
+                Ok(_) => {}
+                Err(BlockstoreError::SlotUnavailable) => {
+                    error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
+                }
+                Err(e) => panic!("Purge database operations failed {e}"),
+            }
         }
     }
 
