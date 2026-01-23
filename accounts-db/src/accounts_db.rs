@@ -4709,12 +4709,14 @@ impl AccountsDb {
 
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
         let flushed_roots: BTreeSet<Slot> = self.accounts_cache.clear_roots(requested_flush_root);
+        let max_flush_root = flushed_roots.last().copied();
+        let num_new_roots = flushed_roots.len();
 
         // Iterate from highest to lowest so that we don't need to flush earlier
         // outdated updates in earlier roots
         let mut num_roots_flushed = 0;
         let mut flush_stats = FlushStats::default();
-        for &root in flushed_roots.iter().rev() {
+        for root in flushed_roots.into_iter().rev() {
             if let Some(stats) =
                 self.flush_slot_cache(root, should_flush_f.as_mut(), max_clean_root)
             {
@@ -4731,10 +4733,8 @@ impl AccountsDb {
         // `max_flush_root` to the max of the flushed roots, because that's
         // max_flushed_root tracks the logical last root that was flushed to
         // storage by snapshotting.
-        if let Some(&root) = flushed_roots.last() {
-            self.accounts_cache.set_max_flush_root(root);
-        }
-        let num_new_roots = flushed_roots.len();
+        max_flush_root.inspect(|&root| self.accounts_cache.set_max_flush_root(root));
+
         (num_new_roots, num_roots_flushed, flush_stats)
     }
 
