@@ -39,6 +39,26 @@ pub fn leader_schedule_by_identity<'a>(
         .collect()
 }
 
+pub fn leader_schedule_by_vote_key(leader_schedule: &LeaderSchedule) -> LeaderScheduleByIdentity {
+    // We know the number of unique identity leaders. The number of vote accounts will be
+    // less than or equal to this (since multiple identities can map to one vote account,
+    // though usually 1:1). This prevents multiple re-allocations.
+    let capacity = leader_schedule.get_leader_slots_map().len();
+    let mut leader_schedule_by_vote_key = HashMap::with_capacity(capacity);
+
+    for (slot_index, identity_pubkey) in leader_schedule.get_slot_leaders().iter().enumerate() {
+        let key = leader_schedule
+            .get_vote_key_at_slot_index(slot_index)
+            .unwrap_or(identity_pubkey);
+        leader_schedule_by_vote_key
+            .entry(key.to_string())
+            .or_insert_with(Vec::new)
+            .push(slot_index);
+    }
+
+    leader_schedule_by_vote_key
+}
+
 /// Return the leader for the given slot.
 pub fn slot_leader_at(slot: Slot, bank: &Bank) -> Option<Pubkey> {
     let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
@@ -84,6 +104,8 @@ mod tests {
         solana_runtime::genesis_utils::{
             bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
         },
+        solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
+        std::str::FromStr,
     };
 
     #[test]
@@ -144,5 +166,43 @@ mod tests {
         assert_eq!(remaining_slots_in_window(2), 2);
         assert_eq!(remaining_slots_in_window(3), 1);
         assert_eq!(remaining_slots_in_window(4), 4);
+    }
+
+    #[test]
+    fn test_leader_schedule_by_vote_key() {
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let vote_accounts_map: VoteAccountsHashMap = [
+            (pubkey0, (10, VoteAccount::new_random())),
+            (pubkey1, (20, VoteAccount::new_random())),
+        ]
+        .into_iter()
+        .collect();
+
+        let leader_schedule = crate::leader_schedule::VoteKeyedLeaderSchedule::new(
+            &vote_accounts_map,
+            0,
+            10,
+            1,
+        );
+        let leader_schedule: crate::leader_schedule::LeaderSchedule = Box::new(leader_schedule);
+
+        let by_vote_key = leader_schedule_by_vote_key(&leader_schedule);
+
+        // Ensure all keys in the result are one of our vote keys
+        for key in by_vote_key.keys() {
+            assert!(key == &pubkey0.to_string() || key == &pubkey1.to_string());
+        }
+
+        // Ensure slot indices match the actual schedule
+        for (key_str, slots) in by_vote_key {
+            let vote_pubkey = Pubkey::from_str(&key_str).unwrap();
+            for slot_index in slots {
+                assert_eq!(
+                    leader_schedule.get_vote_key_at_slot_index(slot_index),
+                    Some(&vote_pubkey)
+                );
+            }
+        }
     }
 }

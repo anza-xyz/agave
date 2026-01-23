@@ -2927,14 +2927,19 @@ pub mod rpc_minimal {
                 .leader_schedule_cache
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
-                    let mut schedule_by_identity =
+                    let mut schedule = if config.use_vote_account.unwrap_or_default() {
+                        solana_ledger::leader_schedule_utils::leader_schedule_by_vote_key(
+                            &leader_schedule,
+                        )
+                    } else {
                         solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule.get_slot_leaders().iter().enumerate(),
-                        );
+                        )
+                    };
                     if let Some(identity) = config.identity {
-                        schedule_by_identity.retain(|k, _| *k == identity);
+                        schedule.retain(|k, _| *k == identity);
                     }
-                    schedule_by_identity
+                    schedule
                 }))
         }
     }
@@ -5502,6 +5507,49 @@ pub mod tests {
         let result: Option<RpcLeaderSchedule> =
             parse_success_result(rpc.handle_request_sync(request));
         let expected = Some(HashMap::default());
+        assert_eq!(result, expected);
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([null, {"useVoteAccount": true}])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let expected = Some(HashMap::from_iter(std::iter::once((
+            rpc.leader_vote_keypair.pubkey().to_string(),
+            Vec::from_iter(0..=128),
+        ))));
+        assert_eq!(result, expected);
+
+        // Test Edge Case: Filter by Identity Key while asking for Vote Keys
+        // Expected behavior: Empty result because keys don't match (trying to match Identity Key against Vote Key map)
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([null, {
+                "useVoteAccount": true,
+                "identity": rpc.leader_pubkey().to_string()
+            }])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let expected = Some(HashMap::default()); // Should be empty
+        assert_eq!(result, expected);
+
+        // Test Edge Case: Filter by Vote Key while asking for Vote Keys
+        // Expected behavior: Should return the schedule for that vote key
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([null, {
+                "useVoteAccount": true,
+                "identity": rpc.leader_vote_keypair.pubkey().to_string()
+            }])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let expected = Some(HashMap::from_iter(std::iter::once((
+            rpc.leader_vote_keypair.pubkey().to_string(),
+            Vec::from_iter(0..=128),
+        ))));
         assert_eq!(result, expected);
     }
 
