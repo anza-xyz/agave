@@ -188,9 +188,12 @@ impl AggregateCommitmentService {
 
         match update_type {
             AlpenglowCommitmentType::Notarize => {
+                // Notarize (our first round vote in favor of a block) satisfies the Processed commitment level
                 w_block_commitment_cache.set_slot(slot);
             }
             AlpenglowCommitmentType::Finalized => {
+                // There is no distinction of OC, root, or finalized in Alpengow commitment.
+                // When receiving a finalilzation certificate we set all of these values.
                 w_block_commitment_cache.set_highest_confirmed_slot(slot);
                 w_block_commitment_cache.set_root(slot);
                 w_block_commitment_cache.set_highest_super_majority_root(slot);
