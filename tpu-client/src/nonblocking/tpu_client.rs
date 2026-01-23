@@ -929,7 +929,16 @@ impl LeaderTpuService {
         //    before the timeout is reached, resulting in the exit condition never being checked.
         const SLOT_UPDATE_TIMEOUT: Duration = Duration::from_millis(10);
 
+        // Track the last time a slot update was received. In case of current
+        // leader is not sending relevant shreds for some reason (typically
+        // delinquency), the slot will be stale on client side. To cope with
+        // this, we introduce fallback mechanicsm for slot updates.
+        const FALLBACK_THRESHOLD: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
+
+        let mut last_update = Instant::now();
         while !exit.load(Ordering::Relaxed) {
+            let mut injected = false;
+
             while let Ok(Some(update)) = timeout(SLOT_UPDATE_TIMEOUT, notifications.next()).await {
                 let current_slot = match update {
                     // This update indicates that a full slot was received by the connected
@@ -941,6 +950,16 @@ impl LeaderTpuService {
                     _ => continue,
                 };
                 recent_slots.record_slot(current_slot);
+                last_update = Instant::now();
+                injected = true;
+            }
+
+            if !injected && last_update.elapsed() >= FALLBACK_THRESHOLD {
+                let estimated = recent_slots.estimated_current_slot().saturating_add(1);
+                info!("Injecting fallback slot {estimated}");
+                recent_slots.record_slot(estimated);
+                recent_slots.record_slot(estimated);
+                last_update = Instant::now();
             }
         }
 
