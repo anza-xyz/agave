@@ -74,14 +74,6 @@ enum PingCacheKey {
 }
 
 impl PingCacheKey {
-    fn from_socket(socket: SocketAddr) -> Self {
-        if socket.ip().is_loopback() {
-            Self::Socket(socket)
-        } else {
-            Self::Ip(socket.ip())
-        }
-    }
-
     fn ip(self) -> IpAddr {
         match self {
             Self::Ip(ip) => ip,
@@ -94,8 +86,14 @@ impl PingCacheKey {
     }
 }
 
-fn ping_cache_key(socket: SocketAddr) -> PingCacheKey {
-    PingCacheKey::from_socket(socket)
+impl From<SocketAddr> for PingCacheKey {
+    fn from(socket: SocketAddr) -> Self {
+        if socket.ip().is_loopback() {
+            Self::Socket(socket)
+        } else {
+            Self::Ip(socket.ip())
+        }
+    }
 }
 
 impl<const N: usize> Ping<N> {
@@ -210,7 +208,7 @@ impl<const N: usize> PingCache<N> {
     /// returns true.
     /// Note: Does not verify the signature.
     pub fn add(&mut self, pong: &Pong, socket: SocketAddr, now: Instant) -> bool {
-        let remote_node = ping_cache_key(socket);
+        let remote_node = PingCacheKey::from(socket);
         if !self.hashers.iter().copied().any(|hasher| {
             let token = make_ping_token::<N>(hasher, &remote_node);
             hash_ping_token(&token) == pong.hash
@@ -244,17 +242,14 @@ impl<const N: usize> PingCache<N> {
         now: Instant,
         remote_socket: SocketAddr,
     ) -> Option<Ping<N>> {
-        let remote_node = ping_cache_key(remote_socket);
-        // Rate limit consecutive pings sent to a remote node.
-        if !remote_node.is_loopback()
-            && matches!(
-                self.pings.peek(&remote_node),
-                Some(&t) if now.saturating_duration_since(t) < self.rate_limit_delay
-            )
-        {
-            return None;
-        }
+        let remote_node = PingCacheKey::from(remote_socket);
+        // Rate limit consecutive pings sent to a remote node (non-loopback addresses).
         if !remote_node.is_loopback() {
+            if let Some(&last_ping) = self.pings.peek(&remote_node)
+                && now.saturating_duration_since(last_ping) < self.rate_limit_delay
+            {
+                return None;
+            }
             self.pings.put(remote_node, now);
         }
         self.maybe_refresh_key(rng, now);
@@ -278,7 +273,7 @@ impl<const N: usize> PingCache<N> {
         now: Instant,
         remote_socket: SocketAddr,
     ) -> (bool, Option<Ping<N>>) {
-        let remote_node = ping_cache_key(remote_socket);
+        let remote_node = PingCacheKey::from(remote_socket);
         let (check, should_ping) = match self.pongs.get(&remote_node) {
             None => (false, true),
             Some(t) => {
@@ -310,7 +305,7 @@ impl<const N: usize> PingCache<N> {
 
     /// Only for tests and simulations.
     pub fn mock_pong(&mut self, socket: SocketAddr, now: Instant) {
-        self.pongs.put(ping_cache_key(socket), now);
+        self.pongs.put(PingCacheKey::from(socket), now);
     }
 }
 
@@ -387,7 +382,7 @@ mod tests {
         let pings: Vec<Option<Ping<32>>> = remote_nodes
             .iter()
             .map(|(_keypair, socket)| {
-                let node = ping_cache_key(*socket);
+                let node = PingCacheKey::from(*socket);
                 let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
                 assert!(!check);
                 assert_eq!(seen_nodes.insert(node), ping.is_some());
@@ -425,7 +420,7 @@ mod tests {
         // a new ping packet to extend verification.
         seen_nodes.clear();
         for (_keypair, socket) in &remote_nodes {
-            let node = ping_cache_key(*socket);
+            let node = PingCacheKey::from(*socket);
             let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
             assert!(check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
@@ -446,7 +441,7 @@ mod tests {
         // check should be false because the pong is expired
         seen_nodes.clear();
         for (_keypair, socket) in &remote_nodes {
-            let node = ping_cache_key(*socket);
+            let node = PingCacheKey::from(*socket);
             let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
             if seen_nodes.insert(node) {
                 assert!(!check, "Expired pong should return check=false");
@@ -474,7 +469,7 @@ mod tests {
         // created for the first observation of each node.
         seen_nodes.clear();
         for (_keypair, socket) in &remote_nodes {
-            let node = ping_cache_key(*socket);
+            let node = PingCacheKey::from(*socket);
             let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
             assert!(!check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
