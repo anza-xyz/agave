@@ -182,6 +182,7 @@ impl FeatureSet {
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
             custom_commission_collector: self.is_active(&custom_commission_collector::id()),
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
+            block_revenue_sharing: self.is_active(&block_revenue_sharing::id()),
         }
     }
 }
@@ -1244,6 +1245,10 @@ pub mod enable_bls12_381_syscall {
     solana_pubkey::declare_id!("b1sraWPVFdcUizB2LV5wQTeMuK8M313bi5bHjco5eVU");
 }
 
+pub mod block_revenue_sharing {
+    solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2230,6 +2235,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enable_bls12_381_syscall::id(),
             "SIMD-0388: BLS12-381 syscalls",
+        ),
+        (
+            block_revenue_sharing::id(),
+            "SIMD-0123: Block Revenue Sharing",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
