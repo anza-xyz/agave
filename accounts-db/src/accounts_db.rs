@@ -4566,11 +4566,8 @@ impl AccountsDb {
         // Note even if force_flush is false, we will still flush all roots <= the
         // given `requested_flush_root`, even if some of the later roots cannot be used for
         // cleaning due to an ongoing scan
-        let (total_new_cleaned_roots, num_cleaned_roots_flushed, mut flush_stats) = self
-            .flush_rooted_accounts_cache(
-                requested_flush_root,
-                true, // should_clean
-            );
+        let (total_new_cleaned_roots, num_cleaned_roots_flushed, mut flush_stats) =
+            self.flush_rooted_accounts_cache_with_clean(requested_flush_root);
         flush_roots_elapsed.stop();
 
         // Note we don't purge unrooted slots here because there may be ongoing scans/references
@@ -4585,7 +4582,7 @@ impl AccountsDb {
                 // Cannot do any cleaning on roots past `requested_flush_root` because future
                 // snapshots may need updates from those later slots, hence we pass `false`
                 // for `should_clean`.
-                self.flush_rooted_accounts_cache(None, false)
+                self.flush_rooted_accounts_cache_without_clean()
             } else {
                 (0, 0, FlushStats::default())
             };
@@ -4681,32 +4678,49 @@ impl AccountsDb {
         );
     }
 
-    fn flush_rooted_accounts_cache(
+    /// Flush all rooted slots up to `requested_flush_root` with cleaning. Cleaning stores only
+    /// the newest version of any given account when flushing multiple rooted slots. This reduces
+    /// storage space and speeds up background account cleaning. If an ongoing scan is occurring,
+    /// cleaning can only be done up to the minimum scan root to avoid cleaning accounts that may
+    /// be needed by the scan.
+    fn flush_rooted_accounts_cache_with_clean(
         &self,
         requested_flush_root: Option<Slot>,
-        should_clean: bool,
     ) -> (usize, usize, FlushStats) {
-        let max_clean_root = should_clean
-            .then(|| {
-                // If there is a long running scan going on, this could prevent any cleaning
-                // based on updates from slots > `max_clean_root`.
-                self.max_clean_root(requested_flush_root)
-            })
-            .flatten();
+        // If there is a long running scan going on, this could prevent any cleaning
+        // based on updates from slots > `max_clean_root`.
+        let max_clean_root = self.max_clean_root(requested_flush_root);
 
         let mut written_accounts = HashSet::new();
 
-        // If `should_clean` is false, then`should_flush_f` will be None, which will cause
-        // `flush_slot_cache` to flush all accounts to storage without cleaning any accounts.
-        let mut should_flush_f = should_clean
-            .then(|| {
-                Some(move |&pubkey: &Pubkey| {
-                    // if not in hashset, then not flushed previously, so flush it
-                    written_accounts.insert(pubkey)
-                })
+        let mut should_flush_f = {
+            Some(move |&pubkey: &Pubkey| {
+                // if not in hashset, then not flushed previously, so flush it
+                written_accounts.insert(pubkey)
             })
-            .flatten();
+        };
 
+        self.flush_rooted_accounts_cache(
+            requested_flush_root,
+            max_clean_root,
+            should_flush_f.as_mut(),
+        )
+    }
+
+    // Flush all rooted slots without cleaning. This is used when rooted accounts must be flushed
+    // to storage but older versions of the accounts are still required. For example, the
+    // older versions may be needed for snapshotting.
+    fn flush_rooted_accounts_cache_without_clean(&self) -> (usize, usize, FlushStats) {
+        self.flush_rooted_accounts_cache(None, None, None::<&mut fn(&_) -> bool>)
+    }
+
+    /// Flush all rooted slots up to `requested_flush_root`.
+    fn flush_rooted_accounts_cache(
+        &self,
+        requested_flush_root: Option<Slot>,
+        max_clean_root: Option<Slot>,
+        mut should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
+    ) -> (usize, usize, FlushStats) {
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
         let flushed_roots: BTreeSet<Slot> = self.accounts_cache.clear_roots(requested_flush_root);
         let max_flush_root = flushed_roots.last().copied();

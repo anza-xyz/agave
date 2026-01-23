@@ -1176,13 +1176,13 @@ fn test_remove_zero_lamport_multi_ref_accounts_panic() {
 
     // Flush without cleaning to avoid reclaiming pubkey_zero early
     accounts.add_root(1);
-    accounts.flush_rooted_accounts_cache(Some(slot), false);
+    accounts.flush_rooted_accounts_cache_without_clean();
 
     accounts.store_for_tests((slot + 1, [(&pubkey_zero, &zero_lamport_account)].as_slice()));
 
     // Flush without cleaning to avoid reclaiming pubkey_zero early
     accounts.add_root(2);
-    accounts.flush_rooted_accounts_cache(Some(slot + 1), false);
+    accounts.flush_rooted_accounts_cache_without_clean();
 
     // This should panic because there are 2 refs for pubkey_zero.
     accounts.remove_zero_lamport_single_ref_accounts_after_shrink(
@@ -1222,7 +1222,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
 
                 // add root and flush without clean (causing ref count to increase)
                 accounts.add_root(slot + 1);
-                accounts.flush_rooted_accounts_cache(None, false);
+                accounts.flush_rooted_accounts_cache_without_clean();
             }
         }
 
@@ -4014,7 +4014,12 @@ fn run_flush_rooted_accounts_cache(should_clean: bool) {
     let (accounts_db, keys, slots, _) = setup_accounts_db_cache_clean(num_slots, None, None);
 
     // If no cleaning is specified, then flush everything
-    accounts_db.flush_rooted_accounts_cache(None, should_clean);
+    if should_clean {
+        accounts_db.flush_rooted_accounts_cache_with_clean(None);
+    } else {
+        accounts_db.flush_rooted_accounts_cache_without_clean();
+    }
+
     for slot in &slots {
         let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
@@ -4068,7 +4073,7 @@ fn test_shrink_unref() {
     db.store_for_tests((1, &[(&account_key1, &account1)][..]));
     db.add_root(1);
     // Flush without cleaning to avoid reclaiming account_key1 early
-    db.flush_rooted_accounts_cache(None, false);
+    db.flush_rooted_accounts_cache_without_clean();
 
     // Clean to remove outdated entry from slot 0
     db.clean_accounts(Some(1), false, &EpochSchedule::default());
@@ -4085,7 +4090,7 @@ fn test_shrink_unref() {
     db.add_root(2);
 
     // Flush without cleaning to avoid reclaiming account_key2 early
-    db.flush_rooted_accounts_cache(None, false);
+    db.flush_rooted_accounts_cache_without_clean();
 
     // Should be one store before clean for slot 0
     db.get_and_assert_single_storage(0);
@@ -4191,7 +4196,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     db.store_for_tests((1, &[(&account_key1, &account0)][..]));
     db.add_root(1);
     // Flushes all roots without clean
-    db.flush_rooted_accounts_cache(None, false);
+    db.flush_rooted_accounts_cache_without_clean();
 
     // Clean to remove outdated entry from slot 0
     db.clean_accounts(Some(1), false, &EpochSchedule::default());
