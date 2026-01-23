@@ -733,7 +733,9 @@ impl BankingSimulator {
         {
             info!("purging slots {}, {}", self.first_simulated_slot, end_slot);
             blockstore.purge_from_next_slots(self.first_simulated_slot, end_slot);
-            blockstore.purge_slots(self.first_simulated_slot, end_slot, PurgeType::Exact);
+            blockstore
+                .purge_slots(self.first_simulated_slot, end_slot, PurgeType::Exact)
+                .unwrap();
             info!("done: purging");
         } else {
             info!("skipping purging...");

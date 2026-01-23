@@ -2643,7 +2643,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
     info!("Purging slots {start_slot} to {end_slot} from blockstore");
     let mut timer = Measure::start("blockstore purge");
     blockstore.purge_from_next_slots(start_slot, end_slot);
-    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact);
+    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact)?;
     timer.stop();
     info!("Purging slots done. {timer}");
 
@@ -3097,7 +3097,9 @@ mod tests {
 
         // Purge blockstore up to latest hard fork
         // No check since all blockstore data newer than latest hard fork
-        blockstore.purge_slots(0, latest_hard_fork, PurgeType::Exact);
+        blockstore
+            .purge_slots(0, latest_hard_fork, PurgeType::Exact)
+            .unwrap();
         assert_eq!(
             should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,

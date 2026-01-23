@@ -152,7 +152,9 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
 
 pub fn purge_slots_with_count(blockstore: &Blockstore, start_slot: Slot, slot_count: Slot) {
     blockstore.purge_from_next_slots(start_slot, start_slot + slot_count - 1);
-    blockstore.purge_slots(start_slot, start_slot + slot_count - 1, PurgeType::Exact);
+    blockstore
+        .purge_slots(start_slot, start_slot + slot_count - 1, PurgeType::Exact)
+        .expect("Purge must succeed");
 }
 
 // Fetches the last vote in the tower, blocking until it has also appeared in blockstore.
