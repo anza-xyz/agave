@@ -713,7 +713,8 @@ pub struct EncodedConfirmedTransactionWithStatusMeta {
     #[serde(flatten)]
     pub transaction: EncodedTransactionWithStatusMeta,
     pub block_time: Option<i64>,
-    pub transaction_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_index: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -620,7 +620,7 @@ impl ConfirmedTransactionWithStatusMeta {
                 true,
             )?,
             block_time: self.block_time,
-            transaction_index: self.index,
+            transaction_index: Some(self.index),
         })
     }
 
@@ -1023,6 +1023,6 @@ mod test {
 
         assert_eq!(encoded.slot, 42);
         assert_eq!(encoded.block_time, Some(1234567890));
-        assert_eq!(encoded.transaction_index, 7);
+        assert_eq!(encoded.transaction_index, Some(7));
     }
 }
