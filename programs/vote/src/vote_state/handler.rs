@@ -58,6 +58,8 @@ pub trait VoteStateHandle {
 
     fn set_inflation_rewards_commission_bps(&mut self, commission_bps: u16);
 
+    fn set_block_revenue_commission_bps(&mut self, commission_bps: u16);
+
     fn node_pubkey(&self) -> &Pubkey;
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
@@ -363,6 +365,11 @@ impl VoteStateHandle for VoteStateV3 {
         // SIMD-0185: the activation of VoteStateV4.
     }
 
+    fn set_block_revenue_commission_bps(&mut self, _commission_bps: u16) {
+        // No-op. We can never reach this callsite, since SIMD-0123 depends on
+        // SIMD-0185: the activation of VoteStateV4.
+    }
+
     fn node_pubkey(&self) -> &Pubkey {
         &self.node_pubkey
     }
@@ -546,6 +553,10 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_inflation_rewards_commission_bps(&mut self, commission_bps: u16) {
         self.inflation_rewards_commission_bps = commission_bps;
+    }
+
+    fn set_block_revenue_commission_bps(&mut self, commission_bps: u16) {
+        self.block_revenue_commission_bps = commission_bps;
     }
 
     fn node_pubkey(&self) -> &Pubkey {
@@ -760,6 +771,13 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_inflation_rewards_commission_bps(commission_bps),
             TargetVoteState::V4(v4) => v4.set_inflation_rewards_commission_bps(commission_bps),
+        }
+    }
+
+    fn set_block_revenue_commission_bps(&mut self, commission_bps: u16) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.set_block_revenue_commission_bps(commission_bps),
+            TargetVoteState::V4(v4) => v4.set_block_revenue_commission_bps(commission_bps),
         }
     }
 
