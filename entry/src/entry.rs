@@ -22,7 +22,11 @@ use {
         sync::{Arc, Once, OnceLock},
         time::Instant,
     },
-    wincode::{containers::Pod, SchemaRead, SchemaWrite},
+    wincode::{
+        containers::{Pod, Vec as WincodeVec},
+        len::BincodeLen,
+        SchemaRead, SchemaWrite,
+    },
 };
 
 pub type EntrySender = Sender<Vec<Entry>>;
@@ -78,6 +82,11 @@ pub struct Api<'a> {
         Symbol<'a, unsafe extern "C" fn(hashes: *mut u8, num_hashes: *const u64)>,
 }
 
+const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
+const MAX_VERSIONED_TRANSACTIONS_PREALLOC: usize =
+    MAX_DATA_SHREDS_PER_SLOT * solana_packet::PACKET_DATA_SIZE;
+type VersionedTransactionsLen = BincodeLen<MAX_VERSIONED_TRANSACTIONS_PREALLOC>;
+
 /// Each Entry contains three pieces of data. The `num_hashes` field is the number
 /// of hashes performed since the previous entry.  The `hash` field is the result
 /// of hashing `hash` from the previous entry `num_hashes` times.  The `transactions`
@@ -117,7 +126,7 @@ pub struct Entry {
     /// An unordered list of transactions that were observed before the Entry ID was
     /// generated. They may have been observed before a previous Entry ID but were
     /// pushed back into this list to ensure deterministic interpretation of the ledger.
-    #[wincode(with = "Vec<crate::wincode::VersionedTransaction>")]
+    #[wincode(with = "WincodeVec<crate::wincode::VersionedTransaction, VersionedTransactionsLen>")]
     pub transactions: Vec<VersionedTransaction>,
 }
 
