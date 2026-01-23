@@ -258,6 +258,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         .subcommand(
             SubCommand::with_name("ping")
                 .about("Submit transactions sequentially")
+                .setting(AppSettings::Hidden)
                 .arg(
                     Arg::with_name("interval")
                         .short("i")

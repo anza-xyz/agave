@@ -944,6 +944,10 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             print_timestamp,
             compute_unit_price,
         } => {
+            eprintln!(
+                "Warning: The 'ping' command is deprecated in v4.0 and will be removed in v4.1."
+            );
+
             let connection_cache = if config.use_tpu_client {
                 Some({
                     #[cfg(feature = "dev-context-only-utils")]
