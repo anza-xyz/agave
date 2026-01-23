@@ -245,7 +245,7 @@ impl Tvu {
                 thread: bls_streamer_t,
                 key_updater: bls_key_updater,
             } = {
-                // 8 connections per min from an IP, 1 thread is enough
+                // quic server params, 8 connections per min from an IP, num_threads 1
                 let quic_server_params = QuicStreamerConfig::default();
                 let qos_config = SimpleQosConfig {
                     max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS,
