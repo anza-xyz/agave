@@ -31,9 +31,9 @@ const DEFAULT_READ_SIZE: IoSize = 1024 * 1024;
 // For large file we don't really use workers as few regularly submitted requests get handled
 // within sqpoll thread. Allow some workers just in case, but limit them.
 const DEFAULT_MAX_IOWQ_WORKERS: u32 = 2;
-// This is conservative write size alignment for use with direct IO, some block devices may have
+// This is conservative read size alignment for use with direct IO, some block devices may have
 // relaxed requirements, but detecting it is not trivial.
-const DIRECT_IO_WRITE_LEN_ALIGNMENT: IoSize = 4096;
+const DIRECT_IO_READ_LEN_ALIGNMENT: IoSize = 4096;
 
 /// Utility for building `SequentialFileReader` with specified tuning options.
 pub struct SequentialFileReaderBuilder<'sp> {
@@ -78,8 +78,8 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 
     /// Read files in direct-IO mode (disables kernel caching of read contents).
     ///
-    /// Enabling requires the filesystem to support directio and subbuffers to be a multiple
-    /// of 4096.
+    /// Enabling requires the filesystem to support directio and `read_capacity`
+    /// to be a multiple of 4096.
     #[cfg(test)]
     pub fn use_direct_io(mut self, use_direct_io: bool) -> Self {
         self.use_direct_io = use_direct_io;
@@ -149,9 +149,9 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             // some multiple of the fs block size (see https://man7.org/linux/man-pages/man2/open.2.html#NOTES).
             assert!(
                 self.read_capacity
-                    .is_multiple_of(DIRECT_IO_WRITE_LEN_ALIGNMENT as u32),
+                    .is_multiple_of(DIRECT_IO_READ_LEN_ALIGNMENT as u32),
                 "read size is not aligned for direct IO({} is not a multiple of \
-                 {DIRECT_IO_WRITE_LEN_ALIGNMENT})",
+                 {DIRECT_IO_READ_LEN_ALIGNMENT})",
                 self.read_capacity
             );
         }
