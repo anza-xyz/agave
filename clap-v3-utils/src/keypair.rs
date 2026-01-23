@@ -922,15 +922,6 @@ pub fn keypair_from_source(
     keypair_name: &str,
     confirm_pubkey: bool,
 ) -> Result<Keypair, Box<dyn error::Error>> {
-    // Handle base58 keypair directly since it's specific to Keypair type
-    if let SignerSourceKind::Base58Keypair(keypair_str) = &source.kind {
-        let keypair = Keypair::from_base58_string(keypair_str);
-        if confirm_pubkey {
-            confirm_encodable_keypair_pubkey(&keypair, "pubkey");
-        }
-        return Ok(keypair);
-    }
-
     let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
     let keypair = encodable_key_from_source(source, keypair_name, skip_validation)?;
     if confirm_pubkey {
@@ -1102,6 +1093,10 @@ fn encodable_key_from_source<K: EncodableKey + SeedDerivable>(
         SignerSourceKind::Stdin => {
             let mut stdin = std::io::stdin();
             Ok(K::read(&mut stdin)?)
+        }
+        SignerSourceKind::Base58Keypair(keypair_str) => {
+            let keypair = Keypair::from_base58_string(keypair_str);
+            Ok(K::from_seed(keypair.secret_bytes())?)
         }
         _ => Err(std::io::Error::other(format!(
             "signer of type `{kind:?}` does not support Keypair output"
@@ -1504,12 +1499,9 @@ mod tests {
             legacy: false,
         };
 
-        let clap_app = Command::new("test_base58_keypair");
-        let matches = clap_app.get_matches_from(Vec::<&str>::new());
-
         // Test that keypair_from_source correctly handles base58 keypair
-        let recovered_keypair =
-            keypair_from_source(&matches, &source, "test_keypair", false).unwrap();
+        let recovered_keypair: Keypair =
+            encodable_key_from_source(&source, "test_keypair", false).unwrap();
 
         // Verify the recovered keypair matches the original
         assert_eq!(recovered_keypair.pubkey(), original_keypair.pubkey());
@@ -1517,12 +1509,6 @@ mod tests {
             recovered_keypair.to_base58_string(),
             original_keypair.to_base58_string()
         );
-
-        // Verify signing works the same
-        let message = b"test message";
-        let original_sig = original_keypair.sign_message(message);
-        let recovered_sig = recovered_keypair.sign_message(message);
-        assert_eq!(original_sig, recovered_sig);
     }
 
     #[test]
@@ -1536,11 +1522,7 @@ mod tests {
             derivation_path: None,
             legacy: false,
         };
-
-        let clap_app = Command::new("test");
-        let matches = clap_app.get_matches_from(Vec::<&str>::new());
-
-        let keypair2 = keypair_from_source(&matches, &source, "test", false).unwrap();
+        let keypair2: Keypair = encodable_key_from_source(&source, "test", false).unwrap();
 
         // Convert back to base58 and compare
         assert_eq!(keypair2.to_base58_string(), base58_str);

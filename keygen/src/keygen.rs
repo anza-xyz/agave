@@ -1310,24 +1310,10 @@ mod tests {
     }
 
     #[test]
-    fn test_recover_from_base58_keypair() {
-        // Create a keypair and save it to a file
-        let keypair_out_dir = tempdir().unwrap();
-        let original_keypair = Keypair::new();
-        let original_keypair_path = keypair_out_dir
-            .path()
-            .join(format!("{}-original.json", original_keypair.pubkey()));
-        let original_keypair_file = original_keypair_path.to_str().unwrap();
-        write_keypair_file(&original_keypair, original_keypair_file).unwrap();
+    fn test_parse_recover_from_base58_keypair() {
+        let keypair = Keypair::new();
 
-        // Get the base58 encoding of the keypair
-        let keypair_base58 = original_keypair.to_base58_string();
-
-        // Recover the keypair from the base58 string to a new file
-        let recovered_keypair_path = keypair_out_dir
-            .path()
-            .join(format!("{}-recovered.json", original_keypair.pubkey()));
-        let recovered_keypair_file = recovered_keypair_path.to_str().unwrap();
+        let keypair_base58 = keypair.to_base58_string();
 
         // Note: The recover command with base58 keypair prompts for confirmation,
         // but we can test the underlying functionality via keypair_from_source
@@ -1339,7 +1325,7 @@ mod tests {
             "recover",
             &keypair_base58,
             "-o",
-            recovered_keypair_file,
+            &keypair_base58,
         ]);
 
         // Verify the argument was parsed correctly
@@ -1347,33 +1333,27 @@ mod tests {
         assert_eq!(subcommand.0, "recover");
         let matches = subcommand.1;
         assert!(matches.try_contains_id("prompt_signer").unwrap());
-
-        // Also verify that the keypair files would be identical by reading and comparing
-        let original_read = read_keypair_file(original_keypair_file).unwrap();
-        assert_eq!(original_read.pubkey(), original_keypair.pubkey());
-        assert_eq!(
-            original_read.to_base58_string(),
-            original_keypair.to_base58_string()
-        );
     }
 
     #[test]
     fn test_base58_keypair_pubkey_command() {
-        // Test that the pubkey command works with base58 keypair input
         let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
         let keypair_base58 = keypair.to_base58_string();
 
-        let default_num_threads = num_cpus::get().to_string();
-        let solana_version = solana_version::version!();
+        let outfile_dir = tempdir().unwrap();
+        let outfile_path = tmp_outfile_path(&outfile_dir, &pubkey.to_string());
 
-        // Verify the pubkey command accepts base58 keypair
-        let app_matches = app(&default_num_threads, solana_version).get_matches_from(vec![
+        process_test_command(&[
             "solana-keygen",
             "pubkey",
             &keypair_base58,
-        ]);
+            "--outfile",
+            &outfile_path,
+        ])
+        .unwrap();
 
-        let subcommand = app_matches.subcommand().unwrap();
-        assert_eq!(subcommand.0, "pubkey");
+        let result_pubkey = read_pubkey_file(&outfile_path).unwrap();
+        assert_eq!(result_pubkey, pubkey);
     }
 }

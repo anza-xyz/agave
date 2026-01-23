@@ -226,14 +226,10 @@ impl SignerSource {
         // We validate that the bytes form a valid keypair (public key matches secret key derivation)
         {
             let mut bytes = [0u8; 64];
-            if bs58::decode(&source).onto(&mut bytes[..]).is_ok() {
-                // Validate by creating keypair from secret key and checking pubkey matches
-                let secret_key: [u8; 32] = bytes[..32].try_into().unwrap();
-                let keypair = Keypair::new_from_array(secret_key);
-                let expected_pubkey = &bytes[32..];
-                if keypair.pubkey().as_ref() == expected_pubkey {
-                    return Ok(SignerSource::new(SignerSourceKind::Base58Keypair(source)));
-                }
+            if five8::decode_64(&source, &mut bytes).is_ok()
+                && Keypair::try_from(bytes.as_ref()).is_ok()
+            {
+                return Ok(SignerSource::new(SignerSourceKind::Base58Keypair(source)));
             }
         }
 
@@ -1161,11 +1157,9 @@ mod tests {
         invalid_bytes[32] ^= 0xFF;
         invalid_bytes[33] ^= 0xFF;
         // Encode to base58 using a buffer
-        let mut encoded_buf = [0u8; 90]; // base58 of 64 bytes fits in ~88 chars
-        let len = bs58::encode(&invalid_bytes)
-            .onto(&mut encoded_buf[..])
-            .expect("encoding should succeed");
-        let encoded = std::str::from_utf8(&encoded_buf[..len]).unwrap();
+        let mut encoded_buf = [0u8; 88];
+        let len = five8::encode_64(&invalid_bytes, &mut encoded_buf);
+        let encoded = std::str::from_utf8(&encoded_buf[..len as usize]).unwrap();
 
         // This should fail to parse as a Base58Keypair since the pubkey doesn't match
         let source = SignerSource::parse(encoded);
@@ -1180,7 +1174,7 @@ mod tests {
 
         // Short base58 strings (like pubkeys) should not be parsed as keypairs
         let pubkey = Pubkey::new_unique();
-        let source = SignerSource::parse(&pubkey.to_string()).unwrap();
+        let source = SignerSource::parse(pubkey.to_string()).unwrap();
         assert!(matches!(source.kind, SignerSourceKind::Pubkey(_)));
 
         // The "ASK" keyword should not be parsed as a keypair
