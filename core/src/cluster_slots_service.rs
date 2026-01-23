@@ -89,12 +89,17 @@ impl ClusterSlotsService {
         let root_bank = bank_forks.read().unwrap().root_bank();
         cluster_slots.update(&root_bank, &cluster_info);
 
-        while !exit.load(Ordering::Relaxed)
-            // Once we are in a full Alpenglow epoch, we can fully shutdown the cluster slots service.
-            // It is important to keep running while in the mixed migration epoch, as EpochSlots can
-            // still be useful for the TowerBFT slots.
-            && !migration_status.is_full_alpenglow_epoch()
-        {
+        while !exit.load(Ordering::Relaxed) {
+            if migration_status.is_full_alpenglow_epoch() {
+                // Once we are in a full Alpenglow epoch, we can fully shutdown the cluster slots service.
+                // It is important to keep running while in the mixed migration epoch, as EpochSlots can
+                // still be useful for the TowerBFT slots.
+                info!(
+                    "ClusterSlotsService has stopped because we have finished the alpenglow \
+                     migration epoch"
+                );
+            }
+
             let slots = match cluster_slots_update_receiver.recv_timeout(Duration::from_millis(200))
             {
                 Ok(slots) => Some(slots),
