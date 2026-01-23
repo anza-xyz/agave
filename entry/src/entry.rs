@@ -83,7 +83,7 @@ pub struct Api<'a> {
 }
 
 const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-const MAX_VERSIONED_TRANSACTIONS_PREALLOC: usize =
+pub(crate) const MAX_VERSIONED_TRANSACTIONS_PREALLOC: usize =
     MAX_DATA_SHREDS_PER_SLOT * solana_packet::PACKET_DATA_SIZE;
 type VersionedTransactionsLen = BincodeLen<MAX_VERSIONED_TRANSACTIONS_PREALLOC>;
 
