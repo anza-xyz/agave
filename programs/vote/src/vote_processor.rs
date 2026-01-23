@@ -337,6 +337,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 commission_bps,
                 kind,
                 &signers,
+                feature_set.block_revenue_sharing,
             )
         }
         VoteInstruction::UpdateCommissionCollector(kind) => {
@@ -1438,46 +1439,60 @@ mod tests {
             },
         ];
 
-        let features = VoteProgramFeatures {
-            vote_state_v4,
-            commission_rate_in_basis_points,
-            ..Default::default()
+        let features = VoteProgramFeatures::all_enabled();
+
+        let get_commission_bps = |vote_account: &AccountSharedData, kind: &CommissionKind| {
+            let vote_state =
+                deserialize_vote_state_for_test(vote_state_v4, vote_account.data(), &vote_pubkey);
+            match kind {
+                CommissionKind::InflationRewards => {
+                    vote_state.as_ref_v4().inflation_rewards_commission_bps
+                }
+                CommissionKind::BlockRevenue => vote_state.as_ref_v4().block_revenue_commission_bps,
+            }
         };
 
-        let get_commission_bps = |vote_account: &AccountSharedData| {
-            deserialize_vote_state_for_test(vote_state_v4, vote_account.data(), &vote_pubkey)
-                .as_ref_v4()
-                .inflation_rewards_commission_bps
-        };
-
-        let original_commission_bps = get_commission_bps(&vote_account);
+        let original_commission_bps =
+            get_commission_bps(&vote_account, &CommissionKind::InflationRewards);
 
         let commission_bps = 200; // 2%
+
+        for kind in [
+            CommissionKind::InflationRewards,
+            CommissionKind::BlockRevenue,
+        ] {
+            let instruction_data = serialize(&VoteInstruction::UpdateCommissionBps {
+                commission_bps,
+                kind: kind.clone(),
+            })
+            .unwrap();
+
+            // Should pass.
+            let accounts = process_instruction(
+                features,
+                &instruction_data,
+                transaction_accounts.clone(),
+                instruction_accounts.clone(),
+                Ok(()),
+            );
+            assert_eq!(get_commission_bps(&accounts[0], &kind), commission_bps);
+
+            // Same value - should pass.
+            let accounts = process_instruction(
+                features,
+                &instruction_data,
+                transaction_accounts.clone(),
+                instruction_accounts.clone(),
+                Ok(()),
+            );
+            assert_eq!(get_commission_bps(&accounts[0], &kind), commission_bps);
+        }
+
         let instruction_data = serialize(&VoteInstruction::UpdateCommissionBps {
             commission_bps,
             kind: CommissionKind::InflationRewards,
         })
         .unwrap();
-
-        // Should pass.
-        let accounts = process_instruction(
-            features,
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
-            Ok(()),
-        );
-        assert_eq!(get_commission_bps(&accounts[0]), commission_bps);
-
-        // Same value - should pass.
-        let accounts = process_instruction(
-            features,
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
-            Ok(()),
-        );
-        assert_eq!(get_commission_bps(&accounts[0]), commission_bps);
 
         // Should fail - SIMD-0185 disabled.
         let accounts = process_instruction(
@@ -1491,13 +1506,17 @@ mod tests {
             instruction_accounts.clone(),
             Err(InstructionError::InvalidInstructionData),
         );
-        let stored_commission_bps = get_commission_bps(&accounts[0]);
+        let stored_commission_bps =
+            get_commission_bps(&accounts[0], &CommissionKind::InflationRewards);
         assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
         assert_ne!(stored_commission_bps, commission_bps); // New value not set
 
-        // Should fail - `CommissionKind::BlockRevenue` disallowed.
+        // Should fail - `CommissionKind::BlockRevenue` disallowed (SIMD-0123 disabled).
         let accounts = process_instruction(
-            features,
+            VoteProgramFeatures {
+                block_revenue_sharing: false,
+                ..features
+            },
             &serialize(&VoteInstruction::UpdateCommissionBps {
                 commission_bps,
                 kind: CommissionKind::BlockRevenue,
@@ -1507,8 +1526,8 @@ mod tests {
             instruction_accounts.clone(),
             Err(InstructionError::InvalidInstructionData),
         );
-        let stored_commission_bps = get_commission_bps(&accounts[0]);
-        assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
+        let stored_commission_bps = get_commission_bps(&accounts[0], &CommissionKind::BlockRevenue);
+        assert_eq!(stored_commission_bps, 0); // BlockRevenue starts at 0
         assert_ne!(stored_commission_bps, commission_bps); // New value not set
 
         // Should fail - authorized withdrawer didn't sign the transaction.
@@ -1521,7 +1540,8 @@ mod tests {
             unsigned_instruction_accounts,
             Err(InstructionError::MissingRequiredSignature),
         );
-        let stored_commission_bps = get_commission_bps(&accounts[0]);
+        let stored_commission_bps =
+            get_commission_bps(&accounts[0], &CommissionKind::InflationRewards);
         assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
         assert_ne!(stored_commission_bps, commission_bps); // New value not set
 
@@ -1548,7 +1568,8 @@ mod tests {
             wrong_signer_instruction_accounts,
             Err(InstructionError::MissingRequiredSignature),
         );
-        let stored_commission_bps = get_commission_bps(&accounts[0]);
+        let stored_commission_bps =
+            get_commission_bps(&accounts[0], &CommissionKind::InflationRewards);
         assert_eq!(stored_commission_bps, original_commission_bps); // Matches original
         assert_ne!(stored_commission_bps, commission_bps); // New value not set
     }

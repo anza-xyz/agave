@@ -868,17 +868,18 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     vote_state.set_vote_account_state(vote_account)
 }
 
-/// Update the vote account's commission in basis points (SIMD-0291).
+/// Update the vote account's commission in basis points (SIMD-0291, SIMD-0123).
 pub fn update_commission_bps<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
     commission_bps: u16,
     kind: CommissionKind,
     signers: &HashSet<Pubkey, S>,
+    block_revenue_sharing_enabled: bool,
 ) -> Result<(), InstructionError> {
-    // Per SIMD-0291: BlockRevenue returns InvalidInstructionData
-    // (Block revenue commission updates will be enabled in a future SIMD)
-    if matches!(kind, CommissionKind::BlockRevenue) {
+    // Per SIMD-0291: BlockRevenue returns InvalidInstructionData unless
+    // SIMD-0123 (block_revenue_sharing) is enabled.
+    if matches!(kind, CommissionKind::BlockRevenue) && !block_revenue_sharing_enabled {
         return Err(InstructionError::InvalidInstructionData);
     }
 
@@ -892,7 +893,14 @@ pub fn update_commission_bps<S: std::hash::BuildHasher>(
     // Require authorized withdrawer to sign.
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
-    vote_state.set_inflation_rewards_commission_bps(commission_bps);
+    match kind {
+        CommissionKind::InflationRewards => {
+            vote_state.set_inflation_rewards_commission_bps(commission_bps);
+        }
+        CommissionKind::BlockRevenue => {
+            vote_state.set_block_revenue_commission_bps(commission_bps);
+        }
+    }
 
     vote_state.set_vote_account_state(vote_account)
 }
@@ -1939,7 +1947,8 @@ mod tests {
         let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
         let non_signers: HashSet<Pubkey> = HashSet::new();
 
-        // `CommissionKind::BlockRevenue` returns `InvalidInstructionData`.
+        // `CommissionKind::BlockRevenue` returns `InvalidInstructionData` when
+        // block_revenue_sharing is disabled.
         assert_eq!(
             update_commission_bps(
                 &mut borrowed_account,
@@ -1947,6 +1956,7 @@ mod tests {
                 500,
                 CommissionKind::BlockRevenue,
                 &signers,
+                false, // block_revenue_sharing disabled
             ),
             Err(InstructionError::InvalidInstructionData)
         );
@@ -1959,6 +1969,7 @@ mod tests {
                 500,
                 CommissionKind::InflationRewards,
                 &non_signers,
+                false,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -1972,6 +1983,7 @@ mod tests {
                 500,
                 CommissionKind::InflationRewards,
                 &wrong_signers,
+                false,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -1983,6 +1995,16 @@ mod tests {
                 new_commission_bps,
                 CommissionKind::InflationRewards,
                 &signers,
+                false,
+            )
+            .unwrap();
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                new_commission_bps,
+                CommissionKind::BlockRevenue,
+                &signers,
+                true,
             )
             .unwrap();
             let handler = get_vote_state_handler_checked(
@@ -1990,8 +2012,14 @@ mod tests {
                 PreserveBehaviorInHandlerHelper::new(target_version, true),
             )
             .unwrap();
-            let commission_bps = handler.as_ref_v4().inflation_rewards_commission_bps;
-            assert_eq!(commission_bps, new_commission_bps);
+            assert_eq!(
+                handler.as_ref_v4().inflation_rewards_commission_bps,
+                new_commission_bps
+            );
+            assert_eq!(
+                handler.as_ref_v4().block_revenue_commission_bps,
+                new_commission_bps
+            );
         };
 
         // There's no timing check for SIMD-0291, so just go back and forth
