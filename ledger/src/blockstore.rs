@@ -17,8 +17,8 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         next_slots_iterator::NextSlotsIterator,
         shred::{
-            self, ErasureSetId, ProcessShredsStats, ReedSolomonCache, Shred, ShredId, ShredType,
-            Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+            self, merkle_tree::fec_set_root::FecSetRoot, ErasureSetId, ProcessShredsStats,
+            ReedSolomonCache, Shred, ShredId, ShredType, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
@@ -190,7 +190,7 @@ impl<T> AsRef<T> for WorkingEntry<T> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct LastFECSetCheckResults {
-    last_fec_set_merkle_root: Option<Hash>,
+    last_fec_set_merkle_root: Option<FecSetRoot>,
     is_retransmitter_signed: bool,
 }
 
@@ -198,7 +198,7 @@ impl LastFECSetCheckResults {
     fn get_last_fec_set_merkle_root(
         &self,
         feature_set: &FeatureSet,
-    ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
+    ) -> std::result::Result<Option<FecSetRoot>, BlockstoreProcessorError> {
         if self.last_fec_set_merkle_root.is_none() {
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         } else if feature_set
@@ -1948,7 +1948,7 @@ impl Blockstore {
         let merkle_root = shred.merkle_root().ok();
         let chained_merkle_root = shred::layout::get_chained_merkle_root(&next_shred);
 
-        if !self.check_chaining(merkle_root, chained_merkle_root) {
+        if !self.check_chaining(merkle_root.map(Hash::from), chained_merkle_root) {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot}, shred \
                  {erasure_set:?} type {:?} has merkle root {merkle_root:?}, however next fec set \
@@ -2033,7 +2033,7 @@ impl Blockstore {
         let merkle_root = shred::layout::get_merkle_root(&prev_shred);
         let chained_merkle_root = shred.chained_merkle_root().ok();
 
-        if !self.check_chaining(merkle_root, chained_merkle_root) {
+        if !self.check_chaining(merkle_root.map(Hash::from), chained_merkle_root) {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
                  chains to merkle root {chained_merkle_root:?}, however previous fec set coding \
@@ -2384,7 +2384,8 @@ impl Blockstore {
                     );
                 all_shreds.append(&mut data_shreds);
                 all_shreds.append(&mut coding_shreds);
-                chained_merkle_root = coding_shreds.last().unwrap().merkle_root().unwrap();
+                chained_merkle_root =
+                    Hash::from(coding_shreds.last().unwrap().merkle_root().unwrap());
                 shredder = Shredder::new(
                     current_slot,
                     parent_slot,
@@ -3734,7 +3735,7 @@ impl Blockstore {
         slot: Slot,
         bank_hash: Hash,
         feature_set: &FeatureSet,
-    ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
+    ) -> std::result::Result<Option<FecSetRoot>, BlockstoreProcessorError> {
         let results = self.check_last_fec_set(slot);
         let Ok(results) = results else {
             warn!(
@@ -3793,7 +3794,7 @@ impl Blockstore {
             .data_shred_cf
             .multi_get_keys((start_index..=last_shred_index).map(|index| (slot, index)));
 
-        let deduped_shred_checks: Vec<(Hash, bool)> = self
+        let deduped_shred_checks = self
             .data_shred_cf
             .multi_get_bytes(&keys)
             .enumerate()
@@ -3818,7 +3819,7 @@ impl Blockstore {
                 Ok((merkle_root, is_retransmitter_signed))
             })
             .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok())
-            .collect::<Result<Vec<(Hash, bool)>>>()?;
+            .collect::<Result<Vec<_>>>()?;
 
         // After the dedup there should be exactly one Hash left and one true value
         let &[(block_id, is_retransmitter_signed)] = deduped_shred_checks.as_slice() else {
@@ -11065,7 +11066,7 @@ pub mod tests {
             .insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule,)
             .is_empty());
 
-        let merkle_root = coding_shred.merkle_root().unwrap();
+        let chained_merkle_root = Hash::from(coding_shred.merkle_root().unwrap());
 
         // Correctly chained merkle
         let (data_shreds, coding_shreds, _) = setup_erasure_shreds_with_index_and_chained_merkle(
@@ -11073,7 +11074,7 @@ pub mod tests {
             parent_slot,
             10,
             next_fec_set_index,
-            merkle_root,
+            chained_merkle_root,
         );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11100,13 +11101,13 @@ pub mod tests {
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
         // Correctly chained merkle
-        let merkle_root = coding_shred.merkle_root().unwrap();
+        let chained_merkle_root = Hash::from(coding_shred.merkle_root().unwrap());
         let (_, next_coding_shreds, _) = setup_erasure_shreds_with_index_and_chained_merkle(
             slot,
             parent_slot,
             10,
             next_fec_set_index,
-            merkle_root,
+            chained_merkle_root,
         );
         let next_coding_shred = next_coding_shreds[0].clone();
 
@@ -11137,15 +11138,15 @@ pub mod tests {
             .is_empty());
 
         // Incorrectly chained merkle for next slot
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != data_shred.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(data_shred.merkle_root().unwrap()));
         let (next_slot_data_shreds, next_slot_coding_shreds, leader_schedule) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot + 1,
                 slot,
                 10,
                 fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let next_slot_data_shred = next_slot_data_shreds[0].clone();
         let next_slot_coding_shred = next_slot_coding_shreds[0].clone();
@@ -11170,15 +11171,15 @@ pub mod tests {
         let coding_shred = coding_shreds[0].clone();
 
         // Incorrectly chained merkle for next slot
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != coding_shred.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(coding_shred.merkle_root().unwrap()));
         let (next_slot_data_shreds, _, leader_schedule) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot + 1,
                 slot,
                 10,
                 fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let next_slot_data_shred = next_slot_data_shreds[0].clone();
 
@@ -11211,15 +11212,15 @@ pub mod tests {
             .is_empty());
 
         // Incorrectly chained merkle
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != coding_shred_previous.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(coding_shred_previous.merkle_root().unwrap()));
         let (data_shreds, coding_shreds, leader_schedule) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot,
                 parent_slot,
                 10,
                 next_fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11259,15 +11260,15 @@ pub mod tests {
             .is_empty());
 
         // Incorrectly chained merkle
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != coding_shred_previous.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(coding_shred_previous.merkle_root().unwrap()));
         let (data_shreds, coding_shreds, leader_schedule) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot,
                 parent_slot,
                 10,
                 next_fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11303,15 +11304,15 @@ pub mod tests {
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
         // Incorrectly chained merkle
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != coding_shred.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(coding_shred.merkle_root().unwrap()));
         let (next_data_shreds, _, leader_schedule_next) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot,
                 parent_slot,
                 10,
                 next_fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let next_data_shred = next_data_shreds[0].clone();
 
@@ -11350,30 +11351,30 @@ pub mod tests {
         let fec_set_index = prev_fec_set_index + prev_data_shreds.len() as u32;
 
         // Incorrectly chained merkle
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != prev_coding_shred.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(prev_coding_shred.merkle_root().unwrap()));
         let (data_shreds, coding_shreds, leader_schedule) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot,
                 parent_slot,
                 10,
                 fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
         let next_fec_set_index = fec_set_index + prev_data_shreds.len() as u32;
 
         // Incorrectly chained merkle
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != data_shred.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(data_shred.merkle_root().unwrap()));
         let (next_data_shreds, _, leader_schedule_next) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot,
                 parent_slot,
                 10,
                 next_fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let next_data_shred = next_data_shreds[0].clone();
 
@@ -11455,15 +11456,15 @@ pub mod tests {
 
         // Add an incorrectly chained merkle from the next set. Although incorrectly chained
         // we skip the duplicate check as the first received coding shred index shred is missing
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != coding_shred_previous.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(coding_shred_previous.merkle_root().unwrap()));
         let (data_shreds, coding_shreds, leader_schedule) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot,
                 parent_slot,
                 10,
                 next_fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11490,15 +11491,15 @@ pub mod tests {
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
         // Incorrectly chained merkle
-        let merkle_root = Hash::new_unique();
-        assert!(merkle_root != coding_shred.merkle_root().unwrap());
+        let chained_merkle_root = Hash::new_unique();
+        assert!(chained_merkle_root != Hash::from(coding_shred.merkle_root().unwrap()));
         let (next_data_shreds, next_coding_shreds, leader_schedule_next) =
             setup_erasure_shreds_with_index_and_chained_merkle(
                 slot,
                 parent_slot,
                 10,
                 next_fec_set_index,
-                merkle_root,
+                chained_merkle_root,
             );
         let next_data_shred = next_data_shreds[0].clone();
 
@@ -11595,7 +11596,7 @@ pub mod tests {
                 Hash::default(),
                 false,
             );
-        let merkle_root = first_data_shreds[0].merkle_root().unwrap();
+        let chained_merkle_root = Hash::from(first_data_shreds[0].merkle_root().unwrap());
         fec_set_index += first_data_shreds.len() as u32;
         let (last_data_shreds, _, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
@@ -11603,7 +11604,7 @@ pub mod tests {
                 parent_slot,
                 40,
                 fec_set_index,
-                merkle_root,
+                chained_merkle_root,
                 false,
             );
         let last_index = last_data_shreds.last().unwrap().index();
@@ -11636,7 +11637,7 @@ pub mod tests {
                 Hash::default(),
                 false,
             );
-        let merkle_root = first_data_shreds[0].merkle_root().unwrap();
+        let chained_merkle_root = Hash::from(first_data_shreds[0].merkle_root().unwrap());
         fec_set_index += first_data_shreds.len() as u32;
         let (last_data_shreds, _, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
@@ -11644,7 +11645,7 @@ pub mod tests {
                 parent_slot,
                 100,
                 fec_set_index,
-                merkle_root,
+                chained_merkle_root,
                 false,
             );
         let last_index = last_data_shreds.last().unwrap().index();
@@ -11685,7 +11686,7 @@ pub mod tests {
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
 
-        let block_id = Hash::new_unique();
+        let block_id = FecSetRoot::new_unique();
         let results = LastFECSetCheckResults {
             last_fec_set_merkle_root: Some(block_id),
             is_retransmitter_signed: false,
@@ -11712,7 +11713,7 @@ pub mod tests {
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
 
-        let block_id = Hash::new_unique();
+        let block_id = FecSetRoot::new_unique();
         let results = LastFECSetCheckResults {
             last_fec_set_merkle_root: Some(block_id),
             is_retransmitter_signed: true,

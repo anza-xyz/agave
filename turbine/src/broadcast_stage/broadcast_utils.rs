@@ -186,10 +186,13 @@ pub(super) fn get_chained_merkle_root_from_parent(
             slot: parent,
             index,
         })?;
-    shred::layout::get_merkle_root(&shred).ok_or(Error::InvalidMerkleRoot {
-        slot: parent,
-        index,
-    })
+    match shred::layout::get_merkle_root(&shred) {
+        Some(r) => Ok(Hash::from(r)),
+        None => Err(Error::InvalidMerkleRoot {
+            slot: parent,
+            index,
+        }),
+    }
 }
 
 #[cfg(test)]
