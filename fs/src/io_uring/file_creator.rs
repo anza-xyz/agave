@@ -150,6 +150,16 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         assert_ne!(buf_capacity, 0, "write size aligned buffer is too small");
         let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
 
+        // O_DIRECT writes have offset, size and buffer alignement restrictions, we guarantee
+        // those by splitting buffer and writes by `write_capacity` and requiring its alignment.
+        assert!(
+            self.write_capacity
+                .is_multiple_of(DIRECT_IO_WRITE_LEN_ALIGNMENT)
+                || !self.write_with_direct_io,
+            "write capacity ({}) must be multiple of {DIRECT_IO_WRITE_LEN_ALIGNMENT} for direct IO",
+            self.write_capacity
+        );
+
         // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
         // dropped before `backing_buffer` is dropped.
         let buffers = unsafe {
