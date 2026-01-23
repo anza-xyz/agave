@@ -72,7 +72,6 @@ dependencies = [
  "bytemuck_derive",
  "group",
  "pairing",
- "solana-define-syscall 5.0.0",
 ]
 
 [[package]]
