@@ -207,7 +207,6 @@ impl solana_connection_cache::nonblocking::client_connection::ClientConnection
 mod tests {
     use {
         super::*,
-        crate::connection_cache::ConnectionCache,
         solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
