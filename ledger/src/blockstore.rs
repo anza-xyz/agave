@@ -82,7 +82,10 @@ use {
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
-    wincode::{containers::Vec as WincodeVec, Deserialize as _},
+    wincode::{
+        containers::{Elem, Vec as WincodeVec},
+        Deserialize as _,
+    },
 };
 
 pub mod blockstore_purge;
@@ -3704,11 +3707,15 @@ impl Blockstore {
                         )))
                     })
                     .and_then(|payload| {
-                        <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
-                            BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                                format!("could not reconstruct entries: {e:?}"),
-                            )))
-                        })
+                        <WincodeVec<Elem<Entry>, MaxDataShredsLen>>::deserialize(&payload).map_err(
+                            |e| {
+                                BlockstoreError::InvalidShredData(Box::new(
+                                    bincode::ErrorKind::Custom(format!(
+                                        "could not reconstruct entries: {e:?}"
+                                    )),
+                                ))
+                            },
+                        )
                     })
             })
             .flatten_ok()
