@@ -415,6 +415,7 @@ mod tests {
         bincode::serialize,
         solana_account::{
             self as account, state_traits::StateMut, Account, AccountSharedData, ReadableAccount,
+            WritableAccount,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
@@ -4451,5 +4452,119 @@ mod tests {
             vote_state.as_ref_v4().pending_delegator_rewards,
             first_deposit_amount + second_deposit_amount,
         );
+    }
+
+    #[test]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn test_withdraw_pending_delegator_rewards() {
+        let rent_sysvar = Rent::default();
+        let rent_minimum_balance = rent_sysvar.minimum_balance(VoteStateV4::size_of());
+
+        let pending_rewards = 500_000;
+        let extra_for_withdraw = 100_000;
+        let vote_account_lamports = rent_minimum_balance + pending_rewards + extra_for_withdraw;
+
+        let (vote_pubkey, _authorized_voter, authorized_withdrawer, mut vote_account) =
+            create_test_account_with_authorized(true);
+
+        // Set some pending delegator rewards.
+        {
+            let mut vote_state =
+                VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
+            vote_state.pending_delegator_rewards = pending_rewards;
+            vote_account.set_data_from_slice(&VoteStateHandler::new_v4(vote_state).serialize());
+            vote_account.set_lamports(vote_account_lamports);
+        };
+
+        let features = VoteProgramFeatures::all_enabled();
+
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: true,
+            },
+        ];
+
+        let rent_account = account::create_account_shared_data_for_test(&rent_sysvar);
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account.clone()),
+            (authorized_withdrawer, AccountSharedData::default()),
+            (sysvar::clock::id(), create_default_clock_account()),
+            (sysvar::rent::id(), rent_account.clone()),
+        ];
+
+        // Should fail, can't close vote account when
+        // pending_delegator_rewards > 0.
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::Withdraw(vote_account_lamports)).unwrap(),
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InsufficientFunds),
+        );
+
+        // Should fail, can't withdraw more than
+        // (lamports - pending_delegator_rewards - rent_exempt).
+        process_instruction(
+            features,
+            &serialize(&VoteInstruction::Withdraw(vote_account_lamports + 1)).unwrap(),
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InsufficientFunds),
+        );
+
+        // Should pass, can withdraw up to the max withdrawable amount.
+        for i in 1..10 {
+            let withdraw_amount = 1 + i * extra_for_withdraw / 10;
+
+            let accounts = process_instruction(
+                features,
+                &serialize(&VoteInstruction::Withdraw(withdraw_amount)).unwrap(),
+                transaction_accounts.clone(),
+                instruction_accounts.clone(),
+                Ok(()),
+            );
+
+            assert_eq!(
+                accounts[0].lamports(),
+                vote_account_lamports - withdraw_amount
+            );
+            assert!(accounts[0].lamports() >= rent_minimum_balance + pending_rewards);
+            assert_eq!(accounts[1].lamports(), withdraw_amount);
+        }
+
+        // Now clear pending delegator rewards.
+        {
+            let mut vote_state =
+                VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
+            vote_state.pending_delegator_rewards = 0;
+            vote_account.set_data_from_slice(&VoteStateHandler::new_v4(vote_state).serialize());
+            vote_account.set_lamports(vote_account_lamports);
+        };
+
+        // Should pass, no pending delegator rewards, so we can close the whole
+        // thing out.
+        let accounts = process_instruction(
+            features,
+            &serialize(&VoteInstruction::Withdraw(vote_account_lamports)).unwrap(),
+            vec![
+                (vote_pubkey, vote_account.clone()),
+                (authorized_withdrawer, AccountSharedData::default()),
+                (sysvar::clock::id(), create_default_clock_account()),
+                (sysvar::rent::id(), rent_account),
+            ],
+            instruction_accounts.clone(),
+            Ok(()),
+        );
+
+        assert_eq!(accounts[0].lamports(), 0);
+        assert_eq!(accounts[0].data(), vec![0; VoteStateV4::size_of()]);
+        assert_eq!(accounts[1].lamports(), vote_account_lamports);
     }
 }

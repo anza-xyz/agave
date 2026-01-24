@@ -1126,7 +1126,16 @@ pub fn withdraw<S: std::hash::BuildHasher>(
         .checked_sub(lamports)
         .ok_or(InstructionError::InsufficientFunds)?;
 
+    // Always zero until SIMD-0123 is activated.
+    let pending_delegator_rewards = vote_state.pending_delegator_rewards();
+
     if remaining_balance == 0 {
+        // SIMD-0123: vote account cannot be closed if
+        // pending_delegator_rewards > 0.
+        if pending_delegator_rewards > 0 {
+            return Err(InstructionError::InsufficientFunds);
+        }
+
         let reject_active_vote_account_close = vote_state
             .epoch_credits()
             .last()
@@ -1146,8 +1155,13 @@ pub fn withdraw<S: std::hash::BuildHasher>(
             VoteStateHandler::deinitialize_vote_account_state(&mut vote_account, target_version)?;
         }
     } else {
+        // SIMD-0123: withdrawable balance when pending_delegator_rewards > 0
+        // is lamports - pending_delegator_rewards - rent_exempt_minimum.
         let min_rent_exempt_balance = rent_sysvar.minimum_balance(vote_account.get_data().len());
-        if remaining_balance < min_rent_exempt_balance {
+        let min_balance = min_rent_exempt_balance
+            .checked_add(pending_delegator_rewards)
+            .ok_or(InstructionError::ArithmeticOverflow)?;
+        if remaining_balance < min_balance {
             return Err(InstructionError::InsufficientFunds);
         }
     }
