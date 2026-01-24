@@ -9,3 +9,5 @@ mod stream_throttle;
 pub mod swqos;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod testing_utilities;
+#[cfg(feature = "webtransport")]
+pub mod webtransport;

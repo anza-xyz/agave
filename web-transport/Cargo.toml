@@ -1,0 +1,25 @@
+[package]
+name = "agave-web-transport"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+futures = { workspace = true }
+# Required by web-transport-proto; v1 differs from workspace v0.2 but is isolated
+http = "1"
+log = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+url = { workspace = true }
+web-transport-proto = { workspace = true }
+
+[lints]
+workspace = true
