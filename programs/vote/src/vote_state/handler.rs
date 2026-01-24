@@ -68,6 +68,8 @@ pub trait VoteStateHandle {
 
     fn set_block_revenue_collector(&mut self, collector: Pubkey);
 
+    fn pending_delegator_rewards(&self) -> u64;
+
     fn add_pending_delegator_rewards(&mut self, amount: u64) -> Result<(), InstructionError>;
 
     fn votes(&self) -> &VecDeque<LandedVote>;
@@ -386,6 +388,11 @@ impl VoteStateHandle for VoteStateV3 {
         // No-op for v3: field does not exist.
     }
 
+    fn pending_delegator_rewards(&self) -> u64 {
+        // V3 doesn't have this field.
+        0
+    }
+
     fn add_pending_delegator_rewards(&mut self, _amount: u64) -> Result<(), InstructionError> {
         // No-op. We can never reach this callsite, since SIMD-0123 depends on
         // SIMD-0185: the activation of VoteStateV4.
@@ -573,6 +580,10 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_block_revenue_collector(&mut self, collector: Pubkey) {
         self.block_revenue_collector = collector;
+    }
+
+    fn pending_delegator_rewards(&self) -> u64 {
+        self.pending_delegator_rewards
     }
 
     fn add_pending_delegator_rewards(&mut self, amount: u64) -> Result<(), InstructionError> {
@@ -806,6 +817,13 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_block_revenue_collector(collector),
             TargetVoteState::V4(v4) => v4.set_block_revenue_collector(collector),
+        }
+    }
+
+    fn pending_delegator_rewards(&self) -> u64 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.pending_delegator_rewards(),
+            TargetVoteState::V4(v4) => v4.pending_delegator_rewards(),
         }
     }
 
