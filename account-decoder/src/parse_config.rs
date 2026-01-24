@@ -3,7 +3,7 @@ use {
         parse_account_data::{ParsableAccount, ParseAccountError},
         validator_info,
     },
-    bincode::deserialize,
+    bincode::{deserialize, serialized_size},
     serde::{Deserialize, Serialize},
     serde_json::Value,
     solana_config_interface::state::{get_config_data, ConfigKeys},
@@ -22,12 +22,16 @@ pub fn parse_config(data: &[u8], pubkey: &Pubkey) -> Result<ConfigAccountType, P
     } else {
         deserialize::<ConfigKeys>(data).ok().and_then(|key_list| {
             if !key_list.keys.is_empty() && key_list.keys[0].0 == validator_info::id() {
-                parse_config_data::<String>(data, key_list.keys).and_then(|validator_info| {
-                    Some(ConfigAccountType::ValidatorInfo(UiConfig {
-                        keys: validator_info.keys,
-                        config_data: serde_json::from_str(&validator_info.config_data).ok()?,
-                    }))
-                })
+                let offset = serialized_size(&key_list).ok()?;
+                let config_data_slice = &data[offset as usize..];
+                parse_config_data::<String>(config_data_slice, key_list.keys).and_then(
+                    |validator_info| {
+                        Some(ConfigAccountType::ValidatorInfo(UiConfig {
+                            keys: validator_info.keys,
+                            config_data: serde_json::from_str(&validator_info.config_data).ok()?,
+                        }))
+                    },
+                )
             } else {
                 None
             }
@@ -38,11 +42,11 @@ pub fn parse_config(data: &[u8], pubkey: &Pubkey) -> Result<ConfigAccountType, P
     ))
 }
 
-fn parse_config_data<T>(data: &[u8], keys: Vec<(Pubkey, bool)>) -> Option<UiConfig<T>>
+fn parse_config_data<T>(config_data_slice: &[u8], keys: Vec<(Pubkey, bool)>) -> Option<UiConfig<T>>
 where
     T: serde::de::DeserializeOwned,
 {
-    let config_data: T = deserialize(get_config_data(data).ok()?).ok()?;
+    let config_data: T = deserialize(config_data_slice).ok()?;
     let keys = keys
         .iter()
         .map(|key| UiConfigKey {
