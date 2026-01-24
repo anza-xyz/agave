@@ -155,6 +155,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             usage_warning:"tpu_coalesce will be dropped (currently ignored)",
     );
     add_arg!(
+        // deprecated in v4.0.0
+        Arg::with_name("tpu_connection_pool_size")
+            .long("tpu-connection-pool-size")
+            .takes_value(true)
+            .default_value( Box::leak( format!("{DEFAULT_TPU_CONNECTION_POOL_SIZE}").into_boxed_str()))
+            .validator(is_parsable::<usize>)
+            .help("Controls the TPU connection pool size per remote address"),
+         usage_warning:"This parameter is misleading, avoid setting it",
+    );
+    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("transaction_struct")
             .long("transaction-structure")

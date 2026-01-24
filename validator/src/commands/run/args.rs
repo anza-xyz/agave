@@ -705,14 +705,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("tpu_connection_pool_size")
-            .long("tpu-connection-pool-size")
-            .takes_value(true)
-            .default_value(&default_args.tpu_connection_pool_size)
-            .validator(is_parsable::<usize>)
-            .help("Controls the TPU connection pool size per remote address"),
-    )
-    .arg(
         Arg::with_name("tpu_max_connections_per_ipaddr_per_minute")
             .long("tpu-max-connections-per-ipaddr-per-minute")
             .takes_value(true)
