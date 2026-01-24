@@ -214,6 +214,22 @@ fn grind_parse_args(
     grind_matches
 }
 
+fn try_consume_match(counter: &std::sync::atomic::AtomicU64) -> bool {
+    use std::sync::atomic::Ordering;
+    loop {
+        let cur = counter.load(Ordering::Acquire);
+        if cur == 0 {
+            return false;
+        }
+        if counter
+            .compare_exchange(cur, cur - 1, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            return true;
+        }
+    }
+}
+
 fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
     Command::new(crate_name!())
         .about(crate_description!())
@@ -788,7 +804,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                 total_matches_found += 1;
                                 continue;
                             }
-                            if (!grind_matches_thread_safe[i].starts.is_empty()
+                            if ((!grind_matches_thread_safe[i].starts.is_empty()
                                 && grind_matches_thread_safe[i].ends.is_empty()
                                 && pubkey.starts_with(&grind_matches_thread_safe[i].starts))
                                 || (grind_matches_thread_safe[i].starts.is_empty()
@@ -797,12 +813,10 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                 || (!grind_matches_thread_safe[i].starts.is_empty()
                                     && !grind_matches_thread_safe[i].ends.is_empty()
                                     && pubkey.starts_with(&grind_matches_thread_safe[i].starts)
-                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends))
+                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends)))
+                                && try_consume_match(&grind_matches_thread_safe[i].count)
                             {
                                 let _found = found.fetch_add(1, Ordering::Relaxed);
-                                grind_matches_thread_safe[i]
-                                    .count
-                                    .fetch_sub(1, Ordering::Relaxed);
                                 if !no_outfile {
                                     write_keypair_file(
                                         &keypair,
@@ -1301,5 +1315,42 @@ mod tests {
             BLSKeypair::derive_from_signer(&my_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         let read_bls_pubkey = read_bls_pubkey_file(&outfile_path).unwrap();
         assert_eq!(read_bls_pubkey, bls_keypair.public.into());
+    }
+
+    #[test]
+    fn test_try_consume_match_concurrent() {
+        use std::{
+            sync::{
+                atomic::{AtomicU64, Ordering},
+                Arc,
+            },
+            thread,
+        };
+
+        let initial: u64 = 1000;
+        let counter = Arc::new(AtomicU64::new(initial));
+        let successes = Arc::new(AtomicU64::new(0));
+        let threads = 16;
+
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let counter = counter.clone();
+                let successes = successes.clone();
+                thread::spawn(move || loop {
+                    if try_consume_match(&counter) {
+                        successes.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        break;
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        assert_eq!(successes.load(Ordering::Relaxed), initial);
     }
 }
