@@ -137,7 +137,7 @@ pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
 /// Minimum stake required for a node to bypass the initial ping check when joining gossip.
-pub(crate) const MIN_STAKE_TO_SKIP_PING: u64 = solana_native_token::LAMPORTS_PER_SOL;
+pub(crate) const MIN_STAKE_TO_SKIP_PING: u64 = 10_000 * solana_native_token::LAMPORTS_PER_SOL;
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
