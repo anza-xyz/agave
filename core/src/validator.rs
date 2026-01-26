@@ -1160,6 +1160,8 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
+        let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
+
         let mut tpu_transactions_forwards_client_sockets =
             Some(node.sockets.tpu_transaction_forwarding_clients);
 
@@ -1214,11 +1216,12 @@ impl Validator {
                 );
             builder = builder.runtime_handle(runtime_handle.clone());
             let (sender, client) = builder.build()?;
-            Some(voting_service::QuicVoteSender {
-                identity: id,
-                sender,
-                client,
-            })
+            let quic_vote_sender = Arc::new(voting_service::QuicVoteSender { sender, client });
+            key_notifiers
+                .write()
+                .unwrap()
+                .add(KeyUpdaterType::VoteClient, quic_vote_sender.clone());
+            Some(quic_vote_sender)
         } else {
             None
         };
@@ -1677,7 +1680,6 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
-        let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
         let forwarding_tpu_client = {
             let runtime_handle = tpu_client_next_runtime
                 .as_ref()

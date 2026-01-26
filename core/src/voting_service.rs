@@ -10,15 +10,16 @@ use {
     solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
     solana_connection_cache::{client_connection::ClientConnection, connection_cache::Protocol},
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
-    solana_keypair::Address,
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
-    solana_signer::Signer,
+    solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{Client, TransactionSender},
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
+        error::Error,
         net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
@@ -37,9 +38,14 @@ const UDP_UPCOMING_LEADER_FANOUT_SLOTS: u64 =
 static_assertions::const_assert_eq!(UDP_UPCOMING_LEADER_FANOUT_SLOTS, 3);
 
 pub struct QuicVoteSender {
-    pub identity: Address,
     pub sender: TransactionSender,
     pub client: Client,
+}
+
+impl NotifyKeyUpdate for QuicVoteSender {
+    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn Error>> {
+        self.client.update_identity(key).map_err(|e| e.into())
+    }
 }
 
 pub enum VoteOp {
@@ -106,7 +112,7 @@ impl VotingService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
         udp_connection_cache: Arc<ConnectionCache>,
-        mut quic_sender: Option<QuicVoteSender>,
+        quic_sender: Option<Arc<QuicVoteSender>>,
         alpenglow_socket: Option<UdpSocket>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
@@ -138,7 +144,7 @@ impl VotingService {
                             tower_storage.as_ref(),
                             vote_op,
                             &udp_connection_cache,
-                            &mut quic_sender,
+                            &quic_sender,
                         );
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = vote_slot {
@@ -163,7 +169,7 @@ impl VotingService {
         tower_storage: &dyn TowerStorage,
         vote_op: VoteOp,
         udp_connection_cache: &Arc<ConnectionCache>,
-        quic_sender: &mut Option<QuicVoteSender>,
+        quic_sender: &Option<Arc<QuicVoteSender>>,
     ) {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
@@ -197,13 +203,6 @@ impl VotingService {
         }
 
         if let Some(quic_sender) = quic_sender {
-            if cluster_info.id() != quic_sender.identity {
-                let kp = cluster_info.keypair();
-                quic_sender.identity = kp.pubkey();
-                if let Err(e) = quic_sender.client.update_identity(&kp) {
-                    error!("Unable to update identity of quic_sender: {e:?}");
-                }
-            }
             if let Ok(serialized) = serialize(vote_op.tx()) {
                 quic_sender
                     .sender

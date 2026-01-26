@@ -169,7 +169,7 @@ impl Tvu {
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         udp_vote_connection_cache: Arc<ConnectionCache>,
-        quic_vote_sender: Option<QuicVoteSender>,
+        quic_vote_sender: Option<Arc<QuicVoteSender>>,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
