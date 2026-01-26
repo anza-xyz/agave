@@ -970,7 +970,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         possible_evictions
     }
 
-    fn write_startup_info_to_disk(&self) {
+    /// Takes self's `startup_info` and writes it to disk and in-mem.
+    ///
+    /// If the configured memory limit is "minimal", nothing is writen to in-mem.
+    /// Otherwise write to in-mem (and respect the memory limit).
+    fn write_startup_info(&self) {
         let insert = std::mem::take(&mut *self.startup_info.insert.lock().unwrap());
         if insert.is_empty() {
             // nothing to insert for this bin
@@ -1127,7 +1131,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // At startup we do not insert index entries into the normal in-mem index.
             // Instead, they are written to a startup-only struct.  Thus, at startup
             // we only need to flush that startup struct and then can return early.
-            self.write_startup_info_to_disk();
+            self.write_startup_info();
             if iterate_for_age {
                 // Note we still have to iterate ages too, since it is checked when
                 // transitioning from startup back to normal/steady state.
