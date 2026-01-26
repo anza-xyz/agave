@@ -129,6 +129,12 @@ pub fn verify(
         }
     }
     if inline_calldata_size != 0 {
+        // If inline call data has not been fully consumed, fail the transaction, since this indicates
+        // a mismatch between caller (at instruction construction) and execution (the Solana program).
+        // In the worst case, if inline signature data is being ignored, and the program has not implemented 
+        // strict inline requirements for the instruction containing the signature data, a malicious attacker 
+        // could exploit this fact by appending a second instruction with arbitrary signing data, 
+        // rendering the secp precompile instruction effectively useless.
         return Err(PrecompileError::InvalidInstructionDataSize);
     }
     Ok(())
