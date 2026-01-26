@@ -60,10 +60,7 @@ use {
     solana_streamer::{
         evicting_sender::EvictingSender,
         nonblocking::simple_qos::SimpleQosConfig,
-        quic::{
-            spawn_simple_qos_server, QuicStreamerConfig, SpawnServerResult,
-            DEFAULT_MAX_STREAMS_PER_MS,
-        },
+        quic::{spawn_simple_qos_server, QuicStreamerConfig, SpawnServerResult},
         streamer::StakedNodes,
     },
     solana_turbine::{retransmit_stage::RetransmitStage, xdp::XdpSender},
@@ -248,11 +245,11 @@ impl Tvu {
                 // quic server params, 8 connections per min from an IP, num_threads 1
                 let quic_server_params = QuicStreamerConfig::default();
                 let qos_config = SimpleQosConfig {
-                    max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS,
+                    max_streams_per_second: 30,
                     // Cap by # of active validators (some overhead for epoch boundaries)
                     max_staked_connections: MAX_ALPENGLOW_VOTE_ACCOUNTS * 2,
-                    // One staked connection per validator
-                    max_connections_per_peer: 1,
+                    // Two staked connection per validator to account for hotspares
+                    max_connections_per_peer: 2,
                 };
                 let cancel = CancellationToken::new();
                 thread::spawn({
