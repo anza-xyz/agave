@@ -82,7 +82,7 @@ serde_bytes = "0.11.19"
 serde_json = "1.0.149"
 serde_yaml = "0.9.34"
 serial_test = "3.2.0"
-signal-hook = "0.4.1"
+signal-hook = "0.4.3"
 solana-account = "3.3.0"
 solana-account-decoder = { path = "../account-decoder", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
