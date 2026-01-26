@@ -11,7 +11,7 @@ pub struct PurgeStats {
     delete_file_in_range: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 /// Controls how `blockstore::purge_slots` purges the data.
 pub enum PurgeType {
     /// A slower but more accurate way to purge slots by also ensuring higher
@@ -55,8 +55,11 @@ impl Blockstore {
                 i64
             )
         );
-        purge_result.inspect_err(|e| {
-            error!("Error: {e:?}; Purge failed in range {from_slot:?} to {to_slot:?}");
+        purge_result.map_err(|e| BlockstoreError::PurgeFailed {
+            from_slot,
+            to_slot,
+            purge_type,
+            inner: Box::new(e),
         })?;
         Ok(())
     }
