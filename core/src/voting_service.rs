@@ -204,10 +204,12 @@ impl VotingService {
 
         if let Some(quic_sender) = quic_sender {
             if let Ok(serialized) = serialize(vote_op.tx()) {
-                quic_sender
+                if let Err(e) = quic_sender
                     .sender
                     .try_send_transactions_in_batch(vec![serialized])
-                    .unwrap();
+                {
+                    warn!("Error sending vote transaction with QUIC: {e}");
+                }
             } else {
                 warn!("Failed to serialize vote");
             }
