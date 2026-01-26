@@ -6155,10 +6155,6 @@ impl AccountsDb {
         store_id: AccountsFileId,
         storage_info: &StorageSizeAndCountMap,
     ) -> SlotIndexGenerationInfo {
-        if storage.accounts.get_account_data_lens(&[0]).is_empty() {
-            return SlotIndexGenerationInfo::default();
-        }
-
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
         let mut zero_lamport_pubkeys = vec![];
