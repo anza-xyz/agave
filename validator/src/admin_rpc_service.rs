@@ -1642,6 +1642,7 @@ mod tests {
                     KeyUpdaterType::RpcService,
                     KeyUpdaterType::Bls,
                     KeyUpdaterType::BlsConnectionCache,
+                    KeyUpdaterType::VoteClient,
                 ])
             );
             let mut io = MetaIoHandler::default();
