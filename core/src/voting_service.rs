@@ -8,10 +8,7 @@ use {
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
-    solana_connection_cache::{
-        client_connection::ClientConnection,
-        connection_cache::Protocol,
-    },
+    solana_connection_cache::{client_connection::ClientConnection, connection_cache::Protocol},
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_keypair::Address,
     solana_measure::measure::Measure,
@@ -42,7 +39,7 @@ static_assertions::const_assert_eq!(UDP_UPCOMING_LEADER_FANOUT_SLOTS, 3);
 pub struct QuicVoteSender {
     pub identity: Address,
     pub sender: TransactionSender,
-    pub client: Client
+    pub client: Client,
 }
 
 pub enum VoteOp {
@@ -208,7 +205,10 @@ impl VotingService {
                 }
             }
             if let Ok(serialized) = serialize(vote_op.tx()) {
-                quic_sender.sender.try_send_transactions_in_batch(vec![serialized]).unwrap();
+                quic_sender
+                    .sender
+                    .try_send_transactions_in_batch(vec![serialized])
+                    .unwrap();
             } else {
                 warn!("Failed to serialize vote");
             }

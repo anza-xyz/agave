@@ -1,6 +1,6 @@
 use {
-    async_trait::async_trait,
     crate::banking_stage::LikeClusterInfo,
+    async_trait::async_trait,
     itertools::Itertools,
     solana_clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_gossip::{
@@ -9,7 +9,10 @@ use {
     },
     solana_poh::poh_recorder::PohRecorder,
     solana_tpu_client_next::leader_updater::LeaderUpdater,
-    std::{sync::Arc, net::SocketAddr, sync::RwLock},
+    std::{
+        net::SocketAddr,
+        sync::{Arc, RwLock},
+    },
 };
 
 /// Returns a list of tpu vote sockets for the leaders of the next N fanout
@@ -68,8 +71,14 @@ pub(crate) struct VotingServiceLeaderUpdater {
 }
 
 impl VotingServiceLeaderUpdater {
-    pub(crate) fn new(cluster_info: Arc<ClusterInfo>, poh_recorder: Arc<RwLock<PohRecorder>>) -> Self {
-        Self { cluster_info, poh_recorder }
+    pub(crate) fn new(
+        cluster_info: Arc<ClusterInfo>,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
+    ) -> Self {
+        Self {
+            cluster_info,
+            poh_recorder,
+        }
     }
 }
 
@@ -80,10 +89,9 @@ impl LeaderUpdater for VotingServiceLeaderUpdater {
             &self.cluster_info,
             &self.poh_recorder,
             lookahead_leaders as u64 * NUM_CONSECUTIVE_LEADER_SLOTS,
-            Protocol::QUIC
+            Protocol::QUIC,
         )
     }
 
-    async fn stop(&mut self) {
-    }
+    async fn stop(&mut self) {}
 }

@@ -16,7 +16,7 @@ use {
         repair::repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
         shred_fetch_stage::{ShredFetchStage, SHRED_FETCH_CHANNEL_SIZE},
-        voting_service::{VotingService, QuicVoteSender},
+        voting_service::{QuicVoteSender, VotingService},
         window_service::{WindowService, WindowServiceChannels},
     },
     bytes::Bytes,
