@@ -15,13 +15,13 @@ use {
         sysvar::stake_history::StakeHistorySysvar,
     },
     solana_sysvar::{
+        Sysvar, SysvarSerialize,
         clock::Clock,
         epoch_rewards::EpochRewards,
         epoch_schedule::EpochSchedule,
         rent::Rent,
         slot_hashes::{PodSlotHashes, SlotHashes},
         slot_history::SlotHistory,
-        Sysvar, SysvarSerialize,
     },
 };
 

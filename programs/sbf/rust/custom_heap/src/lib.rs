@@ -8,7 +8,7 @@ use {
     solana_program_error::ProgramResult,
     solana_pubkey::Pubkey,
     std::{
-        alloc::{alloc, Layout},
+        alloc::{Layout, alloc},
         mem::align_of,
     },
 };

@@ -1,5 +1,5 @@
 use {
-    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
     solana_account_info::AccountInfo,
     solana_program::program::set_return_data,
     solana_program_error::ProgramResult,

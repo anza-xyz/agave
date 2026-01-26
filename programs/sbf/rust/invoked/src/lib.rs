@@ -104,9 +104,11 @@ fn process_instruction(
             );
             {
                 let data = accounts[INVOKED_PROGRAM_INDEX].try_borrow_data()?;
-                assert!(accounts[INVOKED_PROGRAM_DUP_INDEX]
-                    .try_borrow_mut_data()
-                    .is_err());
+                assert!(
+                    accounts[INVOKED_PROGRAM_DUP_INDEX]
+                        .try_borrow_mut_data()
+                        .is_err()
+                );
                 sol_log_64(data[0] as u64, 0, 0, 0, 0);
             }
         }

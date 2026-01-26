@@ -2,7 +2,7 @@
 
 use {
     solana_msg::msg,
-    solana_poseidon::{hashv, Endianness, Parameters, PoseidonSyscallError},
+    solana_poseidon::{Endianness, Parameters, PoseidonSyscallError, hashv},
     solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
 
