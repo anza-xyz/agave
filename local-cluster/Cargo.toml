@@ -35,6 +35,7 @@ solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+solana-feature-gate-interface = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hard-forks = { workspace = true }
