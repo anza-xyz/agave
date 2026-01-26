@@ -24,6 +24,7 @@ shuttle-test = [
 svm-internal = []
 
 [dependencies]
+agave-bls12-381 = { workspace = true }
 bincode = { workspace = true }
 libsecp256k1 = { workspace = true }
 num-traits = { workspace = true }

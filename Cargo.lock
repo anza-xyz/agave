@@ -340,6 +340,7 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls12-381",
  "assert_matches",
  "bincode",
  "libsecp256k1",
@@ -5781,7 +5782,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls 0.23.36",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6921,9 +6922,9 @@ dependencies = [
 
 [[package]]
 name = "signal-hook"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a37d01603c37b5466f808de79f845c7116049b0579adb70a6b7d47c1fa3a952"
+checksum = "3b57709da74f9ff9f4a27dce9526eec25ca8407c45a7887243b031a58935fb8e"
 dependencies = [
  "libc",
  "signal-hook-registry",
@@ -7025,9 +7026,9 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
+checksum = "86f4aa3ad99f2088c990dfa82d367e19cb29268ed67c574d10d0a4bfe71f07e0"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
@@ -9472,7 +9473,7 @@ dependencies = [
  "rand 0.9.2",
  "serde",
  "shuttle",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "solana-net-utils",
  "solana-serde",
  "solana-svm-type-overrides",
@@ -10955,7 +10956,7 @@ dependencies = [
  "rand 0.9.2",
  "rustls 0.23.36",
  "smallvec",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
@@ -11304,6 +11305,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-syscalls",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
@@ -11332,6 +11334,7 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
+ "solana-program-runtime",
  "solana-program-test",
  "solana-pubkey 4.0.0",
  "solana-rent",
@@ -11339,6 +11342,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
  "solana-streamer",
@@ -11868,7 +11872,7 @@ dependencies = [
  "rustls 0.23.36",
  "signal-hook",
  "smallvec",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "solana-clap-utils",
  "solana-client",
  "solana-clock",
@@ -12890,7 +12894,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "pin-project-lite",
  "signal-hook-registry",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "tokio-macros",
  "windows-sys 0.61.0",
 ]

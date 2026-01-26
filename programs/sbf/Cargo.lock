@@ -63,6 +63,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-bls12-381"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "blst",
+ "blstrs",
+ "bytemuck",
+ "bytemuck_derive",
+ "group",
+ "pairing",
+]
+
+[[package]]
 name = "agave-feature-set"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -209,6 +221,7 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls12-381",
  "bincode",
  "libsecp256k1 0.6.0",
  "num-traits",
@@ -1260,9 +1273,9 @@ dependencies = [
 
 [[package]]
 name = "blst"
-version = "0.3.15"
+version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fd49896f12ac9b6dcd7a5998466b9b58263a695a3dd1ecc1aaca2e12a90b080"
+checksum = "dcdb4c7013139a150f9fc55d123186dbfaba0d912817466282c73ac49e71fb45"
 dependencies = [
  "cc",
  "glob",
@@ -4869,7 +4882,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls 0.23.36",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -5791,9 +5804,9 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "signal-hook"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a37d01603c37b5466f808de79f845c7116049b0579adb70a6b7d47c1fa3a952"
+checksum = "3b57709da74f9ff9f4a27dce9526eec25ca8407c45a7887243b031a58935fb8e"
 dependencies = [
  "libc",
  "signal-hook-registry",
@@ -5895,9 +5908,9 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
+checksum = "86f4aa3ad99f2088c990dfa82d367e19cb29268ed67c574d10d0a4bfe71f07e0"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
@@ -7627,7 +7640,7 @@ dependencies = [
  "nix",
  "rand 0.9.2",
  "serde",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "solana-serde",
  "solana-svm-type-overrides",
  "tokio",
@@ -9606,7 +9619,7 @@ dependencies = [
  "rand 0.9.2",
  "rustls 0.23.36",
  "smallvec",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
@@ -9885,6 +9898,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-syscalls",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
@@ -9913,6 +9927,7 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
+ "solana-program-runtime",
  "solana-program-test",
  "solana-pubkey 4.0.0",
  "solana-rent",
@@ -9920,6 +9935,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
  "solana-streamer",
@@ -11138,7 +11154,7 @@ dependencies = [
  "parking_lot 0.12.2",
  "pin-project-lite",
  "signal-hook-registry",
- "socket2 0.6.1",
+ "socket2 0.6.2",
  "tokio-macros",
  "windows-sys 0.61.0",
 ]

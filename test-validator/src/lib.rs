@@ -7,6 +7,7 @@ use {
     agave_snapshots::{
         paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig, SnapshotInterval,
     },
+    agave_syscalls::create_program_runtime_environment_v1,
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -48,6 +49,9 @@ use {
     solana_net_utils::{
         find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
     },
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -59,6 +63,7 @@ use {
         bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig,
     },
+    solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
@@ -795,7 +800,6 @@ pub struct TestValidator {
     preserve_ledger: bool,
     rpc_pubsub_url: String,
     rpc_url: String,
-    tpu: SocketAddr,
     tpu_quic: SocketAddr,
     gossip: SocketAddr,
     validator: Option<Validator>,
@@ -946,6 +950,17 @@ impl TestValidator {
             }
         }
 
+        let runtime_features = feature_set.runtime_features();
+        let program_runtime_environment = create_program_runtime_environment_v1(
+            &runtime_features,
+            &SVMTransactionExecutionBudget::new_with_defaults(
+                runtime_features.raise_cpi_nesting_limit_to_8,
+            ),
+            true,
+            false,
+        )?;
+        let program_runtime_environment = Arc::new(program_runtime_environment);
+
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_binaries::spl_programs(&config.rent) {
             accounts.entry(address).or_insert(account);
@@ -959,6 +974,13 @@ impl TestValidator {
         }
         for upgradeable_program in &config.upgradeable_programs {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);
+            let executable =
+                Executable::<InvokeContext>::from_elf(&data, program_runtime_environment.clone())
+                    .map_err(|err| format!("ELF error: {err}"))?;
+            executable
+                .verify::<RequisiteVerifier>()
+                .map_err(|err| format!("ELF error: {err}"))?;
+
             let (programdata_address, _) = Pubkey::find_program_address(
                 &[upgradeable_program.program_id.as_ref()],
                 &upgradeable_program.loader,
@@ -1130,8 +1152,7 @@ impl TestValidator {
         let vote_account_address = validator_vote_account.pubkey();
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());
         let rpc_pubsub_url = format!("ws://{}/", node.info.rpc_pubsub().unwrap());
-        let tpu = node.info.tpu(Protocol::UDP).unwrap();
-        let tpu_quic = node.info.tpu(Protocol::QUIC).unwrap_or(tpu);
+        let tpu_quic = node.info.tpu(Protocol::QUIC).unwrap();
         let gossip = node.info.gossip().unwrap();
 
         {
@@ -1234,7 +1255,6 @@ impl TestValidator {
             preserve_ledger,
             rpc_pubsub_url,
             rpc_url,
-            tpu,
             tpu_quic,
             gossip,
             validator,
@@ -1364,11 +1384,6 @@ impl TestValidator {
             sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
         }
         panic!("Timeout waiting for program to become usable");
-    }
-
-    /// Return the validator's TPU address
-    pub fn tpu(&self) -> &SocketAddr {
-        &self.tpu
     }
 
     /// Return the validator's TPU QUIC address

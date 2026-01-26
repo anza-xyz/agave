@@ -681,16 +681,42 @@ impl RpcClient {
         &self,
         transaction: &impl SerializableTransaction,
     ) -> ClientResult<Signature> {
+        self.send_and_confirm_transaction_with_config(
+            transaction,
+            self.commitment(),
+            RpcSendTransactionConfig {
+                preflight_commitment: Some(self.commitment().commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await
+    }
+
+    /// Send a transaction and wait for confirmation with custom configuration.
+    ///
+    /// This method is similar to [`send_and_confirm_transaction`] but allows
+    /// specifying both a commitment level and transaction send configuration.
+    ///
+    /// [`send_and_confirm_transaction`]: RpcClient::send_and_confirm_transaction
+    pub async fn send_and_confirm_transaction_with_config(
+        &self,
+        transaction: &impl SerializableTransaction,
+        commitment: CommitmentConfig,
+        config: RpcSendTransactionConfig,
+    ) -> ClientResult<Signature> {
         const SEND_RETRIES: usize = 1;
         const GET_STATUS_RETRIES: usize = usize::MAX;
 
         'sending: for _ in 0..SEND_RETRIES {
             let (latest_blockhash, signature) = self
-                .send_transaction_and_get_latest_blockhash(transaction, None)
+                .send_transaction_and_get_latest_blockhash(transaction, Some(config))
                 .await?;
 
             for status_retry in 0..GET_STATUS_RETRIES {
-                match self.get_signature_status(&signature).await? {
+                match self
+                    .get_signature_status_with_commitment(&signature, commitment)
+                    .await?
+                {
                     Some(Ok(_)) => return Ok(signature),
                     Some(Err(e)) => return Err(e.into()),
                     None => {

@@ -181,6 +181,7 @@ impl FeatureSet {
             enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
             custom_commission_collector: self.is_active(&custom_commission_collector::id()),
+            enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
         }
     }
 }
@@ -1239,6 +1240,10 @@ pub mod custom_commission_collector {
     solana_pubkey::declare_id!("GFZ5U5LUCWNecKMBJDuVR3vdepUMwSkwVUMxWKjJXkC4");
 }
 
+pub mod enable_bls12_381_syscall {
+    solana_pubkey::declare_id!("b1sraWPVFdcUizB2LV5wQTeMuK8M313bi5bHjco5eVU");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2221,6 +2226,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             custom_commission_collector::id(),
             "SIMD-0232: Custom Commission Collector Account",
+        ),
+        (
+            enable_bls12_381_syscall::id(),
+            "SIMD-0388: BLS12-381 syscalls",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

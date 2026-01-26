@@ -853,16 +853,14 @@ pub fn process_create_address_with_seed(
 
 pub fn process_find_program_derived_address(
     config: &CliConfig<'_>,
-    seeds: &Vec<Vec<u8>>,
+    seeds: &[Vec<u8>],
     program_id: &Pubkey,
 ) -> ProcessResult {
-    if config.verbose {
-        println!("Seeds: {seeds:?}");
-    }
     let seeds_slice = seeds.iter().map(|x| &x[..]).collect::<Vec<_>>();
     let (address, bump_seed) = Pubkey::find_program_address(&seeds_slice[..], program_id);
     let result = CliFindProgramDerivedAddress {
         address: address.to_string(),
+        seeds: seeds.to_owned(),
         bump_seed,
     };
     Ok(config.output_format.formatted_string(&result))
