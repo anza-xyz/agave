@@ -9,7 +9,11 @@ use {
         },
         recycled_vec::RecycledVec,
     },
-    rayon::prelude::*,
+    agave_transaction_view::{
+        transaction_data::TransactionData, transaction_version::TransactionVersion,
+        transaction_view::SanitizedTransactionView,
+    },
+    rayon::{prelude::*, ThreadPool},
     solana_hash::Hash,
     solana_message::{MESSAGE_HEADER_LENGTH, MESSAGE_VERSION_PREFIX},
     solana_pubkey::Pubkey,
@@ -90,40 +94,39 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
         return false;
     }
 
-    let packet_offsets = get_packet_offsets(packet, 0, reject_non_vote);
-    let mut sig_start = packet_offsets.sig_start as usize;
-    let mut pubkey_start = packet_offsets.pubkey_start as usize;
-    let msg_start = packet_offsets.msg_start as usize;
-
-    if packet_offsets.sig_len == 0 {
+    let Some(data) = packet.data(..) else {
         return false;
-    }
+    };
 
-    if packet.meta().size <= msg_start {
-        return false;
-    }
+    let (is_simple_vote_tx, verified) = {
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, true, true) else {
+            return false;
+        };
 
-    for _ in 0..packet_offsets.sig_len {
-        let pubkey_end = pubkey_start.saturating_add(size_of::<Pubkey>());
-        let Some(sig_end) = sig_start.checked_add(size_of::<Signature>()) else {
-            return false;
-        };
-        let Some(Ok(signature)) = packet.data(sig_start..sig_end).map(Signature::try_from) else {
-            return false;
-        };
-        let Some(pubkey) = packet.data(pubkey_start..pubkey_end) else {
-            return false;
-        };
-        let Some(message) = packet.data(msg_start..) else {
-            return false;
-        };
-        if !signature.verify(pubkey, message) {
-            return false;
+        let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
+        if reject_non_vote && !is_simple_vote_tx {
+            (is_simple_vote_tx, false)
+        } else {
+            let signatures = view.signatures();
+            if signatures.is_empty() {
+                (is_simple_vote_tx, false)
+            } else {
+                let message = view.message_data();
+                let static_account_keys = view.static_account_keys();
+                let verified = signatures
+                    .iter()
+                    .zip(static_account_keys.iter())
+                    .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message));
+                (is_simple_vote_tx, verified)
+            }
         }
-        pubkey_start = pubkey_end;
-        sig_start = sig_end;
+    };
+
+    if is_simple_vote_tx {
+        packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
     }
-    true
+
+    verified
 }
 
 pub fn count_packets_in_batches(batches: &[PacketBatch]) -> usize {
@@ -382,6 +385,38 @@ fn check_for_simple_vote_transaction(
         packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
     }
     Ok(())
+}
+
+fn is_simple_vote_transaction_view<D: TransactionData>(view: &SanitizedTransactionView<D>) -> bool {
+    // vote could have 1 or 2 sigs; zero sig has already been excluded by sanitization.
+    if view.num_signatures() > 2 {
+        return false;
+    }
+
+    // simple vote should only be legacy message
+    if !matches!(view.version(), TransactionVersion::Legacy) {
+        return false;
+    }
+
+    // skip if has more than 1 instruction
+    if view.num_instructions() != 1 {
+        return false;
+    }
+
+    let mut instructions = view.instructions_iter();
+    let Some(instruction) = instructions.next() else {
+        return false;
+    };
+    if instructions.next().is_some() {
+        return false;
+    }
+
+    let program_id_index = usize::from(instruction.program_id_index);
+    let Some(program_id) = view.static_account_keys().get(program_id_index) else {
+        return false;
+    };
+
+    *program_id == solana_sdk_ids::vote::id()
 }
 
 fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<RecycledPacketBatch>) {
