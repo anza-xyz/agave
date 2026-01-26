@@ -9456,6 +9456,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-random",
+ "agave-transaction-view",
  "ahash 0.8.12",
  "assert_matches",
  "bencher",
