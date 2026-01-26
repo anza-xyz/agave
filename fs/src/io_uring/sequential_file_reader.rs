@@ -143,13 +143,12 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             unsafe { IoBufferChunk::register(buf_slice_mut, &ring)? };
         }
 
-        #[cfg(debug_assertions)]
         if self.use_direct_io {
             // O_DIRECT reads have size and alignment restrictions and must be into a sub-buffer of
             // some multiple of the fs block size (see https://man7.org/linux/man-pages/man2/open.2.html#NOTES).
             assert!(
                 self.read_capacity
-                    .is_multiple_of(DIRECT_IO_READ_LEN_ALIGNMENT as u32),
+                    .is_multiple_of(DIRECT_IO_READ_LEN_ALIGNMENT),
                 "read size is not aligned for direct IO({} is not a multiple of \
                  {DIRECT_IO_READ_LEN_ALIGNMENT})",
                 self.read_capacity
