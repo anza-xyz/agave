@@ -4,11 +4,10 @@
 use {
     crate::{
         packet::{
-            BytesPacketBatch, Packet, PacketBatch, PacketFlags, PacketRef, PacketRefMut,
+            BytesPacketBatch, PacketBatch, PacketFlags, PacketRef, PacketRefMut,
             RecycledPacketBatch,
         },
         recycled_vec::RecycledVec,
-        recycler::Recycler,
     },
     rayon::{prelude::*, ThreadPool},
     solana_hash::Hash,
@@ -32,8 +31,6 @@ static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::n
 });
 
 pub type TxOffset = RecycledVec<u32>;
-
-type TxOffsets = (TxOffset, TxOffset, TxOffset, TxOffset, Vec<Vec<u32>>);
 
 #[derive(Debug, PartialEq, Eq)]
 struct PacketOffsets {
@@ -394,58 +391,6 @@ fn check_for_simple_vote_transaction(
         packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
     }
     Ok(())
-}
-
-pub fn generate_offsets(
-    batches: &mut [PacketBatch],
-    recycler: &Recycler<TxOffset>,
-    reject_non_vote: bool,
-) -> TxOffsets {
-    debug!("allocating..");
-    let mut signature_offsets: RecycledVec<_> = recycler.allocate("sig_offsets");
-    let mut pubkey_offsets: RecycledVec<_> = recycler.allocate("pubkey_offsets");
-    let mut msg_start_offsets: RecycledVec<_> = recycler.allocate("msg_start_offsets");
-    let mut msg_sizes: RecycledVec<_> = recycler.allocate("msg_size_offsets");
-    let mut current_offset: usize = 0;
-    let offsets = batches
-        .iter_mut()
-        .map(|batch| {
-            batch
-                .iter_mut()
-                .map(|mut packet| {
-                    let packet_offsets =
-                        get_packet_offsets(&mut packet, current_offset, reject_non_vote);
-
-                    trace!("pubkey_offset: {}", packet_offsets.pubkey_start);
-
-                    let mut pubkey_offset = packet_offsets.pubkey_start;
-                    let mut sig_offset = packet_offsets.sig_start;
-                    let msg_size = current_offset.saturating_add(packet.meta().size) as u32;
-                    for _ in 0..packet_offsets.sig_len {
-                        signature_offsets.push(sig_offset);
-                        sig_offset = sig_offset.saturating_add(size_of::<Signature>() as u32);
-
-                        pubkey_offsets.push(pubkey_offset);
-                        pubkey_offset = pubkey_offset.saturating_add(size_of::<Pubkey>() as u32);
-
-                        msg_start_offsets.push(packet_offsets.msg_start);
-
-                        let msg_size = msg_size.saturating_sub(packet_offsets.msg_start);
-                        msg_sizes.push(msg_size);
-                    }
-                    current_offset = current_offset.saturating_add(size_of::<Packet>());
-                    packet_offsets.sig_len
-                })
-                .collect()
-        })
-        .collect();
-    (
-        signature_offsets,
-        pubkey_offsets,
-        msg_start_offsets,
-        msg_sizes,
-        offsets,
-    )
 }
 
 fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<RecycledPacketBatch>) {
