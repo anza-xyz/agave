@@ -80,11 +80,11 @@ spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 ed25519-dalek = { workspace = true }
+env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 rand0-7 = { workspace = true }

@@ -6,6 +6,7 @@
 pub mod file;
 mod harness;
 pub mod keyed_account;
+pub mod logger;
 pub mod program_cache;
 pub mod sysvar_cache;
 

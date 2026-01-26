@@ -21,10 +21,10 @@ fuzz = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
+env_logger = { workspace = true }
 prost = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-builtins = { workspace = true }

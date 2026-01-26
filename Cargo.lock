@@ -11022,12 +11022,12 @@ dependencies = [
 name = "solana-svm"
 version = "4.0.0-alpha.0"
 dependencies = [
- "agave-logger",
  "agave-syscalls",
  "ahash 0.8.12",
  "assert_matches",
  "bincode",
  "ed25519-dalek 1.0.1",
+ "env_logger",
  "libsecp256k1",
  "log",
  "openssl",
@@ -11151,10 +11151,10 @@ name = "solana-svm-test-harness-instr"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
- "agave-logger",
  "agave-precompiles",
  "agave-syscalls",
  "bincode",
+ "env_logger",
  "prost",
  "solana-account",
  "solana-builtins",

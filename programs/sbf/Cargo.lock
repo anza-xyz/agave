@@ -9765,10 +9765,10 @@ name = "solana-svm-test-harness-instr"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
- "agave-logger",
  "agave-precompiles",
  "agave-syscalls",
  "bincode",
+ "env_logger",
  "solana-account",
  "solana-builtins",
  "solana-clock",
