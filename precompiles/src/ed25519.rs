@@ -1,7 +1,6 @@
-use ed25519_dalek::Signature;
-use ed25519_dalek::VerifyingKey;
 use {
     agave_feature_set::FeatureSet,
+    ed25519_dalek::{Signature, VerifyingKey},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
