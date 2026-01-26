@@ -63,6 +63,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-bls12-381"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "blst",
+ "blstrs",
+ "bytemuck",
+ "bytemuck_derive",
+ "group",
+ "pairing",
+]
+
+[[package]]
 name = "agave-feature-set"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -209,6 +221,7 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls12-381",
  "bincode",
  "libsecp256k1 0.6.0",
  "num-traits",
@@ -1260,9 +1273,9 @@ dependencies = [
 
 [[package]]
 name = "blst"
-version = "0.3.15"
+version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fd49896f12ac9b6dcd7a5998466b9b58263a695a3dd1ecc1aaca2e12a90b080"
+checksum = "dcdb4c7013139a150f9fc55d123186dbfaba0d912817466282c73ac49e71fb45"
 dependencies = [
  "cc",
  "glob",
@@ -4167,9 +4180,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.30.1"
+version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+checksum = "225e7cfe711e0ba79a68baeddb2982723e4235247aefce1482f2f16c27865b66"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if 1.0.4",
@@ -4782,9 +4795,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.105"
+version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "535d180e0ecab6268a3e718bb9fd44db66bbbc256257165fc699dadf70d16fe7"
+checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
@@ -4950,9 +4963,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.43"
+version = "1.0.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc74d9a594b72ae6656596548f56f667211f8a97b3d4c3d467150794690dc40a"
+checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
 dependencies = [
  "proc-macro2",
 ]
@@ -6339,7 +6352,6 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-syscalls",
  "bincode",
- "cfg-if 1.0.4",
  "qualifier_attr",
  "solana-account",
  "solana-bincode",
@@ -7961,6 +7973,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "bincode",
+ "cfg-if 1.0.4",
  "itertools 0.14.0",
  "log",
  "percentage",
@@ -8597,6 +8610,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status",
  "solana-vote",
+ "solana-vote-interface",
  "solana-vote-program",
  "test-case",
 ]
@@ -9292,9 +9306,9 @@ dependencies = [
 
 [[package]]
 name = "solana-sbpf"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "022455679ce40fd8e342ecf7abc53f182f934a72270df9eb546de66e49f24f7a"
+checksum = "faf12cb3e7a3848f82ce69dd53ba543dd5c9231080b764dfd08a84d2618a79a1"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
@@ -9926,6 +9940,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-syscalls",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
@@ -9954,6 +9969,7 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
+ "solana-program-runtime",
  "solana-program-test",
  "solana-pubkey 4.0.0",
  "solana-rent",
@@ -9961,6 +9977,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
  "solana-streamer",

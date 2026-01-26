@@ -22,7 +22,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, shred::Shred},
     solana_measure::measure::Measure,
-    solana_metrics::{inc_new_counter_error, inc_new_counter_info},
+    solana_metrics::inc_new_counter_error,
     solana_net_utils::SocketAddrSpace,
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_pubkey::Pubkey,

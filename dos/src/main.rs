@@ -968,7 +968,7 @@ pub mod test {
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams::default(),
-                tpu_use_quic: false,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
@@ -1017,7 +1017,7 @@ pub mod test {
                     transaction_type: None,
                     num_instructions: None,
                 },
-                tpu_use_quic: false,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
@@ -1045,7 +1045,7 @@ pub mod test {
                     transaction_type: None,
                     num_instructions: None,
                 },
-                tpu_use_quic: false,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
@@ -1073,13 +1073,14 @@ pub mod test {
                     transaction_type: None,
                     num_instructions: None,
                 },
-                tpu_use_quic: false,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
     }
 
-    fn run_dos_with_blockhash_and_payer(tpu_use_quic: bool) {
+    #[test]
+    fn run_dos_with_blockhash_and_payer() {
         agave_logger::setup();
 
         // 1. Create faucet thread
@@ -1153,7 +1154,7 @@ pub mod test {
                     transaction_type: Some(TransactionType::Transfer),
                     num_instructions: Some(1),
                 },
-                tpu_use_quic,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
@@ -1183,7 +1184,7 @@ pub mod test {
                     transaction_type: Some(TransactionType::Transfer),
                     num_instructions: Some(1),
                 },
-                tpu_use_quic,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
@@ -1212,7 +1213,7 @@ pub mod test {
                     transaction_type: Some(TransactionType::Transfer),
                     num_instructions: Some(8),
                 },
-                tpu_use_quic,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
@@ -1241,19 +1242,9 @@ pub mod test {
                     transaction_type: Some(TransactionType::AccountCreation),
                     num_instructions: None,
                 },
-                tpu_use_quic,
+                tpu_use_quic: true,
                 send_batch_size: TEST_SEND_BATCH_SIZE,
             },
         );
-    }
-
-    #[test]
-    fn test_dos_with_blockhash_and_payer() {
-        run_dos_with_blockhash_and_payer(/*tpu_use_quic*/ false)
-    }
-
-    #[test]
-    fn test_dos_with_blockhash_and_payer_and_quic() {
-        run_dos_with_blockhash_and_payer(/*tpu_use_quic*/ true)
     }
 }

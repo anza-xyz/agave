@@ -177,7 +177,7 @@ dependencies = [
  "ctrlc",
  "dirs-next",
  "indicatif 0.18.3",
- "nix",
+ "nix 0.31.1",
  "reqwest 0.12.28",
  "scopeguard",
  "semver 1.0.27",
@@ -288,7 +288,7 @@ dependencies = [
  "agave-transaction-view",
  "ahash 0.8.12",
  "libc",
- "nix",
+ "nix 0.31.1",
  "rts-alloc",
  "shaq",
  "solana-pubkey 4.0.0",
@@ -339,6 +339,7 @@ dependencies = [
 name = "agave-syscalls"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls12-381",
  "assert_matches",
  "bincode",
  "libsecp256k1",
@@ -2396,7 +2397,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73736a89c4aff73035ba2ed2e565061954da00d4970fc9ac25dcc85a2a20d790"
 dependencies = [
  "dispatch2",
- "nix",
+ "nix 0.30.1",
  "windows-sys 0.61.0",
 ]
 
@@ -4906,6 +4907,18 @@ dependencies = [
  "cfg-if 1.0.4",
  "cfg_aliases",
  "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "225e7cfe711e0ba79a68baeddb2982723e4235247aefce1482f2f16c27865b66"
+dependencies = [
+ "bitflags 2.10.0",
+ "cfg-if 1.0.4",
+ "cfg_aliases",
+ "libc",
  "memoffset 0.9.1",
 ]
 
@@ -5638,9 +5651,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.105"
+version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "535d180e0ecab6268a3e718bb9fd44db66bbbc256257165fc699dadf70d16fe7"
+checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
@@ -5849,9 +5862,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.43"
+version = "1.0.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc74d9a594b72ae6656596548f56f667211f8a97b3d4c3d467150794690dc40a"
+checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
 dependencies = [
  "proc-macro2",
 ]
@@ -7582,7 +7595,6 @@ dependencies = [
  "agave-syscalls",
  "assert_matches",
  "bincode",
- "cfg-if 1.0.4",
  "criterion",
  "qualifier_attr",
  "rand 0.9.2",
@@ -9497,7 +9509,7 @@ dependencies = [
  "hxdmp",
  "itertools 0.14.0",
  "log",
- "nix",
+ "nix 0.31.1",
  "pcap-file",
  "rand 0.9.2",
  "serde",
@@ -9612,7 +9624,7 @@ dependencies = [
  "fnv",
  "libc",
  "log",
- "nix",
+ "nix 0.31.1",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "rayon",
@@ -9854,9 +9866,11 @@ dependencies = [
  "assert_matches",
  "base64 0.22.1",
  "bincode",
+ "cfg-if 1.0.4",
  "itertools 0.14.0",
  "log",
  "percentage",
+ "qualifier_attr",
  "rand 0.9.2",
  "serde",
  "solana-account",
@@ -10324,6 +10338,7 @@ dependencies = [
  "solana-inflation",
  "solana-pubkey 4.0.0",
  "solana-reward-info",
+ "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
@@ -10562,9 +10577,9 @@ checksum = "dcf09694a0fc14e5ffb18f9b7b7c0f15ecb6eac5b5610bf76a1853459d19daf9"
 
 [[package]]
 name = "solana-sbpf"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "022455679ce40fd8e342ecf7abc53f182f934a72270df9eb546de66e49f24f7a"
+checksum = "faf12cb3e7a3848f82ce69dd53ba543dd5c9231080b764dfd08a84d2618a79a1"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
@@ -10973,7 +10988,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "nix",
+ "nix 0.31.1",
  "num_cpus",
  "pem",
  "percentage",
@@ -11330,6 +11345,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-syscalls",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
@@ -11358,6 +11374,7 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
+ "solana-program-runtime",
  "solana-program-test",
  "solana-pubkey 4.0.0",
  "solana-rent",
@@ -11365,6 +11382,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
  "solana-streamer",
@@ -11886,7 +11904,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "nix",
+ "nix 0.31.1",
  "pem",
  "percentage",
  "quinn",

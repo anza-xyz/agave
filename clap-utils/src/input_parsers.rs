@@ -5,7 +5,10 @@ use {
     },
     chrono::DateTime,
     clap::ArgMatches,
-    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
+    solana_bls_signatures::{
+        keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey,
+        PubkeyCompressed as BLSPubkeyCompressed,
+    },
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -103,6 +106,12 @@ pub fn pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Pubkey>> {
             })
             .collect()
     })
+}
+
+pub fn bls_keypair_of(matches: &ArgMatches<'_>, name: &str) -> Option<BLSKeypair> {
+    matches
+        .value_of(name)
+        .and_then(|path| BLSKeypair::read_json_file(path).ok())
 }
 
 pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPubkeyCompressed>> {
@@ -272,7 +281,6 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
-        solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
         solana_keypair::write_keypair_file,
         std::fs,
     };
@@ -434,6 +442,24 @@ mod tests {
         assert_ne!(lamports_of_sol(&matches, "single"), Some(15_700_000));
         let matches = app().get_matches_from(vec!["test", "--single", "0.5025"]);
         assert_ne!(lamports_of_sol(&matches, "single"), Some(502_500_000));
+    }
+
+    #[test]
+    fn test_bls_keypair_of() {
+        let bls_keypair = BLSKeypair::new();
+        let outfile = tmp_file_path("test_bls_keypair_of.json", &Pubkey::new_unique());
+        bls_keypair.write_json_file(&outfile).unwrap();
+
+        let matches = app().get_matches_from(vec!["test", "--single", &outfile]);
+        let parsed = bls_keypair_of(&matches, "single").unwrap();
+        assert_eq!(parsed.public, bls_keypair.public);
+        assert!(bls_keypair_of(&matches, "multiple").is_none());
+
+        // Non-existent file should return None
+        let matches = app().get_matches_from(vec!["test", "--single", "random_bls_keypair.json"]);
+        assert!(bls_keypair_of(&matches, "single").is_none());
+
+        fs::remove_file(&outfile).unwrap();
     }
 
     #[test]

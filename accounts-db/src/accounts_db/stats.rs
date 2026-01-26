@@ -30,6 +30,7 @@ pub struct AccountsStats {
     pub num_obsolete_bytes_removed: AtomicU64,
     pub add_zero_lamport_accounts_us: AtomicU64,
     pub num_zero_lamport_accounts_added: AtomicU64,
+    pub num_ephemeral_accounts_skipped: AtomicU64,
 }
 
 #[derive(Debug, Default)]

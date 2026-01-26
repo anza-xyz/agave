@@ -258,6 +258,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         .subcommand(
             SubCommand::with_name("ping")
                 .about("Submit transactions sequentially")
+                .setting(AppSettings::Hidden)
                 .arg(
                     Arg::with_name("interval")
                         .short("i")
@@ -2299,6 +2300,7 @@ pub async fn process_transaction_history(
                             block_time,
                             slot,
                             transaction: transaction_with_meta,
+                            ..
                         } = confirmed_transaction;
 
                         let decoded_transaction =

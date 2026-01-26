@@ -82,7 +82,7 @@ use {
         stake_flags::StakeFlags,
         state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
     },
-    solana_vote_program::vote_state,
+    solana_vote_program::vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
 };
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
@@ -101,9 +101,12 @@ impl StakeReward {
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
             &validator_voting_keypair.pubkey(),
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &validator_voting_keypair.pubkey(),
-            None,
             1000,
+            &validator_voting_keypair.pubkey(),
+            0,
+            &validator_voting_keypair.pubkey(),
             validator_stake_lamports,
         );
 

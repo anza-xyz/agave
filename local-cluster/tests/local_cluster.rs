@@ -40,7 +40,7 @@ use {
         bank_forks_utils,
         blockstore::{entries_to_test_shreds, Blockstore},
         blockstore_processor::ProcessOptions,
-        leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
+        leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
@@ -54,7 +54,7 @@ use {
             purge_slots_with_count, remove_tower, remove_tower_if_exists, restore_tower,
             run_cluster_partition, run_kill_partition_switch_threshold, save_tower,
             setup_snapshot_validator_config, test_faulty_node, wait_for_duplicate_proof,
-            wait_for_last_vote_in_tower_to_land_in_ledger, SnapshotValidatorConfig,
+            wait_for_last_vote_in_tower_to_land_in_ledger, SnapshotValidatorConfig, ValidatorKeys,
             ValidatorTestConfig, DEFAULT_NODE_STAKE, RUST_LOG_FILTER,
         },
         local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
@@ -100,6 +100,21 @@ use {
     },
     strum::{EnumCount, IntoEnumIterator},
 };
+
+fn create_test_validator_keys(keypairs: &[&str]) -> Vec<(ValidatorKeys, bool)> {
+    keypairs
+        .iter()
+        .map(|s| {
+            (
+                ValidatorKeys {
+                    node_keypair: Arc::new(Keypair::from_base58_string(s)),
+                    vote_keypair: Arc::new(Keypair::new()),
+                },
+                true,
+            )
+        })
+        .collect()
+}
 
 #[test]
 #[serial]
@@ -543,8 +558,8 @@ fn test_snapshot_download() {
     cluster.add_validator(
         &validator_snapshot_test_config.validator_config,
         stake,
-        Arc::new(Keypair::new()),
-        None,
+        &ValidatorKeys::new(),
+        true, // should_setup_accounts
         SocketAddrSpace::Unspecified,
     );
 }
@@ -700,8 +715,8 @@ fn test_incremental_snapshot_download() {
     cluster.add_validator(
         &validator_snapshot_test_config.validator_config,
         stake,
-        Arc::new(Keypair::new()),
-        None,
+        &ValidatorKeys::new(),
+        true, // should_setup_accounts
         SocketAddrSpace::Unspecified,
     );
 }
@@ -979,12 +994,13 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     );
 
     info!("Starting the validator...");
-    let validator_identity = Arc::new(Keypair::new());
+    let validator_keys = ValidatorKeys::new();
+    let validator_identity = validator_keys.node_keypair.clone();
     cluster.add_validator(
         &validator_snapshot_test_config.validator_config,
         stake,
-        validator_identity.clone(),
-        None,
+        &validator_keys,
+        true,
         SocketAddrSpace::Unspecified,
     );
     info!("Starting the validator... DONE");
@@ -1218,12 +1234,11 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     );
 
     info!("Starting final validator...");
-    let final_validator_identity = Arc::new(Keypair::new());
     cluster.add_validator(
         &final_validator_snapshot_test_config.validator_config,
         stake,
-        final_validator_identity,
-        None,
+        &ValidatorKeys::new(),
+        true, // should_setup_accounts
         SocketAddrSpace::Unspecified,
     );
     info!("Starting final validator... DONE");
@@ -1376,8 +1391,8 @@ fn test_snapshots_blockstore_floor() {
     cluster.add_validator(
         &validator_snapshot_test_config.validator_config,
         DEFAULT_NODE_STAKE,
-        Arc::new(Keypair::new()),
-        None,
+        &ValidatorKeys::new(),
+        true, // should_setup_accounts
         SocketAddrSpace::Unspecified,
     );
     let all_pubkeys = cluster.get_node_pubkeys();
@@ -1650,19 +1665,15 @@ fn test_optimistic_confirmation_violation_detection() {
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
     let node_stakes = vec![50 * DEFAULT_NODE_STAKE, 51 * DEFAULT_NODE_STAKE];
-    let validator_keys: Vec<_> = [
+    let validator_keys: Vec<_> = create_test_validator_keys(&[
         "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
         "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect();
+    ]);
 
     // Do not restart the validator which is the cluster entrypoint because its gossip port
     // might be changed after restart resulting in the two nodes not being able to
     // to form a cluster. The heavier validator is the second node.
-    let node_to_restart = validator_keys[1].0.pubkey();
+    let node_to_restart = validator_keys[1].0.node_keypair.pubkey();
 
     // WFSM as we require a OC slot > 50 within 100 seconds
     let mut validator_config = ValidatorConfig::default_for_test();
@@ -1889,12 +1900,12 @@ fn test_validator_saves_tower() {
         require_tower: true,
         ..ValidatorConfig::default_for_test()
     };
-    let validator_identity_keypair = Arc::new(Keypair::new());
-    let validator_id = validator_identity_keypair.pubkey();
+    let validator_keys = ValidatorKeys::new();
+    let validator_id = validator_keys.node_keypair.pubkey();
     let mut config = ClusterConfig {
         node_stakes: vec![DEFAULT_NODE_STAKE],
         validator_configs: vec![validator_config],
-        validator_keys: Some(vec![(validator_identity_keypair.clone(), true)]),
+        validator_keys: Some(vec![(validator_keys.clone(), true)]),
         ..ClusterConfig::default()
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
@@ -1963,7 +1974,7 @@ fn test_validator_saves_tower() {
     // Rollback saved tower to `tower1` to simulate a validator starting from a newer snapshot
     // without having to wait for that snapshot to be generated in this test
     tower1
-        .save(&file_tower_storage, &validator_identity_keypair)
+        .save(&file_tower_storage, &validator_keys.node_keypair)
         .unwrap();
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
@@ -2042,17 +2053,20 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
         ClusterMode::MasterSlave => vec![DEFAULT_NODE_STAKE * 100, DEFAULT_NODE_STAKE],
     };
 
-    let validator_keys = [
+    let validator_keypairs = match cluster_mode {
+        ClusterMode::MasterOnly => vec![
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
-        "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect::<Vec<_>>();
+    ],
+        ClusterMode::MasterSlave => vec![
+        "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
+        "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
+    ],
+    };
+
+    let validator_keys = create_test_validator_keys(&validator_keypairs);
     let validators = validator_keys
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| keys.node_keypair.pubkey())
         .collect::<Vec<_>>();
     let validator_a_pubkey = match cluster_mode {
         ClusterMode::MasterOnly => validators[0],
@@ -2207,17 +2221,13 @@ fn test_hard_fork_invalidates_tower() {
     let slots_per_epoch = 2048;
     let node_stakes = vec![60 * DEFAULT_NODE_STAKE, 40 * DEFAULT_NODE_STAKE];
 
-    let validator_keys = [
+    let validator_keys = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect::<Vec<_>>();
+    ]);
     let validators = validator_keys
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| keys.node_keypair.pubkey())
         .collect::<Vec<_>>();
 
     let validator_a_pubkey = validators[0];
@@ -2380,17 +2390,13 @@ fn test_hard_fork_with_gap_in_roots() {
     let slots_per_epoch = 2048;
     let node_stakes = vec![60, 40];
 
-    let validator_keys = [
+    let validator_keys = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect::<Vec<_>>();
+    ]);
     let validators = validator_keys
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| keys.node_keypair.pubkey())
         .collect::<Vec<_>>();
 
     let validator_a_pubkey = validators[0];
@@ -2552,13 +2558,9 @@ fn test_restart_tower_rollback() {
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
     ];
 
-    let validator_keys = validator_strings
-        .iter()
-        .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-        .take(node_stakes.len())
-        .collect::<Vec<_>>();
+    let validator_keys = create_test_validator_keys(&validator_strings);
 
-    let b_pubkey = validator_keys[1].0.pubkey();
+    let b_pubkey = validator_keys[1].0.node_keypair.pubkey();
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.wait_for_supermajority = Some(0);
@@ -2704,15 +2706,11 @@ fn test_rpc_block_subscribe() {
     validator_config.enable_default_rpc_block_subscribe();
     validator_config.wait_for_supermajority = Some(0);
 
-    let validator_keys = [
+    let validator_keys = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect::<Vec<_>>();
-    let rpc_node_pubkey = &validator_keys[1].0.pubkey();
+    ]);
+    let rpc_node_pubkey = &validator_keys[1].0.node_keypair.pubkey();
 
     let mut config = ClusterConfig {
         mint_lamports: total_stake,
@@ -2781,22 +2779,18 @@ fn test_oc_bad_signatures() {
     let leader_stake = (total_stake as f64 * VOTE_THRESHOLD_SIZE) as u64;
     let our_node_stake = total_stake - leader_stake;
     let node_stakes = vec![leader_stake, our_node_stake];
-    let validator_keys = [
+    let validator_keys = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect::<Vec<_>>();
+    ]);
 
     // Give bootstrap node all the leader slots to avoid initial forking leading
     // to casting votes with invalid blockhash. This is not what is meant to be
     // test and only inflates test time.
     let fixed_schedule = FixedSchedule {
-        leader_schedule: Arc::new(Box::new(IdentityKeyedLeaderSchedule::new_from_schedule(
-            vec![validator_keys.first().unwrap().0.pubkey()],
-        ))),
+        leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader::from(
+            &validator_keys.first().unwrap().0,
+        )])),
     };
 
     let mut validator_config = ValidatorConfig {
@@ -2807,7 +2801,7 @@ fn test_oc_bad_signatures() {
     };
     validator_config.enable_default_rpc_block_subscribe();
 
-    let our_id = validator_keys.last().unwrap().0.pubkey();
+    let our_id = validator_keys.last().unwrap().0.node_keypair.pubkey();
     let mut config = ClusterConfig {
         mint_lamports: total_stake,
         node_stakes,
@@ -3151,14 +3145,10 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
     let node_stakes = vec![51 * DEFAULT_NODE_STAKE, 50 * DEFAULT_NODE_STAKE];
-    let validator_keys: Vec<_> = [
+    let validator_keys: Vec<_> = create_test_validator_keys(&[
         "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
         "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect();
+    ]);
 
     let num_starting_accounts = 100;
     let exit = Arc::new(AtomicBool::new(false));
@@ -3276,21 +3266,18 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     let truncated_slots: Slot = 100;
 
     // Each pubkeys are prefixed with A, B, C
-    let validator_keys = [
+    let validator_keys = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
         "4mx9yoFBeYasDKBGDWCTWGJdWuJCKbgqmuP8bN9umybCh5Jzngw7KQxe99Rf5uzfyzgba1i65rJW4Wqk7Ab5S8ye",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .take(node_stakes.len())
-    .collect::<Vec<_>>();
+    ]);
     let validators = validator_keys
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| SlotLeader::from(keys))
         .collect::<Vec<_>>();
+    let (validator_a, validator_b, validator_c) = (validators[0], validators[1], validators[2]);
     let (validator_a_pubkey, validator_b_pubkey, validator_c_pubkey) =
-        (validators[0], validators[1], validators[2]);
+        (validator_a.id, validator_b.id, validator_c.id);
 
     // Disable voting on all validators other than validator B
     let mut default_config = ValidatorConfig::default_for_test();
@@ -3301,15 +3288,12 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // Don't give validator A any slots because it's going to be deleting its ledger, so it may create
     // versions of slots it's already created, but on a different fork.
     let validator_to_slots = vec![
-        (
-            validator_b_pubkey,
-            validator_b_last_leader_slot as usize + 1,
-        ),
-        (validator_c_pubkey, DEFAULT_SLOTS_PER_EPOCH as usize),
+        (validator_b, validator_b_last_leader_slot as usize + 1),
+        (validator_c, DEFAULT_SLOTS_PER_EPOCH as usize),
     ];
     // Trick C into not producing any blocks during this time, in case its leader slots come up before we can
     // kill the validator. We don't want any forks during the time validator B is producing its initial blocks.
-    let c_validator_to_slots = vec![(validator_b_pubkey, DEFAULT_SLOTS_PER_EPOCH as usize)];
+    let c_validator_to_slots = vec![(validator_b, DEFAULT_SLOTS_PER_EPOCH as usize)];
 
     let c_leader_schedule = create_custom_leader_schedule(c_validator_to_slots.into_iter());
     let leader_schedule = Arc::new(create_custom_leader_schedule(
@@ -3825,7 +3809,7 @@ fn test_kill_heaviest_partition() {
     ]);
 
     let empty = |_: &mut LocalCluster, _: &mut ()| {};
-    let validator_to_kill = validator_keys[0].pubkey();
+    let validator_to_kill = validator_keys[0].node_keypair.pubkey();
     let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
         info!("Killing validator with id: {validator_to_kill}");
         cluster.exit_node(&validator_to_kill);
@@ -4012,7 +3996,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
     );
 
     // This is why it's important our node was last in `node_stakes`
-    let our_id = validator_keys.last().unwrap().pubkey();
+    let our_id = validator_keys.last().unwrap().node_keypair.pubkey();
 
     // 2) Kill our node and start up a thread to simulate votes to control our voting behavior
     let our_info = cluster.exit_node(&our_id);
@@ -4459,9 +4443,9 @@ fn test_leader_failure_4() {
     // Embed vote and stake account in genesis to avoid waiting for stake
     // activation and race conditions around accepting gossip votes, repairing
     // blocks, etc. before we advance through too many epochs.
-    let validator_keys: Option<Vec<(Arc<Keypair>, bool)>> = Some(
+    let validator_keys: Option<Vec<(ValidatorKeys, bool)>> = Some(
         (0..num_nodes)
-            .map(|_| (Arc::new(Keypair::new()), true))
+            .map(|_| (ValidatorKeys::new(), true))
             .collect(),
     );
     // Skip the warmup slots because these short epochs can cause problems when
@@ -4529,23 +4513,13 @@ fn test_slot_hash_expiry() {
 
     let slots_per_epoch = 2048;
     let node_stakes = vec![60 * DEFAULT_NODE_STAKE, 40 * DEFAULT_NODE_STAKE];
-    let validator_keys = [
+    let validator_keys = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .collect::<Vec<_>>();
-    let node_vote_keys = [
-        "3NDQ3ud86RTVg8hTy2dDWnS4P8NfjhZ2gDgQAJbr3heaKaUVS1FW3sTLKA1GmDrY9aySzsa4QxpDkbLv47yHxzr3",
-        "46ZHpHE6PEvXYPu3hf9iQqjBk2ZNDaJ9ejqKWHEjxaQjpAGasKaWKbKHbP3646oZhfgDRzx95DH9PCBKKsoCVngk",
-    ]
-    .iter()
-    .map(|s| Arc::new(Keypair::from_base58_string(s)))
-    .collect::<Vec<_>>();
+    ]);
     let vs = validator_keys
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| keys.node_keypair.pubkey())
         .collect::<Vec<_>>();
     let (a_pubkey, b_pubkey) = (vs[0], vs[1]);
 
@@ -4562,7 +4536,6 @@ fn test_slot_hash_expiry() {
         node_stakes,
         validator_configs,
         validator_keys: Some(validator_keys),
-        node_vote_keys: Some(node_vote_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         skip_warmup_slots: true,
@@ -4754,33 +4727,33 @@ fn test_duplicate_with_pruned_ancestor() {
     let majority_fork_buffer = 5;
 
     let mut node_stakes = vec![majority_leader_stake, minority_leader_stake, our_node];
+    let num_observers = 3;
     // We need enough observers to reach `ANCESTOR_HASH_REPAIR_SAMPLE_SIZE`
-    node_stakes.append(&mut vec![observer_stake; 3]);
+    node_stakes.append(&mut vec![observer_stake; num_observers]);
 
     let num_nodes = node_stakes.len();
 
-    let validator_keys = [
+    let mut validator_keys = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
         "4mx9yoFBeYasDKBGDWCTWGJdWuJCKbgqmuP8bN9umybCh5Jzngw7KQxe99Rf5uzfyzgba1i65rJW4Wqk7Ab5S8ye",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .chain(std::iter::repeat_with(|| (Arc::new(Keypair::new()), true)))
-    .take(node_stakes.len())
-    .collect::<Vec<_>>();
+    ]);
+    validator_keys.extend((0..num_observers).map(|_| (ValidatorKeys::new(), true)));
+
     let validators = validator_keys
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| SlotLeader::from(keys))
         .collect::<Vec<_>>();
-    let (majority_pubkey, minority_pubkey, our_node_pubkey) =
+    let (majority_leader, minority_leader, our_node_leader) =
         (validators[0], validators[1], validators[2]);
+    let (majority_pubkey, minority_pubkey, our_node_pubkey) =
+        (majority_leader.id, minority_leader.id, our_node_leader.id);
 
     let mut default_config = ValidatorConfig::default_for_test();
     // Minority fork is leader long enough to create pruned fork
     let validator_to_slots = vec![
-        (minority_pubkey, (fork_slot + fork_length) as usize),
-        (majority_pubkey, slots_per_epoch as usize),
+        (minority_leader, (fork_slot + fork_length) as usize),
+        (majority_leader, slots_per_epoch as usize),
     ];
     let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
     default_config.fixed_leader_schedule = Some(FixedSchedule {
@@ -4791,7 +4764,7 @@ fn test_duplicate_with_pruned_ancestor() {
     // Don't let majority produce anything past the fork by tricking its leader schedule
     validator_configs[0].fixed_leader_schedule = Some(FixedSchedule {
         leader_schedule: Arc::new(create_custom_leader_schedule(
-            [(minority_pubkey, slots_per_epoch as usize)].into_iter(),
+            [(minority_leader, slots_per_epoch as usize)].into_iter(),
         )),
     });
 
@@ -5039,12 +5012,13 @@ fn test_boot_from_local_state() {
     info!("Copying snapshots to validator2... DONE");
 
     info!("Starting validator2...");
-    let validator2_identity = Arc::new(Keypair::new());
+    let validator2_keys = ValidatorKeys::new();
+    let validator2_identity = validator2_keys.node_keypair.clone();
     cluster.add_validator(
         &validator2_config.validator_config,
         DEFAULT_NODE_STAKE,
-        validator2_identity.clone(),
-        None,
+        &validator2_keys,
+        true,
         SocketAddrSpace::Unspecified,
     );
     info!("Starting validator2... DONE");
@@ -5114,12 +5088,12 @@ fn test_boot_from_local_state() {
     info!("Copying snapshots to validator3... DONE");
 
     info!("Starting validator3...");
-    let validator3_identity = Arc::new(Keypair::new());
+    let validator3_keys = ValidatorKeys::new();
     cluster.add_validator(
         &validator3_config.validator_config,
         DEFAULT_NODE_STAKE,
-        validator3_identity,
-        None,
+        &validator3_keys,
+        true,
         SocketAddrSpace::Unspecified,
     );
     info!("Starting validator3... DONE");
@@ -5455,19 +5429,16 @@ fn test_duplicate_shreds_switch_failure() {
     }
 
     agave_logger::setup_with_default(RUST_LOG_FILTER);
-    let validator_keypairs = [
+    let validator_keypairs = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
         "4mx9yoFBeYasDKBGDWCTWGJdWuJCKbgqmuP8bN9umybCh5Jzngw7KQxe99Rf5uzfyzgba1i65rJW4Wqk7Ab5S8ye",
         "2XFPyuzPuXMsPnkH98UNcQpfA7M4b2TUhRxcWEoWjy4M6ojQ7HGJSvotktEVbaq49Qxt16wUjdqvSJc6ecbFfZwj",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .collect::<Vec<_>>();
+    ]);
 
     let validators = validator_keypairs
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| SlotLeader::from(keys))
         .collect::<Vec<_>>();
 
     // Create 4 nodes:
@@ -5504,11 +5475,23 @@ fn test_duplicate_shreds_switch_failure() {
 
     let (
         // Has to be first in order to be picked as the duplicate leader
+        duplicate_leader_validator,
+        target_switch_fork_validator,
+        duplicate_fork_validator1,
+        duplicate_fork_validator2,
+    ) = (validators[0], validators[1], validators[2], validators[3]);
+
+    let (
         duplicate_leader_validator_pubkey,
         target_switch_fork_validator_pubkey,
         duplicate_fork_validator1_pubkey,
         duplicate_fork_validator2_pubkey,
-    ) = (validators[0], validators[1], validators[2], validators[3]);
+    ) = (
+        duplicate_leader_validator.id,
+        target_switch_fork_validator.id,
+        duplicate_fork_validator1.id,
+        duplicate_fork_validator2.id,
+    );
 
     info!(
         "duplicate_fork_validator1_pubkey: {duplicate_fork_validator1_pubkey}, \
@@ -5518,8 +5501,8 @@ fn test_duplicate_shreds_switch_failure() {
     );
 
     let validator_to_slots = vec![
-        (duplicate_leader_validator_pubkey, 50),
-        (target_switch_fork_validator_pubkey, 5),
+        (duplicate_leader_validator, 50),
+        (target_switch_fork_validator, 5),
         // The ideal sequence of events for the `duplicate_fork_validator1_pubkey` validator would go:
         // 1. Vote for duplicate block `D`
         // 2. See `D` is duplicate, remove from fork choice and reset to ancestor `A`, potentially generating a fork off that ancestor
@@ -5543,7 +5526,7 @@ fn test_duplicate_shreds_switch_failure() {
         // 1. Switch fork from getting locked out for too long
         // 2. A lot of consecutive slots in which to build up lockout in tower and make new roots
         // to resolve the partition
-        (duplicate_fork_validator1_pubkey, 500),
+        (duplicate_fork_validator1, 500),
     ];
 
     let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
@@ -5552,13 +5535,13 @@ fn test_duplicate_shreds_switch_failure() {
     let (duplicate_slot_sender, duplicate_slot_receiver) = unbounded();
     let validator_configs = validator_keypairs
         .into_iter()
-        .map(|(validator_keypair, in_genesis)| {
-            let pubkey = validator_keypair.pubkey();
+        .map(|(validator_keys, in_genesis)| {
+            let pubkey = validator_keys.node_keypair.pubkey();
             // Only allow the leader to vote so that no version gets duplicate confirmed.
             // This is to avoid the leader dumping his own block.
             let voting_disabled = { pubkey != duplicate_leader_validator_pubkey };
             ValidatorTestConfig {
-                validator_keypair,
+                validator_keys,
                 validator_config: ValidatorConfig {
                     voting_disabled,
                     ..ValidatorConfig::default_for_test()
@@ -5852,26 +5835,25 @@ fn test_invalid_forks_persisted_on_restart() {
     agave_logger::setup_with("info,solana_metrics=off,solana_ledger=off");
 
     let dup_slot = 10;
-    let validator_keypairs = [
+    let validator_keypairs = create_test_validator_keys(&[
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
-    ]
-    .iter()
-    .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
-    .collect::<Vec<_>>();
-    let majority_keypair = validator_keypairs[1].0.clone();
+    ]);
+
+    let majority_keypair = validator_keypairs[1].0.node_keypair.clone();
 
     let validators = validator_keypairs
         .iter()
-        .map(|(kp, _)| kp.pubkey())
+        .map(|(keys, _)| SlotLeader::from(keys))
         .collect::<Vec<_>>();
 
     let node_stakes = vec![DEFAULT_NODE_STAKE, 100 * DEFAULT_NODE_STAKE];
-    let (target_pubkey, majority_pubkey) = (validators[0], validators[1]);
+    let (target_leader, majority_leader) = (validators[0], validators[1]);
+    let target_pubkey = target_leader.id;
     // Need majority validator to make the dup_slot
     let validator_to_slots = vec![
-        (majority_pubkey, dup_slot as usize + 5),
-        (target_pubkey, DEFAULT_SLOTS_PER_EPOCH as usize),
+        (majority_leader, dup_slot as usize + 5),
+        (target_leader, DEFAULT_SLOTS_PER_EPOCH as usize),
     ];
     let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
     let mut default_config = ValidatorConfig::default_for_test();

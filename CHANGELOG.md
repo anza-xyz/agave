@@ -37,6 +37,8 @@ Release channels have their own copy of this changelog:
 * `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
 * Added `--accounts-index-limit` to specify the memory limit of the accounts index.
 ### CLI
+#### Deprecations
+* The `ping` command is deprecated and will be removed in v4.1.
 #### Changes
 * Support Trezor hardware wallets using `usb://trezor`
 ### Platform tools

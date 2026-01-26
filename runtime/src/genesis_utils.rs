@@ -195,28 +195,24 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
                 BLS_KEYPAIR_DERIVE_SEED,
             )
             .unwrap();
-            Some(bls_keypair.public.to_bytes_compressed())
+            bls_keypair.public.to_bytes_compressed()
         } else {
-            None
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
         };
         let vote_account = if feature_set.is_active(&vote_state_v4::id()) {
             // Vote state v4 feature active. Create a v4 account.
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
                 &vote_pubkey,
-                &vote_pubkey,
                 bls_pubkey_compressed,
+                &vote_pubkey,
                 0,
+                &vote_pubkey,
+                0,
+                &vote_pubkey,
                 *stake,
             )
         } else {
-            // Vote state v4 feature inactive. Create a v3 account.
-            if bls_pubkey_compressed.is_some() {
-                warn!(
-                    "BLS pubkey provided but vote_state_v4 feature is not active. BLS pubkey will \
-                     be ignored."
-                );
-            }
             vote_state::create_v3_account_with_authorized(
                 &node_pubkey,
                 &vote_pubkey,
@@ -381,9 +377,12 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         vote_state::create_v4_account_with_authorized(
             validator_pubkey,
             validator_vote_account_pubkey,
+            validator_bls_pubkey.unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
             validator_vote_account_pubkey,
-            validator_bls_pubkey,
             0,
+            validator_vote_account_pubkey,
+            0,
+            validator_vote_account_pubkey,
             validator_stake_lamports,
         )
     } else {

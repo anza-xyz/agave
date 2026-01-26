@@ -37,7 +37,7 @@ use {
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{create_ticks, Entry, MaxDataShredsLen},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -82,6 +82,7 @@ use {
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
+    wincode::{containers::Vec as WincodeVec, Deserialize as _},
 };
 
 pub mod blockstore_purge;
@@ -3166,7 +3167,7 @@ impl Blockstore {
         if let Some((slot, meta)) =
             self.get_transaction_status(signature, confirmed_unrooted_slots)?
         {
-            let transaction = self
+            let (transaction, index) = self
                 .find_transaction_in_slot(slot, signature)?
                 .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?; // Should not happen
 
@@ -3177,32 +3178,40 @@ impl Blockstore {
                     VersionedTransactionWithStatusMeta { transaction, meta },
                 ),
                 block_time,
+                index,
             }))
         } else {
             Ok(None)
         }
     }
 
+    /// Finds a transaction by signature in the given slot and returns it along with its index.
+    ///
+    /// The index represents the transaction's 0-based position in the flattened list of all
+    /// transactions across all entries in this slot. This matches the `transaction_index`
+    /// stored in `AddressSignatures` when `write_transaction_status` is called during block
+    /// processing.
     fn find_transaction_in_slot(
         &self,
         slot: Slot,
         signature: Signature,
-    ) -> Result<Option<VersionedTransaction>> {
+    ) -> Result<Option<(VersionedTransaction, u32)>> {
         let slot_entries = self.get_slot_entries(slot, 0)?;
         Ok(slot_entries
-            .iter()
-            .cloned()
+            .into_iter()
             .flat_map(|entry| entry.transactions)
-            .map(|transaction| {
+            .enumerate()
+            .map(|(index, transaction)| {
                 if let Err(err) = transaction.sanitize() {
                     warn!(
                         "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: \
                          {slot:?}, {transaction:?}",
                     );
                 }
-                transaction
+                (index, transaction)
             })
-            .find(|transaction| transaction.signatures[0] == signature))
+            .find(|(_, transaction)| transaction.signatures[0] == signature)
+            .map(|(index, transaction)| (transaction, index as u32)))
     }
 
     // DEPRECATED and decommissioned
@@ -3222,9 +3231,9 @@ impl Blockstore {
         &self,
         pubkey: Pubkey,
         slot: Slot,
-    ) -> Result<Vec<(Slot, Signature)>> {
+    ) -> Result<Vec<(Slot, Signature, u32)>> {
         let (lock, lowest_available_slot) = self.ensure_lowest_cleanup_slot();
-        let mut signatures: Vec<(Slot, Signature)> = vec![];
+        let mut signatures: Vec<(Slot, Signature, u32)> = vec![];
         if slot < lowest_available_slot {
             return Ok(signatures);
         }
@@ -3239,11 +3248,11 @@ impl Blockstore {
                     ),
                     IteratorDirection::Forward,
                 ))?;
-        for ((address, transaction_slot, _transaction_index, signature), _) in index_iterator {
+        for ((address, transaction_slot, transaction_index, signature), _) in index_iterator {
             if transaction_slot > slot || address != pubkey {
                 break;
             }
-            signatures.push((slot, signature));
+            signatures.push((transaction_slot, signature, transaction_index));
         }
         drop(lock);
         Ok(signatures)
@@ -3346,7 +3355,7 @@ impl Blockstore {
         get_until_slot_timer.stop();
 
         // Fetch the list of signatures that affect the given address
-        let mut address_signatures = vec![];
+        let mut address_signatures: Vec<(Slot, Signature, u32)> = vec![];
 
         // Get signatures in `slot`
         let mut get_initial_slot_timer = Measure::start("get_initial_slot_timer");
@@ -3356,7 +3365,7 @@ impl Blockstore {
             address_signatures.extend(
                 signatures
                     .into_iter()
-                    .filter(|(_, signature)| !excluded_signatures.contains(signature)),
+                    .filter(|(_, signature, _)| !excluded_signatures.contains(signature)),
             )
         } else {
             address_signatures.append(&mut signatures);
@@ -3378,13 +3387,13 @@ impl Blockstore {
 
         // Iterate until limit is reached
         while address_signatures.len() < limit {
-            if let Some(((key_address, slot, _transaction_index, signature), _)) = iterator.next() {
+            if let Some(((key_address, slot, transaction_index, signature), _)) = iterator.next() {
                 if slot < lowest_slot {
                     break;
                 }
                 if key_address == address {
                     if self.is_root(slot) || confirmed_unrooted_slots.contains(&slot) {
-                        address_signatures.push((slot, signature));
+                        address_signatures.push((slot, signature, transaction_index));
                     }
                     continue;
                 }
@@ -3395,13 +3404,13 @@ impl Blockstore {
 
         let address_signatures_iter = address_signatures
             .into_iter()
-            .filter(|(_, signature)| !until_excluded_signatures.contains(signature))
+            .filter(|(_, signature, _)| !until_excluded_signatures.contains(signature))
             .take(limit);
 
         // Fill in the status information for each found transaction
         let mut get_status_info_timer = Measure::start("get_status_info_timer");
         let mut infos = vec![];
-        for (slot, signature) in address_signatures_iter {
+        for (slot, signature, index) in address_signatures_iter {
             let transaction_status =
                 self.get_transaction_status(signature, &confirmed_unrooted_slots)?;
             let err = transaction_status.and_then(|(_slot, status)| status.status.err());
@@ -3413,6 +3422,7 @@ impl Blockstore {
                 err,
                 memo,
                 block_time,
+                index,
             });
         }
         get_status_info_timer.stop();
@@ -3694,7 +3704,7 @@ impl Blockstore {
                         )))
                     })
                     .and_then(|payload| {
-                        wincode::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
+                        <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
                             BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
                                 format!("could not reconstruct entries: {e:?}"),
                             )))
@@ -5212,7 +5222,7 @@ pub mod tests {
         super::*,
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
+            leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
             shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
@@ -8868,14 +8878,15 @@ pub mod tests {
             })
             .collect();
 
-        for tx_with_meta in expected_transactions.clone() {
+        for (index, tx_with_meta) in expected_transactions.clone().into_iter().enumerate() {
             let signature = tx_with_meta.transaction.signatures[0];
             assert_eq!(
                 blockstore.get_rooted_transaction(signature).unwrap(),
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta.clone()),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
             assert_eq!(
@@ -8885,7 +8896,8 @@ pub mod tests {
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
         }
@@ -8991,7 +9003,7 @@ pub mod tests {
             })
             .collect();
 
-        for tx_with_meta in expected_transactions.clone() {
+        for (index, tx_with_meta) in expected_transactions.clone().into_iter().enumerate() {
             let signature = tx_with_meta.transaction.signatures[0];
             assert_eq!(
                 blockstore
@@ -9000,7 +9012,8 @@ pub mod tests {
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
             assert_eq!(blockstore.get_rooted_transaction(signature).unwrap(), None);
@@ -9135,25 +9148,28 @@ pub mod tests {
         let slot1_signatures = blockstore
             .find_address_signatures_for_slot(address0, 1)
             .unwrap();
-        for (i, (slot, signature)) in slot1_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot1_signatures.iter().enumerate() {
             assert_eq!(*slot, slot1);
             assert_eq!(*signature, Signature::from([i as u8 + 1; 64]));
+            assert_eq!(*index, (i + 1) as u32);
         }
 
         let slot2_signatures = blockstore
             .find_address_signatures_for_slot(address0, 2)
             .unwrap();
-        for (i, (slot, signature)) in slot2_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot2_signatures.iter().enumerate() {
             assert_eq!(*slot, slot2);
             assert_eq!(*signature, Signature::from([i as u8 + 5; 64]));
+            assert_eq!(*index, (i + 5) as u32);
         }
 
         let slot3_signatures = blockstore
             .find_address_signatures_for_slot(address0, 3)
             .unwrap();
-        for (i, (slot, signature)) in slot3_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot3_signatures.iter().enumerate() {
             assert_eq!(*slot, slot3);
             assert_eq!(*signature, Signature::from([i as u8 + 9; 64]));
+            assert_eq!(*index, (i + 9) as u32);
         }
     }
 
@@ -10115,9 +10131,10 @@ pub mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = FixedSchedule {
-            leader_schedule: Arc::new(Box::new(IdentityKeyedLeaderSchedule::new_from_schedule(
-                vec![leader_keypair.pubkey()],
-            ))),
+            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader {
+                id: leader_keypair.pubkey(),
+                vote_address: Pubkey::new_unique(),
+            }])),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 

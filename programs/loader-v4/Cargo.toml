@@ -18,7 +18,7 @@ name = "solana_loader_v4_program"
 [features]
 default = ["metrics"]
 agave-unstable-api = []
-metrics = ["solana-program-runtime/metrics"]
+metrics = ["solana-bpf-loader-program/metrics", "solana-program-runtime/metrics"]
 shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",

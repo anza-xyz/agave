@@ -82,7 +82,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteStateV3, VoteStateV4},
+        vote_state::{self, VoteStateV3, VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -2406,9 +2406,12 @@ fn main() {
                                 vote_state::create_v4_account_with_authorized(
                                     identity_pubkey,
                                     identity_pubkey,
+                                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                                     identity_pubkey,
-                                    None,
                                     10000,
+                                    identity_pubkey,
+                                    0,
+                                    identity_pubkey,
                                     rent.minimum_balance(VoteStateV4::size_of()).max(1),
                                 )
                             } else {

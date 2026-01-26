@@ -9,7 +9,6 @@
 )]
 use {
     solana_bincode::limited_deserialize,
-    solana_bpf_loader_program::execute,
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::{
@@ -21,6 +20,7 @@ use {
         deploy_program,
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        vm::execute,
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},

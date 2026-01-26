@@ -4123,13 +4123,6 @@ impl Bank {
             .flush_accounts_cache(true, Some(self.slot()))
     }
 
-    pub fn flush_accounts_cache_if_needed(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .flush_accounts_cache(false, Some(self.slot()))
-    }
-
     /// Technically this issues (or even burns!) new lamports,
     /// so be extra careful for its usage
     fn store_account_and_update_capitalization(

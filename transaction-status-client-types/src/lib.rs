@@ -93,6 +93,7 @@ pub struct ConfirmedTransactionStatusWithSignature {
     pub err: Option<TransactionError>,
     pub memo: Option<String>,
     pub block_time: Option<i64>,
+    pub index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -712,6 +713,8 @@ pub struct EncodedConfirmedTransactionWithStatusMeta {
     #[serde(flatten)]
     pub transaction: EncodedTransactionWithStatusMeta,
     pub block_time: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_index: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

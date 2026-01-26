@@ -119,6 +119,30 @@ pub struct ComputeBudget {
     pub alt_bn128_g2_compress: u64,
     /// Number of compute units consumed to call alt_bn128_g2_decompress.
     pub alt_bn128_g2_decompress: u64,
+    /// Number of compute units consumed to add two bls12_381 g1 points.
+    pub bls12_381_g1_add_cost: u64,
+    /// Number of compute units consumed to add two bls12_381 g2 points.
+    pub bls12_381_g2_add_cost: u64,
+    /// Number of compute units consumed to subtract two bls12_381 g1 points.
+    pub bls12_381_g1_subtract_cost: u64,
+    /// Number of compute units consumed to subtract two bls12_381 g2 points.
+    pub bls12_381_g2_subtract_cost: u64,
+    /// Number of compute units consumed to multiply a bls12_381 g1 point.
+    pub bls12_381_g1_multiply_cost: u64,
+    /// Number of compute units consumed to multiply a bls12_381 g2 point.
+    pub bls12_381_g2_multiply_cost: u64,
+    /// Number of compute units consumed to decompress a bls12_381 g1 point.
+    pub bls12_381_g1_decompress_cost: u64,
+    /// Number of compute units consumed to decompress a bls12_381 g2 point.
+    pub bls12_381_g2_decompress_cost: u64,
+    /// Number of compute units consumed to validate a bls12_381 g1 point.
+    pub bls12_381_g1_validate_cost: u64,
+    /// Number of compute units consumed to validate a bls12_381 g2 point.
+    pub bls12_381_g2_validate_cost: u64,
+    /// Base number of compute units consumed to perform a bls12_381 pairing.
+    pub bls12_381_one_pair_cost: u64,
+    /// Incremental number of compute units consumed per pair in a bls12_381 pairing.
+    pub bls12_381_additional_pair_cost: u64,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -191,6 +215,18 @@ impl ComputeBudget {
             alt_bn128_g1_decompress: cost.alt_bn128_g1_decompress,
             alt_bn128_g2_compress: cost.alt_bn128_g2_compress,
             alt_bn128_g2_decompress: cost.alt_bn128_g2_decompress,
+            bls12_381_g1_add_cost: cost.bls12_381_g1_add_cost,
+            bls12_381_g2_add_cost: cost.bls12_381_g2_add_cost,
+            bls12_381_g1_subtract_cost: cost.bls12_381_g1_subtract_cost,
+            bls12_381_g2_subtract_cost: cost.bls12_381_g2_subtract_cost,
+            bls12_381_g1_multiply_cost: cost.bls12_381_g1_multiply_cost,
+            bls12_381_g2_multiply_cost: cost.bls12_381_g2_multiply_cost,
+            bls12_381_g1_decompress_cost: cost.bls12_381_g1_decompress_cost,
+            bls12_381_g2_decompress_cost: cost.bls12_381_g2_decompress_cost,
+            bls12_381_g1_validate_cost: cost.bls12_381_g1_validate_cost,
+            bls12_381_g2_validate_cost: cost.bls12_381_g2_validate_cost,
+            bls12_381_one_pair_cost: cost.bls12_381_one_pair_cost,
+            bls12_381_additional_pair_cost: cost.bls12_381_additional_pair_cost,
         }
     }
 
@@ -248,6 +284,18 @@ impl ComputeBudget {
             alt_bn128_g1_decompress: self.alt_bn128_g1_decompress,
             alt_bn128_g2_compress: self.alt_bn128_g2_compress,
             alt_bn128_g2_decompress: self.alt_bn128_g2_decompress,
+            bls12_381_g1_add_cost: self.bls12_381_g1_add_cost,
+            bls12_381_g2_add_cost: self.bls12_381_g2_add_cost,
+            bls12_381_g1_subtract_cost: self.bls12_381_g1_subtract_cost,
+            bls12_381_g2_subtract_cost: self.bls12_381_g2_subtract_cost,
+            bls12_381_g1_multiply_cost: self.bls12_381_g1_multiply_cost,
+            bls12_381_g2_multiply_cost: self.bls12_381_g2_multiply_cost,
+            bls12_381_g1_decompress_cost: self.bls12_381_g1_decompress_cost,
+            bls12_381_g2_decompress_cost: self.bls12_381_g2_decompress_cost,
+            bls12_381_g1_validate_cost: self.bls12_381_g1_validate_cost,
+            bls12_381_g2_validate_cost: self.bls12_381_g2_validate_cost,
+            bls12_381_one_pair_cost: self.bls12_381_one_pair_cost,
+            bls12_381_additional_pair_cost: self.bls12_381_additional_pair_cost,
         }
     }
 

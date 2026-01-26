@@ -1121,9 +1121,11 @@ mod tests {
             blockstore_meta::SlotMeta,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
+            leader_schedule::SlotLeader,
         },
         solana_perf::test_tx::test_tx,
         solana_sha256_hasher::hash,
+        solana_signer::Signer,
     };
 
     #[test]
@@ -1779,6 +1781,7 @@ mod tests {
         let GenesisConfigInfo {
             genesis_config,
             validator_pubkey,
+            voting_keypair,
             ..
         } = create_genesis_config(2);
 
@@ -1787,35 +1790,24 @@ mod tests {
         let prev_hash = bank.last_blockhash();
 
         // Setup leader schedule.
-        let leader_a_pubkey = validator_pubkey;
-        let leader_b_pubkey = Pubkey::new_unique();
-        let leader_c_pubkey = Pubkey::new_unique();
-        let leader_d_pubkey = Pubkey::new_unique();
+        let leader_a = SlotLeader {
+            id: validator_pubkey,
+            vote_address: voting_keypair.pubkey(),
+        };
+        let leader_b = SlotLeader::new_unique();
+        let leader_c = SlotLeader::new_unique();
+        let leader_d = SlotLeader::new_unique();
         let consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS as usize;
         let mut slot_leaders = Vec::with_capacity(consecutive_leader_slots * 3);
-        slot_leaders.extend(std::iter::repeat_n(
-            leader_a_pubkey,
-            consecutive_leader_slots,
-        ));
-        slot_leaders.extend(std::iter::repeat_n(
-            leader_b_pubkey,
-            consecutive_leader_slots,
-        ));
-        slot_leaders.extend(std::iter::repeat_n(
-            leader_c_pubkey,
-            consecutive_leader_slots,
-        ));
-        slot_leaders.extend(std::iter::repeat_n(
-            leader_d_pubkey,
-            consecutive_leader_slots,
-        ));
+        slot_leaders.extend(std::iter::repeat_n(leader_a, consecutive_leader_slots));
+        slot_leaders.extend(std::iter::repeat_n(leader_b, consecutive_leader_slots));
+        slot_leaders.extend(std::iter::repeat_n(leader_c, consecutive_leader_slots));
+        slot_leaders.extend(std::iter::repeat_n(leader_d, consecutive_leader_slots));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = solana_ledger::leader_schedule::FixedSchedule {
-            leader_schedule: Arc::new(Box::new(
-                solana_ledger::leader_schedule::IdentityKeyedLeaderSchedule::new_from_schedule(
-                    slot_leaders,
-                ),
-            )),
+            leader_schedule: Arc::new(
+                solana_ledger::leader_schedule::LeaderSchedule::new_from_schedule(slot_leaders),
+            ),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 
@@ -1864,7 +1856,7 @@ mod tests {
         // True, because from Leader A's perspective, the previous slot was also
         // its own slot, and validators don't give grace periods if previous
         // slot was also their own.
-        assert!(poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick));
+        assert!(poh_recorder.reached_leader_tick(&leader_a.id, leader_a_start_tick));
 
         // Tick through grace ticks.
         for _ in 0..grace_ticks {
@@ -1872,13 +1864,13 @@ mod tests {
         }
 
         // True, because we have ticked through all the grace ticks.
-        assert!(poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick));
+        assert!(poh_recorder.reached_leader_tick(&leader_a.id, leader_a_start_tick));
 
         // Reset PoH on Leader A's first slot 0, ticking towards Leader B's leader slots.
         poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
 
         // False, because Leader B hasn't ticked to its starting slot yet.
-        assert!(!poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
+        assert!(!poh_recorder.reached_leader_tick(&leader_b.id, leader_b_start_tick));
 
         // Tick through Leader A's remaining slots.
         for _ in poh_recorder.tick_height()..ticks_in_leader_slot_set {
@@ -1887,18 +1879,18 @@ mod tests {
 
         // False, because the PoH was reset on slot 0, which is a block produced
         // by previous leader A, so a grace period must be given.
-        assert!(!poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
+        assert!(!poh_recorder.reached_leader_tick(&leader_b.id, leader_b_start_tick));
 
         // Reset onto Leader A's last slot.
         for _ in leader_a_start_slot + 1..leader_b_start_slot {
             let child_slot = bank.slot() + 1;
-            bank = Arc::new(Bank::new_from_parent(bank, &leader_a_pubkey, child_slot));
+            bank = Arc::new(Bank::new_from_parent(bank, &leader_a.id, child_slot));
         }
         poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
 
         // True, because the PoH was reset the last slot produced by the
         // previous leader, so we can run immediately.
-        assert!(poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
+        assert!(poh_recorder.reached_leader_tick(&leader_b.id, leader_b_start_tick));
 
         // Simulate skipping Leader B's first slot.
         poh_recorder.reset(
@@ -1910,11 +1902,11 @@ mod tests {
         }
 
         // True, because we're building off the previous leader A's last block.
-        assert!(poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
+        assert!(poh_recorder.reached_leader_tick(&leader_b.id, leader_b_start_tick));
 
         // Simulate generating Leader B's second slot.
         let child_slot = bank.slot() + 1;
-        bank = Arc::new(Bank::new_from_parent(bank, &leader_b_pubkey, child_slot));
+        bank = Arc::new(Bank::new_from_parent(bank, &leader_b.id, child_slot));
 
         // Reset PoH targeting Leader D's slots.
         poh_recorder.reset(bank, Some((leader_d_start_slot, leader_d_end_slot)));
@@ -1931,7 +1923,7 @@ mod tests {
 
         // True, because Leader D is not building on any of Leader C's slots.
         // The PoH was last reset onto Leader B's second slot.
-        assert!(poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick));
+        assert!(poh_recorder.reached_leader_tick(&leader_d.id, leader_d_start_tick));
 
         // Add some active (partially received) blocks to the active fork.
         let active_descendants = vec![NUM_CONSECUTIVE_LEADER_SLOTS];
@@ -1939,14 +1931,14 @@ mod tests {
 
         // True, because Leader D observes pending blocks on the active fork,
         // but the config to delay for these is not set.
-        assert!(poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick));
+        assert!(poh_recorder.reached_leader_tick(&leader_d.id, leader_d_start_tick));
 
         // Flip the config to delay for pending blocks.
         poh_recorder.delay_leader_block_for_pending_fork = true;
 
         // False, because Leader D observes pending blocks on the active fork,
         // and the config to delay for these is set.
-        assert!(!poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick));
+        assert!(!poh_recorder.reached_leader_tick(&leader_d.id, leader_d_start_tick));
     }
 
     #[test]

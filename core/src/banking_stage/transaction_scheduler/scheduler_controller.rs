@@ -112,7 +112,7 @@ where
         }
     }
 
-    pub fn run(mut self) -> Result<(), SchedulerError> {
+    pub fn run(&mut self) -> Result<(), SchedulerError> {
         let mut most_recent_leader_slot = None;
         let mut cost_pacer = None;
 
@@ -176,9 +176,9 @@ where
 
             self.receive_completed()?;
             self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
-            if self.receive_and_buffer_packets(&decision).is_err() {
-                break;
-            }
+            self.receive_and_buffer_packets(&decision).map_err(|_| {
+                SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
+            })?;
             // Report metrics only if there is data.
             // Reset intervals when appropriate, regardless of report.
             let should_report = self.count_metrics.interval_has_data();
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "batch id 0 is not being tracked")]
     fn test_unexpected_batch_id() {
-        let (test_frame, scheduler_controller) =
+        let (test_frame, mut scheduler_controller) =
             create_test_frame(1, test_create_transaction_view_receive_and_buffer);
         let TestFrame {
             finished_consume_work_sender,

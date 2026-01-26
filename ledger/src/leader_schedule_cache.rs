@@ -250,7 +250,7 @@ mod tests {
                 bootstrap_validator_stake_lamports, create_genesis_config,
                 create_genesis_config_with_leader, GenesisConfigInfo,
             },
-            leader_schedule::IdentityKeyedLeaderSchedule,
+            leader_schedule::LeaderSchedule,
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
@@ -307,10 +307,7 @@ mod tests {
         let mut cached_schedules: HashMap<Epoch, Arc<LeaderSchedule>> = HashMap::new();
         let mut order = VecDeque::new();
         for i in 0..=MAX_SCHEDULES {
-            cached_schedules.insert(
-                i as u64,
-                Arc::new(Box::new(IdentityKeyedLeaderSchedule::default())),
-            );
+            cached_schedules.insert(i as u64, Arc::new(LeaderSchedule::default()));
             order.push_back(i as u64);
         }
         LeaderScheduleCache::retain_latest(&mut cached_schedules, &mut order, MAX_SCHEDULES);

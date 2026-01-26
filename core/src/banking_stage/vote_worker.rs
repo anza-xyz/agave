@@ -43,6 +43,7 @@ use {
         },
         time::Instant,
     },
+    tokio_util::sync::CancellationToken,
 };
 
 mod transaction {
@@ -56,6 +57,7 @@ pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
 pub struct VoteWorker {
     exit: Arc<AtomicBool>,
+    shutdown_signal: CancellationToken,
     decision_maker: DecisionMaker,
     tpu_receiver: VotePacketReceiver,
     gossip_receiver: VotePacketReceiver,
@@ -67,6 +69,7 @@ pub struct VoteWorker {
 impl VoteWorker {
     pub fn new(
         exit: Arc<AtomicBool>,
+        shutdown_signal: CancellationToken,
         decision_maker: DecisionMaker,
         tpu_receiver: VotePacketReceiver,
         gossip_receiver: VotePacketReceiver,
@@ -76,6 +79,7 @@ impl VoteWorker {
     ) -> Self {
         Self {
             exit,
+            shutdown_signal,
             decision_maker,
             tpu_receiver,
             gossip_receiver,
@@ -110,7 +114,11 @@ impl VoteWorker {
                 VoteSource::Tpu,
             ) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
-                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.shutdown_signal.cancel();
+
+                    break;
+                }
             }
             // Check for new packets from the gossip receiver
             match self.gossip_receiver.receive_and_buffer_packets(
@@ -120,7 +128,11 @@ impl VoteWorker {
                 VoteSource::Gossip,
             ) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
-                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.shutdown_signal.cancel();
+
+                    break;
+                }
             }
             banking_stage_stats.report(1000);
         }
