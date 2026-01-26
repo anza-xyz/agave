@@ -202,7 +202,7 @@ async fn send_transaction_with_rpc_fallback(
     let send_over_rpc = if let Some(tpu_client) = tpu_client {
         !tokio::time::timeout(
             SEND_TIMEOUT_INTERVAL,
-            tpu_client.send_wire_transaction(serialized_transaction.clone()),
+            tpu_client.send_wire_transaction(serialized_transaction),
         )
         .await
         .unwrap_or(false)
