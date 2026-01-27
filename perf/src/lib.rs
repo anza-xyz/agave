@@ -25,7 +25,6 @@ pub mod thread;
 extern crate log;
 
 #[cfg(test)]
-#[macro_use]
 extern crate assert_matches;
 
 #[macro_use]
