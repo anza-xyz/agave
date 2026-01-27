@@ -1,0 +1,35 @@
+[package]
+name = "agave-bls12-381"
+description = "Agave BLS12-381"
+documentation = "https://docs.rs/agave-bls12-381"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+blst = { workspace = true }
+blstrs = { workspace = true }
+bytemuck = { workspace = true, features = ["min_const_generics"] }
+bytemuck_derive = { workspace = true }
+group = { workspace = true }
+pairing = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+hex-literal = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "bench_main"
+harness = false

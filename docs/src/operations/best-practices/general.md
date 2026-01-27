@@ -153,41 +153,6 @@ If one of the known validators is downloading slowly, you can try adding the
 switch to another known validator if the initial download speed is below the
 threshold that you set.
 
-### Manually Downloading Snapshots
-
-In the case that there are network troubles with one or more of your known
-validators, then you may have to manually download the snapshot. To manually
-download a snapshot from one of your known validators, first, find the IP
-address of the validator in using the `solana gossip` command. In the example
-below, `5D1fNXzvv5NjV1ysLjirC4WY92RNsVH18vjmcszZd8on` is the pubkey of one of my
-known validators:
-
-```
-solana gossip | grep 5D1fNXzvv5NjV1ysLjirC4WY92RNsVH18vjmcszZd8on
-```
-
-The IP address of the validators is `139.178.68.207` and the open port on this
-validator is `80`. You can see the IP address and port in the fifth column in
-the gossip output:
-
-```
-139.178.68.207  | 5D1fNXzvv5NjV1ysLjirC4WY92RNsVH18vjmcszZd8on | 8001   | 8004  | 139.178.68.207:80     | 1.10.27 | 1425680972
-```
-
-Now that the IP and port are known, you can download a full snapshot or an
-incremental snapshot:
-
-```
-wget --trust-server-names http://139.178.68.207:80/snapshot.tar.bz2
-wget --trust-server-names http://139.178.68.207:80/incremental-snapshot.tar.bz2
-```
-
-Now move those files into your snapshot directory. If you have not specified a
-snapshot directory, then you should put the files in your ledger directory.
-
-Once you have a local snapshot, you can restart your validator with the
-`--no-snapshot-fetch` flag.
-
 ## Regularly Check Account Balances
 
 It is important that you do not accidentally run out of funds in your identity

@@ -1,6 +1,9 @@
 //! The error that can be produced from Blockstore operations.
 
-use {agave_snapshots::hardened_unpack::UnpackError, solana_clock::Slot, thiserror::Error};
+use {
+    super::PurgeType, agave_snapshots::hardened_unpack::UnpackError, solana_clock::Slot,
+    thiserror::Error,
+};
 
 #[derive(Error, Debug)]
 pub enum BlockstoreError {
@@ -54,5 +57,13 @@ pub enum BlockstoreError {
     LegacyShred(Slot, u64),
     #[error("unable to read merkle root slot {0}, index {1}")]
     MissingMerkleRoot(Slot, u64),
+    #[error("unable to purge slots in range [{from_slot}, {to_slot}] {purge_type:?}: {inner:?}")]
+    PurgeFailed {
+        from_slot: Slot,
+        to_slot: Slot,
+        purge_type: PurgeType,
+        #[source]
+        inner: Box<BlockstoreError>,
+    },
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;

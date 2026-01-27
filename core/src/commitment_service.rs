@@ -282,7 +282,7 @@ mod tests {
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
             self, process_slot_vote_unchecked, TowerSync, VoteStateV4, VoteStateVersions,
-            MAX_LOCKOUT_HISTORY,
+            BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY,
         },
     };
 
@@ -404,9 +404,12 @@ mod tests {
         let mut vote_account1 = vote_state::create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &pk1,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &pk1,
-            None,
             0,
+            &pk1,
+            0,
+            &pk1,
             100,
         );
         let stake_account1 = stake_utils::create_stake_account(
@@ -421,9 +424,12 @@ mod tests {
         let mut vote_account2 = vote_state::create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &pk2,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &pk2,
-            None,
             0,
+            &pk2,
+            0,
+            &pk2,
             50,
         );
         let stake_account2 =
@@ -433,9 +439,12 @@ mod tests {
         let mut vote_account3 = vote_state::create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &pk3,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &pk3,
-            None,
             0,
+            &pk3,
+            0,
+            &pk3,
             1,
         );
         let stake_account3 = stake_utils::create_stake_account(
@@ -450,9 +459,12 @@ mod tests {
         let mut vote_account4 = vote_state::create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &pk4,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &pk4,
-            None,
             0,
+            &pk4,
+            0,
+            &pk4,
             1,
         );
         let stake_account4 = stake_utils::create_stake_account(

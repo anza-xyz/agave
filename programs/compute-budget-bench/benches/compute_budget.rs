@@ -1,12 +1,12 @@
 use {
     agave_feature_set::FeatureSet,
-    criterion::{black_box, criterion_group, criterion_main, Criterion},
+    criterion::{criterion_group, criterion_main, Criterion},
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_message::compiled_instruction::CompiledInstruction,
     solana_svm_transaction::instruction::SVMInstruction,
-    std::num::NonZero,
+    std::{hint::black_box, num::NonZero},
 };
 
 const ONE_PAGE: u32 = 32 * 1024;

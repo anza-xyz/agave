@@ -21,6 +21,7 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+agave-votor-messages = { workspace = true }
 bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 dlopen2 = { workspace = true }
@@ -29,6 +30,8 @@ num_cpus = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-address = { workspace = true }
+solana-bls-signatures = { workspace = true }
+solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-measure = { workspace = true }
 solana-merkle-tree = { workspace = true }
@@ -42,6 +45,7 @@ solana-short-vec = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]

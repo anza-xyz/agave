@@ -21,7 +21,10 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lru::LruCache,
     rand::{
-        distributions::{Distribution, WeightedError, WeightedIndex},
+        distr::{
+            weighted::{Error as WeightedError, WeightedIndex},
+            Distribution,
+        },
         Rng,
     },
     serde::{Deserialize, Serialize},
@@ -230,7 +233,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "fFcqrZWZX4WcorTUxfMCVWeh2QcwamXKdLTzsDj58Kn")
+    frozen_abi(digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -840,7 +843,7 @@ impl ServeRepair {
         assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
 
         let mut ping_cache = PingCache::new(
-            &mut rand::thread_rng(),
+            &mut rand::rng(),
             Instant::now(),
             REPAIR_PING_CACHE_TTL,
             REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
@@ -940,17 +943,10 @@ impl ServeRepair {
         from_addr: &SocketAddr,
         identity_keypair: &Keypair,
     ) -> (bool, Option<Packet>) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let (check, ping) = request
             .sender()
-            .map(|&sender| {
-                ping_cache.check(
-                    &mut rng,
-                    identity_keypair,
-                    Instant::now(),
-                    (sender, *from_addr),
-                )
-            })
+            .map(|_| ping_cache.check(&mut rng, identity_keypair, Instant::now(), *from_addr))
             .unwrap_or_default();
         let ping_pkt = if let Some(ping) = ping {
             match request {
@@ -1106,7 +1102,7 @@ impl ServeRepair {
                 peers_cache.get(&slot).unwrap()
             }
         };
-        let peer = repair_peers.sample(&mut rand::thread_rng());
+        let peer = repair_peers.sample(&mut rand::rng());
         let nonce = outstanding_requests.add_request(repair_request, timestamp());
         let out = self.map_repair_request(
             &repair_request,
@@ -1146,7 +1142,7 @@ impl ServeRepair {
         }
         let (weights, index) = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
         let peers = WeightedShuffle::new("repair_request_ancestor_hashes", weights)
-            .shuffle(&mut rand::thread_rng())
+            .shuffle(&mut rand::rng())
             .map(|i| index[i])
             .filter_map(|i| {
                 let addr = repair_peers[i].serve_repair(repair_protocol)?;
@@ -1170,9 +1166,7 @@ impl ServeRepair {
             return None;
         }
         let (weights, index) = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
-        let k = WeightedIndex::new(weights)
-            .ok()?
-            .sample(&mut rand::thread_rng());
+        let k = WeightedIndex::new(weights).ok()?.sample(&mut rand::rng());
         let n = index[k];
         Some((
             *repair_peers[n].pubkey(),
@@ -1372,9 +1366,9 @@ mod tests {
 
     #[test]
     fn test_serialized_ping_size() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
-        let ping = Ping::new(rng.gen(), &keypair);
+        let ping = Ping::new(rng.random(), &keypair);
         let ping = RepairResponse::Ping(ping);
         let pkt = Packet::from_data(None, ping).unwrap();
         assert_eq!(pkt.meta().size, REPAIR_RESPONSE_SERIALIZED_PING_BYTES);
@@ -1415,9 +1409,9 @@ mod tests {
 
     #[test]
     fn test_check_well_formed_repair_request() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
-        let ping = Ping::new(rng.gen(), &keypair);
+        let ping = Ping::new(rng.random(), &keypair);
         let pong = Pong::new(&ping, &keypair);
         let request = RepairProtocol::Pong(pong);
         let mut pkt = Packet::from_data(None, request).unwrap();
@@ -1918,7 +1912,6 @@ mod tests {
         );
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
         nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
-        nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr).unwrap();

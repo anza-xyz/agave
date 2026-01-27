@@ -27,7 +27,6 @@ solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false }
-solana-quic-definitions = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }

@@ -7,7 +7,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = { workspace = true }
+edition = "2024"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -19,8 +19,8 @@ name = "solana_bpf_loader_program"
 [features]
 default = ["metrics"]
 agave-unstable-api = []
-metrics = ["solana-program-runtime/metrics"]
-sbpf-debugger = ["solana-sbpf/debugger"]
+metrics = ["agave-syscalls/metrics", "solana-program-runtime/metrics"]
+sbpf-debugger = ["solana-program-runtime/sbpf-debugger", "solana-sbpf/debugger"]
 shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",
@@ -31,7 +31,6 @@ svm-internal = []
 [dependencies]
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
-cfg-if = { workspace = true }
 qualifier_attr = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }

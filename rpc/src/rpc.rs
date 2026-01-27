@@ -252,7 +252,7 @@ pub struct JsonRpcRequestProcessor {
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
-    prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     runtime: Arc<Runtime>,
 }
 impl Metadata for JsonRpcRequestProcessor {}
@@ -415,7 +415,7 @@ impl JsonRpcRequestProcessor {
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<Runtime>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (transaction_sender, transaction_receiver) = unbounded();
@@ -520,7 +520,7 @@ impl JsonRpcRequestProcessor {
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
-            prioritization_fee_cache: Arc::new(PrioritizationFeeCache::default()),
+            prioritization_fee_cache: Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
         }
     }
@@ -876,6 +876,7 @@ impl JsonRpcRequestProcessor {
                         amount: reward.lamports.unsigned_abs(),
                         post_balance: reward.post_balance,
                         commission: reward.commission,
+                        commission_bps: reward.commission_bps,
                     });
                 }
                 None
@@ -965,7 +966,7 @@ impl JsonRpcRequestProcessor {
 
     fn get_slot_leader(&self, config: RpcContextConfig) -> Result<String> {
         let bank = self.get_bank_with_config(config)?;
-        Ok(bank.collector_id().to_string())
+        Ok(bank.leader_id().to_string())
     }
 
     fn get_slot_leaders(
@@ -988,6 +989,7 @@ impl JsonRpcRequestProcessor {
                     leader_schedule
                         .get_slot_leaders()
                         .iter()
+                        .map(|slot_leader| slot_leader.id)
                         .skip(slot_index as usize)
                         .take(limit.saturating_sub(slot_leaders.len())),
                 );
@@ -2385,8 +2387,12 @@ impl JsonRpcRequestProcessor {
         &self,
         pubkeys: Vec<Pubkey>,
     ) -> Result<Vec<RpcPrioritizationFee>> {
-        Ok(self
-            .prioritization_fee_cache
+        let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_deref() else {
+            error!("The PrioritizationFeeCache should always be available for the full RPC API");
+            return Err(Error::internal_error());
+        };
+
+        Ok(prioritization_fee_cache
             .get_prioritization_fees(&pubkeys)
             .into_iter()
             .map(|(slot, prioritization_fee)| RpcPrioritizationFee {
@@ -2924,7 +2930,11 @@ pub mod rpc_minimal {
                 .map(|leader_schedule| {
                     let mut schedule_by_identity =
                         solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
-                            leader_schedule.get_slot_leaders().iter().enumerate(),
+                            leader_schedule
+                                .get_slot_leaders()
+                                .iter()
+                                .map(|slot_leader| &slot_leader.id)
+                                .enumerate(),
                         );
                     if let Some(identity) = config.identity {
                         schedule_by_identity.retain(|k, _| *k == identity);
@@ -3657,15 +3667,11 @@ pub mod rpc_full {
                             tvu: contact_info
                                 .tvu(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            tpu: contact_info
-                                .tpu(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
+                            tpu: None,
                             tpu_quic: contact_info
                                 .tpu(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_forwards: contact_info
-                                .tpu_forwards(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
+                            tpu_forwards: None,
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
@@ -4604,7 +4610,7 @@ pub mod tests {
 
     const TEST_MINT_LAMPORTS: u64 = 1_000_000_000;
     const TEST_SIGNATURE_FEE: u64 = 5_000;
-    const TEST_SLOTS_PER_EPOCH: u64 = DELINQUENT_VALIDATOR_SLOT_DISTANCE + 1;
+    const TEST_SLOTS_PER_EPOCH: u64 = 256;
 
     pub(crate) fn new_test_cluster_info() -> ClusterInfo {
         let keypair = Arc::new(Keypair::new());
@@ -4791,7 +4797,7 @@ pub mod tests {
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
             let bank = bank_forks.read().unwrap().working_bank();
 
-            let leader_pubkey = *bank.collector_id();
+            let leader_pubkey = *bank.leader_id();
             let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
             let exit = Arc::new(AtomicBool::new(false));
             let validator_exit = create_validator_exit(exit);
@@ -4806,6 +4812,10 @@ pub mod tests {
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
             let optimistically_confirmed_bank =
                 OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+            // PrioritizationFeeCache is optional for JsonRpcRequestProcessor
+            // depending on whether the full API is enabled or not. Since this
+            // is test code, always pass it and just .unwrap() as needed
+            let prioritization_fee_cache = Some(Arc::new(PrioritizationFeeCache::default()));
 
             let JsonRpcConfig {
                 rpc_threads,
@@ -4829,7 +4839,7 @@ pub mod tests {
                 max_slots.clone(),
                 Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
                 max_complete_transaction_status_slot.clone(),
-                Arc::new(PrioritizationFeeCache::default()),
+                prioritization_fee_cache,
                 service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
             )
             .0;
@@ -4979,7 +4989,7 @@ pub mod tests {
             let mut parent_bank = self.bank_forks.read().unwrap().working_bank();
             for (i, root) in roots.iter().enumerate() {
                 let new_bank =
-                    Bank::new_from_parent(parent_bank.clone(), parent_bank.collector_id(), *root);
+                    Bank::new_from_parent(parent_bank.clone(), parent_bank.leader_id(), *root);
                 parent_bank = self
                     .bank_forks
                     .write()
@@ -4998,7 +5008,7 @@ pub mod tests {
             self.blockstore.set_roots(roots.iter()).unwrap();
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
-                parent_bank.collector_id(),
+                parent_bank.leader_id(),
                 roots.iter().max().unwrap() + 1,
             );
             self.bank_forks.write().unwrap().insert(new_bank);
@@ -5057,12 +5067,15 @@ pub mod tests {
                 .map(RuntimeTransaction::from_transaction_for_tests)
                 .collect();
 
-            let prioritization_fee_cache = &self.meta.prioritization_fee_cache;
-            prioritization_fee_cache.update(&bank, transactions.iter());
+            self.meta
+                .prioritization_fee_cache
+                .as_deref()
+                .unwrap()
+                .update(&bank, transactions.iter());
         }
 
         fn get_prioritization_fee_cache(&self) -> &PrioritizationFeeCache {
-            &self.meta.prioritization_fee_cache
+            self.meta.prioritization_fee_cache.as_deref().unwrap()
         }
 
         fn working_bank(&self) -> Arc<Bank> {
@@ -5070,7 +5083,7 @@ pub mod tests {
         }
 
         fn leader_pubkey(&self) -> Pubkey {
-            *self.working_bank().collector_id()
+            *self.working_bank().leader_id()
         }
     }
 
@@ -5168,9 +5181,9 @@ pub mod tests {
             "gossip": "127.0.0.1:8000",
             "shredVersion": 0u16,
             "tvu": "127.0.0.1:8001",
-            "tpu": "127.0.0.1:8003",
+            "tpu": null,
             "tpuQuic": "127.0.0.1:8009",
-            "tpuForwards": "127.0.0.1:8004",
+            "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:8010",
             "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
@@ -5183,9 +5196,9 @@ pub mod tests {
             "gossip": "127.0.0.1:1235",
             "shredVersion": 0u16,
             "tvu": "127.0.0.1:1236",
-            "tpu": "127.0.0.1:1234",
+            "tpu": null,
             "tpuQuic": "127.0.0.1:1240",
-            "tpuForwards": "127.0.0.1:1239",
+            "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:1245",
             "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
@@ -5472,7 +5485,7 @@ pub mod tests {
                 parse_success_result(rpc.handle_request_sync(request));
             let expected = Some(HashMap::from_iter(std::iter::once((
                 rpc.leader_pubkey().to_string(),
-                Vec::from_iter(0..=128),
+                Vec::from_iter(0..TEST_SLOTS_PER_EPOCH as usize),
             ))));
             assert_eq!(result, expected);
         }
@@ -6891,7 +6904,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
-            Arc::new(PrioritizationFeeCache::default()),
+            Some(Arc::new(PrioritizationFeeCache::default())),
             runtime.clone(),
         );
 
@@ -7215,7 +7228,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
-            Arc::new(PrioritizationFeeCache::default()),
+            Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
         );
 
@@ -7690,7 +7703,7 @@ pub mod tests {
 
         // Create a vote account with no stake.
         let alice_vote_keypair = Keypair::new();
-        let alice_vote_state = VoteStateV4::new(
+        let alice_vote_state = VoteStateV4::new_with_defaults(
             &alice_vote_keypair.pubkey(),
             &VoteInit {
                 node_pubkey: mint_keypair.pubkey(),
@@ -8922,6 +8935,8 @@ pub mod tests {
         let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
+        let prioritization_fee_cache_inner = None;
+        let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let mut pending_optimistically_confirmed_banks = HashSet::new();
@@ -8957,7 +8972,7 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             max_complete_transaction_status_slot,
-            Arc::new(PrioritizationFeeCache::default()),
+            prioritization_fee_cache_inner.clone(),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
         );
 
@@ -8988,7 +9003,7 @@ pub mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // no dependency tracker
         );
         let req =
@@ -9012,7 +9027,7 @@ pub mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // No dependency tracker
         );
         let req =
@@ -9036,7 +9051,7 @@ pub mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // No dependency tracker
         );
         let req =
@@ -9061,7 +9076,7 @@ pub mod tests {
             &mut highest_confirmed_slot,
             &mut highest_root_slot,
             &None,
-            &PrioritizationFeeCache::default(),
+            prioritization_fee_cache,
             &None, // No dependency tracker
         );
         let req =

@@ -1,6 +1,6 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
-    rand::{seq::SliceRandom, Rng},
+    bencher::{Bencher, benchmark_group, benchmark_main},
+    rand::{Rng, prelude::IndexedRandom as _},
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
@@ -10,7 +10,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_turbine::{
-        cluster_nodes::{make_test_cluster, new_cluster_nodes, ClusterNodes},
+        cluster_nodes::{ClusterNodes, make_test_cluster, new_cluster_nodes},
         retransmit_stage::RetransmitStage,
     },
 };
@@ -68,7 +68,7 @@ fn get_retransmit_peers_deterministic_wrapper(
     unstaked_ratio: Option<(u32, u32)>,
     use_cha_cha_8: bool,
 ) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let (nodes, cluster_nodes) = make_cluster_nodes(&mut rng, unstaked_ratio, use_cha_cha_8);
     let slot_leader = *nodes[1..].choose(&mut rng).unwrap().pubkey();
     let slot = rand::random::<u64>();

@@ -98,7 +98,9 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 #[derive(Clone)]
 struct PacketAccumulator {
     pub meta: Meta,
-    pub chunks: SmallVec<[Bytes; 2]>,
+    // the capacity here should match or exceed the capacity of the chunks
+    // array used by handle_connection()
+    pub chunks: SmallVec<[Bytes; 4]>,
     pub start_time: Instant,
 }
 
@@ -503,6 +505,7 @@ async fn setup_connection<Q, C>(
                 {
                     tasks.spawn(handle_connection(
                         packet_sender.clone(),
+                        from,
                         new_connection,
                         stats,
                         server_params.wait_for_chunk_timeout,
@@ -592,6 +595,7 @@ fn track_streamer_fetch_packet_performance(
 
 async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketBatch>,
+    remote_address: SocketAddr,
     connection: Connection,
     stats: Arc<StreamerStats>,
     wait_for_chunk_timeout: Duration,
@@ -603,10 +607,9 @@ async fn handle_connection<Q, C>(
     C: ConnectionContext + Send + Sync + 'static,
 {
     let peer_type = context.peer_type();
-    let remote_addr = connection.remote_address();
     debug!(
         "quic new connection {} streams: {} connections: {}",
-        remote_addr,
+        remote_address,
         stats.active_streams.load(Ordering::Relaxed),
         stats.total_connections.load(Ordering::Relaxed),
     );
@@ -632,7 +635,7 @@ async fn handle_connection<Q, C>(
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
         let mut meta = Meta::default();
-        meta.set_socket_addr(&remote_addr);
+        meta.set_socket_addr(&remote_address);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
         if let Some(pubkey) = context.remote_pubkey() {
             meta.set_remote_pubkey(pubkey);
@@ -783,7 +786,6 @@ fn handle_chunks(
     // done receiving chunks
     let bytes_sent = accum.meta.size;
 
-    //
     // 86% of transactions/packets come in one chunk. In that case,
     // we can just move the chunk to the `Packet` and no copy is
     // made.
@@ -796,8 +798,7 @@ fn handle_chunks(
             accum.meta.clone(),
         )
     } else {
-        let size: usize = accum.chunks.iter().map(Bytes::len).sum();
-        let mut buf = BytesMut::with_capacity(size);
+        let mut buf = BytesMut::with_capacity(bytes_sent);
         for chunk in &accum.chunks {
             buf.put_slice(chunk);
         }

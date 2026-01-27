@@ -33,7 +33,7 @@ static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
     (
         spl_generic_token::token_2022::ID,
         solana_sdk_ids::bpf_loader_upgradeable::ID,
-        include_bytes!("programs/spl_token_2022-8.0.0.so"),
+        include_bytes!("programs/spl_token_2022-10.0.0.so"),
     ),
     (
         spl_memo_1_0::ID,

@@ -3,10 +3,10 @@
 //! The format of these log messages should not be modified to avoid breaking downstream consumers
 //! of program logging
 use {
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     itertools::Itertools,
     solana_pubkey::Pubkey,
-    solana_svm_log_collector::{ic_logger_msg, LogCollector},
+    solana_svm_log_collector::{LogCollector, ic_logger_msg},
     std::{cell::RefCell, rc::Rc},
 };
 

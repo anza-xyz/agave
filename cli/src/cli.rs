@@ -4,7 +4,6 @@ use {
         program::*, program_v4::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
     clap::{crate_description, crate_name, value_t_or_exit, ArgMatches, Shell},
-    log::*,
     num_traits::FromPrimitive,
     serde_json::{self, Value},
     solana_clap_utils::{self, input_parsers::*, keypair::*},
@@ -945,6 +944,10 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             print_timestamp,
             compute_unit_price,
         } => {
+            eprintln!(
+                "Warning: The 'ping' command is deprecated in v4.0 and will be removed in v4.1."
+            );
+
             let connection_cache = if config.use_tpu_client {
                 Some({
                     #[cfg(feature = "dev-context-only-utils")]
