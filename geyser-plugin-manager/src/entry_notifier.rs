@@ -8,8 +8,6 @@ use {
     solana_clock::Slot,
     solana_entry::entry::EntrySummary,
     solana_ledger::entry_notifier_interface::EntryNotifier,
-    solana_measure::measure::Measure,
-    solana_metrics::*,
     std::sync::{Arc, RwLock},
 };
 
@@ -25,8 +23,6 @@ impl EntryNotifier for EntryNotifierImpl {
         entry: &'a EntrySummary,
         starting_transaction_index: usize,
     ) {
-        let mut measure = Measure::start("geyser-plugin-notify_plugins_of_entry_info");
-
         let plugin_manager = self.plugin_manager.read().unwrap();
         if plugin_manager.plugins.is_empty() {
             return;
@@ -52,13 +48,6 @@ impl EntryNotifier for EntryNotifierImpl {
                 }
             }
         }
-        measure.stop();
-        inc_new_counter_debug!(
-            "geyser-plugin-notify_plugins_of_entry_info-us",
-            measure.as_us() as usize,
-            10000,
-            10000
-        );
     }
 }
 

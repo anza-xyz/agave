@@ -23,10 +23,10 @@ use {
     },
     itertools::Itertools,
     rand::{
-        distributions::{Distribution, WeightedIndex},
         Rng,
+        distr::{Distribution, weighted::WeightedIndex},
     },
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     serde::{Deserialize, Serialize},
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_hash::Hash,
@@ -43,8 +43,8 @@ use {
         net::SocketAddr,
         ops::Index,
         sync::{
-            atomic::{AtomicI64, AtomicUsize, Ordering},
             LazyLock, Mutex, RwLock,
+            atomic::{AtomicI64, AtomicUsize, Ordering},
         },
         time::Duration,
     },
@@ -96,7 +96,7 @@ impl CrdsFilter {
         let max_items = Self::max_items(max_bits, FALSE_RATE, KEYS);
         let mask_bits = Self::mask_bits(num_items as f64, max_items);
         let filter = Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize);
-        let seed: u64 = rand::thread_rng().gen_range(0..2u64.pow(mask_bits));
+        let seed: u64 = rand::rng().random_range(0..2u64.pow(mask_bits));
         let mask = Self::compute_mask(seed, mask_bits);
         CrdsFilter {
             filter,
@@ -125,10 +125,7 @@ impl CrdsFilter {
         u64::from_le_bytes(buf)
     }
     fn test_mask(&self, item: &Hash) -> bool {
-        // only consider the highest mask_bits bits from the hash and set the rest to 1.
-        let ones = (!0u64).checked_shr(self.mask_bits).unwrap_or(!0u64);
-        let bits = Self::hash_as_u64(item) | ones;
-        bits == self.mask
+        Self::hash_matches_mask_prefix(self.mask, self.mask_bits, Self::hash_as_u64(item))
     }
     #[cfg(test)]
     fn add(&mut self, item: &Hash) {
@@ -145,6 +142,21 @@ impl CrdsFilter {
     }
     fn filter_contains(&self, item: &Hash) -> bool {
         self.filter.contains(item)
+    }
+    #[inline]
+    fn lsb_mask(mask_bits: u32) -> u64 {
+        // Mask with all least-significant (64 - mask_bits) bits set to 1.
+        (!0u64).checked_shr(mask_bits).unwrap_or(0)
+    }
+    #[inline]
+    pub(crate) fn canonical_mask(mask: u64, mask_bits: u32) -> u64 {
+        // Normalize a mask so that all bits below mask_bits are 1s
+        mask | Self::lsb_mask(mask_bits)
+    }
+    #[inline]
+    pub(crate) fn hash_matches_mask_prefix(mask: u64, mask_bits: u32, hash_u64: u64) -> bool {
+        let lsb_mask = Self::lsb_mask(mask_bits);
+        (hash_u64 | lsb_mask) == Self::canonical_mask(mask, mask_bits)
     }
 }
 
@@ -165,7 +177,7 @@ impl CrdsFilterSet {
         let mut indices: Vec<_> = (0..filters.len()).collect();
         let size = filters.len().div_ceil(SAMPLE_RATE);
         for _ in 0..MAX_NUM_FILTERS.min(size) {
-            let k = rng.gen_range(0..indices.len());
+            let k = rng.random_range(0..indices.len());
             let k = indices.swap_remove(k);
             let filter = Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize);
             filters[k] = Some(ConcurrentBloom::<Hash>::from(filter));
@@ -248,7 +260,7 @@ impl CrdsGossipPull {
         socket_addr_space: &SocketAddrSpace,
     ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
     {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         // Active and valid gossip nodes with matching shred-version.
         let nodes = crds_gossip::get_gossip_nodes(
             &mut rng,
@@ -435,7 +447,7 @@ impl CrdsGossipPull {
         let crds = crds.read().unwrap();
         let num_items = crds.len() + crds.num_purged() + failed_inserts.len();
         let num_items = MIN_NUM_BLOOM_ITEMS.max(num_items);
-        let filters = CrdsFilterSet::new(&mut rand::thread_rng(), num_items, bloom_size);
+        let filters = CrdsFilterSet::new(&mut rand::rng(), num_items, bloom_size);
         thread_pool.install(|| {
             crds.par_values()
                 .with_min_len(PAR_MIN_LENGTH)
@@ -467,7 +479,7 @@ impl CrdsGossipPull {
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
-        let jitter = rand::thread_rng().gen_range(0..msg_timeout / 4);
+        let jitter = rand::rng().random_range(0..msg_timeout / 4);
         //skip filters from callers that are too old
         let caller_wallclock_window =
             now.saturating_sub(msg_timeout)..now.saturating_add(msg_timeout);
@@ -617,7 +629,7 @@ impl Index<&Pubkey> for CrdsTimeouts<'_> {
 pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
     // Maps serialized size of CrdsFilter to max_bytes of bloom filter.
     static MAX_BYTES_CACHE: LazyLock<[u16; PACKET_DATA_SIZE + 1]> = LazyLock::new(|| {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut out = [0u16; PACKET_DATA_SIZE + 1];
         for max_bytes in 1..=PACKET_DATA_SIZE {
             let filters = CrdsFilterSet::new(&mut rng, /*num_items:*/ 1, max_bytes);
@@ -668,7 +680,7 @@ pub(crate) mod tests {
             protocol::Protocol,
         },
         itertools::Itertools,
-        rand::{seq::SliceRandom, SeedableRng},
+        rand::{SeedableRng, prelude::IndexedRandom as _},
         rand_chacha::ChaChaRng,
         rayon::ThreadPoolBuilder,
         solana_hash::HASH_BYTES,
@@ -736,7 +748,7 @@ pub(crate) mod tests {
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
-            &mut rand::thread_rng(),
+            &mut rand::rng(),
             Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
@@ -779,12 +791,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_crds_filter_set_add() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let crds_filter_set = CrdsFilterSet::new(
             &mut rng, /*num_items=*/ 59672788, /*max_bytes=*/ 8196,
         );
         let hash_values: Vec<_> = repeat_with(|| {
-            let buf: [u8; 32] = rng.gen();
+            let buf: [u8; 32] = rng.random();
             solana_sha256_hasher::hashv(&[&buf])
         })
         .take(1024)
@@ -820,7 +832,7 @@ pub(crate) mod tests {
         // Validates invariances required by CrdsFilterSet::get in the
         // vector of filters generated by CrdsFilterSet::new.
         let filters = CrdsFilterSet::new(
-            &mut rand::thread_rng(),
+            &mut rand::rng(),
             55345017, // num_items
             4098,     // max_bytes
         );
@@ -857,7 +869,7 @@ pub(crate) mod tests {
             let keypair = keypairs.choose(&mut rng).unwrap();
             let value = CrdsValue::new_rand(&mut rng, Some(keypair));
             if crds
-                .insert(value, rng.gen(), GossipRoute::LocalMessage)
+                .insert(value, rng.random(), GossipRoute::LocalMessage)
                 .is_ok()
             {
                 num_inserts += 1;
@@ -960,7 +972,7 @@ pub(crate) mod tests {
         ping_cache
             .lock()
             .unwrap()
-            .mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+            .mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         crds.write()
             .unwrap()
@@ -1023,13 +1035,13 @@ pub(crate) mod tests {
         crds.insert(entry, now, GossipRoute::LocalMessage).unwrap();
         let mut old = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
         old.set_gossip(([127, 0, 0, 1], 8020)).unwrap();
-        ping_cache.mock_pong(*old.pubkey(), old.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(old.gossip().unwrap(), Instant::now());
         let old = CrdsValue::new_unsigned(CrdsData::from(old));
         crds.insert(old.clone(), now, GossipRoute::LocalMessage)
             .unwrap();
         let mut new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
         new.set_gossip(([127, 0, 0, 1], 8021)).unwrap();
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         crds.insert(new, now, GossipRoute::LocalMessage).unwrap();
         let crds = RwLock::new(crds);
@@ -1084,7 +1096,7 @@ pub(crate) mod tests {
             .insert(entry, now, GossipRoute::LocalMessage)
             .unwrap();
         let new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), now);
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         node_crds
             .insert(new, now, GossipRoute::LocalMessage)
@@ -1202,7 +1214,7 @@ pub(crate) mod tests {
             .unwrap();
         let mut ping_cache = new_ping_cache();
         let new = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 1);
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         node_crds.insert(new, 0, GossipRoute::LocalMessage).unwrap();
 
@@ -1210,7 +1222,7 @@ pub(crate) mod tests {
         let new_id = solana_pubkey::new_rand();
         let same_key = ContactInfo::new_localhost(&new_id, 0);
         let new = ContactInfo::new_localhost(&new_id, 1);
-        ping_cache.mock_pong(*new.pubkey(), new.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(new.gossip().unwrap(), Instant::now());
         let new = CrdsValue::new_unsigned(CrdsData::from(new));
         dest_crds
             .insert(new.clone(), 0, GossipRoute::LocalMessage)
@@ -1218,11 +1230,7 @@ pub(crate) mod tests {
         let dest_crds = RwLock::new(dest_crds);
 
         // node contains a key from the dest node, but at an older local timestamp
-        ping_cache.mock_pong(
-            *same_key.pubkey(),
-            same_key.gossip().unwrap(),
-            Instant::now(),
-        );
+        ping_cache.mock_pong(same_key.gossip().unwrap(), Instant::now());
         let same_key = CrdsValue::new_unsigned(CrdsData::from(same_key));
         assert_eq!(same_key.label(), new.label());
         assert!(same_key.wallclock() < new.wallclock());
@@ -1397,8 +1405,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn test_crds_filter_complete_set_add_mask() {
-        let mut filters =
-            Vec::<CrdsFilter>::from(CrdsFilterSet::new(&mut rand::thread_rng(), 1000, 10));
+        let mut filters = Vec::<CrdsFilter>::from(CrdsFilterSet::new(&mut rand::rng(), 1000, 10));
         assert!(filters.iter().all(|f| f.mask_bits > 0));
         let mut h: Hash = Hash::default();
         // rev to make the hash::default() miss on the first few test_masks
@@ -1443,7 +1450,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_process_pull_response() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let node_crds = RwLock::<Crds>::default();
         let node = CrdsGossipPull::default();
 
@@ -1550,30 +1557,139 @@ pub(crate) mod tests {
     #[test_case(645043)]
     #[test_case(3873238)]
     fn test_get_max_bloom_filter_bytes(num_items: usize) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
         let node = {
             let mut node =
                 ContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ timestamp());
-            node.set_shred_version(rng.gen());
+            node.set_shred_version(rng.random());
             node
         };
         {
             let caller: CrdsValue = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1175);
+            assert_eq!(get_max_bloom_filter_bytes(&caller), 1184);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = {
             let addr = Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888);
             let socket = SocketAddr::new(IpAddr::from(addr), 8053);
             let mut node = ContactInfo::new_with_socketaddr(&keypair.pubkey(), &socket);
-            node.set_shred_version(rng.gen());
+            node.set_shred_version(rng.random());
             node
         };
         {
             let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1155);
+            assert_eq!(get_max_bloom_filter_bytes(&caller), 1165);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
+    }
+
+    #[test]
+    fn test_lsb_mask() {
+        assert_eq!(CrdsFilter::lsb_mask(0), !0u64);
+        assert_eq!(CrdsFilter::lsb_mask(1), !0u64 >> 1);
+        assert_eq!(CrdsFilter::lsb_mask(4), !0u64 >> 4);
+        assert_eq!(CrdsFilter::lsb_mask(64), 0);
+        assert_eq!(CrdsFilter::lsb_mask(65), 0);
+    }
+
+    #[test]
+    fn test_canonical_mask_normalizes_low_bits() {
+        let mask_bits = 8;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+
+        // Construct a mask with some garbage in the low bits
+        let prefix: u64 = 0b1010_1100;
+        let high = prefix << (64 - mask_bits);
+        let garbage_low = 0x1234_5678_u64;
+        let raw_mask = high | garbage_low;
+
+        let canonical = CrdsFilter::canonical_mask(raw_mask, mask_bits);
+
+        // High bits (prefix) are preserved
+        assert_eq!(canonical >> (64 - mask_bits), prefix);
+        // Low bits are all 1
+        assert_eq!(canonical & lsb, lsb);
+    }
+
+    #[test]
+    fn test_hash_matches_mask_prefix_positive_and_negative() {
+        let mask_bits = 4;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+
+        // Prefix 0b1010 for the high 4 bits
+        let prefix: u64 = 0b1010;
+        let high = prefix << (64 - mask_bits);
+        let canonical_mask = CrdsFilter::canonical_mask(high, mask_bits);
+
+        // Hash with same high 4 bits -> should match
+        let hash_match: u64 = high | 0x1234;
+        assert!(CrdsFilter::hash_matches_mask_prefix(
+            canonical_mask,
+            mask_bits,
+            hash_match
+        ));
+
+        // Hash with different high 4 bits -> should not match
+        let other_prefix: u64 = 0b1011;
+        let other_high = other_prefix << (64 - mask_bits);
+        let hash_nomatch: u64 = other_high | 0x1234;
+        assert!(!CrdsFilter::hash_matches_mask_prefix(
+            canonical_mask,
+            mask_bits,
+            hash_nomatch
+        ));
+
+        // Test malformed mask: same high bits,
+        // but low bits cleared instead of all 1s
+        let malformed_mask = canonical_mask & !lsb;
+        // Should be the same after canonicalization
+        assert!(CrdsFilter::hash_matches_mask_prefix(
+            malformed_mask,
+            mask_bits,
+            hash_match
+        ));
+        assert!(!CrdsFilter::hash_matches_mask_prefix(
+            malformed_mask,
+            mask_bits,
+            hash_nomatch
+        ));
+    }
+
+    #[test]
+    fn test_mask_prefix_matching_with_malformed_mask() {
+        let mask_bits = 5;
+        let lsb = CrdsFilter::lsb_mask(mask_bits);
+        let prefix: u64 = 0b1_0011;
+        let high = prefix << (64 - mask_bits);
+        // canonical mask = high | lsb = 0b1_0011_1111...111 (5 prefix bits, 59 ones)
+        let canonical_mask = CrdsFilter::canonical_mask(high, mask_bits);
+
+        let mut filter = CrdsFilter {
+            mask_bits,
+            mask: canonical_mask,
+            ..Default::default()
+        };
+
+        // Build a Hash whose u64 view has the correct prefix
+        let h_u64 = high | 0x55u64; //random low bits
+        let mut arr = [0u8; HASH_BYTES];
+        arr[..8].copy_from_slice(&h_u64.to_le_bytes());
+        let hash = arr.into();
+
+        // Positive case: canonical mask
+        assert!(filter.test_mask(&hash));
+
+        // Negative case: flip a high bit -> hash with a different prefix bit
+        let bad_u64 = h_u64 ^ (1u64 << (64 - mask_bits)); // flip one of the prefix bits
+        let mut bad_arr = [0u8; HASH_BYTES];
+        bad_arr[..8].copy_from_slice(&bad_u64.to_le_bytes());
+        let bad_hash = bad_arr.into();
+        assert!(!filter.test_mask(&bad_hash));
+
+        // Malformed mask: clear low bits -> should still match the hash with the correct prefix
+        filter.mask = canonical_mask & !lsb;
+        assert!(filter.test_mask(&hash));
+        assert!(!filter.test_mask(&bad_hash));
     }
 }

@@ -25,7 +25,6 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
         vortexor_receiver_adapter::VortexorReceiverAdapter,
     },
-    bytes::Bytes,
     crossbeam_channel::{bounded, unbounded, Receiver},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -62,20 +61,18 @@ use {
     },
     std::{
         collections::HashMap,
-        net::{SocketAddr, UdpSocket},
+        net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
     },
-    tokio::sync::{mpsc, mpsc::Sender as AsyncSender},
+    tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
 };
 
 pub struct TpuSockets {
-    pub transactions: Vec<UdpSocket>,
-    pub transaction_forwards: Vec<UdpSocket>,
     pub vote: Vec<UdpSocket>,
     pub broadcast: Vec<UdpSocket>,
     pub transactions_quic: Vec<UdpSocket>,
@@ -103,6 +100,10 @@ impl SigVerifier {
 
 // Conservatively allow 20 TPS per validator.
 pub const MAX_VOTES_PER_SECOND: u64 = 20;
+
+/// Size of the channel between streamer and TPU sigverify stage. The values have been selected to
+/// be conservative max of obsersed on mnb during high-load events.
+const TPU_CHANNEL_SIZE: usize = 50_000;
 
 pub struct Tpu {
     fetch_stage: FetchStage,
@@ -146,18 +147,16 @@ impl Tpu {
         bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
         client: ForwardingClientOption,
-        turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
         shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
         banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
-        tpu_enable_udp: bool,
         tpu_quic_server_config: SwQosQuicStreamerConfig,
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
@@ -169,8 +168,6 @@ impl Tpu {
         cancel: CancellationToken,
     ) -> Self {
         let TpuSockets {
-            transactions: transactions_sockets,
-            transaction_forwards: tpu_forwards_sockets,
             vote: tpu_vote_sockets,
             broadcast: broadcast_sockets,
             transactions_quic: transactions_quic_sockets,
@@ -180,22 +177,17 @@ impl Tpu {
             vortexor_receivers,
         } = sockets;
 
-        let (packet_sender, packet_receiver) = unbounded();
+        let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
-            transactions_sockets,
-            tpu_forwards_sockets,
             tpu_vote_sockets,
             exit.clone(),
             &packet_sender,
             &vote_packet_sender,
-            &forwarded_packet_sender,
             forwarded_packet_receiver,
             poh_recorder,
             None, // coalesce
-            Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
-            tpu_enable_udp,
         );
 
         let staked_nodes_updater_service = StakedNodesUpdaterService::new(
@@ -346,7 +338,7 @@ impl Tpu {
             replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
-            prioritization_fee_cache.clone(),
+            prioritization_fee_cache,
         );
 
         #[cfg(unix)]
@@ -391,7 +383,6 @@ impl Tpu {
             blockstore,
             bank_forks,
             shred_version,
-            turbine_quic_endpoint_sender,
             xdp_sender,
         );
 

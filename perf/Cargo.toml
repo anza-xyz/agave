@@ -79,6 +79,7 @@ nix = { workspace = true, features = ["user"] }
 
 [dev-dependencies]
 agave-logger = { workspace = true }
+agave-random = { workspace = true }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 rand_chacha = { workspace = true }

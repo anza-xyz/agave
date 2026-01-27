@@ -18,6 +18,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_vortexor"
 
+[[bin]]
+name = "solana-vortexor"
+path = "src/main.rs"
+required-features = ["agave-unstable-api"]
+
 [features]
 default = ["agave-unstable-api"]
 agave-unstable-api = []
@@ -42,7 +47,6 @@ pem = { workspace = true }
 percentage = { workspace = true }
 quinn = { workspace = true }
 quinn-proto = { workspace = true }
-rand = { workspace = true }
 rustls = { workspace = true }
 signal-hook = { workspace = true }
 smallvec = { workspace = true }
@@ -58,9 +62,9 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-tls-utils = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
 solana-version = { workspace = true }
 thiserror = { workspace = true }

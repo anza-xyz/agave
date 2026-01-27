@@ -8,10 +8,10 @@ use {
         stable_log,
         sysvar_cache::SysvarCache,
     },
-    solana_account::{create_account_shared_data_for_test, AccountSharedData},
+    solana_account::{AccountSharedData, create_account_shared_data_for_test},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -26,15 +26,15 @@ use {
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_log_collector::{ic_msg, LogCollector},
+    solana_svm_log_collector::{LogCollector, ic_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
+        IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, TransactionContext,
         instruction::InstructionContext, instruction_accounts::InstructionAccount,
-        transaction_accounts::KeyedAccountSharedData, IndexOfAccount, TransactionContext,
-        MAX_ACCOUNTS_PER_TRANSACTION,
+        transaction_accounts::KeyedAccountSharedData,
     },
     std::{
         alloc::Layout,
@@ -297,9 +297,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
-        // This algorithm allocates the array on the stack for speed.
-        // On AArch64 in release mode, this function only consumes 640 bytes of stack.
-        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
 
@@ -308,7 +306,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         // function, we must borrow it again as mutable.
         let program_account_index = {
             let instruction_context = self.transaction_context.get_current_instruction_context()?;
-            debug_assert!(instruction.accounts.len() <= transaction_callee_map.len());
 
             for account_meta in instruction.accounts.iter() {
                 let index_in_transaction = self
@@ -343,7 +340,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                     };
                     instruction_accounts.push(cloned_account);
                 } else {
-                    *index_in_callee = instruction_accounts.len() as u8;
+                    *index_in_callee = instruction_accounts.len() as u16;
                     instruction_accounts.push(InstructionAccount::new(
                         index_in_transaction,
                         account_meta.is_signer,
@@ -426,11 +423,15 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             program_account_index_in_transaction.unwrap()
         };
 
+        // This ? operator should not error out because `fn get_current_instruction_index` is also called
+        // in `get_current_instruction_context`
+        let caller_index = self.transaction_context.get_current_instruction_index()?;
         self.transaction_context.configure_next_instruction(
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
             Cow::Owned(instruction.data),
+            Some(caller_index as u16),
         )?;
         Ok(())
     }
@@ -445,11 +446,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         data: &'ix_data [u8],
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
-        // This algorithm allocates the array on the stack for speed.
-        // On AArch64 in release mode, this function only consumes 464 bytes of stack (when it is
-        // not inlined).
-        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
-        debug_assert!(instruction.accounts.len() <= transaction_callee_map.len());
+        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
 
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
@@ -461,7 +458,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 .unwrap();
 
             if (*index_in_callee as usize) > instruction_accounts.len() {
-                *index_in_callee = instruction_accounts.len() as u8;
+                *index_in_callee = instruction_accounts.len() as u16;
             }
 
             let index_in_transaction = *index_in_transaction as usize;
@@ -477,6 +474,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             instruction_accounts,
             transaction_callee_map,
             Cow::Borrowed(data),
+            None,
         )?;
         Ok(())
     }
@@ -800,6 +798,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
+            /* number_of_top_level_instructions */ 1,
         );
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {
@@ -986,7 +985,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_rent::Rent,
         solana_signer::Signer,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION,
         std::collections::HashSet,
         test_case::test_case,
@@ -1170,6 +1169,7 @@ mod tests {
             )],
             Rent::default(),
             1,
+            MAX_INSTRUCTIONS,
             MAX_INSTRUCTIONS,
         );
         for _ in 0..MAX_INSTRUCTIONS {
@@ -1393,9 +1393,10 @@ mod tests {
 
     #[test]
     fn test_prepare_instruction_maximum_accounts() {
+        const MAX_ACCOUNTS_REFERENCED: usize = u16::MAX as usize;
         let mut transaction_accounts: Vec<KeyedAccountSharedData> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
-        let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION);
+        let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_REFERENCED);
 
         // Fee-payer
         let fee_payer = Keypair::new();
@@ -1411,10 +1412,20 @@ mod tests {
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
 
-        for _ in 2..MAX_ACCOUNTS_PER_INSTRUCTION {
-            let key = Pubkey::new_unique();
-            transaction_accounts.push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
-            account_metas.push(AccountMeta::new_readonly(key, false));
+        for i in 2..MAX_ACCOUNTS_REFERENCED {
+            // Let's reference 256 unique accounts, and the rest is repeated.
+            if i < MAX_ACCOUNTS_PER_TRANSACTION {
+                let key = Pubkey::new_unique();
+                transaction_accounts
+                    .push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
+                account_metas.push(AccountMeta::new_readonly(key, false));
+            } else {
+                let repeated_key = transaction_accounts
+                    .get(i % MAX_ACCOUNTS_PER_TRANSACTION)
+                    .unwrap()
+                    .0;
+                account_metas.push(AccountMeta::new_readonly(repeated_key, false));
+            }
         }
 
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
@@ -1441,15 +1452,26 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap();
-            for index_in_transaction in 0..MAX_ACCOUNTS_PER_INSTRUCTION as IndexOfAccount {
-                let index_in_instruction = instruction_context
-                    .get_index_of_account_in_instruction(index_in_transaction as IndexOfAccount)
-                    .unwrap();
-                let other_transaction = instruction_context
+            for index_in_instruction in 0..MAX_ACCOUNTS_REFERENCED as IndexOfAccount {
+                let index_in_transaction = instruction_context
                     .get_index_of_instruction_account_in_transaction(index_in_instruction)
                     .unwrap();
-                assert_eq!(index_in_transaction, other_transaction);
-                assert_eq!(index_in_transaction, index_in_instruction);
+                let other_ix_index = instruction_context
+                    .get_index_of_account_in_instruction(index_in_transaction)
+                    .unwrap();
+                if (index_in_instruction as usize) < MAX_ACCOUNTS_PER_TRANSACTION {
+                    assert_eq!(index_in_instruction, index_in_transaction);
+                    assert_eq!(index_in_instruction, other_ix_index);
+                } else {
+                    assert_eq!(
+                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
+                        index_in_transaction as usize
+                    );
+                    assert_eq!(
+                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
+                        other_ix_index as usize
+                    );
+                }
             }
         }
 
@@ -1458,20 +1480,29 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap();
-            for index_in_transaction in 0..MAX_ACCOUNTS_PER_INSTRUCTION as IndexOfAccount {
-                let index_in_instruction = instruction_context
-                    .get_index_of_account_in_instruction(index_in_transaction as IndexOfAccount)
-                    .unwrap();
-                let other_transaction = instruction_context
+            for index_in_instruction in 0..MAX_ACCOUNTS_REFERENCED as IndexOfAccount {
+                let index_in_transaction = instruction_context
                     .get_index_of_instruction_account_in_transaction(index_in_instruction)
                     .unwrap();
+                let other_ix_index = instruction_context
+                    .get_index_of_account_in_instruction(index_in_transaction)
+                    .unwrap();
                 assert_eq!(
-                    index_in_instruction,
-                    (MAX_ACCOUNTS_PER_INSTRUCTION as IndexOfAccount)
-                        .saturating_sub(index_in_transaction)
+                    index_in_transaction,
+                    (MAX_ACCOUNTS_REFERENCED as u16)
+                        .saturating_sub(index_in_instruction)
                         .saturating_sub(1)
+                        .overflowing_rem(MAX_ACCOUNTS_PER_TRANSACTION as u16)
+                        .0
                 );
-                assert_eq!(index_in_transaction, other_transaction);
+                if (index_in_instruction as usize) < MAX_ACCOUNTS_PER_TRANSACTION {
+                    assert_eq!(index_in_instruction, other_ix_index);
+                } else {
+                    assert_eq!(
+                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
+                        other_ix_index as usize
+                    );
+                }
             }
         }
 

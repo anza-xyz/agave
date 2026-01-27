@@ -23,7 +23,7 @@ use {
         ancestor_iterator::AncestorIterator,
         blockstore::{
             column::{Column, ColumnName},
-            Blockstore, PurgeType,
+            Blockstore, BlockstoreError, PurgeType,
         },
         blockstore_options::AccessType,
         shred::Shred,
@@ -894,14 +894,15 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 perform_compaction,
                 dead_slots_only,
             );
-            let purge_from_blockstore = |start_slot, end_slot| {
-                blockstore.purge_from_next_slots(start_slot, end_slot);
-                if perform_compaction {
-                    blockstore.purge_and_compact_slots(start_slot, end_slot);
-                } else {
-                    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact);
-                }
-            };
+            let purge_from_blockstore =
+                |start_slot, end_slot| -> std::result::Result<(), BlockstoreError> {
+                    blockstore.purge_from_next_slots(start_slot, end_slot);
+                    if perform_compaction {
+                        blockstore.purge_and_compact_slots(start_slot, end_slot)
+                    } else {
+                        blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact)
+                    }
+                };
             if !dead_slots_only {
                 let slots_iter = &(start_slot..=end_slot).chunks(batch_size);
                 for slots in slots_iter {
@@ -916,7 +917,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                         end_slot,
                         end_slot - start_slot
                     );
-                    purge_from_blockstore(start_slot, end_slot);
+                    purge_from_blockstore(start_slot, end_slot)?;
                 }
             } else {
                 let dead_slots_iter = blockstore
@@ -924,7 +925,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     .take_while(|s| *s <= end_slot);
                 for dead_slot in dead_slots_iter {
                     info!("Purging dead slot {dead_slot}");
-                    purge_from_blockstore(dead_slot, dead_slot);
+                    purge_from_blockstore(dead_slot, dead_slot)?;
                 }
             }
         }

@@ -17,7 +17,7 @@ use {
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
     solana_sdk_ids::sysvar,
     solana_signer::Signer,
@@ -469,9 +469,9 @@ pub fn parse_address_lookup_table_subcommand(
     Ok(response)
 }
 
-pub fn process_address_lookup_table_subcommand(
+pub async fn process_address_lookup_table_subcommand(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     subcommand: &AddressLookupTableCliCommand,
 ) -> ProcessResult {
     match subcommand {
@@ -480,69 +480,83 @@ pub fn process_address_lookup_table_subcommand(
             payer_signer_index,
         } => {
             process_create_lookup_table(&rpc_client, config, *authority_pubkey, *payer_signer_index)
+                .await
         }
         AddressLookupTableCliCommand::FreezeLookupTable {
             lookup_table_pubkey,
             authority_signer_index,
             bypass_warning,
-        } => process_freeze_lookup_table(
-            &rpc_client,
-            config,
-            *lookup_table_pubkey,
-            *authority_signer_index,
-            *bypass_warning,
-        ),
+        } => {
+            process_freeze_lookup_table(
+                &rpc_client,
+                config,
+                *lookup_table_pubkey,
+                *authority_signer_index,
+                *bypass_warning,
+            )
+            .await
+        }
         AddressLookupTableCliCommand::ExtendLookupTable {
             lookup_table_pubkey,
             authority_signer_index,
             payer_signer_index,
             new_addresses,
-        } => process_extend_lookup_table(
-            &rpc_client,
-            config,
-            *lookup_table_pubkey,
-            *authority_signer_index,
-            *payer_signer_index,
-            new_addresses.to_vec(),
-        ),
+        } => {
+            process_extend_lookup_table(
+                &rpc_client,
+                config,
+                *lookup_table_pubkey,
+                *authority_signer_index,
+                *payer_signer_index,
+                new_addresses.to_vec(),
+            )
+            .await
+        }
         AddressLookupTableCliCommand::DeactivateLookupTable {
             lookup_table_pubkey,
             authority_signer_index,
             bypass_warning,
-        } => process_deactivate_lookup_table(
-            &rpc_client,
-            config,
-            *lookup_table_pubkey,
-            *authority_signer_index,
-            *bypass_warning,
-        ),
+        } => {
+            process_deactivate_lookup_table(
+                &rpc_client,
+                config,
+                *lookup_table_pubkey,
+                *authority_signer_index,
+                *bypass_warning,
+            )
+            .await
+        }
         AddressLookupTableCliCommand::CloseLookupTable {
             lookup_table_pubkey,
             authority_signer_index,
             recipient_pubkey,
-        } => process_close_lookup_table(
-            &rpc_client,
-            config,
-            *lookup_table_pubkey,
-            *authority_signer_index,
-            *recipient_pubkey,
-        ),
+        } => {
+            process_close_lookup_table(
+                &rpc_client,
+                config,
+                *lookup_table_pubkey,
+                *authority_signer_index,
+                *recipient_pubkey,
+            )
+            .await
+        }
         AddressLookupTableCliCommand::ShowLookupTable {
             lookup_table_pubkey,
-        } => process_show_lookup_table(&rpc_client, config, *lookup_table_pubkey),
+        } => process_show_lookup_table(&rpc_client, config, *lookup_table_pubkey).await,
     }
 }
 
-fn process_create_lookup_table(
+async fn process_create_lookup_table(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     authority_address: Pubkey,
     payer_signer_index: usize,
 ) -> ProcessResult {
     let payer_signer = config.signers[payer_signer_index];
 
     let get_clock_result = rpc_client
-        .get_account_with_commitment(&sysvar::clock::id(), CommitmentConfig::finalized())?;
+        .get_account_with_commitment(&sysvar::clock::id(), CommitmentConfig::finalized())
+        .await?;
     let clock_account = get_clock_result.value.expect("Clock account doesn't exist");
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
@@ -552,7 +566,7 @@ fn process_create_lookup_table(
     let (create_lookup_table_ix, lookup_table_address) =
         create_lookup_table(authority_address, payer_address, clock.slot);
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let mut tx = Transaction::new_unsigned(Message::new(
         &[create_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
@@ -560,15 +574,17 @@ fn process_create_lookup_table(
 
     let keypairs: Vec<&dyn Signer> = vec![config.signers[0], payer_signer];
     tx.try_sign(&keypairs, blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        RpcSendTransactionConfig {
-            skip_preflight: false,
-            preflight_commitment: Some(config.commitment.commitment),
-            ..RpcSendTransactionConfig::default()
-        },
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            RpcSendTransactionConfig {
+                skip_preflight: false,
+                preflight_commitment: Some(config.commitment.commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await;
     match result {
         Err(err) => Err(format!("Create failed: {err}").into()),
         Ok(signature) => Ok(config
@@ -584,17 +600,18 @@ pub const FREEZE_LOOKUP_TABLE_WARNING: &str =
     "WARNING! Once a lookup table is frozen, it can never be modified or unfrozen again. To \
      proceed with freezing, rerun the `freeze` command with the `--bypass-warning` flag";
 
-fn process_freeze_lookup_table(
+async fn process_freeze_lookup_table(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
     bypass_warning: bool,
 ) -> ProcessResult {
     let authority_signer = config.signers[authority_signer_index];
 
-    let get_lookup_table_result =
-        rpc_client.get_account_with_commitment(&lookup_table_pubkey, config.commitment)?;
+    let get_lookup_table_result = rpc_client
+        .get_account_with_commitment(&lookup_table_pubkey, config.commitment)
+        .await?;
     let lookup_table_account = get_lookup_table_result.value.ok_or_else(|| {
         format!("Lookup table account {lookup_table_pubkey} not found, was it already closed?")
     })?;
@@ -613,22 +630,24 @@ fn process_freeze_lookup_table(
     let authority_address = authority_signer.pubkey();
     let freeze_lookup_table_ix = freeze_lookup_table(lookup_table_pubkey, authority_address);
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let mut tx = Transaction::new_unsigned(Message::new(
         &[freeze_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
     tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        RpcSendTransactionConfig {
-            skip_preflight: false,
-            preflight_commitment: Some(config.commitment.commitment),
-            ..RpcSendTransactionConfig::default()
-        },
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            RpcSendTransactionConfig {
+                skip_preflight: false,
+                preflight_commitment: Some(config.commitment.commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await;
     match result {
         Err(err) => Err(format!("Freeze failed: {err}").into()),
         Ok(signature) => Ok(config.output_format.formatted_string(&CliSignature {
@@ -637,9 +656,9 @@ fn process_freeze_lookup_table(
     }
 }
 
-fn process_extend_lookup_table(
+async fn process_extend_lookup_table(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
     payer_signer_index: usize,
@@ -652,8 +671,9 @@ fn process_extend_lookup_table(
         return Err("Lookup tables must be extended by at least one address".into());
     }
 
-    let get_lookup_table_result =
-        rpc_client.get_account_with_commitment(&lookup_table_pubkey, config.commitment)?;
+    let get_lookup_table_result = rpc_client
+        .get_account_with_commitment(&lookup_table_pubkey, config.commitment)
+        .await?;
     let lookup_table_account = get_lookup_table_result.value.ok_or_else(|| {
         format!("Lookup table account {lookup_table_pubkey} not found, was it already closed?")
     })?;
@@ -674,22 +694,27 @@ fn process_extend_lookup_table(
         new_addresses,
     );
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let mut tx = Transaction::new_unsigned(Message::new(
         &[extend_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        RpcSendTransactionConfig {
-            skip_preflight: false,
-            preflight_commitment: Some(config.commitment.commitment),
-            ..RpcSendTransactionConfig::default()
-        },
-    );
+    tx.try_sign(
+        &[config.signers[0], authority_signer, payer_signer],
+        blockhash,
+    )?;
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            RpcSendTransactionConfig {
+                skip_preflight: false,
+                preflight_commitment: Some(config.commitment.commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await;
     match result {
         Err(err) => Err(format!("Extend failed: {err}").into()),
         Ok(signature) => Ok(config.output_format.formatted_string(&CliSignature {
@@ -703,17 +728,18 @@ pub const DEACTIVATE_LOOKUP_TABLE_WARNING: &str =
 Deactivated lookup tables may only be closed and cannot be recreated at the same address. To \
      proceed with deactivation, rerun the `deactivate` command with the `--bypass-warning` flag";
 
-fn process_deactivate_lookup_table(
+async fn process_deactivate_lookup_table(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
     bypass_warning: bool,
 ) -> ProcessResult {
     let authority_signer = config.signers[authority_signer_index];
 
-    let get_lookup_table_result =
-        rpc_client.get_account_with_commitment(&lookup_table_pubkey, config.commitment)?;
+    let get_lookup_table_result = rpc_client
+        .get_account_with_commitment(&lookup_table_pubkey, config.commitment)
+        .await?;
     let lookup_table_account = get_lookup_table_result.value.ok_or_else(|| {
         format!("Lookup table account {lookup_table_pubkey} not found, was it already closed?")
     })?;
@@ -733,22 +759,24 @@ fn process_deactivate_lookup_table(
     let deactivate_lookup_table_ix =
         deactivate_lookup_table(lookup_table_pubkey, authority_address);
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let mut tx = Transaction::new_unsigned(Message::new(
         &[deactivate_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
     tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        RpcSendTransactionConfig {
-            skip_preflight: false,
-            preflight_commitment: Some(config.commitment.commitment),
-            ..RpcSendTransactionConfig::default()
-        },
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            RpcSendTransactionConfig {
+                skip_preflight: false,
+                preflight_commitment: Some(config.commitment.commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await;
     match result {
         Err(err) => Err(format!("Deactivate failed: {err}").into()),
         Ok(signature) => Ok(config.output_format.formatted_string(&CliSignature {
@@ -757,17 +785,18 @@ fn process_deactivate_lookup_table(
     }
 }
 
-fn process_close_lookup_table(
+async fn process_close_lookup_table(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
     recipient_pubkey: Pubkey,
 ) -> ProcessResult {
     let authority_signer = config.signers[authority_signer_index];
 
-    let get_lookup_table_result =
-        rpc_client.get_account_with_commitment(&lookup_table_pubkey, config.commitment)?;
+    let get_lookup_table_result = rpc_client
+        .get_account_with_commitment(&lookup_table_pubkey, config.commitment)
+        .await?;
     let lookup_table_account = get_lookup_table_result.value.ok_or_else(|| {
         format!("Lookup table account {lookup_table_pubkey} not found, was it already closed?")
     })?;
@@ -792,22 +821,24 @@ fn process_close_lookup_table(
     let close_lookup_table_ix =
         close_lookup_table(lookup_table_pubkey, authority_address, recipient_pubkey);
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let mut tx = Transaction::new_unsigned(Message::new(
         &[close_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
     tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        RpcSendTransactionConfig {
-            skip_preflight: false,
-            preflight_commitment: Some(config.commitment.commitment),
-            ..RpcSendTransactionConfig::default()
-        },
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            RpcSendTransactionConfig {
+                skip_preflight: false,
+                preflight_commitment: Some(config.commitment.commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await;
     match result {
         Err(err) => Err(format!("Close failed: {err}").into()),
         Ok(signature) => Ok(config.output_format.formatted_string(&CliSignature {
@@ -816,13 +847,14 @@ fn process_close_lookup_table(
     }
 }
 
-fn process_show_lookup_table(
+async fn process_show_lookup_table(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
 ) -> ProcessResult {
-    let get_lookup_table_result =
-        rpc_client.get_account_with_commitment(&lookup_table_pubkey, config.commitment)?;
+    let get_lookup_table_result = rpc_client
+        .get_account_with_commitment(&lookup_table_pubkey, config.commitment)
+        .await?;
     let lookup_table_account = get_lookup_table_result.value.ok_or_else(|| {
         format!("Lookup table account {lookup_table_pubkey} not found, was it already closed?")
     })?;

@@ -9,7 +9,7 @@ use {
     solana_transaction::versioned,
     std::mem::MaybeUninit,
     wincode::{
-        containers::{self, Elem, Pod},
+        containers::{self, Pod},
         error::invalid_tag_encoding,
         io::{Reader, Writer},
         len::ShortU16Len,
@@ -29,8 +29,8 @@ struct MessageHeader {
 #[wincode(from = "solana_transaction::CompiledInstruction")]
 struct CompiledInstruction {
     program_id_index: u8,
-    accounts: containers::Vec<Pod<u8>, ShortU16Len>,
-    data: containers::Vec<Pod<u8>, ShortU16Len>,
+    accounts: containers::Vec<u8, ShortU16Len>,
+    data: containers::Vec<u8, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -39,26 +39,25 @@ struct LegacyMessage {
     header: MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<Elem<CompiledInstruction>, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::MessageAddressTableLookup")]
 struct MessageAddressTableLookup {
     account_key: Pod<Address>,
-    writable_indexes: containers::Vec<Pod<u8>, ShortU16Len>,
-    readonly_indexes: containers::Vec<Pod<u8>, ShortU16Len>,
+    writable_indexes: containers::Vec<u8, ShortU16Len>,
+    readonly_indexes: containers::Vec<u8, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::Message")]
 struct V0Message {
-    #[wincode(with = "Pod<_>")]
-    header: solana_message::MessageHeader,
+    header: MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<Elem<CompiledInstruction>, ShortU16Len>,
-    address_table_lookups: containers::Vec<Elem<MessageAddressTableLookup>, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
+    address_table_lookups: containers::Vec<MessageAddressTableLookup, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -83,7 +82,7 @@ impl SchemaWrite for VersionedMsg {
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
             solana_message::VersionedMessage::Legacy(message) => {
                 LegacyMessage::write(writer, message)
@@ -96,10 +95,10 @@ impl SchemaWrite for VersionedMsg {
     }
 }
 
-impl SchemaRead<'_> for VersionedMsg {
+impl<'de> SchemaRead<'de> for VersionedMsg {
     type Dst = solana_message::VersionedMessage;
 
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // From `solana_message`:
         //
         // If the first bit is set, the remaining 7 bits will be used to determine
@@ -125,16 +124,27 @@ impl SchemaRead<'_> for VersionedMsg {
         // the `num_required_signatures` field.
         // As such, we need to write the remaining fields into the message manually,
         // as calling `LegacyMessage::read` will miss the first field.
-        let header_uninit = LegacyMessage::uninit_header_mut(&mut msg);
-
-        MessageHeader::write_uninit_num_required_signatures(variant, header_uninit);
-        MessageHeader::read_num_readonly_signed_accounts(reader, header_uninit)?;
-        MessageHeader::read_num_readonly_unsigned_accounts(reader, header_uninit)?;
-
-        LegacyMessage::read_account_keys(reader, &mut msg)?;
-        LegacyMessage::read_recent_blockhash(reader, &mut msg)?;
-        LegacyMessage::read_instructions(reader, &mut msg)?;
-
+        // Builder is used to ensure any partially initialized data is dropped on errors.
+        let mut msg_builder = LegacyMessageUninitBuilder::from_maybe_uninit_mut(&mut msg);
+        // SAFETY: initializer function uses header builder and initialize all fields
+        unsafe {
+            msg_builder.init_header_with(|uninit_header| {
+                let mut header_builder =
+                    MessageHeaderUninitBuilder::from_maybe_uninit_mut(uninit_header);
+                header_builder.write_num_required_signatures(variant);
+                header_builder.read_num_readonly_signed_accounts(reader)?;
+                header_builder.read_num_readonly_unsigned_accounts(reader)?;
+                debug_assert!(header_builder.is_init());
+                header_builder.finish();
+                Ok(())
+            })?;
+        }
+        msg_builder.read_account_keys(reader)?;
+        msg_builder.read_recent_blockhash(reader)?;
+        msg_builder.read_instructions(reader)?;
+        debug_assert!(msg_builder.is_init());
+        // SAFETY: All fields are initialized, safe to close the builder and assume initialized.
+        msg_builder.finish();
         let msg = unsafe { msg.assume_init() };
         dst.write(solana_message::VersionedMessage::Legacy(msg));
 
@@ -145,7 +155,7 @@ impl SchemaRead<'_> for VersionedMsg {
 #[cfg(test)]
 mod tests {
     use {
-        crate::entry::Entry,
+        crate::entry::{Entry, MAX_DATA_SHREDS_SIZE},
         proptest::prelude::*,
         solana_address::{Address, ADDRESS_BYTES},
         solana_hash::{Hash, HASH_BYTES},
@@ -350,5 +360,83 @@ mod tests {
             let deserialized: Vec<Entry> = wincode::deserialize(&serialized).unwrap();
             prop_assert_eq!(entries, deserialized);
         }
+    }
+
+    #[test]
+    fn entry_deserialize_rejects_excessive_prealloc() {
+        let message = LegacyMessage {
+            header: MessageHeader {
+                num_required_signatures: 0,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 0,
+            },
+            account_keys: vec![],
+            recent_blockhash: Hash::new_from_array([0u8; HASH_BYTES]),
+            instructions: vec![],
+        };
+        let transaction = VersionedTransaction {
+            signatures: vec![],
+            message: VersionedMessage::Legacy(message),
+        };
+        let entry = Entry {
+            num_hashes: 0,
+            hash: Hash::new_from_array([0u8; HASH_BYTES]),
+            transactions: vec![transaction],
+        };
+
+        let mut data = wincode::serialize(&entry).unwrap();
+        let over_limit: usize = MAX_DATA_SHREDS_SIZE / size_of::<VersionedTransaction>() + 1;
+        let len_offset = 8 + HASH_BYTES;
+        // Fudge the length of the vec to be over the limit to trigger the preallocation
+        // size limit error.
+        data[len_offset..len_offset + 8].copy_from_slice(&over_limit.to_le_bytes());
+
+        let needed_bytes = over_limit * size_of::<VersionedTransaction>();
+        let err = Entry::deserialize(&data).unwrap_err();
+        assert!(matches!(
+            err,
+            wincode::error::ReadError::PreallocationSizeLimit {
+                limit: MAX_DATA_SHREDS_SIZE,
+                needed,
+            } if needed == needed_bytes,
+        ));
+    }
+
+    #[test]
+    fn entry_deserialize_accepts_prealloc_at_limit() {
+        let message = LegacyMessage {
+            header: MessageHeader {
+                num_required_signatures: 0,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 0,
+            },
+            account_keys: vec![],
+            recent_blockhash: Hash::new_from_array([0u8; HASH_BYTES]),
+            instructions: vec![],
+        };
+        let transaction = VersionedTransaction {
+            signatures: vec![],
+            message: VersionedMessage::Legacy(message),
+        };
+        let entry = Entry {
+            num_hashes: 0,
+            hash: Hash::new_from_array([0u8; HASH_BYTES]),
+            transactions: vec![transaction],
+        };
+
+        let mut data = wincode::serialize(&entry).unwrap();
+        let at_limit: usize = MAX_DATA_SHREDS_SIZE / size_of::<VersionedTransaction>();
+        let len_offset = 8 + HASH_BYTES;
+        // Fudge the length of the vec to be at the limit.
+        data[len_offset..len_offset + 8].copy_from_slice(&at_limit.to_le_bytes());
+
+        let err = Entry::deserialize(&data).unwrap_err();
+        assert!(!matches!(
+            err,
+            wincode::error::ReadError::PreallocationSizeLimit {
+                limit: _,
+                needed: _,
+            }
+        ));
     }
 }

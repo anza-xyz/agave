@@ -2,7 +2,8 @@
 use {
     crate::{
         account_storage::stored_account_info::StoredAccountInfo,
-        accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
+        account_storage_entry::AccountStorageEntry,
+        accounts_db::{AccountFromStorage, AccountsDb},
         is_zero_lamport::IsZeroLamport,
         utils::create_account_shared_data,
     },
@@ -363,11 +364,12 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
+            account_storage_entry::AccountStorageEntry,
+            accounts_db::get_temp_accounts_paths,
             accounts_file::AccountsFileProvider,
         },
         rand::Rng,
-        solana_account::{accounts_equal, AccountSharedData, WritableAccount},
+        solana_account::{accounts_equal, AccountSharedData},
         std::sync::Arc,
     };
 
@@ -547,9 +549,9 @@ pub mod tests {
                     let mut raw4 = Vec::new();
                     for entry in 0..entries {
                         let pk = Pubkey::from([entry; 32]);
-                        let account = AccountSharedData::create(
+                        let account = AccountSharedData::create_from_existing_shared_data(
                             (entry as u64) * starting_slot,
-                            Vec::default(),
+                            Arc::new(Vec::default()),
                             Pubkey::default(),
                             false,
                             0,
@@ -667,7 +669,7 @@ pub mod tests {
             db.storage_access(),
         );
         let storage = Arc::new(data);
-        db.storage.insert(slot, storage.clone());
+        db.storage.insert(storage.clone());
         storage
     }
 
@@ -678,9 +680,9 @@ pub mod tests {
             let mut raw2 = Vec::new();
             for entry in 0..entries {
                 let pk = Pubkey::from([entry; 32]);
-                let account = AccountSharedData::create(
+                let account = AccountSharedData::create_from_existing_shared_data(
                     entry as u64,
-                    Vec::default(),
+                    Arc::new(Vec::default()),
                     Pubkey::default(),
                     false,
                     0,

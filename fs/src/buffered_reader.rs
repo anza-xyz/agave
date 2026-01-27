@@ -14,7 +14,11 @@
 //! When reading full accounts data whose sizes exceed the small stack buffer, the `BufReaderWithOverflow`
 //! should be used, which supports dynamically allocated buffer for preparing contiguous data slices.
 use {
-    crate::file_io::{read_into_buffer, read_more_buffer},
+    crate::{
+        file_io::{read_into_buffer, read_more_buffer},
+        io_setup::IoSetupState,
+        FileSize,
+    },
     std::{
         fs::File,
         io::{self, BufRead},
@@ -65,14 +69,14 @@ pub trait FileBufRead<'a>: BufRead {
     ///
     /// `read_limit` provides a pre-defined limit on the number of bytes that can be read
     /// from the file (unless EOF is reached).
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()>;
+    fn set_file(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()>;
 
     /// Returns the current file offset corresponding to the start of the buffer
     /// that will be returned by the next call to `fill_buf`.
     ///
     /// This offset represents the position within the underlying file where data
     /// will be consumed from.
-    fn get_file_offset(&self) -> usize;
+    fn get_file_offset(&self) -> FileSize;
 }
 
 /// An extension of the `BufRead` trait for readers that require stronger control
@@ -102,15 +106,15 @@ impl<'a, T: RequiredLenBufRead + FileBufRead<'a>> RequiredLenBufFileRead<'a> for
 /// read a file a large buffer at a time and provide access to a slice in that buffer
 pub struct BufferedReader<'a, const N: usize> {
     /// when we are next asked to read from file, start at this offset
-    file_offset_of_next_read: usize,
+    file_offset_of_next_read: FileSize,
     /// the most recently read data. `buf_valid_bytes` specifies the range of `buf` that is valid.
     buf: Stack<N>,
     /// specifies the range of `buf` that contains valid data that has not been used by the caller
     buf_valid_bytes: Range<usize>,
     /// offset in the file of the `buf_valid_bytes`.`start`
-    file_last_offset: usize,
+    file_last_offset: FileSize,
     /// how many bytes are valid in the file. The file's len may be longer.
-    file_len_valid: usize,
+    file_len_valid: FileSize,
     /// reference to file handle
     file: Option<&'a File>,
 }
@@ -128,12 +132,12 @@ impl<'a, const N: usize> BufferedReader<'a, N> {
         }
     }
 
-    pub fn with_file(mut self, file: &'a File, read_limit: usize) -> Self {
+    pub fn with_file(mut self, file: &'a File, read_limit: FileSize) -> Self {
         self.do_set_file(file, read_limit);
         self
     }
 
-    fn do_set_file(&mut self, file: &'a File, read_limit: usize) {
+    fn do_set_file(&mut self, file: &'a File, read_limit: FileSize) {
         self.file = Some(file);
         self.file_len_valid = read_limit;
         self.file_last_offset = 0;
@@ -143,17 +147,17 @@ impl<'a, const N: usize> BufferedReader<'a, N> {
 }
 
 impl<'a, const N: usize> FileBufRead<'a> for BufferedReader<'a, N> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+    fn set_file(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
         self.do_set_file(file, read_limit);
         Ok(())
     }
 
     #[inline(always)]
-    fn get_file_offset(&self) -> usize {
+    fn get_file_offset(&self) -> FileSize {
         if self.buf_valid_bytes.is_empty() {
             self.file_offset_of_next_read
         } else {
-            self.file_last_offset + self.buf_valid_bytes.start
+            self.file_last_offset + self.buf_valid_bytes.start as FileSize
         }
     }
 }
@@ -163,8 +167,9 @@ impl<const N: usize> BufferedReader<'_, N> {
     /// space as much as possible.
     fn read_more_bytes(&mut self) -> io::Result<()> {
         // we haven't used all the bytes we read last time, so adjust the effective offset
-        debug_assert!(self.buf_valid_bytes.len() <= self.file_offset_of_next_read);
-        self.file_last_offset = self.file_offset_of_next_read - self.buf_valid_bytes.len();
+        debug_assert!(self.buf_valid_bytes.len() as FileSize <= self.file_offset_of_next_read);
+        self.file_last_offset =
+            self.file_offset_of_next_read - self.buf_valid_bytes.len() as FileSize;
         let Some(file) = &self.file else {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "no open file"));
         };
@@ -239,7 +244,7 @@ impl<const N: usize> BufRead for BufferedReader<'_, N> {
         } else {
             let additional_amount_to_skip = amt - self.buf_valid_bytes.len();
             self.buf_valid_bytes = 0..0;
-            self.file_offset_of_next_read += additional_amount_to_skip;
+            self.file_offset_of_next_read += additional_amount_to_skip as FileSize;
         }
     }
 }
@@ -332,13 +337,13 @@ impl<R: BufRead> BufRead for BufReaderWithOverflow<R> {
 }
 
 impl<'a, R: FileBufRead<'a>> FileBufRead<'a> for BufReaderWithOverflow<R> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+    fn set_file(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
         self.overflow_buf.clear();
         self.reader.set_file(file, read_limit)
     }
 
-    fn get_file_offset(&self) -> usize {
-        self.reader.get_file_offset() - self.overflow_buf.len()
+    fn get_file_offset(&self) -> FileSize {
+        self.reader.get_file_offset() - self.overflow_buf.len() as FileSize
     }
 }
 
@@ -386,19 +391,28 @@ impl<R: BufRead> RequiredLenBufRead for BufReaderWithOverflow<R> {
 
 /// Open file at `path` with buffering reader using `buf_size` memory and doing
 /// read-ahead IO reads (if `io_uring` is supported by the platform)
-pub fn large_file_buf_reader(path: &Path, buf_size: usize) -> io::Result<impl BufRead + use<>> {
+pub fn large_file_buf_reader(
+    path: &Path,
+    buf_size: usize,
+    io_setup: &IoSetupState,
+) -> io::Result<impl BufRead + use<>> {
     #[cfg(target_os = "linux")]
     {
         assert!(agave_io_uring::io_uring_supported());
-        use crate::io_uring::sequential_file_reader::{SequentialFileReader, DEFAULT_READ_SIZE};
+        use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 
-        let buf_size = buf_size.max(DEFAULT_READ_SIZE);
-        SequentialFileReader::with_capacity(buf_size, path)
+        let mut reader = SequentialFileReaderBuilder::new()
+            .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+            .build(buf_size)?;
+        reader.set_path(path)?;
+        Ok(reader)
     }
     #[cfg(not(target_os = "linux"))]
     {
         use std::io::BufReader;
         let file = File::open(path)?;
+        let _ = io_setup;
         Ok(BufReader::with_capacity(buf_size, file))
     }
 }
@@ -414,8 +428,8 @@ mod tests {
     #[inline(always)]
     fn rand_bytes<const N: usize>() -> [u8; N] {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
-        std::array::from_fn(|_| rng.r#gen::<u8>())
+        let mut rng = rand::rng();
+        std::array::from_fn(|_| rng.random::<u8>())
     }
 
     #[test]
@@ -445,7 +459,7 @@ mod tests {
         let mut required_len = 32;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(
             reader
@@ -458,7 +472,7 @@ mod tests {
         // Continue reading should yield EOF.
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         required_len = 16;
         assert_eq!(
@@ -506,7 +520,7 @@ mod tests {
         let mut required_data_len = 16;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(
             reader
@@ -521,7 +535,7 @@ mod tests {
         required_data_len = 16;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(
             reader
@@ -536,7 +550,7 @@ mod tests {
         required_data_len = 8;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(
             reader
@@ -551,7 +565,7 @@ mod tests {
         required_data_len = 8;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(
             reader
@@ -589,12 +603,12 @@ mod tests {
         reader.consume(advance);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(required_len).unwrap();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_len);
         assert_eq!(
             slice,
-            &bytes[expected_offset..expected_offset + required_len]
+            &bytes[expected_offset as usize..expected_offset as usize + required_len]
         ); // no need to read more
 
         // Continue reading should succeed and read the rest 16 bytes.
@@ -603,12 +617,12 @@ mod tests {
         reader.consume(advance);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(required_len).unwrap();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_len);
         assert_eq!(
             slice,
-            &bytes[expected_offset..expected_offset + required_len]
+            &bytes[expected_offset as usize..expected_offset as usize + required_len]
         );
 
         // Continue reading should yield EOF and empty slice.
@@ -616,7 +630,7 @@ mod tests {
         required_len = 16;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(
             reader
@@ -664,12 +678,12 @@ mod tests {
         reader.consume(advance);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(required_data_len).unwrap();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_data_len);
         assert_eq!(
             slice,
-            &bytes[expected_offset..expected_offset + required_data_len]
+            &bytes[expected_offset as usize..expected_offset as usize + required_data_len]
         );
 
         // Continue reading should succeed and read the rest 8 bytes.
@@ -678,12 +692,12 @@ mod tests {
         reader.consume(advance);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(required_data_len).unwrap();
-        expected_offset += advance;
+        expected_offset += advance as FileSize;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_data_len);
         assert_eq!(
             slice,
-            &bytes[expected_offset..expected_offset + required_data_len]
+            &bytes[expected_offset as usize..expected_offset as usize + required_data_len]
         );
     }
 
@@ -697,7 +711,7 @@ mod tests {
         sample_file.write_all(&bytes).unwrap();
 
         let mut reader = BufReaderWithOverflow::new(
-            BufferedReader::<BUFFER_SIZE>::new().with_file(&sample_file, FILE_SIZE),
+            BufferedReader::<BUFFER_SIZE>::new().with_file(&sample_file, FILE_SIZE as FileSize),
             0,
             usize::MAX,
         );
@@ -744,7 +758,7 @@ mod tests {
         sample_file.write_all(&bytes).unwrap();
 
         let mut reader = BufReaderWithOverflow::new(
-            BufferedReader::<BUFFER_SIZE>::new().with_file(&sample_file, FILE_SIZE),
+            BufferedReader::<BUFFER_SIZE>::new().with_file(&sample_file, FILE_SIZE as FileSize),
             0,
             32,
         );

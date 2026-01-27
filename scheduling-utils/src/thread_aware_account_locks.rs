@@ -19,11 +19,13 @@ type LockCount = u32;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct ThreadSet(u64);
 
+#[derive(Debug)]
 struct AccountWriteLocks {
     thread_id: ThreadId,
     lock_count: LockCount,
 }
 
+#[derive(Debug)]
 struct AccountReadLocks {
     thread_set: ThreadSet,
     lock_counts: [LockCount; MAX_THREADS],
@@ -34,7 +36,7 @@ struct AccountReadLocks {
 ///     Contains how many write locks are held by the thread.
 /// Read Locks - multiple threads can hold a read lock at a time.
 ///     Contains thread-set for easily checking which threads are scheduled.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct AccountLocks {
     pub write_locks: Option<AccountWriteLocks>,
     pub read_locks: Option<AccountReadLocks>,
@@ -53,6 +55,7 @@ pub enum TryLockError {
 /// that already hold locks on the account. This is useful for allowing
 /// queued transactions to be scheduled on a thread while the transaction
 /// is still being executed on the thread.
+#[derive(Debug)]
 pub struct ThreadAwareAccountLocks {
     /// Number of threads.
     num_threads: usize, // 0..MAX_THREADS

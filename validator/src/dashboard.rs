@@ -105,8 +105,8 @@ impl Dashboard {
                 if let Some(gossip) = contact_info.gossip {
                     println_name_value("Gossip Address:", &gossip.to_string());
                 }
-                if let Some(tpu) = contact_info.tpu {
-                    println_name_value("TPU Address:", &tpu.to_string());
+                if let Some(tpu) = contact_info.tpu_quic {
+                    println_name_value("TPU QUIC Address:", &tpu.to_string());
                 }
                 if let Some(rpc) = contact_info.rpc {
                     println_name_value("JSON RPC URL:", &format!("http://{rpc}"));

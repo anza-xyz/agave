@@ -1,0 +1,30 @@
+[package]
+name = "agave-random"
+description = "Agave randomization utils"
+documentation = "https://docs.rs/agave-random"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "agave_random"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+rand = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+bs58 = { workspace = true, features = ["alloc"] }
+rand_chacha = { workspace = true }
+sha2 = { workspace = true }
+test-case = { workspace = true }

@@ -40,7 +40,7 @@ jobs:
   check:
     #if: github.repository == 'anza-xyz/agave'
     if: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       matrix:
@@ -57,7 +57,7 @@ jobs:
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |
@@ -79,7 +79,7 @@ jobs:
   test_cli:
     #if: github.repository == 'anza-xyz/agave'
     if: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       matrix:
@@ -87,7 +87,7 @@ jobs:
           - single-pool
           - token-2022
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |
@@ -110,7 +110,7 @@ jobs:
   cargo-test-sbf:
     #if: github.repository == 'anza-xyz/agave'
     if: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       matrix:
@@ -127,7 +127,7 @@ jobs:
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |

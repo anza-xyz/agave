@@ -11,7 +11,7 @@ pub struct PurgeStats {
     delete_file_in_range: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 /// Controls how `blockstore::purge_slots` purges the data.
 pub enum PurgeType {
     /// A slower but more accurate way to purge slots by also ensuring higher
@@ -38,7 +38,7 @@ impl Blockstore {
     /// while the non-slot-id based column families, `cf::TransactionStatus`,
     /// `AddressSignature`, and `cf::TransactionStatusIndex`, are cleaned-up
     /// based on the `purge_type` setting.
-    pub fn purge_slots(&self, from_slot: Slot, to_slot: Slot, purge_type: PurgeType) {
+    pub fn purge_slots(&self, from_slot: Slot, to_slot: Slot, purge_type: PurgeType) -> Result<()> {
         let mut purge_stats = PurgeStats::default();
         let purge_result =
             self.run_purge_with_stats(from_slot, to_slot, purge_type, &mut purge_stats);
@@ -55,9 +55,13 @@ impl Blockstore {
                 i64
             )
         );
-        if let Err(e) = purge_result {
-            error!("Error: {e:?}; Purge failed in range {from_slot:?} to {to_slot:?}");
-        }
+        purge_result.map_err(|e| BlockstoreError::PurgeFailed {
+            from_slot,
+            to_slot,
+            purge_type,
+            inner: Box::new(e),
+        })?;
+        Ok(())
     }
 
     /// Usually this is paired with .purge_slots() but we can't internally call this in
@@ -77,8 +81,9 @@ impl Blockstore {
         }
     }
 
-    pub fn purge_and_compact_slots(&self, from_slot: Slot, to_slot: Slot) {
-        self.purge_slots(from_slot, to_slot, PurgeType::Exact);
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn purge_and_compact_slots(&self, from_slot: Slot, to_slot: Slot) -> Result<()> {
+        self.purge_slots(from_slot, to_slot, PurgeType::Exact)
     }
 
     /// Ensures that the SlotMeta::next_slots vector for all slots contain no references in the
@@ -532,11 +537,11 @@ pub mod tests {
         let (shreds, _) = make_many_slot_entries(0, 50, 5);
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
-        blockstore.purge_and_compact_slots(0, 5);
+        blockstore.purge_and_compact_slots(0, 5).unwrap();
 
         test_all_empty_or_min(&blockstore, 6);
 
-        blockstore.purge_and_compact_slots(0, 50);
+        blockstore.purge_and_compact_slots(0, 50).unwrap();
 
         // min slot shouldn't matter, blockstore should be empty
         test_all_empty_or_min(&blockstore, 100);

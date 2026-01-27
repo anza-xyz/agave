@@ -4,7 +4,7 @@ use {
     log::*,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, DEFAULT_MEMLOCK_BUDGET_SIZE},
+        accounts_db::AccountsDbConfig,
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimit, ScanFilter},
     },
@@ -15,6 +15,7 @@ use {
     },
     solana_cli_output::CliAccountNewConfig,
     solana_clock::Slot,
+    solana_core::resource_limits,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
@@ -43,7 +44,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("PATH")
             .takes_value(true)
             .multiple(true)
-            .requires("enable_accounts_disk_index")
             .help(
                 "Persistent accounts-index location. May be specified multiple times. [default: \
                  <LEDGER>/accounts_index]",
@@ -61,12 +61,29 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .help("Pre-allocate the accounts index, assuming this many accounts")
             .hidden(hidden_unless_forced()),
-        Arg::with_name("enable_accounts_disk_index")
-            .long("enable-accounts-disk-index")
-            .help("Enables the disk-based accounts index")
+        Arg::with_name("accounts_index_limit")
+            .long("accounts-index-limit")
+            .value_name("VALUE")
+            .takes_value(true)
+            .possible_values(&[
+                "minimal",
+                "25GB",
+                "50GB",
+                "100GB",
+                "200GB",
+                "400GB",
+                "800GB",
+                "unlimited",
+            ])
+            .default_value("unlimited")
+            .help("Sets the memory limit for the accounts index")
             .long_help(
-                "Enables the disk-based accounts index. Reduce the memory footprint of the \
-                 accounts index at the cost of index performance.",
+                "Sets the memory limit for the accounts index. The size options will limit the \
+                 accounts index memory to the specified value. E.g. \"50GB\" means the accounts \
+                 index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
+                 accounts index in memory. The \"minimal\" option reduces memory usage as much as \
+                 possible. All index entries that are not in memory are kept in the disk-backed \
+                 index. The disk-backed index has lower performance; prefer higher limits here.",
             ),
         Arg::with_name("accounts_db_skip_shrink")
             .long("accounts-db-skip-shrink")
@@ -252,10 +269,21 @@ pub fn get_accounts_db_config(
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
     let num_initial_accounts =
         value_t!(arg_matches, "accounts_index_initial_accounts_count", usize).ok();
-    let accounts_index_index_limit = if !arg_matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::InMemOnly
-    } else {
-        IndexLimit::Minimal
+    let accounts_index_limit =
+        value_t!(arg_matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
+    let index_limit = match accounts_index_limit.as_str() {
+        "minimal" => IndexLimit::Minimal,
+        "25GB" => IndexLimit::Threshold(25_000_000_000),
+        "50GB" => IndexLimit::Threshold(50_000_000_000),
+        "100GB" => IndexLimit::Threshold(100_000_000_000),
+        "200GB" => IndexLimit::Threshold(200_000_000_000),
+        "400GB" => IndexLimit::Threshold(400_000_000_000),
+        "800GB" => IndexLimit::Threshold(800_000_000_000),
+        "unlimited" => IndexLimit::InMemOnly,
+        x => {
+            // clap will enforce only the above values are possible
+            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+        }
     };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()
@@ -264,7 +292,7 @@ pub fn get_accounts_db_config(
     let accounts_index_config = AccountsIndexConfig {
         bins: accounts_index_bins,
         num_initial_accounts,
-        index_limit: accounts_index_index_limit,
+        index_limit,
         drives: Some(accounts_index_drives),
         ..AccountsIndexConfig::default()
     };
@@ -300,7 +328,7 @@ pub fn get_accounts_db_config(
 
     AccountsDbConfig {
         index: Some(accounts_index_config),
-        base_working_path: Some(ledger_tool_ledger_path),
+        bank_hash_details_dir: ledger_tool_ledger_path,
         ancient_append_vec_offset: value_t!(arg_matches, "accounts_db_ancient_append_vecs", i64)
             .ok(),
         ancient_storage_ideal_size: value_t!(
@@ -314,7 +342,9 @@ pub fn get_accounts_db_config(
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         storage_access,
         scan_filter_for_shrinking,
-        memlock_budget_size: DEFAULT_MEMLOCK_BUDGET_SIZE,
+        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        ),
         ..AccountsDbConfig::default()
     }
 }

@@ -1,29 +1,73 @@
 use {
     crate::{
-        instruction_accounts::BorrowedInstructionAccount, IndexOfAccount, InstructionAccount,
-        TransactionContext,
+        IndexOfAccount, InstructionAccount, TransactionContext,
+        instruction_accounts::BorrowedInstructionAccount,
+        vm_addresses::{
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            GUEST_REGION_SIZE,
+        },
+        vm_slice::VmSlice,
     },
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    std::{borrow::Cow, collections::HashSet},
+    std::collections::HashSet,
 };
 
 /// Instruction shared between runtime and programs.
-#[derive(Debug, Clone, Default)]
-pub struct InstructionFrame<'ix_data> {
-    pub nesting_level: usize,
-    pub program_account_index_in_tx: IndexOfAccount,
-    pub instruction_accounts: Vec<InstructionAccount>,
-    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
-    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
-    /// This is a vector of u8s to save memory, since many entries may be unused.
-    pub(crate) dedup_map: Vec<u8>,
-    pub instruction_data: Cow<'ix_data, [u8]>,
+#[repr(C)]
+#[derive(Debug)]
+pub struct InstructionFrame {
+    /// Reserved field for alignment and potential future usage.
+    pub reserved: u16,
+    pub program_account_index_in_tx: u16,
+    pub nesting_level: u16,
+    /// This is the index of the parent instruction if this is a CPI and u16::MAX if this is a
+    /// top-level instruction
+    pub index_of_caller_instruction: u16,
+    pub instruction_accounts: VmSlice<InstructionAccount>,
+    pub instruction_data: VmSlice<u8>,
+}
+
+impl Default for InstructionFrame {
+    fn default() -> Self {
+        InstructionFrame {
+            nesting_level: 0,
+            program_account_index_in_tx: 0,
+            index_of_caller_instruction: u16::MAX,
+            // Using u64::MAX as the default pointer value, since it shall never be accessible.
+            instruction_accounts: VmSlice::new(0, 0),
+            instruction_data: VmSlice::new(0, 0),
+            reserved: 0,
+        }
+    }
+}
+
+impl InstructionFrame {
+    pub fn configure_vm_slices(
+        &mut self,
+        instruction_index: u64,
+        instruction_accounts_len: usize,
+        instruction_data_len: u64,
+    ) {
+        let common_offset = GUEST_REGION_SIZE.saturating_mul(instruction_index);
+
+        // Instruction data slice
+        self.instruction_data = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(common_offset),
+            instruction_data_len,
+        );
+
+        // Instruction accounts slice
+        self.instruction_accounts = VmSlice::new(
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(common_offset),
+            instruction_accounts_len as u64,
+        );
+    }
 }
 
 /// View interface to read instructions.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) transaction_context: &'a TransactionContext<'ix_data>,
     // The rest of the fields are redundant shortcuts
@@ -31,7 +75,7 @@ pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) nesting_level: usize,
     pub(crate) program_account_index_in_tx: IndexOfAccount,
     pub(crate) instruction_accounts: &'a [InstructionAccount],
-    pub(crate) dedup_map: &'a [u8],
+    pub(crate) dedup_map: &'a [u16],
     pub(crate) instruction_data: &'ix_data [u8],
 }
 

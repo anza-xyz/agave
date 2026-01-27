@@ -25,7 +25,6 @@ use {
     solana_transaction_error::TransactionError, tokio::time::Duration,
 };
 
-pub const DEFAULT_TPU_ENABLE_UDP: bool = false;
 pub const DEFAULT_VOTE_USE_QUIC: bool = false;
 
 /// The default connection count is set to 1 -- it should

@@ -3,11 +3,11 @@ use {
     itertools::Itertools,
     solana_clock::Slot,
     solana_ledger::shred::{
-        ShredId, ShredType, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
+        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ShredId, ShredType,
     },
     std::{
         cmp::Reverse,
-        collections::{hash_map::Entry, HashMap, VecDeque},
+        collections::{HashMap, VecDeque, hash_map::Entry},
         net::SocketAddr,
     },
 };
@@ -397,9 +397,11 @@ mod tests {
         assert_eq!(entry.index_data, 2);
 
         entry.last_shred_in_slot = true;
-        assert!(entry
-            .get_shreds(7)
-            .eq([(ShredType::Code, 3), (ShredType::Data, 2)]));
+        assert!(
+            entry
+                .get_shreds(7)
+                .eq([(ShredType::Code, 3), (ShredType::Data, 2)])
+        );
         assert_eq!(entry.index_code, 3);
         assert_eq!(entry.index_data, 2);
 

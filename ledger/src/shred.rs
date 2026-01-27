@@ -51,16 +51,8 @@
 //! payload can fit into one coding shred / packet.
 
 pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
-pub use {
-    self::{
-        payload::Payload,
-        shred_data::ShredData,
-        stats::{ProcessShredsStats, ShredFetchStats},
-    },
-    crate::shredder::{ReedSolomonCache, Shredder},
-};
 use {
-    self::{shred_code::ShredCode, traits::Shred as _},
+    self::traits::{Shred as _, ShredData as _},
     crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
@@ -74,18 +66,31 @@ use {
     solana_sha256_hasher::hashv,
     solana_signature::{Signature, SIGNATURE_BYTES},
     static_assertions::const_assert_eq,
-    std::fmt::Debug,
+    std::{fmt::Debug, mem::MaybeUninit},
     thiserror::Error,
+    wincode::{
+        containers::Pod,
+        io::{Reader, Writer},
+        SchemaRead, SchemaWrite, TypeMeta,
+    },
+};
+pub use {
+    self::{
+        merkle::{ShredCode, ShredData},
+        payload::Payload,
+        stats::{ProcessShredsStats, ShredFetchStats},
+    },
+    crate::shredder::{ReedSolomonCache, Shredder},
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
 mod common;
-pub(crate) mod merkle;
+pub mod merkle;
 mod merkle_tree;
 mod payload;
 mod shred_code;
-mod shred_data;
+pub(crate) mod shred_data;
 mod stats;
 mod traits;
 pub mod wire;
@@ -160,7 +165,9 @@ impl ShredFlags {
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
-    Bincode(#[from] bincode::Error),
+    WincodeRead(#[from] wincode::ReadError),
+    #[error(transparent)]
+    WincodeWrite(#[from] wincode::WriteError),
     #[error(transparent)]
     Erasure(#[from] reed_solomon_erasure::Error),
     #[error("Invalid data size: {size}, payload: {payload}")]
@@ -203,16 +210,32 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Unknown proof size")]
     UnknownProofSize,
+    #[error("Empty shreds list")]
+    EmptyIterator,
 }
 
 #[repr(u8)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(
-    Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, IntoPrimitive, Serialize, TryFromPrimitive,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    Deserialize,
+    IntoPrimitive,
+    Serialize,
+    TryFromPrimitive,
+    SchemaWrite,
+    SchemaRead,
 )]
 #[serde(into = "u8", try_from = "u8")]
+#[wincode(tag_encoding = "u8")]
 pub enum ShredType {
+    #[wincode(tag = 0b1010_0101)]
     Data = 0b1010_0101,
+    #[wincode(tag = 0b0101_1010)]
     Code = 0b0101_1010,
 }
 
@@ -231,8 +254,9 @@ enum ShredVariant {
 }
 
 /// A common header that is present in data and code shred headers
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct ShredCommonHeader {
+    #[wincode(with = "Pod<_>")]
     signature: Signature,
     shred_variant: ShredVariant,
     slot: Slot,
@@ -242,15 +266,16 @@ struct ShredCommonHeader {
 }
 
 /// The data shred header has parent offset and flags
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct DataShredHeader {
     parent_offset: u16,
+    #[wincode(with = "Pod<_>")]
     flags: ShredFlags,
     size: u16, // common shred header + data shred header + data
 }
 
 /// The coding shred header has FEC information
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct CodingShredHeader {
     num_data_shreds: u16,
     num_coding_shreds: u16,
@@ -260,7 +285,7 @@ struct CodingShredHeader {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shred {
     ShredCode(ShredCode),
-    ShredData(ShredData),
+    ShredData(merkle::ShredData),
 }
 
 /// Tuple which uniquely identifies a shred should it exists.
@@ -373,6 +398,7 @@ impl Shred {
 
     dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
@@ -395,11 +421,11 @@ impl Shred {
         Ok(match layout::get_shred_variant(shred.as_ref())? {
             ShredVariant::MerkleCode { .. } => {
                 let shred = merkle::ShredCode::from_payload(shred)?;
-                Self::from(ShredCode::from(shred))
+                Self::ShredCode(shred)
             }
             ShredVariant::MerkleData { .. } => {
                 let shred = merkle::ShredData::from_payload(shred)?;
-                Self::from(ShredData::from(shred))
+                Self::ShredData(shred)
             }
         })
     }
@@ -422,15 +448,6 @@ impl Shred {
 
     pub fn index(&self) -> u32 {
         self.common_header().index
-    }
-
-    // Possibly trimmed payload;
-    // Should only be used when storing shreds to blockstore.
-    pub(crate) fn bytes_to_store(&self) -> &[u8] {
-        match self {
-            Self::ShredCode(shred) => shred.payload(),
-            Self::ShredData(shred) => shred.bytes_to_store(),
-        }
     }
 
     pub fn fec_set_index(&self) -> u32 {
@@ -551,32 +568,13 @@ impl Shred {
         }
         get_payload(self) != get_payload(other)
     }
-
-    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
-        match self {
-            Self::ShredCode(ShredCode::Merkle(shred)) => shred.retransmitter_signature_offset(),
-            Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),
-        }
-    }
-}
-
-impl From<ShredCode> for Shred {
-    fn from(shred: ShredCode) -> Self {
-        Self::ShredCode(shred)
-    }
-}
-
-impl From<ShredData> for Shred {
-    fn from(shred: ShredData) -> Self {
-        Self::ShredData(shred)
-    }
 }
 
 impl From<merkle::Shred> for Shred {
     fn from(shred: merkle::Shred) -> Self {
         match shred {
-            merkle::Shred::ShredCode(shred) => Self::ShredCode(ShredCode::Merkle(shred)),
-            merkle::Shred::ShredData(shred) => Self::ShredData(ShredData::Merkle(shred)),
+            merkle::Shred::ShredCode(shred) => Self::ShredCode(shred),
+            merkle::Shred::ShredData(shred) => Self::ShredData(shred),
         }
     }
 }
@@ -586,8 +584,8 @@ impl TryFrom<Shred> for merkle::Shred {
 
     fn try_from(shred: Shred) -> Result<Self, Self::Error> {
         match shred {
-            Shred::ShredCode(ShredCode::Merkle(shred)) => Ok(Self::ShredCode(shred)),
-            Shred::ShredData(ShredData::Merkle(shred)) => Ok(Self::ShredData(shred)),
+            Shred::ShredCode(shred) => Ok(Self::ShredCode(shred)),
+            Shred::ShredData(shred) => Ok(Self::ShredData(shred)),
         }
     }
 }
@@ -655,6 +653,42 @@ impl TryFrom<u8> for ShredVariant {
                 _ => Err(Error::InvalidShredVariant),
             }
         }
+    }
+}
+
+impl SchemaWrite for ShredVariant {
+    type Src = Self;
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 1,
+        zero_copy: false,
+    };
+
+    fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
+        Ok(1)
+    }
+
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        let repr: u8 = (*src).into();
+        u8::write(writer, &repr)
+    }
+}
+
+impl<'a> SchemaRead<'a> for ShredVariant {
+    type Dst = Self;
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 1,
+        zero_copy: false,
+    };
+
+    fn read(
+        reader: &mut impl Reader<'a>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let repr = u8::get(reader)?;
+        let value = Self::try_from(repr)
+            .map_err(|_| wincode::ReadError::InvalidTagEncoding(repr as usize))?;
+        dst.write(value);
+        Ok(())
     }
 }
 
@@ -933,7 +967,6 @@ mod tests {
     use {
         super::*,
         assert_matches::assert_matches,
-        bincode::serialized_size,
         itertools::Itertools,
         rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
@@ -992,6 +1025,8 @@ mod tests {
 
     #[test]
     fn test_shred_constants() {
+        use wincode::Serialize as _;
+
         let common_header = ShredCommonHeader {
             signature: Signature::default(),
             shred_variant: ShredVariant::MerkleCode {
@@ -1015,15 +1050,15 @@ mod tests {
         };
         assert_eq!(
             SIZE_OF_COMMON_SHRED_HEADER,
-            serialized_size(&common_header).unwrap() as usize
+            wincode::serialized_size(&common_header).unwrap() as usize
         );
         assert_eq!(
             SIZE_OF_CODING_SHRED_HEADERS - SIZE_OF_COMMON_SHRED_HEADER,
-            serialized_size(&coding_shred_header).unwrap() as usize
+            wincode::serialized_size(&coding_shred_header).unwrap() as usize
         );
         assert_eq!(
             SIZE_OF_DATA_SHRED_HEADERS - SIZE_OF_COMMON_SHRED_HEADER,
-            serialized_size(&data_shred_header).unwrap() as usize
+            wincode::serialized_size(&data_shred_header).unwrap() as usize
         );
         let data_shred_header_with_size = DataShredHeader {
             size: 1000,
@@ -1031,15 +1066,15 @@ mod tests {
         };
         assert_eq!(
             SIZE_OF_DATA_SHRED_HEADERS - SIZE_OF_COMMON_SHRED_HEADER,
-            serialized_size(&data_shred_header_with_size).unwrap() as usize
+            wincode::serialized_size(&data_shred_header_with_size).unwrap() as usize
         );
         assert_eq!(
             SIZE_OF_SIGNATURE,
-            bincode::serialized_size(&Signature::default()).unwrap() as usize
+            Pod::<Signature>::serialized_size(&Signature::default()).unwrap() as usize
         );
         assert_eq!(
             SIZE_OF_SHRED_VARIANT,
-            bincode::serialized_size(&ShredVariant::MerkleCode {
+            wincode::serialized_size(&ShredVariant::MerkleCode {
                 proof_size: 15,
                 resigned: true
             })
@@ -1047,11 +1082,11 @@ mod tests {
         );
         assert_eq!(
             SIZE_OF_SHRED_SLOT,
-            bincode::serialized_size(&Slot::default()).unwrap() as usize
+            wincode::serialized_size(&Slot::default()).unwrap() as usize
         );
         assert_eq!(
             SIZE_OF_SHRED_INDEX,
-            bincode::serialized_size(&common_header.index).unwrap() as usize
+            wincode::serialized_size(&common_header.index).unwrap() as usize
         );
     }
 
@@ -1062,29 +1097,6 @@ mod tests {
             let flags = ShredFlags::from_reference_tick(tick);
             assert_eq!(flags.bits(), tick.min(MAX_REFERENCE_TICK));
         }
-    }
-
-    #[test]
-    fn test_version_from_hash() {
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5,
-            0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a,
-            0xa5, 0xa5, 0x5a, 0x5a,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 1);
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 0xffff);
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 0x5a5b);
     }
 
     #[test]
@@ -1539,26 +1551,26 @@ mod tests {
         assert_eq!(std::mem::size_of::<ShredType>(), std::mem::size_of::<u8>());
         assert_matches!(ShredType::try_from(0u8), Err(_));
         assert_matches!(ShredType::try_from(1u8), Err(_));
-        assert_matches!(bincode::deserialize::<ShredType>(&[0u8]), Err(_));
-        assert_matches!(bincode::deserialize::<ShredType>(&[1u8]), Err(_));
+        assert_matches!(wincode::deserialize::<ShredType>(&[0u8]), Err(_));
+        assert_matches!(wincode::deserialize::<ShredType>(&[1u8]), Err(_));
         // data shred
         assert_eq!(ShredType::Data as u8, 0b1010_0101);
         assert_eq!(u8::from(ShredType::Data), 0b1010_0101);
         assert_eq!(ShredType::try_from(0b1010_0101), Ok(ShredType::Data));
-        let buf = bincode::serialize(&ShredType::Data).unwrap();
+        let buf = wincode::serialize(&ShredType::Data).unwrap();
         assert_eq!(buf, vec![0b1010_0101]);
         assert_matches!(
-            bincode::deserialize::<ShredType>(&[0b1010_0101]),
+            wincode::deserialize::<ShredType>(&[0b1010_0101]),
             Ok(ShredType::Data)
         );
         // coding shred
         assert_eq!(ShredType::Code as u8, 0b0101_1010);
         assert_eq!(u8::from(ShredType::Code), 0b0101_1010);
         assert_eq!(ShredType::try_from(0b0101_1010), Ok(ShredType::Code));
-        let buf = bincode::serialize(&ShredType::Code).unwrap();
+        let buf = wincode::serialize(&ShredType::Code).unwrap();
         assert_eq!(buf, vec![0b0101_1010]);
         assert_matches!(
-            bincode::deserialize::<ShredType>(&[0b0101_1010]),
+            wincode::deserialize::<ShredType>(&[0b0101_1010]),
             Ok(ShredType::Code)
         );
     }
@@ -1569,12 +1581,12 @@ mod tests {
         assert_matches!(ShredVariant::try_from(1u8), Err(_));
         assert_matches!(ShredVariant::try_from(0b0101_0000), Err(_));
         assert_matches!(ShredVariant::try_from(0b1010_0000), Err(_));
-        assert_matches!(bincode::deserialize::<ShredVariant>(&[0b0101_0000]), Err(_));
-        assert_matches!(bincode::deserialize::<ShredVariant>(&[0b1010_0000]), Err(_));
+        assert_matches!(wincode::deserialize::<ShredVariant>(&[0b0101_0000]), Err(_));
+        assert_matches!(wincode::deserialize::<ShredVariant>(&[0b1010_0000]), Err(_));
         assert_matches!(ShredVariant::try_from(0b0101_1010), Err(_));
-        assert_matches!(bincode::deserialize::<ShredVariant>(&[0b0101_1010]), Err(_));
+        assert_matches!(wincode::deserialize::<ShredVariant>(&[0b0101_1010]), Err(_));
         assert_matches!(ShredVariant::try_from(0b1010_0101), Err(_));
-        assert_matches!(bincode::deserialize::<ShredVariant>(&[0b1010_0101]), Err(_));
+        assert_matches!(wincode::deserialize::<ShredVariant>(&[0b1010_0101]), Err(_));
     }
 
     #[test_case(false, 0b0110_0000)]
@@ -1603,14 +1615,14 @@ mod tests {
                     resigned,
                 },
             );
-            let buf = bincode::serialize(&ShredVariant::MerkleCode {
+            let wincode_buf = wincode::serialize(&ShredVariant::MerkleCode {
                 proof_size,
                 resigned,
             })
             .unwrap();
-            assert_eq!(buf, vec![byte]);
+            assert_eq!(wincode_buf, vec![byte]);
             assert_eq!(
-                bincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
+                wincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
                 ShredVariant::MerkleCode {
                     proof_size,
                     resigned,
@@ -1645,14 +1657,14 @@ mod tests {
                     resigned
                 }
             );
-            let buf = bincode::serialize(&ShredVariant::MerkleData {
+            let wincode_buf = wincode::serialize(&ShredVariant::MerkleData {
                 proof_size,
                 resigned,
             })
             .unwrap();
-            assert_eq!(buf, vec![byte]);
+            assert_eq!(wincode_buf, vec![byte]);
             assert_eq!(
-                bincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
+                wincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
                 ShredVariant::MerkleData {
                     proof_size,
                     resigned
@@ -1776,7 +1788,6 @@ mod tests {
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
@@ -1826,7 +1837,6 @@ mod tests {
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(
             shred,
             Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
@@ -1836,38 +1846,42 @@ mod tests {
 
     #[test]
     fn test_shred_flags_serde() {
-        let flags: ShredFlags = bincode::deserialize(&[0b0001_0101]).unwrap();
+        use wincode::{Deserialize as _, Serialize as _};
+
+        let flags = Pod::<ShredFlags>::deserialize(&[0b0001_0101]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b0001_0101).unwrap());
         assert!(!flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 21u8);
-        assert_eq!(bincode::serialize(&flags).unwrap(), [0b0001_0101]);
+        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b0001_0101]);
 
-        let flags: ShredFlags = bincode::deserialize(&[0b0111_0001]).unwrap();
+        let flags = Pod::<ShredFlags>::deserialize(&[0b0111_0001]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b0111_0001).unwrap());
         assert!(flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 49u8);
-        assert_eq!(bincode::serialize(&flags).unwrap(), [0b0111_0001]);
+        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b0111_0001]);
 
-        let flags: ShredFlags = bincode::deserialize(&[0b1110_0101]).unwrap();
+        let flags = Pod::<ShredFlags>::deserialize(&[0b1110_0101]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b1110_0101).unwrap());
         assert!(flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 37u8);
-        assert_eq!(bincode::serialize(&flags).unwrap(), [0b1110_0101]);
+        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b1110_0101]);
 
-        let flags: ShredFlags = bincode::deserialize(&[0b1011_1101]).unwrap();
+        let flags = Pod::<ShredFlags>::deserialize(&[0b1011_1101]).unwrap();
         assert_eq!(flags, ShredFlags::from_bits(0b1011_1101).unwrap());
         assert!(!flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 61u8);
-        assert_eq!(bincode::serialize(&flags).unwrap(), [0b1011_1101]);
+        assert_eq!(Pod::<ShredFlags>::serialize(&flags).unwrap(), [0b1011_1101]);
     }
 
     // Verifies that LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED.
     #[test]
     fn test_shred_flags_data_complete() {
+        use wincode::Deserialize as _;
+
         let mut flags = ShredFlags::empty();
         assert!(!flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
@@ -1882,7 +1896,7 @@ mod tests {
         assert!(flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
 
-        let mut flags: ShredFlags = bincode::deserialize(&[0b1011_1111]).unwrap();
+        let mut flags = Pod::<ShredFlags>::deserialize(&[0b1011_1111]).unwrap();
         assert!(!flags.contains(ShredFlags::DATA_COMPLETE_SHRED));
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         flags.insert(ShredFlags::LAST_SHRED_IN_SLOT);

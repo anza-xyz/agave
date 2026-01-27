@@ -29,6 +29,7 @@ dev-context-only-utils = [
     "solana-transaction/dev-context-only-utils",
 ]
 frozen-abi = [
+    "dev-context-only-utils",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-fee-calculator/frozen-abi",
@@ -54,7 +55,7 @@ modular-bitfield = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
-rand = "0.9.2"
+rand = { workspace = true }
 rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
@@ -110,7 +111,7 @@ assert_matches = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
-rand_chacha = "0.9.0"
+rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

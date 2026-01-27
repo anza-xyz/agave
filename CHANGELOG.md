@@ -27,8 +27,28 @@ Release channels have their own copy of this changelog:
   * `--accounts-db-read-cache-limit-mb`
   * `--accounts-hash-cache-path`
   * `--disable-accounts-disk-index`
+  * `--dev-halt-at-slot`
+  * `--monitor` (`exit` subcommand)
+  * `--wait-for-exit` (`exit` subcommand)
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+* The `--enable-accounts-disk-index` flag is now deprecated. Use `--accounts-index-limit` instead. To retain the same behavior, use `--accounts-index-limit minimal`.
+#### Changes
+* `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
+* Added `--accounts-index-limit` to specify the memory limit of the accounts index.
+### CLI
+#### Deprecations
+* The `ping` command is deprecated and will be removed in v4.1.
+#### Changes
+* Support Trezor hardware wallets using `usb://trezor`
+### Platform tools
+#### Breaking
+* `cargo-build-sbf --debug` now generates a file `program.so.debug` instead of `program.debug`.
+* `cargo-build-sbf --debug` places all debug related objects inside `target/deploy/debug`.
+### Geyser
+#### Changes
+* Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program *does* zero out any fields itself, those will remain zeroed out in the notification.
+
 
 ## 3.1.0
 ### RPC
@@ -48,6 +68,7 @@ deprecated, signaling their inclusion in the Agave Unstable API. Enable the
 `agave-unstable-api` crate feature to acknowledge use of an interface that may break
 without warning. From v4.0.0 onward, symbols in these crates will be unavailable without
 `agave-unstable-api` enabled.
+* The `--dev-halt-at-slot` flag is now deprecated.
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.

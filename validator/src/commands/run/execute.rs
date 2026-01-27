@@ -14,7 +14,7 @@ use {
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
-    rand::{seq::SliceRandom, thread_rng},
+    rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
@@ -33,6 +33,7 @@ use {
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
+        resource_limits,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         tpu::MAX_VOTES_PER_SECOND,
@@ -63,7 +64,6 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
         xdp::{set_cpu_affinity, XdpConfig},
@@ -71,11 +71,11 @@ use {
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
+        env,
         fs::{self, File},
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
-        process::exit,
         str::{self, FromStr},
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
@@ -92,6 +92,12 @@ pub fn execute(
     solana_version: &str,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Debugging panics is easier with a backtrace
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        // Safety: env update is made before any spawned threads might access the environment
+        unsafe { env::set_var("RUST_BACKTRACE", "1") }
+    }
+
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
@@ -122,6 +128,263 @@ pub fn execute(
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
+
+    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
+    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
+    solana_entry::entry::init_poh();
+
+    let bind_addresses = {
+        let parsed = matches
+            .values_of("bind_address")
+            .expect("bind_address should always be present due to default")
+            .map(solana_net_utils::parse_host)
+            .collect::<Result<Vec<_>, _>>()?;
+        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
+    };
+
+    let entrypoint_addrs = run_args.entrypoints;
+    for addr in &entrypoint_addrs {
+        if !run_args.socket_addr_space.check(addr) {
+            Err(format!("invalid entrypoint address: {addr}"))?;
+        }
+    }
+
+    let xdp_interface = matches.value_of("retransmit_xdp_interface");
+    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
+    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
+        XdpConfig::new(
+            xdp_interface,
+            parse_cpu_ranges(cpus).unwrap(),
+            xdp_zero_copy,
+        )
+    });
+
+    let dynamic_port_range =
+        solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
+            .expect("invalid dynamic_port_range");
+
+    let advertised_ip = matches
+        .value_of("advertised_ip")
+        .map(|advertised_ip| {
+            solana_net_utils::parse_host(advertised_ip)
+                .map_err(|err| format!("failed to parse --advertised-ip: {err}"))
+        })
+        .transpose()?;
+
+    let advertised_ip = if let Some(cli_ip) = advertised_ip {
+        cli_ip
+    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
+        bind_addresses.active()
+    } else if !entrypoint_addrs.is_empty() {
+        let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
+        order.shuffle(&mut rng());
+
+        order
+            .into_iter()
+            .find_map(|i| {
+                let entrypoint_addr = &entrypoint_addrs[i];
+                info!(
+                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
+                );
+                solana_net_utils::get_public_ip_addr_with_binding(
+                    entrypoint_addr,
+                    bind_addresses.active(),
+                )
+                .map_or_else(
+                    |err| {
+                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                        None
+                    },
+                    Some,
+                )
+            })
+            .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+    let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
+        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
+            .map_err(|err| format!("unable to find an available gossip port: {err}"))
+    })?;
+
+    let public_tpu_addr = matches
+        .value_of("public_tpu_addr")
+        .map(|public_tpu_addr| {
+            solana_net_utils::parse_host_port(public_tpu_addr)
+                .map_err(|err| format!("failed to parse --public-tpu-address: {err}"))
+        })
+        .transpose()?;
+
+    let public_tpu_forwards_addr = matches
+        .value_of("public_tpu_forwards_addr")
+        .map(|public_tpu_forwards_addr| {
+            solana_net_utils::parse_host_port(public_tpu_forwards_addr)
+                .map_err(|err| format!("failed to parse --public-tpu-forwards-address: {err}"))
+        })
+        .transpose()?;
+
+    let public_tvu_addr = matches
+        .value_of("public_tvu_addr")
+        .map(|public_tvu_addr| {
+            solana_net_utils::parse_host_port(public_tvu_addr)
+                .map_err(|err| format!("failed to parse --public-tvu-address: {err}"))
+        })
+        .transpose()?;
+
+    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
+        Err(String::from(
+            "--public-tvu-address can not be used in a multihoming context",
+        ))?;
+    }
+
+    let tpu_vortexor_receiver_address =
+        matches
+            .value_of("tpu_vortexor_receiver_address")
+            .map(|tpu_vortexor_receiver_address| {
+                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
+                    |err| {
+                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
+                        std::process::exit(1);
+                    },
+                )
+            });
+
+    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
+    let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+
+    let node_config = NodeConfig {
+        advertised_ip,
+        gossip_port,
+        port_range: dynamic_port_range,
+        bind_ip_addrs: bind_addresses.clone(),
+        public_tpu_addr,
+        public_tpu_forwards_addr,
+        public_tvu_addr,
+        num_tvu_receive_sockets: tvu_receive_threads,
+        num_tvu_retransmit_sockets: tvu_retransmit_threads,
+        num_quic_endpoints,
+        vortexor_receiver_addr: tpu_vortexor_receiver_address,
+    };
+
+    let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
+
+    let exit = Arc::new(AtomicBool::new(false));
+
+    #[cfg(target_os = "linux")]
+    let maybe_xdp_retransmit_builder = {
+        use {
+            caps::{
+                CapSet,
+                Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
+            },
+            solana_turbine::xdp::{master_ip_if_bonded, XdpRetransmitBuilder},
+        };
+
+        let mut required_caps = HashSet::new();
+        let mut retained_caps = HashSet::new();
+        let supported_caps = HashSet::from_iter([
+            CAP_BPF,
+            CAP_NET_ADMIN,
+            CAP_NET_RAW,
+            CAP_PERFMON,
+            CAP_SYS_NICE,
+        ]);
+
+        if let Some(xdp_config) = retransmit_xdp.as_ref() {
+            required_caps.insert(CAP_NET_ADMIN);
+            required_caps.insert(CAP_NET_RAW);
+            if xdp_config.zero_copy {
+                required_caps.insert(CAP_BPF);
+                required_caps.insert(CAP_PERFMON);
+            }
+        }
+
+        let snapshot_packager_niceness_adj =
+            value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
+
+        if snapshot_packager_niceness_adj != 0 || run_args.json_rpc_config.rpc_niceness_adj != 0 {
+            required_caps.insert(CAP_SYS_NICE);
+            retained_caps.insert(CAP_SYS_NICE);
+        }
+
+        // lazy dev check
+        assert!(
+            required_caps.is_subset(&supported_caps),
+            "required_caps contains a cap not in supported_caps",
+        );
+
+        // validate and minimize the permitted set
+        let current_permitted =
+            caps::read(None, CapSet::Permitted).expect("permitted capset to be readable");
+        let missing_caps = required_caps
+            .difference(&current_permitted)
+            .collect::<Vec<_>>();
+        if !missing_caps.is_empty() {
+            error!(
+                "the current configuration requires the following capabilities, which have not \
+                 been permitted to the current process: {missing_caps:?}",
+            );
+            std::process::exit(1);
+        }
+        // warn about extraneous caps that no configuration requires
+        let extra_caps = current_permitted
+            .difference(&supported_caps)
+            .collect::<Vec<_>>();
+        if !extra_caps.is_empty() {
+            warn!(
+                "dropping extraneous capabilities ({extra_caps:?}) from the current process. \
+                 consider removing them from your operational configuration.",
+            );
+        }
+        // drop all caps that the current configuration does not require
+        caps::set(None, CapSet::Permitted, &required_caps)
+            .expect("permitted capset to be writable");
+
+        // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
+        // capabilities do not leak, leaving the process in a state where it could
+        // potentially be used as a privilege escalation gadget
+        let maybe_xdp_retransmit_builder = retransmit_xdp.clone().map(|xdp_config| {
+            let src_port = node.sockets.retransmit_sockets[0]
+                .local_addr()
+                .expect("failed to get local address")
+                .port();
+            let src_ip = match node.bind_ip_addrs.active() {
+                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+                IpAddr::V4(_unspecified) => xdp_config
+                    .interface
+                    .as_ref()
+                    .and_then(|iface| master_ip_if_bonded(iface)),
+                _ => panic!("IPv6 not supported"),
+            };
+            XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
+                .expect("failed to create xdp retransmitter")
+        });
+
+        // we're done with caps needed to init xdp now. remove them from our process
+        caps::set(None, CapSet::Permitted, &retained_caps)
+            .expect("linux allows permitted capset to be set");
+
+        maybe_xdp_retransmit_builder
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let maybe_xdp_retransmit_builder = None;
+
+    let reserved = retransmit_xdp
+        .map(|xdp| xdp.cpus.clone())
+        .unwrap_or_default()
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    if !reserved.is_empty() {
+        let available = core_affinity::get_core_ids()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|core_id| core_id.id)
+            .collect::<HashSet<_>>();
+        let available = available.difference(&reserved);
+        set_cpu_affinity(available.into_iter().copied()).unwrap();
+    }
 
     solana_core::validator::report_target_features();
 
@@ -201,15 +464,6 @@ pub fn execute(
         "--gossip-validator",
     )?;
 
-    let bind_addresses = {
-        let parsed = matches
-            .values_of("bind_address")
-            .expect("bind_address should always be present due to default")
-            .map(solana_net_utils::parse_host)
-            .collect::<Result<Vec<_>, _>>()?;
-        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
-    };
-
     if bind_addresses.len() > 1 {
         for (flag, msg) in [
             (
@@ -251,13 +505,6 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
-    let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
-        warn!("Submission of TPU transactions via UDP is deprecated.");
-        true
-    } else {
-        DEFAULT_TPU_ENABLE_UDP
-    };
-
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
@@ -273,12 +520,6 @@ pub fn execute(
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
     };
-    let entrypoint_addrs = run_args.entrypoints;
-    for addr in &entrypoint_addrs {
-        if !run_args.socket_addr_space.check(addr) {
-            Err(format!("invalid entrypoint address: {addr}"))?;
-        }
-    }
     // TODO: Once entrypoints are updated to return shred-version, this should
     // abort if it fails to obtain a shred-version, so that nodes always join
     // gossip with a valid shred-version. The code to adopt entrypoint shred
@@ -293,8 +534,32 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
+    let accounts_index_limit =
+        value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
+    let index_limit = match accounts_index_limit.as_str() {
+        "minimal" => IndexLimit::Minimal,
+        "25GB" => IndexLimit::Threshold(25_000_000_000),
+        "50GB" => IndexLimit::Threshold(50_000_000_000),
+        "100GB" => IndexLimit::Threshold(100_000_000_000),
+        "200GB" => IndexLimit::Threshold(200_000_000_000),
+        "400GB" => IndexLimit::Threshold(400_000_000_000),
+        "800GB" => IndexLimit::Threshold(800_000_000_000),
+        "unlimited" => IndexLimit::InMemOnly,
+        x => {
+            // clap will enforce only the above values are possible
+            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+        }
+    };
+    // Note: need to still handle --enable-accounts-disk-index until it is removed
+    let index_limit = if matches.is_present("enable_accounts_disk_index") {
+        IndexLimit::Minimal
+    } else {
+        index_limit
+    };
+
     let mut accounts_index_config = AccountsIndexConfig {
         num_flush_threads: Some(accounts_index_flush_threads),
+        index_limit,
         ..AccountsIndexConfig::default()
     };
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
@@ -305,12 +570,6 @@ pub fn execute(
     {
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
-
-    accounts_index_config.index_limit = if !matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::InMemOnly
-    } else {
-        IndexLimit::Minimal
-    };
 
     {
         let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
@@ -410,7 +669,7 @@ pub fn execute(
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
-        base_working_path: Some(ledger_path.clone()),
+        bank_hash_details_dir: ledger_path.clone(),
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
@@ -431,7 +690,9 @@ pub fn execute(
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         mark_obsolete_accounts,
-        memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
+        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
+            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
+        ),
         ..AccountsDbConfig::default()
     };
 
@@ -447,16 +708,6 @@ pub fn execute(
     };
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
-
-    let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
-    });
 
     let account_paths: Vec<PathBuf> =
         if let Ok(account_paths) = values_t!(matches, "account_paths", String) {
@@ -504,7 +755,6 @@ pub fn execute(
         logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
-        halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
@@ -581,7 +831,6 @@ pub fn execute(
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         turbine_disabled: Arc::<AtomicBool>::default(),
-        retransmit_xdp,
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
             matches,
@@ -618,24 +867,6 @@ pub fn execute(
         .into(),
     };
 
-    let reserved = validator_config
-        .retransmit_xdp
-        .as_ref()
-        .map(|xdp| xdp.cpus.clone())
-        .unwrap_or_default()
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    if !reserved.is_empty() {
-        let available = core_affinity::get_core_ids()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|core_id| core_id.id)
-            .collect::<HashSet<_>>();
-        let available = available.difference(&reserved);
-        set_cpu_affinity(available.into_iter().copied()).unwrap();
-    }
-
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {
             warn!("--vote-account not specified, validator will not vote");
@@ -643,10 +874,6 @@ pub fn execute(
         }
         Keypair::new().pubkey()
     });
-
-    let dynamic_port_range =
-        solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
-            .expect("invalid dynamic_port_range");
 
     let maximum_local_snapshot_age = value_t_or_exit!(matches, "maximum_local_snapshot_age", u64);
     let minimal_snapshot_download_speed =
@@ -664,6 +891,16 @@ pub fn execute(
             );
         }
         BlockVerificationMethod::UnifiedScheduler => {}
+    }
+    if matches!(
+        validator_config.block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        warn!(
+            "Currently, the unified-scheduler method is experimental for block-production. It has \
+             known security issues and should be used only for developing and benchmarking \
+             purposes"
+        );
     }
 
     let public_rpc_addr = matches
@@ -712,95 +949,6 @@ pub fn execute(
         },
     );
 
-    let advertised_ip = matches
-        .value_of("advertised_ip")
-        .map(|advertised_ip| {
-            solana_net_utils::parse_host(advertised_ip)
-                .map_err(|err| format!("failed to parse --advertised-ip: {err}"))
-        })
-        .transpose()?;
-
-    let advertised_ip = if let Some(cli_ip) = advertised_ip {
-        cli_ip
-    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
-        bind_addresses.active()
-    } else if !entrypoint_addrs.is_empty() {
-        let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
-        order.shuffle(&mut thread_rng());
-
-        order
-            .into_iter()
-            .find_map(|i| {
-                let entrypoint_addr = &entrypoint_addrs[i];
-                info!(
-                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
-                );
-                solana_net_utils::get_public_ip_addr_with_binding(
-                    entrypoint_addr,
-                    bind_addresses.active(),
-                )
-                .map_or_else(
-                    |err| {
-                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                        None
-                    },
-                    Some,
-                )
-            })
-            .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
-    } else {
-        IpAddr::V4(Ipv4Addr::LOCALHOST)
-    };
-    let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
-            .map_err(|err| format!("unable to find an available gossip port: {err}"))
-    })?;
-
-    let public_tpu_addr = matches
-        .value_of("public_tpu_addr")
-        .map(|public_tpu_addr| {
-            solana_net_utils::parse_host_port(public_tpu_addr)
-                .map_err(|err| format!("failed to parse --public-tpu-address: {err}"))
-        })
-        .transpose()?;
-
-    let public_tpu_forwards_addr = matches
-        .value_of("public_tpu_forwards_addr")
-        .map(|public_tpu_forwards_addr| {
-            solana_net_utils::parse_host_port(public_tpu_forwards_addr)
-                .map_err(|err| format!("failed to parse --public-tpu-forwards-address: {err}"))
-        })
-        .transpose()?;
-
-    let public_tvu_addr = matches
-        .value_of("public_tvu_addr")
-        .map(|public_tvu_addr| {
-            solana_net_utils::parse_host_port(public_tvu_addr)
-                .map_err(|err| format!("failed to parse --public-tvu-address: {err}"))
-        })
-        .transpose()?;
-
-    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
-        Err(String::from(
-            "--public-tvu-address can not be used in a multihoming context",
-        ))?;
-    }
-
-    let tpu_vortexor_receiver_address =
-        matches
-            .value_of("tpu_vortexor_receiver_address")
-            .map(|tpu_vortexor_receiver_address| {
-                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
-                    |err| {
-                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
-                        exit(1);
-                    },
-                )
-            });
-
-    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
-    let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
-
     let tpu_max_connections_per_peer: Option<u64> = matches
         .value_of("tpu_max_connections_per_peer")
         .and_then(|v| v.parse().ok());
@@ -821,26 +969,10 @@ pub fn execute(
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
 
-    let node_config = NodeConfig {
-        advertised_ip,
-        gossip_port,
-        port_range: dynamic_port_range,
-        bind_ip_addrs: bind_addresses,
-        public_tpu_addr,
-        public_tpu_forwards_addr,
-        public_tvu_addr,
-        num_tvu_receive_sockets: tvu_receive_threads,
-        num_tvu_retransmit_sockets: tvu_retransmit_threads,
-        num_quic_endpoints,
-        vortexor_receiver_addr: tpu_vortexor_receiver_address,
-    };
-
     let cluster_entrypoints = entrypoint_addrs
         .iter()
         .map(ContactInfo::new_gossip_entry_point)
         .collect::<Vec<_>>();
-
-    let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
     if restricted_repair_only_mode {
         if validator_config.wen_restart_proto_path.is_some() {
@@ -883,9 +1015,6 @@ pub fn execute(
         }
     }
 
-    solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
-    solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
-    solana_entry::entry::init_poh();
     snapshot_utils::remove_tmp_snapshot_archives(
         &validator_config.snapshot_config.full_snapshot_archives_dir,
     );
@@ -980,7 +1109,7 @@ pub fn execute(
         },
     };
 
-    let validator = match Validator::new(
+    let validator = match Validator::new_with_exit(
         node,
         identity_keypair,
         &ledger_path,
@@ -995,12 +1124,13 @@ pub fn execute(
         ValidatorTpuConfig {
             vote_use_quic,
             tpu_connection_pool_size,
-            tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
         },
         admin_service_post_init,
+        maybe_xdp_retransmit_builder,
+        exit,
     ) {
         Ok(validator) => Ok(validator),
         Err(err) => {
@@ -1014,7 +1144,7 @@ pub fn execute(
                     "Please remove --wen_restart and use --wait_for_supermajority as instructed \
                      above"
                 );
-                exit(200);
+                std::process::exit(200);
             }
             Err(format!("{err:?}"))
         }
@@ -1064,7 +1194,7 @@ fn validators_set(
 fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -> Option<u16> {
     let entrypoints = {
         let mut index: Vec<_> = (0..entrypoints.len()).collect();
-        index.shuffle(&mut rand::thread_rng());
+        index.shuffle(&mut rand::rng());
         index.into_iter().map(|i| &entrypoints[i])
     };
     for entrypoint in entrypoints {

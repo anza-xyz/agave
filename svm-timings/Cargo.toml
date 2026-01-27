@@ -19,3 +19,6 @@ agave-unstable-api = []
 eager = { workspace = true }
 enum-iterator = { workspace = true }
 solana-pubkey = { workspace = true }
+
+[dev-dependencies]
+solana-pubkey = { workspace = true, features = ["rand"] }

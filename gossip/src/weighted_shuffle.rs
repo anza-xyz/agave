@@ -1,13 +1,12 @@
 //! The `weighted_shuffle` module provides an iterator over shuffled weights.
 
 use {
+    agave_random::range::UniformU64Sampler,
     num_traits::CheckedAdd,
-    rand::{
-        distributions::uniform::{SampleUniform, UniformSampler},
-        Rng,
-    },
+    rand::Rng,
     std::{
         borrow::Borrow,
+        num::NonZero,
         ops::{AddAssign, SubAssign},
     },
 };
@@ -174,15 +173,13 @@ impl WeightedShuffle {
 impl WeightedShuffle {
     // Equivalent to weighted_shuffle.shuffle(&mut rng).next()
     pub fn first<R: Rng>(&self, rng: &mut R) -> Option<usize> {
-        if self.weight > 0 {
-            let sample = <u64 as SampleUniform>::Sampler::sample_single(0, self.weight, rng);
+        if let Some(weight) = NonZero::new(self.weight) {
+            let sample = UniformU64Sampler::new_like_trait_sample(weight).sample(rng);
             let (index, _) = self.search(sample);
             return Some(index);
         }
-        if self.zeros.is_empty() {
-            return None;
-        }
-        let index = <u64 as SampleUniform>::Sampler::sample_single(0, self.zeros.len() as u64, rng);
+        let num_zeros = NonZero::new(self.zeros.len() as u64)?;
+        let index = UniformU64Sampler::new_like_trait_sample(num_zeros).sample(rng);
         self.zeros.get(index as usize).copied()
     }
 }
@@ -190,17 +187,14 @@ impl WeightedShuffle {
 impl WeightedShuffle {
     pub fn shuffle<'a, R: Rng>(&'a mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
-            if self.weight > 0 {
-                let sample = <u64 as SampleUniform>::Sampler::sample_single(0, self.weight, rng);
+            if let Some(weight) = NonZero::new(self.weight) {
+                let sample = UniformU64Sampler::new_like_trait_sample(weight).sample(rng);
                 let (index, weight) = self.search(sample);
                 self.remove(index, weight);
                 return Some(index);
             }
-            if self.zeros.is_empty() {
-                return None;
-            }
-            let index =
-                <u64 as SampleUniform>::Sampler::sample_single(0, self.zeros.len() as u64, rng);
+            let num_zeros = NonZero::new(self.zeros.len() as u64)?;
+            let index = UniformU64Sampler::new_like_trait_sample(num_zeros).sample(rng);
             Some(self.zeros.swap_remove(index as usize))
         })
     }
@@ -246,6 +240,7 @@ impl Clone for WeightedShuffle {
 mod tests {
     use {
         super::*,
+        agave_random::range::random_u64_range,
         itertools::Itertools,
         rand::SeedableRng,
         rand_chacha::{ChaCha8Rng, ChaChaRng},
@@ -271,16 +266,20 @@ mod tests {
         }));
         assert!(mask.iter().all(|&x| x));
         // Assert that the random shuffle is weighted.
-        assert!(shuffle
-            .chunks(shuffle.len() / 10)
-            .map(|chunk| chunk.iter().map(|&i| weights[i]).sum::<u64>())
-            .tuple_windows()
-            .all(|(a, b)| a > b));
+        assert!(
+            shuffle
+                .chunks(shuffle.len() / 10)
+                .map(|chunk| chunk.iter().map(|&i| weights[i]).sum::<u64>())
+                .tuple_windows()
+                .all(|(a, b)| a > b)
+        );
         // Assert that zero weights only appear at the end of the shuffle.
-        assert!(shuffle
-            .iter()
-            .tuple_windows()
-            .all(|(&i, &j)| weights[i] != 0 || weights[j] == 0));
+        assert!(
+            shuffle
+                .iter()
+                .tuple_windows()
+                .all(|(&i, &j)| weights[i] != 0 || weights[j] == 0)
+        );
     }
 
     fn weighted_shuffle_slow<R>(rng: &mut R, mut weights: Vec<u64>) -> Vec<usize>
@@ -296,7 +295,7 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         while high != 0 {
-            let sample = rng.gen_range(0..high);
+            let sample = random_u64_range(rng, 0..high);
             let index = weights
                 .iter()
                 .scan(0, |acc, &w| {
@@ -309,8 +308,8 @@ mod tests {
             high -= weights[index];
             weights[index] = 0;
         }
-        while !zeros.is_empty() {
-            let index = <u64 as SampleUniform>::Sampler::sample_single(0, zeros.len() as u64, rng);
+        while let Some(num_zeros) = NonZero::new(zeros.len() as u64) {
+            let index = UniformU64Sampler::new_like_trait_sample(num_zeros).sample(rng);
             shuffle.push(zeros.swap_remove(index as usize));
         }
         shuffle
@@ -343,7 +342,7 @@ mod tests {
     #[test]
     fn test_weighted_shuffle_empty_weights() {
         let weights = Vec::<u64>::new();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let shuffle = WeightedShuffle::new("", weights);
         assert!(shuffle.clone().shuffle(&mut rng).next().is_none());
         assert!(shuffle.first(&mut rng).is_none());
@@ -450,7 +449,9 @@ mod tests {
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [10, 3, 14, 18, 0, 9, 19, 6, 2, 1, 17, 7, 13, 15, 20, 12, 4, 8, 5, 16, 11]
+            [
+                10, 3, 14, 18, 0, 9, 19, 6, 2, 1, 17, 7, 13, 15, 20, 12, 4, 8, 5, 16, 11
+            ]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(10));
@@ -470,7 +471,9 @@ mod tests {
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [3, 15, 10, 6, 19, 17, 2, 0, 9, 20, 1, 14, 7, 8, 12, 18, 4, 13, 5, 11, 16]
+            [
+                3, 15, 10, 6, 19, 17, 2, 0, 9, 20, 1, 14, 7, 8, 12, 18, 4, 13, 5, 11, 16
+            ]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(3));
@@ -510,13 +513,13 @@ mod tests {
         )
         .map(ChaChaRng::from_seed)
         .unwrap();
-        let num_weights = rng.gen_range(1..=100_000);
+        let num_weights = random_u64_range(&mut rng, 1..=100_000) as usize;
         assert!((8143..=85348).contains(&num_weights), "{num_weights}");
         let weights: Vec<u64> = repeat_with(|| {
-            if rng.gen_ratio(1, 100) {
+            if rng.random_ratio(1, 100) {
                 0u64 // 1% zero weights.
             } else {
-                rng.gen_range(0..=(u64::MAX / num_weights as u64))
+                random_u64_range(&mut rng, 0..=(u64::MAX / num_weights as u64))
             }
         })
         .take(num_weights)
@@ -534,10 +537,10 @@ mod tests {
         assert_eq!(shuffle1.len(), num_weights);
         verify_shuffle(&shuffle1, &weights, vec![false; num_weights]);
         // Drop some of the weights and re-shuffle.
-        let num_drops = rng.gen_range(1..1_000);
+        let num_drops = random_u64_range(&mut rng, 1..1_000) as usize;
         assert!((253..=981).contains(&num_drops), "{num_drops}");
         let mut mask = vec![false; num_weights];
-        repeat_with(|| rng.gen_range(0..num_weights))
+        repeat_with(|| random_u64_range(&mut rng, 0..num_weights as u64) as usize)
             .filter(|&index| {
                 if mask[index] {
                     false
@@ -567,8 +570,10 @@ mod tests {
         test_weighted_shuffle_match_slow_impl::<ChaCha8Rng>();
 
         fn test_weighted_shuffle_match_slow_impl<R: Rng + rand::SeedableRng<Seed = [u8; 32]>>() {
-            let mut rng = rand::thread_rng();
-            let weights: Vec<u64> = repeat_with(|| rng.gen_range(0..1000)).take(997).collect();
+            let mut rng = rand::rng();
+            let weights: Vec<u64> = repeat_with(|| random_u64_range(&mut rng, 0..1000))
+                .take(997)
+                .collect();
             for _ in 0..10 {
                 let mut seed = [0u8; 32];
                 rng.fill(&mut seed[..]);
@@ -587,8 +592,8 @@ mod tests {
 
     #[test]
     fn test_weighted_shuffle_paranoid() {
-        let mut rng = rand::thread_rng();
-        let seed = rng.gen::<[u8; 32]>();
+        let mut rng = rand::rng();
+        let seed = rng.random::<[u8; 32]>();
         let rng = ChaCha8Rng::from_seed(seed);
         test_weighted_shuffle_paranoid_impl(rng);
         let rng = ChaChaRng::from_seed(seed);
@@ -596,7 +601,9 @@ mod tests {
 
         fn test_weighted_shuffle_paranoid_impl<R: Rng + Clone>(mut rng: R) {
             for size in 0..1351 {
-                let weights: Vec<_> = repeat_with(|| rng.gen_range(0..1000)).take(size).collect();
+                let weights: Vec<_> = repeat_with(|| random_u64_range(&mut rng, 0..1000))
+                    .take(size)
+                    .collect();
                 let shuffle_slow = weighted_shuffle_slow(&mut rng.clone(), weights.clone());
                 let mut shuffle = WeightedShuffle::new("", weights);
                 if size > 0 {

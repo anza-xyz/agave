@@ -159,7 +159,7 @@ impl ForkProgress {
         num_dropped_blocks_on_fork: u64,
     ) -> Self {
         let validator_stake_info = {
-            if bank.collector_id() == validator_identity {
+            if bank.leader_id() == validator_identity {
                 Some(ValidatorStakeInfo::new(
                     *validator_vote_pubkey,
                     bank.epoch_vote_account_stake(validator_vote_pubkey),

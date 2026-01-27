@@ -1,0 +1,18 @@
+[workspace]
+members = ["a", "b"]
+
+exclude = ["sub", "d"]
+
+resolver = "2"
+
+[workspace.package]
+version = "1.2.3"
+edition = "2021"
+
+
+[workspace.dependencies]
+a = { path = "a", version = "=1.2.3" }
+b = { path = "b", version = "=1.2.3" }
+byte-slice-cast = "=1.2.3"
+cc = "1.2.3"
+scopeguard = "1.2.0"

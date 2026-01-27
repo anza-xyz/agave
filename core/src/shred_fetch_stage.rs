@@ -255,7 +255,6 @@ impl ShredFetchStage {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         sockets: Vec<Arc<UdpSocket>>,
-        turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
         sender: EvictingSender<PacketBatch>,
@@ -347,38 +346,6 @@ impl ShredFetchStage {
                     .unwrap(),
             ]);
         }
-        // Turbine shreds fetched over QUIC protocol.
-        let (packet_sender, packet_receiver) = unbounded();
-        tvu_threads.extend([
-            Builder::new()
-                .name("solTvuRecvQuic".to_string())
-                .spawn(|| {
-                    receive_quic_datagrams(
-                        turbine_quic_endpoint_receiver,
-                        PacketFlags::empty(),
-                        packet_sender,
-                        exit,
-                    )
-                })
-                .unwrap(),
-            Builder::new()
-                .name("solTvuFetchQuic".to_string())
-                .spawn(move || {
-                    let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-                    Self::modify_packets(
-                        packet_receiver,
-                        None,
-                        sender,
-                        &sharable_banks,
-                        shred_version,
-                        "shred_fetch_quic",
-                        PacketFlags::empty(),
-                        None, // repair_context
-                        turbine_disabled,
-                    )
-                })
-                .unwrap(),
-        ]);
         Self {
             thread_hdls: tvu_threads,
         }

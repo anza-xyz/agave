@@ -1317,13 +1317,13 @@ pub fn list(config_file: &str) -> Result<(), String> {
         )
     })?;
 
+    let current_version =
+        load_release_version(&config.active_release_dir().join("version.yml"))?.channel;
+
     for entry in entries {
         match entry {
             Ok(entry) => {
                 let dir_name = entry.file_name();
-                let current_version =
-                    load_release_version(&config.active_release_dir().join("version.yml"))?.channel;
-
                 let current = if current_version.contains(dir_name.to_string_lossy().as_ref()) {
                     " (current)"
                 } else {

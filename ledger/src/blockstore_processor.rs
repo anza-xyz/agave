@@ -151,7 +151,7 @@ pub fn execute_batch<'a>(
     replay_vote_sender: Option<&'a ReplayVoteSender>,
     timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &'a PrioritizationFeeCache,
+    prioritization_fee_cache: Option<&'a PrioritizationFeeCache>,
     extra_pre_commit_callback: Option<
         impl FnOnce(&Result<ProcessedTransaction>) -> Result<Option<usize>>,
     >,
@@ -260,12 +260,13 @@ pub fn execute_batch<'a>(
         replay_vote_sender,
     );
 
-    let committed_transactions = commit_results
-        .iter()
-        .zip(batch.sanitized_transactions())
-        .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
-    prioritization_fee_cache.update(bank, committed_transactions);
-
+    if let Some(prioritization_fee_cache) = prioritization_fee_cache {
+        let committed_transactions = commit_results
+            .iter()
+            .zip(batch.sanitized_transactions())
+            .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
+        prioritization_fee_cache.update(bank, committed_transactions);
+    }
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions: Vec<SanitizedTransaction> = batch
             .sanitized_transactions()
@@ -375,7 +376,7 @@ fn execute_batches_internal(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> Result<ExecuteBatchesInternalMetrics> {
     assert!(!batches.is_empty());
     let execution_timings_per_thread: Mutex<HashMap<usize, ThreadExecuteTimings>> =
@@ -455,7 +456,7 @@ fn process_batches(
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_execution_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> Result<()> {
     if bank.has_installed_scheduler() {
         debug!(
@@ -540,7 +541,7 @@ fn execute_batches(
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> Result<()> {
     if locked_entries.len() == 0 {
         return Ok(());
@@ -624,7 +625,6 @@ pub fn process_entries_for_tests(
     })
     .collect();
 
-    let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
     let result = process_entries(
         bank,
         &replay_tx_thread_pool,
@@ -633,7 +633,7 @@ pub fn process_entries_for_tests(
         replay_vote_sender,
         &mut batch_timing,
         None,
-        &ignored_prioritization_fee_cache,
+        None,
     );
 
     debug!("process_entries: {batch_timing:?}");
@@ -648,7 +648,7 @@ fn process_entries(
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> Result<()> {
     // accumulator for entries that can be processed in parallel
     let mut batches = vec![];
@@ -1136,7 +1136,6 @@ fn confirm_full_slot(
 ) -> result::Result<(), BlockstoreProcessorError> {
     let mut confirmation_timing = ConfirmationTiming::default();
     let skip_verification = !opts.run_verification;
-    let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
 
     confirm_slot(
         blockstore,
@@ -1150,7 +1149,7 @@ fn confirm_full_slot(
         replay_vote_sender,
         opts.allow_dead_slots,
         opts.runtime_config.log_messages_bytes_limit,
-        &ignored_prioritization_fee_cache,
+        None,
     )?;
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
@@ -1488,7 +1487,7 @@ pub fn confirm_slot(
     replay_vote_sender: Option<&ReplayVoteSender>,
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
 
@@ -1533,7 +1532,7 @@ fn confirm_slot_entries(
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let ConfirmationTiming {
         confirmation_elapsed,
@@ -4861,7 +4860,7 @@ pub mod tests {
             None,
             None,
             None,
-            &PrioritizationFeeCache::new(0u64),
+            None,
         )
     }
 
@@ -4954,7 +4953,7 @@ pub mod tests {
             None,
             None,
             None,
-            &PrioritizationFeeCache::new(0u64),
+            None,
         )
         .unwrap();
         assert_eq!(progress.num_txs, 2);
@@ -4998,7 +4997,7 @@ pub mod tests {
             None,
             None,
             None,
-            &PrioritizationFeeCache::new(0u64),
+            None,
         )
         .unwrap();
         assert_eq!(progress.num_txs, 5);
@@ -5077,7 +5076,6 @@ pub mod tests {
 
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut batch_execution_timing = BatchExecutionTiming::default();
-        let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
         let result = process_batches(
             &bank,
             &replay_tx_thread_pool,
@@ -5086,7 +5084,7 @@ pub mod tests {
             None,
             &mut batch_execution_timing,
             None,
-            &ignored_prioritization_fee_cache,
+            None,
         );
         if should_succeed {
             assert_matches!(result, Ok(()));
@@ -5170,7 +5168,6 @@ pub mod tests {
             batch,
             transaction_indexes: vec![],
         };
-        let prioritization_fee_cache = PrioritizationFeeCache::default();
         let mut timing = ExecuteTimings::default();
         let (sender, receiver) = crossbeam_channel::unbounded();
 
@@ -5188,7 +5185,7 @@ pub mod tests {
             None,
             &mut timing,
             None,
-            &prioritization_fee_cache,
+            None,
             Some(|processing_result: &'_ Result<_>| {
                 is_called = true;
                 let ok = poh_result?;
@@ -5240,7 +5237,7 @@ pub mod tests {
         const HASHES_PER_TICK: u64 = 10;
         const TICKS_PER_SLOT: u64 = 2;
 
-        let collector_id = Pubkey::new_unique();
+        let leader_id = Pubkey::new_unique();
 
         let GenesisConfigInfo {
             mut genesis_config,
@@ -5266,7 +5263,7 @@ pub mod tests {
         assert_eq!(slot_0_bank.get_hash_age(&genesis_hash), Some(1));
         assert_eq!(slot_0_bank.get_hash_age(&slot_0_hash), Some(0));
 
-        let new_bank = Bank::new_from_parent(slot_0_bank, &collector_id, 2);
+        let new_bank = Bank::new_from_parent(slot_0_bank, &leader_id, 2);
         let slot_2_bank = bank_forks
             .write()
             .unwrap()

@@ -137,6 +137,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         usage_warning: "CUDA support will be dropped"
     );
     add_arg!(
+        // deprecated in v4.0.0
+        Arg::with_name("enable_accounts_disk_index")
+            .long("enable-accounts-disk-index")
+            .help("Enables the disk-based accounts index")
+            .conflicts_with("accounts_index_limit"),
+        replaced_by: "accounts-index-limit",
+    );
+    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("tpu_coalesce_ms")
             .long("tpu-coalesce-ms")
@@ -145,6 +153,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .validator(is_parsable::<u64>)
             .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
             usage_warning:"tpu_coalesce will be dropped (currently ignored)",
+    );
+    add_arg!(
+        // deprecated in v4.0.0
+        Arg::with_name("tpu_connection_pool_size")
+            .long("tpu-connection-pool-size")
+            .takes_value(true)
+            .default_value( Box::leak( format!("{DEFAULT_TPU_CONNECTION_POOL_SIZE}").into_boxed_str()))
+            .validator(is_parsable::<usize>)
+            .help("Controls the TPU connection pool size per remote address"),
+         usage_warning:"This parameter is misleading, avoid setting it",
     );
     add_arg!(
         // deprecated in v3.1.0

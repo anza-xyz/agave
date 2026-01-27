@@ -1444,7 +1444,7 @@ mod tests {
         solana_signer::Signer,
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
-        solana_vote_interface::state::{TowerSync, Vote},
+        solana_vote_interface::state::{TowerSync, Vote, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
         solana_vote_program::vote_state::create_v4_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},
         tempfile::TempDir,
@@ -1770,7 +1770,7 @@ mod tests {
                 assert!(wait_for_wen_restart(wen_restart_config).is_ok());
             })
             .unwrap();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut expected_received_last_voted_fork_slots = HashMap::new();
         let validators_to_take: usize =
             (WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT * TOTAL_VALIDATOR_COUNT as u64 / 100 - 1)
@@ -1989,9 +1989,12 @@ mod tests {
                         VoteAccount::try_from(create_v4_account_with_authorized(
                             &node_id,
                             &authorized_voter,
+                            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
                             &node_id,
-                            None,
                             0,
+                            &node_id,
+                            0,
+                            &node_id,
                             100,
                         ))
                         .unwrap(),
@@ -2066,7 +2069,7 @@ mod tests {
             TICKS_PER_SLOT,
             new_root_bank.last_blockhash(),
         );
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         // Everyone except 0 votes for old_epoch_bank.
         for (index, keypairs) in test_state
             .validator_voting_keypairs
@@ -2562,7 +2565,7 @@ mod tests {
             }
         )
         .is_ok());
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut expected_messages = HashMap::new();
         let expected_slots_to_repair: Vec<Slot> =
             (last_vote_slot + 1..last_vote_slot + 3).collect();
@@ -3173,7 +3176,7 @@ mod tests {
             .take(validators_to_take)
         {
             let node_pubkey = keypair.node_keypair.pubkey();
-            let node = ContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
+            let node = ContactInfo::new_rand(&mut rand::rng(), Some(node_pubkey));
             let now = timestamp();
             push_restart_heaviest_fork(
                 test_state.cluster_info.clone(),
@@ -3429,7 +3432,7 @@ mod tests {
 
     #[test]
     fn test_receive_restart_heaviest_fork() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let coordinator_keypair = Keypair::new();
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -3661,7 +3664,7 @@ mod tests {
         let coordinator_keypair =
             &test_state.validator_voting_keypairs[COORDINATOR_INDEX].node_keypair;
         config.wen_restart_coordinator = coordinator_keypair.pubkey();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let node = ContactInfo::new_rand(&mut rng, Some(coordinator_keypair.pubkey()));
         let now = timestamp();
         push_restart_heaviest_fork(

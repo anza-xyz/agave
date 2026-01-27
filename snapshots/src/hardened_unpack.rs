@@ -1,7 +1,7 @@
 use {
     agave_fs::file_io::{self, FileCreator},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_genesis_config::DEFAULT_GENESIS_FILE,
     std::{
         fs::{self, File},
@@ -15,6 +15,7 @@ use {
     tar::{
         Archive,
         EntryType::{Directory, GNUSparse, Regular},
+        Unpacked,
     },
     thiserror::Error,
 };
@@ -197,13 +198,15 @@ fn unpack_entry<'a, R: Read>(
         _ => 0o755,
     };
     if should_fallback_to_tar_unpack(&entry) {
-        entry.unpack(&dst)?;
+        let unpacked = entry.unpack(&dst)?;
+
         // Sanitize permissions.
         file_io::set_path_permissions(&dst, mode)?;
 
-        if !entry.header().entry_type().is_dir() {
+        if let Unpacked::File(unpacked_file) = unpacked {
             // Process file after setting permissions
-            files_creator.file_complete(dst);
+            let size = entry.header().size()?;
+            files_creator.file_complete(unpacked_file, dst, size);
         }
         return Ok(());
     }
@@ -341,7 +344,7 @@ where
             if is_valid_snapshot_archive_entry(parts, kind) {
                 if let ["accounts", file] = parts {
                     // Randomly distribute the accounts files about the available `account_paths`,
-                    let path_index = thread_rng().gen_range(0..account_paths.len());
+                    let path_index = rng().random_range(0..account_paths.len());
                     match account_paths
                         .get(path_index)
                         .map(|path_buf| path_buf.as_path())
@@ -452,7 +455,7 @@ fn is_valid_genesis_archive_entry<'a>(
 mod tests {
     use {
         super::*,
-        agave_fs::file_io::file_creator,
+        agave_fs::{file_io::file_creator, io_setup::IoSetupState},
         assert_matches::assert_matches,
         std::io::BufReader,
         tar::{Builder, Header},
@@ -699,7 +702,9 @@ mod tests {
     }
 
     fn finalize_and_unpack_snapshot(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        let file_creator = file_creator(256, |_| {})?;
+        let file_creator = file_creator(256, &IoSetupState::default(), |file_info| {
+            Some(file_info.file)
+        })?;
         with_finalize_and_unpack(archive, move |a, b| {
             unpack_snapshot_with_processors(a, file_creator, b, &[PathBuf::new()], |_, _| {})
                 .map(|_| ())
@@ -707,7 +712,9 @@ mod tests {
     }
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        let file_creator = file_creator(0, |_| {})?;
+        let file_creator = file_creator(0, &IoSetupState::default(), |file_info| {
+            Some(file_info.file)
+        })?;
         with_finalize_and_unpack(archive, move |a, b| {
             unpack_genesis(a, file_creator, b, MAX_GENESIS_SIZE_FOR_TESTS)
         })
@@ -990,8 +997,10 @@ mod tests {
         archive.append(&header, data).unwrap();
         let result = with_finalize_and_unpack(archive, |ar, tmp| {
             let tmp_path_buf = tmp.to_path_buf();
-            let file_creator = file_creator(256, move |path| {
-                assert_eq!(path, tmp_path_buf.join("accounts_dest/123.456"))
+            let file_creator = file_creator(256, &IoSetupState::default(), move |file_info| {
+                assert_eq!(file_info.path, tmp_path_buf.join("accounts_dest/123.456"));
+                assert_eq!(data.len(), file_info.size as usize);
+                Some(file_info.file)
             })
             .expect("must make file_creator");
             unpack_snapshot_with_processors(

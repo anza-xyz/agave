@@ -325,7 +325,7 @@ pub(crate) mod external {
                 .num_messages_processed
                 .fetch_add(1, Ordering::Relaxed);
 
-            if message.flags & pack_message_flags::EXECUTE == 1 {
+            if message.flags & pack_message_flags::EXECUTE != 0 {
                 self.execute_batch(message, should_drain_executes)
             } else {
                 self.check_batch(message).map(|()| false)
@@ -347,12 +347,17 @@ pub(crate) mod external {
                     .map(|()| true);
             }
 
+            let BankPair {
+                root_bank,
+                working_bank: _,
+            } = self.sharable_banks.load();
+
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
             // not record at the end because the slot has ended, we will retry
             // on the next slot.
-            for _ in 0..1 {
+            for _ in 0..2 {
                 let Some(leader_state) =
                     active_leader_state_with_timeout(&self.shared_leader_state)
                 else {
@@ -385,7 +390,7 @@ pub(crate) mod external {
                     )
                 };
                 let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank);
+                    Self::translate_transaction_batch(&batch, bank, &root_bank);
 
                 // Enforce all or nothing on translation_results.
                 let execution_flags = ExecutionFlags {
@@ -497,7 +502,7 @@ pub(crate) mod external {
 
             // Do resolving next since we (currently) need resolved transactions for status checks.
             let (parsing_and_resolve_results, txs, max_ages) =
-                Self::translate_transaction_batch(&batch, &root_bank);
+                Self::translate_transaction_batch(&batch, &working_bank, &root_bank);
 
             if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
                 self.check_resolve_pubkeys(
@@ -939,12 +944,13 @@ pub(crate) mod external {
         /// Translate batch of transactions into usable
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
-            bank: &Bank,
+            working_bank: &Bank,
+            root_bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_static_instruction_limit = bank
+            let enable_static_instruction_limit = root_bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
-            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+            let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -952,7 +958,8 @@ pub(crate) mod external {
             for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
-                    bank,
+                    working_bank,
+                    root_bank,
                     enable_static_instruction_limit,
                     transaction_account_lock_limit,
                 ) {
@@ -970,13 +977,15 @@ pub(crate) mod external {
 
         fn translate_transaction(
             transaction_ptr: TransactionPtr,
-            bank: &Bank,
+            working_bank: &Bank,
+            root_bank: &Bank,
             enable_static_instruction_limit: bool,
             transaction_account_lock_limit: usize,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
-                bank,
+                working_bank,
+                root_bank,
                 enable_static_instruction_limit,
                 transaction_account_lock_limit,
             )
@@ -984,7 +993,7 @@ pub(crate) mod external {
                 (
                     view,
                     MaxAge {
-                        sanitized_epoch: bank.epoch(),
+                        sanitized_epoch: root_bank.epoch(),
                         alt_invalidation_slot: deactivation_slot,
                     },
                 )
@@ -1018,7 +1027,9 @@ pub(crate) mod external {
 
         fn validate_message_flags(flags: u16) -> bool {
             if flags & pack_message_flags::EXECUTE != 0 {
-                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE;
+                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING;
 
                 flags & !ALLOWED_EXECUTE_FLAGS == 0
             } else {
@@ -1111,9 +1122,27 @@ pub(crate) mod external {
 
         #[test]
         fn test_validate_message_flags() {
+            // Execute flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::EXECUTE
             ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::DROP_ON_FAILURE
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | execution_flags::ALL_OR_NOTHING
+            ));
+            assert!(ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE
+                    | execution_flags::DROP_ON_FAILURE
+                    | execution_flags::ALL_OR_NOTHING
+            ));
+            // Invalid execute flag
+            assert!(!ExternalWorker::validate_message_flags(
+                pack_message_flags::EXECUTE | (1 << 15)
+            ));
+
+            // Check flags
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::CHECK
                     | agave_scheduler_bindings::pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES
@@ -1137,6 +1166,7 @@ pub(crate) mod external {
                 .map(|_| {
                     translate_to_runtime_view(
                         &simple_tx[..],
+                        &bank,
                         &bank,
                         true,
                         bank.get_transaction_account_lock_limit(),
@@ -1367,8 +1397,8 @@ pub(crate) mod external {
             fn to_resolved_view(
                 tx: &'_ [u8],
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
-                RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
-                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                         SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
@@ -2112,8 +2142,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-            vote_sender_types::ReplayVoteReceiver,
+            bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver,
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
@@ -2174,11 +2203,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
+        let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 

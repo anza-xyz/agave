@@ -41,7 +41,6 @@ solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true }
@@ -49,6 +48,7 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
+solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }

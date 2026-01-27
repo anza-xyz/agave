@@ -40,8 +40,7 @@ impl Default for BuildBalanceMessageConfig {
 }
 
 fn is_memo_program(k: &Pubkey) -> bool {
-    let k_str = k.to_string();
-    (k_str == spl_memo_v1_id().to_string()) || (k_str == spl_memo_v3_id().to_string())
+    *k == spl_memo_v1_id() || *k == spl_memo_v3_id()
 }
 
 pub fn build_balance_message_with_config(
@@ -814,6 +813,7 @@ mod test {
                 post_balance: 9_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData {
@@ -894,6 +894,7 @@ Rewards:
                 post_balance: 14_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses,
             return_data: Some(TransactionReturnData {

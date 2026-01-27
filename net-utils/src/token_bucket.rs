@@ -4,7 +4,7 @@
 //! as connections.
 use {
     cfg_if::cfg_if,
-    dashmap::{mapref::entry::Entry, DashMap},
+    dashmap::{DashMap, mapref::entry::Entry},
     solana_svm_type_overrides::sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     std::{borrow::Borrow, cmp::Reverse, hash::Hash, time::Instant},
 };
@@ -85,6 +85,24 @@ impl TokenBucket {
         ) {
             Ok(prev) => Ok(prev.saturating_sub(request_size)),
             Err(prev) => Err(request_size.saturating_sub(prev)),
+        }
+    }
+
+    /// Returns time in microseconds until `num_tokens` worth of new
+    /// tokens can be consumed.
+    ///
+    /// Calculation is performed assuming no demand for smaller
+    /// batches of tokens (actual time may be longer).
+    /// Returns None if num_tokens > bucket capacity.
+    #[inline]
+    pub fn us_to_have_tokens(&self, num_tokens: u64) -> Option<u64> {
+        if num_tokens > self.max_tokens {
+            return None;
+        }
+
+        match num_tokens.checked_sub(self.current_tokens()) {
+            Some(missing) => Some((missing as f64 / self.new_tokens_per_us) as u64),
+            None => Some(0),
         }
     }
 
@@ -204,12 +222,21 @@ where
 {
     /// Creates a new KeyedRateLimiter with a specified target capacity and shard amount for the
     /// underlying DashMap. This uses a LazyLRU style eviction policy, so actual memory consumption
-    /// will be 2 * target_capacity.
+    /// will be <= 2 * target_capacity.
     ///
-    /// shard_amount should be greater than 0 and be a power of two.
-    /// If a shard_amount which is not a power of two is provided, the function will panic.
+    /// shard_amount must be greater than 0 and be a power of two; otherwise this function panics.
+    /// target_capacity must be >= shard_amount; otherwise this function panics.
     #[allow(clippy::arithmetic_side_effects)]
     pub fn new(target_capacity: usize, prototype_bucket: TokenBucket, shard_amount: usize) -> Self {
+        assert!(
+            shard_amount > 0 && shard_amount.is_power_of_two(),
+            "KeyedRateLimiter shard_amount ({shard_amount}) must be > 0 and a power of two"
+        );
+        assert!(
+            target_capacity >= shard_amount,
+            "KeyedRateLimiter target_capacity ({target_capacity}) must be >= shard_amount \
+             ({shard_amount})"
+        );
         let shrink_interval = target_capacity / 4;
         Self {
             data: DashMap::with_capacity_and_shard_amount(target_capacity * 2, shard_amount),
@@ -291,6 +318,9 @@ where
     fn maybe_shrink(&self) {
         let mut actual_len = 0;
         let target_shard_size = self.target_capacity / self.data.shards().len();
+        if target_shard_size == 0 {
+            return;
+        }
         let mut entries = Vec::with_capacity(target_shard_size * 2);
         for shardlock in self.data.shards() {
             let mut shard = shardlock.write();
@@ -348,7 +378,7 @@ pub mod test {
     };
 
     #[test]
-    fn test_token_bucket() {
+    fn test_token_bucket_basics() {
         let tb = TokenBucket::new(100, 100, 1000.0);
         assert_eq!(tb.current_tokens(), 100);
         tb.consume_tokens(50).expect("Bucket is initially full");
@@ -370,6 +400,25 @@ pub mod test {
         thread::sleep(Duration::from_millis(120));
         assert_eq!(tb.current_tokens(), 100, "Bucket should not overfill");
     }
+
+    #[test]
+    fn test_token_bucket_us_to_have_tokens() {
+        let tb = TokenBucket::new(1000, 1000, 1000.0);
+        assert_eq!(tb.current_tokens(), 1000);
+        tb.consume_tokens(1000).expect("Bucket is initially full");
+        assert!(
+            tb.current_tokens() < 100,
+            "Shoult not have many tokens left in bucket"
+        );
+
+        let t = tb
+            .us_to_have_tokens(500)
+            .expect("500 < bucket capacity (1000)")
+            / 1000; // convert to ms
+        assert!(t > 100, "time to fill should be ~ 500ms (got {t})");
+        assert!(t <= 500, "time to fill should be less than 500ms (got {t})");
+    }
+
     #[test]
     fn test_keyed_rate_limiter() {
         let prototype_bucket = TokenBucket::new(100, 100, 1000.0);
@@ -426,6 +475,14 @@ pub mod test {
         );
         rl.consume_tokens(ip2, 100)
             .expect("New bucket should have been made for ip2");
+    }
+
+    #[test]
+    #[should_panic(expected = "must be >= shard_amount")]
+    fn test_keyed_rate_limiter_capacity_less_than_shards_panics() {
+        let tb = TokenBucket::new(1, 1, 1.0);
+        // target_capacity (1) < shard_amount (2) should panic
+        let _ = KeyedRateLimiter::<u64>::new(1, tb, 2);
     }
 
     #[cfg(feature = "shuttle-test")]

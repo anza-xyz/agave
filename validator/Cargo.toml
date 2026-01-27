@@ -95,6 +95,9 @@ tokio = { workspace = true }
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = { workspace = true }
+
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
 

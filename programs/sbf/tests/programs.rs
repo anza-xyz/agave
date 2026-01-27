@@ -12,7 +12,7 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
     solana_clock::{UnixTimestamp, MAX_PROCESSING_AGE},
@@ -26,9 +26,11 @@ use {
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
-    solana_loader_v4_interface::instruction as loader_v4_instruction,
+    solana_loader_v4_interface::{
+        instruction as loader_v4_instruction,
+        state::{LoaderV4State, LoaderV4Status},
+    },
     solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
-    solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -40,15 +42,13 @@ use {
             create_genesis_config_with_leader_ex, GenesisConfigInfo,
         },
         loader_utils::{
-            create_program, instructions_to_load_program_of_loader_v4, load_program_from_file,
-            load_program_of_loader_v4, load_upgradeable_buffer,
+            create_program, instructions_to_load_program_of_loader_v4, load_program_of_loader_v4,
+            load_upgradeable_buffer,
         },
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_realloc_dep::*,
     solana_sbf_rust_realloc_invoke_dep::*,
-    solana_sbpf::vm::ContextObject,
     solana_sdk_ids::sysvar::{self as sysvar, clock},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_signer::Signer,
@@ -64,23 +64,64 @@ use {
     solana_transaction_error::TransactionError,
     std::{
         assert_eq,
-        cell::RefCell,
         str::FromStr,
         sync::{Arc, RwLock},
         time::Duration,
     },
     test_case::test_matrix,
 };
-#[cfg(all(
-    any(feature = "sbf_c", feature = "sbf_rust"),
-    not(feature = "sbf_sanity_list")
-))]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
-    solana_svm_test_harness::{self as harness, fixture::instr_context::InstrContext},
+    solana_svm_test_harness_instr::{
+        self as harness, fixture::instr_context::InstrContext,
+        keyed_account::keyed_account_for_system_program,
+    },
 };
+
+#[cfg(feature = "sbf_rust")]
+fn default_program_cache(
+    feature_set: &FeatureSet,
+) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+    harness::program_cache::new_with_builtins(feature_set, /* slot */ 0)
+}
+
+fn default_program_cache_with_program(
+    program_id: &Pubkey,
+    program_elf: &[u8],
+    feature_set: &FeatureSet,
+    compute_budget: &ComputeBudget,
+) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+    let mut program_cache = default_program_cache(feature_set);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        program_id,
+        &loader_v4::id(),
+        program_elf,
+        feature_set,
+        compute_budget,
+    );
+    program_cache
+}
+
+#[cfg(feature = "sbf_rust")]
+fn default_sysvar_cache() -> SysvarCache {
+    let mut sysvar_cache = SysvarCache::default();
+    sysvar_cache.fill_missing_entries(|pubkey, callback| {
+        if pubkey == &rent::id() {
+            let rent = Rent::default();
+            let rent_data = bincode::serialize(&rent).unwrap();
+            callback(&rent_data);
+        } else if pubkey == &clock::id() {
+            let clock = solana_clock::Clock::default();
+            let clock_data = bincode::serialize(&clock).unwrap();
+            callback(&clock_data);
+        }
+    });
+    sysvar_cache
+}
 
 #[cfg(feature = "sbf_rust")]
 fn process_transaction_and_record_inner(
@@ -250,55 +291,26 @@ fn test_program_sbf_sanity() {
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
 
-        let accounts = vec![
-            (
-                program_id,
-                Account {
-                    owner: loader_v4::id(),
-                    ..Default::default() // <-- Stubbed
-                },
-            ),
-            (pubkey1, Account::default()),
-            (pubkey2, Account::default()),
-        ];
+        let accounts = vec![(pubkey1, Account::default()), (pubkey2, Account::default())];
 
         let compute_budget = ComputeBudget::new_with_defaults(false, false);
-
-        let mut program_cache =
-            harness::program_cache::new_with_builtins(&feature_set, /* slot */ 0);
-        harness::program_cache::add_program(
-            &mut program_cache,
+        let mut program_cache = default_program_cache_with_program(
             &program_id,
-            &loader_v4::id(),
             &program_elf,
             &feature_set,
             &compute_budget,
         );
-
-        let mut sysvar_cache = SysvarCache::default();
-        sysvar_cache.fill_missing_entries(|pubkey, callbackback| {
-            if pubkey == &rent::id() {
-                // Add the default Rent sysvar.
-                let rent = Rent::default();
-                let rent_data = bincode::serialize(&rent).unwrap();
-                callbackback(&rent_data);
-            }
-        });
+        let sysvar_cache = default_sysvar_cache();
 
         let context = InstrContext {
             feature_set,
             accounts,
-            instruction: instruction.into(),
-            cu_avail: compute_budget.compute_unit_limit,
+            instruction,
         };
 
-        let effects = harness::instr::execute_instr(
-            context,
-            &compute_budget,
-            &mut program_cache,
-            &sysvar_cache,
-        )
-        .unwrap();
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
 
         let result = match effects.result {
             Some(err) => Err(err),
@@ -331,45 +343,52 @@ fn test_program_sbf_loader_deprecated() {
     for program in programs.iter() {
         println!("Test program: {:?}", program);
 
-        let GenesisConfigInfo {
-            mut genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
-        genesis_config
-            .accounts
-            .remove(&agave_feature_set::disable_deploy_of_alloc_free_syscall::id())
-            .unwrap();
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let program_id = create_program(&bank, &bpf_loader_deprecated::id(), program);
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let mut bank_client = BankClient::new_shared(bank);
-        bank_client
-            .advance_slot(1, bank_forks.as_ref(), &Pubkey::default())
-            .expect("Failed to advance the slot");
-        let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&agave_feature_set::disable_deploy_of_alloc_free_syscall::id());
+
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let pubkey = Pubkey::new_unique();
+        let accounts = vec![
+            (program_id, Account::new(0, 0, &bpf_loader_deprecated::id())),
+            (pubkey, Account::default()),
+        ];
+
+        let mut program_cache = default_program_cache(&feature_set);
+        harness::program_cache::add_program(
+            &mut program_cache,
+            &program_id,
+            &bpf_loader_deprecated::id(),
+            &program_elf,
+            &feature_set,
+            &compute_budget,
+        );
+        let sysvar_cache = default_sysvar_cache();
+
+        let account_metas = vec![AccountMeta::new(pubkey, true)];
         let instruction = Instruction::new_with_bytes(program_id, &[255], account_metas);
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
+
+        let context = InstrContext {
+            feature_set,
+            accounts,
+            instruction,
+        };
+
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+
+        assert!(effects.result.is_none());
     }
 }
 
 #[test]
 #[cfg(feature = "sbf_rust")]
-#[should_panic(expected = "called `Result::unwrap()` on an `Err` value: \
-                           TransactionError(InstructionError(0, InvalidAccountData))")]
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
 
     // Populate loader account with `solana_sbf_rust_deprecated_loader` elf, which
     // depends on `sol_alloc_free_` syscall. This can be verified with
@@ -379,18 +398,63 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     // In fact, `sol_alloc_free_` is called from sbf allocator, which is originated from
     // AccountInfo::realloc() in the program code.
 
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_deprecated_loader");
+    let program_id = Pubkey::new_unique();
+    let authority_pubkey = Pubkey::new_unique();
+
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+    // Create a retracted program account with LoaderV4State header + ELF bytes.
+    let loader_state = LoaderV4State {
+        slot: 0,
+        authority_address_or_next_version: authority_pubkey,
+        status: LoaderV4Status::Retracted,
+    };
+    let state_bytes: &[u8; LoaderV4State::program_data_offset()] = unsafe {
+        std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
+            &loader_state,
+        )
+    };
+    let mut program_data = state_bytes.to_vec();
+    program_data.extend_from_slice(&program_elf);
+
+    let accounts = vec![
+        (
+            program_id,
+            Account {
+                lamports: 1_000_000_000,
+                data: program_data,
+                owner: loader_v4::id(),
+                executable: false,
+                rent_epoch: u64::MAX,
+            },
+        ),
+        (authority_pubkey, Account::default()),
+    ];
+
+    let mut program_cache = default_program_cache(&feature_set);
+    let sysvar_cache = default_sysvar_cache();
+
+    // Build the deploy instruction
+    let instruction = loader_v4_instruction::deploy(&program_id, &authority_pubkey);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
     // Expect that deployment to fail. B/C during deployment, there is an elf
     // verification step, which uses the runtime to look up relocatable symbols
     // in elf inside syscall table. In this case, `sol_alloc_free_` can't be
     // found in syscall table. Hence, the verification fails and the deployment
     // fails.
-    let (_bank, _program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_deprecated_loader",
-    );
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
+    assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
 }
 
 #[test]
@@ -411,92 +475,99 @@ fn test_program_sbf_duplicate_accounts() {
     for program in programs.iter() {
         println!("Test program: {:?}", program);
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
-
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let authority_keypair = Keypair::new();
-
-        let (bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
+        let feature_set = FeatureSet::all_enabled();
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let mut program_cache = default_program_cache_with_program(
+            &program_id,
+            &program_elf,
+            &feature_set,
+            &compute_budget,
         );
-        let payee_account = AccountSharedData::new(10, 1, &program_id);
-        let payee_pubkey = Pubkey::new_unique();
-        bank.store_account(&payee_pubkey, &payee_account);
-        let account = AccountSharedData::new(10, 1, &program_id);
+        let sysvar_cache = default_sysvar_cache();
 
+        let payer_pubkey = Pubkey::new_unique();
+        let payee_pubkey = Pubkey::new_unique();
         let pubkey = Pubkey::new_unique();
+        let account = Account::new(10, 1, &program_id);
+
         let account_metas = vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
+            AccountMeta::new(payer_pubkey, true),
             AccountMeta::new(payee_pubkey, false),
             AccountMeta::new(pubkey, false),
             AccountMeta::new(pubkey, false),
         ];
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert!(result.is_ok());
+        let mut execute = |data: &[u8]| {
+            let accounts = vec![
+                (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
+                (payee_pubkey, Account::new(10, 1, &program_id)),
+                (pubkey, account.clone()),
+            ];
+            let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
+            let context = InstrContext {
+                feature_set: feature_set.clone(),
+                accounts,
+                instruction,
+            };
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap()
+        };
+
+        let effects = execute(&[1]);
+        assert!(effects.result.is_none());
+        let data = effects.get_account(&pubkey).unwrap().data.clone();
         assert_eq!(data[0], 1);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[2], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[2]);
+        assert!(effects.result.is_none());
+        let data = effects.get_account(&pubkey).unwrap().data.clone();
         assert_eq!(data[0], 2);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[3], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[3]);
+        assert!(effects.result.is_none());
+        let data = effects.get_account(&pubkey).unwrap().data.clone();
         assert_eq!(data[0], 3);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[4], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let lamports = bank_client.get_balance(&pubkey).unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[4]);
+        assert!(effects.result.is_none());
+        let lamports = effects.get_account(&pubkey).unwrap().lamports;
         assert_eq!(lamports, 11);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[5], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let lamports = bank_client.get_balance(&pubkey).unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[5]);
+        assert!(effects.result.is_none());
+        let lamports = effects.get_account(&pubkey).unwrap().lamports;
         assert_eq!(lamports, 12);
 
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[6], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let lamports = bank_client.get_balance(&pubkey).unwrap();
-        assert!(result.is_ok());
+        let effects = execute(&[6]);
+        assert!(effects.result.is_none());
+        let lamports = effects.get_account(&pubkey).unwrap().lamports;
         assert_eq!(lamports, 13);
 
-        let keypair = Keypair::new();
-        let pubkey = keypair.pubkey();
+        let pubkey = Pubkey::new_unique();
         let account_metas = vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
+            AccountMeta::new(payer_pubkey, true),
             AccountMeta::new(payee_pubkey, false),
             AccountMeta::new(pubkey, false),
             AccountMeta::new_readonly(pubkey, true),
             AccountMeta::new_readonly(program_id, false),
         ];
-        bank.store_account(&pubkey, &account);
-        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas.clone());
-        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-        let result = bank_client.send_and_confirm_message(&[&mint_keypair, &keypair], message);
-        assert!(result.is_ok());
+        let accounts = vec![
+            (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
+            (payee_pubkey, Account::new(10, 1, &program_id)),
+            (pubkey, Account::new(10, 1, &program_id)),
+        ];
+        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts,
+            instruction,
+        };
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+        assert!(effects.result.is_none());
     }
 }
 
@@ -518,96 +589,79 @@ fn test_program_sbf_error_handling() {
     for program in programs.iter() {
         println!("Test program: {:?}", program);
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank);
-        let authority_keypair = Keypair::new();
+        let feature_set = FeatureSet::all_enabled();
 
-        let (_bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let pubkey1 = Pubkey::new_unique();
+
+        let accounts = vec![(pubkey1, Account::default())];
+
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+        let mut program_cache = default_program_cache_with_program(
+            &program_id,
+            &program_elf,
+            &feature_set,
+            &compute_budget,
+        );
+        let sysvar_cache = default_sysvar_cache();
+
+        // Helper to execute an instruction with the given data byte.
+        let mut execute = |data: &[u8]| {
+            let account_metas = vec![AccountMeta::new(pubkey1, true)];
+            let instruction = Instruction::new_with_bytes(program_id, data, account_metas);
+
+            let context = InstrContext {
+                feature_set: feature_set.clone(),
+                accounts: accounts.clone(),
+                instruction,
+            };
+
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap()
+        };
+
+        let effects = execute(&[1]);
+        assert!(effects.result.is_none());
+
+        let effects = execute(&[2]);
+        assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
+
+        let effects = execute(&[3]);
+        assert_eq!(effects.result, Some(InstructionError::Custom(0)));
+
+        let effects = execute(&[4]);
+        assert_eq!(effects.result, Some(InstructionError::Custom(42)));
+
+        let effects = execute(&[5]);
+        assert!(
+            effects.result == Some(InstructionError::InvalidInstructionData)
+                || effects.result == Some(InstructionError::InvalidError)
         );
 
-        let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
-
-        let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
-
-        let instruction = Instruction::new_with_bytes(program_id, &[2], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidAccountData)
+        let effects = execute(&[6]);
+        assert!(
+            effects.result == Some(InstructionError::InvalidInstructionData)
+                || effects.result == Some(InstructionError::InvalidError)
         );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[3], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::Custom(0))
+        let effects = execute(&[7]);
+        assert!(
+            effects.result == Some(InstructionError::InvalidInstructionData)
+                || effects.result == Some(InstructionError::AccountBorrowFailed)
         );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[4], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        let effects = execute(&[8]);
         assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::Custom(42))
+            effects.result,
+            Some(InstructionError::InvalidInstructionData)
         );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[5], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let result = result.unwrap_err().unwrap();
-        if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
-        {
-            assert_eq!(
-                result,
-                TransactionError::InstructionError(0, InstructionError::InvalidError)
-            );
-        }
-
-        let instruction = Instruction::new_with_bytes(program_id, &[6], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let result = result.unwrap_err().unwrap();
-        if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
-        {
-            assert_eq!(
-                result,
-                TransactionError::InstructionError(0, InstructionError::InvalidError)
-            );
-        }
-
-        let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        let result = result.unwrap_err().unwrap();
-        if TransactionError::InstructionError(0, InstructionError::InvalidInstructionData) != result
-        {
-            assert_eq!(
-                result,
-                TransactionError::InstructionError(0, InstructionError::AccountBorrowFailed)
-            );
-        }
-
-        let instruction = Instruction::new_with_bytes(program_id, &[8], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        let effects = execute(&[9]);
         assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
-        );
-
-        let instruction = Instruction::new_with_bytes(program_id, &[9], account_metas.clone());
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::MaxSeedLengthExceeded)
+            effects.result,
+            Some(InstructionError::MaxSeedLengthExceeded)
         );
     }
 }
@@ -628,45 +682,52 @@ fn test_return_data_and_log_data_syscall() {
     }
 
     for program in programs.iter() {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
+        println!("Test program: {:?}", program);
 
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let authority_keypair = Keypair::new();
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let (bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let feature_set = FeatureSet::all_enabled();
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let pubkey = Pubkey::new_unique();
+        let accounts = vec![(pubkey, Account::default())];
+
+        let mut program_cache = default_program_cache_with_program(
+            &program_id,
+            &program_elf,
+            &feature_set,
+            &compute_budget,
         );
+        let sysvar_cache = default_sysvar_cache();
 
-        bank.freeze();
-
-        let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
+        let account_metas = vec![AccountMeta::new(pubkey, true)];
         let instruction =
             Instruction::new_with_bytes(program_id, &[1, 2, 3, 0, 4, 5, 6], account_metas);
 
-        let blockhash = bank.last_blockhash();
-        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-        let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
-        let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+        let context = InstrContext {
+            feature_set,
+            accounts,
+            instruction,
+        };
 
-        let result = bank.simulate_transaction(&sanitized_tx, false);
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
 
-        assert!(result.result.is_ok());
+        assert!(effects.result.is_none());
 
-        assert_eq!(result.logs[1], "Program data: AQID BAUG");
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == "Program data: AQID BAUG"));
 
-        assert_eq!(
-            result.logs[3],
-            format!("Program return: {} CAFE", program_id)
-        );
+        assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
+
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
     }
 }
 
@@ -1396,38 +1457,46 @@ fn test_program_sbf_invoke_sanity() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_program_id_spoofing() {
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let spoof1_elf = harness::file::load_program_elf("solana_sbf_rust_spoof1");
+    let spoof1_system_elf = harness::file::load_program_elf("solana_sbf_rust_spoof1_system");
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let malicious_swap_pubkey = Pubkey::new_unique();
+    let malicious_system_pubkey = Pubkey::new_unique();
 
-    let (_bank, malicious_swap_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_spoof1",
-    );
-    let (bank, malicious_system_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_spoof1_system",
-    );
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let from_pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(10, 0, &system_program::id());
-    bank.store_account(&from_pubkey, &account);
-
     let to_pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(0, 0, &system_program::id());
-    bank.store_account(&to_pubkey, &account);
+
+    let accounts = vec![
+        keyed_account_for_system_program(),
+        (
+            malicious_system_pubkey,
+            Account::new(0, 0, &loader_v4::id()),
+        ),
+        (from_pubkey, Account::new(10, 0, &system_program::id())),
+        (to_pubkey, Account::new(0, 0, &system_program::id())),
+    ];
+
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &malicious_swap_pubkey,
+        &loader_v4::id(),
+        &spoof1_elf,
+        &feature_set,
+        &compute_budget,
+    );
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &malicious_system_pubkey,
+        &loader_v4::id(),
+        &spoof1_system_elf,
+        &feature_set,
+        &compute_budget,
+    );
+    let sysvar_cache = default_sysvar_cache();
 
     let account_metas = vec![
         AccountMeta::new_readonly(system_program::id(), false),
@@ -1438,53 +1507,81 @@ fn test_program_sbf_program_id_spoofing() {
 
     let instruction =
         Instruction::new_with_bytes(malicious_swap_pubkey, &[], account_metas.clone());
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
     assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature)
+        effects.result,
+        Some(InstructionError::MissingRequiredSignature)
     );
-    assert_eq!(10, bank.get_balance(&from_pubkey));
-    assert_eq!(0, bank.get_balance(&to_pubkey));
+
+    let from_account = effects.get_account(&from_pubkey).unwrap();
+    assert_eq!(10, from_account.lamports);
+
+    let to_account = effects.get_account(&to_pubkey).unwrap();
+    assert_eq!(0, to_account.lamports);
 }
 
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_caller_has_access_to_cpi_program() {
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let caller_access_elf = harness::file::load_program_elf("solana_sbf_rust_caller_access");
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let caller_pubkey = Pubkey::new_unique();
+    let caller2_pubkey = Pubkey::new_unique();
 
-    let (_bank, caller_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_caller_access",
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+    let accounts = vec![
+        (caller_pubkey, Account::new(0, 0, &loader_v4::id())),
+        (caller2_pubkey, Account::new(0, 0, &loader_v4::id())),
+    ];
+
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &caller_pubkey,
+        &loader_v4::id(),
+        &caller_access_elf,
+        &feature_set,
+        &compute_budget,
     );
-    let (_bank, caller2_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_caller_access",
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &caller2_pubkey,
+        &loader_v4::id(),
+        &caller_access_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
     let account_metas = vec![
         AccountMeta::new_readonly(caller_pubkey, false),
         AccountMeta::new_readonly(caller2_pubkey, false),
     ];
-    let instruction = Instruction::new_with_bytes(caller_pubkey, &[1], account_metas.clone());
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::MissingAccount),
-    );
+    let instruction = Instruction::new_with_bytes(caller_pubkey, &[1], account_metas);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
+    assert_eq!(effects.result, Some(InstructionError::MissingAccount));
 }
 
 #[test]
@@ -1492,56 +1589,50 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
 fn test_program_sbf_ro_modify() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_ro_modify");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (bank, program_pubkey) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_ro_modify",
+    let test_pubkey = Pubkey::new_unique();
+    let accounts = vec![
+        keyed_account_for_system_program(),
+        (test_pubkey, Account::new(10, 0, &system_program::id())),
+    ];
+
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
-
-    let test_keypair = Keypair::new();
-    let account = AccountSharedData::new(10, 0, &system_program::id());
-    bank.store_account(&test_keypair.pubkey(), &account);
+    let sysvar_cache = default_sysvar_cache();
 
     let account_metas = vec![
         AccountMeta::new_readonly(system_program::id(), false),
-        AccountMeta::new(test_keypair.pubkey(), true),
+        AccountMeta::new(test_pubkey, true),
     ];
 
-    let instruction = Instruction::new_with_bytes(program_pubkey, &[1], account_metas.clone());
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair, &test_keypair], message);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
-    );
+    for instr_data in [1u8, 3, 4] {
+        let instruction =
+            Instruction::new_with_bytes(program_id, &[instr_data], account_metas.clone());
 
-    let instruction = Instruction::new_with_bytes(program_pubkey, &[3], account_metas.clone());
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair, &test_keypair], message);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
-    );
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts: accounts.clone(),
+            instruction,
+        };
 
-    let instruction = Instruction::new_with_bytes(program_pubkey, &[4], account_metas.clone());
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair, &test_keypair], message);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
-    );
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+
+        assert_eq!(
+            effects.result,
+            Some(InstructionError::ProgramFailedToComplete)
+        );
+    }
 }
 
 #[test]
@@ -1549,40 +1640,37 @@ fn test_program_sbf_ro_modify() {
 fn test_program_sbf_call_depth() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_call_depth");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_call_depth",
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
-    let budget = ComputeBudget::new_with_defaults(
-        genesis_config
-            .accounts
-            .contains_key(&feature_set::raise_cpi_nesting_limit_to_8::id()),
-        genesis_config
-            .accounts
-            .contains_key(&feature_set::increase_cpi_account_info_limit::id()),
-    );
-    let instruction =
-        Instruction::new_with_bincode(program_id, &(budget.max_call_depth - 1), vec![]);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok());
+    let mut execute = |depth: usize| {
+        let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
 
-    let instruction = Instruction::new_with_bincode(program_id, &budget.max_call_depth, vec![]);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_err());
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts: vec![],
+            instruction,
+        };
+
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache).unwrap()
+    };
+
+    let effects = execute(compute_budget.max_call_depth - 1);
+    assert!(effects.result.is_none());
+
+    let effects = execute(compute_budget.max_call_depth);
+    assert!(effects.result.is_some());
 }
 
 #[test]
@@ -1590,34 +1678,38 @@ fn test_program_sbf_call_depth() {
 fn test_program_sbf_compute_budget() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_noop");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let mut compute_budget = ComputeBudget::new_with_defaults(false, false);
+    compute_budget.compute_unit_limit = 0;
 
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_noop",
+    let accounts = vec![(program_id, Account::new(0, 0, &loader_v4::id()))];
+
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
-    let message = Message::new(
-        &[
-            ComputeBudgetInstruction::set_compute_unit_limit(150),
-            Instruction::new_with_bincode(program_id, &0, vec![]),
-        ],
-        Some(&mint_keypair.pubkey()),
-    );
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair], message);
+    let sysvar_cache = default_sysvar_cache();
+
+    let instruction = Instruction::new_with_bincode(program_id, &0, vec![]);
+
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+
     assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(1, InstructionError::ProgramFailedToComplete),
+        effects.result,
+        Some(InstructionError::ProgramFailedToComplete),
     );
 }
 
@@ -1664,55 +1756,55 @@ fn assert_instruction_count() {
         ]);
     }
 
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let sysvar_cache = default_sysvar_cache();
+
     println!("\n  {:36} expected actual  diff", "SBF program");
     for (program_name, expected_consumption) in programs.iter() {
-        let loader_id = bpf_loader::id();
-        let program_key = Pubkey::new_unique();
-        let mut transaction_accounts = vec![
-            (program_key, AccountSharedData::new(0, 0, &loader_id)),
-            (
-                Pubkey::new_unique(),
-                AccountSharedData::new(0, 0, &program_key),
-            ),
-        ];
+        let program_elf = harness::file::load_program_elf(program_name);
+        let program_id = Pubkey::new_unique();
+
+        let mut program_cache = default_program_cache_with_program(
+            &program_id,
+            &program_elf,
+            &feature_set,
+            &compute_budget,
+        );
+
+        let account_pubkey = Pubkey::new_unique();
+        let accounts = vec![(account_pubkey, Account::new(0, 0, &program_id))];
+
         let instruction_accounts = vec![AccountMeta {
-            pubkey: transaction_accounts[1].0,
+            pubkey: account_pubkey,
             is_signer: false,
             is_writable: false,
         }];
-        transaction_accounts[0]
-            .1
-            .set_data_from_slice(&load_program_from_file(program_name));
-        transaction_accounts[0].1.set_executable(true);
+        let instruction = Instruction::new_with_bytes(program_id, &[], instruction_accounts);
 
-        let prev_compute_meter = RefCell::new(0);
-        print!("  {:36} {:8}", program_name, *expected_consumption);
-        mock_process_instruction(
-            &loader_id,
-            Some(0),
-            &[],
-            transaction_accounts,
-            instruction_accounts,
-            Ok(()),
-            solana_bpf_loader_program::Entrypoint::vm,
-            |invoke_context| {
-                *prev_compute_meter.borrow_mut() = invoke_context.get_remaining();
-                solana_bpf_loader_program::test_utils::load_all_invoked_programs(invoke_context);
-            },
-            |invoke_context| {
-                let consumption = prev_compute_meter
-                    .borrow()
-                    .saturating_sub(invoke_context.get_remaining());
-                let diff: i64 = consumption as i64 - *expected_consumption as i64;
-                println!(
-                    "{:6} {:+5} ({:+3.0}%)",
-                    consumption,
-                    diff,
-                    100.0_f64 * consumption as f64 / *expected_consumption as f64 - 100.0_f64,
-                );
-                assert!(consumption <= *expected_consumption);
-            },
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts,
+            instruction,
+        };
+
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+
+        let consumption = compute_budget
+            .compute_unit_limit
+            .saturating_sub(effects.cu_avail);
+        let diff: i64 = consumption as i64 - *expected_consumption as i64;
+        println!(
+            "  {:36} {:8}{:6} {:+5} ({:+3.0}%)",
+            program_name,
+            *expected_consumption,
+            consumption,
+            diff,
+            100.0_f64 * consumption as f64 / *expected_consumption as f64 - 100.0_f64,
         );
+        assert!(consumption <= *expected_consumption);
     }
 }
 
@@ -1785,34 +1877,29 @@ fn test_program_sbf_instruction_introspection() {
 fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_len: usize) {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf =
+        harness::file::load_program_elf("solana_sbf_rust_r2_instruction_data_pointer");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_r2_instruction_data_pointer",
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
+    let mut accounts = Vec::new();
     let mut account_metas = Vec::new();
 
     for i in 0..num_accounts {
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        bank.store_account(
-            &pubkey,
-            &AccountSharedData::new(0, 100 + (i * 50), &program_id),
-        );
+        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
 
         // Mixed account roles.
         if i % 2 == 0 {
@@ -1822,23 +1909,23 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
         }
     }
 
-    bank.freeze();
-
     // The provided instruction data will be set to the return data.
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
 
     let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
 
-    let blockhash = bank.last_blockhash();
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
-    let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+    let context = InstrContext {
+        feature_set,
+        accounts,
+        instruction,
+    };
 
-    let result = bank.simulate_transaction(&sanitized_tx, false);
-    assert!(result.result.is_ok());
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
 
-    let return_data = result.return_data.unwrap().data;
-    assert_eq!(input_data, return_data);
+    assert!(effects.result.is_none());
+    assert_eq!(input_data, effects.return_data);
 }
 
 fn get_stable_genesis_config() -> GenesisConfigInfo {
@@ -1864,6 +1951,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
+        &FeatureSet::all_enabled(),
         vec![],
     );
     genesis_config.creation_time = Duration::ZERO.as_secs() as UnixTimestamp;
@@ -2338,68 +2426,99 @@ fn test_program_sbf_disguised_as_sbf_loader() {
     }
 
     for program in programs.iter() {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.deactivate_feature(&agave_feature_set::remove_bpf_loader_incorrect_program_id::id());
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let mut bank_client = BankClient::new_shared(bank);
-        let authority_keypair = Keypair::new();
+        let program_elf = harness::file::load_program_elf(program);
+        let program_id = Pubkey::new_unique();
 
-        let (_bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program,
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&agave_feature_set::remove_bpf_loader_incorrect_program_id::id());
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let mut program_cache = default_program_cache(&feature_set);
+        harness::program_cache::add_program(
+            &mut program_cache,
+            &program_id,
+            &bpf_loader::id(),
+            &program_elf,
+            &feature_set,
+            &compute_budget,
         );
+        let sysvar_cache = default_sysvar_cache();
 
         let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
         let instruction = Instruction::new_with_bytes(bpf_loader::id(), &[1], account_metas);
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId)
-        );
+
+        let context = InstrContext {
+            feature_set,
+            accounts: vec![],
+            instruction,
+        };
+
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+        assert_eq!(effects.result, Some(InstructionError::UnsupportedProgramId));
     }
 }
 
 #[test]
 #[cfg(feature = "sbf_c")]
 fn test_program_reads_from_program_account() {
-    use solana_loader_v4_interface::state as loader_v4_state;
+    use solana_loader_v4_interface::state::LoaderV4State;
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("read_program");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "read_program",
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &program_id,
+        &solana_sdk_ids::loader_v4::id(),
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
-    let data = bank_client.get_account_data(&program_id).unwrap().unwrap();
+
+    let sysvar_cache = default_sysvar_cache();
+
+    // Build the program account data: LoaderV4State header + ELF bytes
+    let loader_state = LoaderV4State {
+        slot: 0,
+        authority_address_or_next_version: Pubkey::default(),
+        status: solana_loader_v4_interface::state::LoaderV4Status::Deployed,
+    };
+    let state_bytes: &[u8; LoaderV4State::program_data_offset()] = unsafe {
+        std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
+            &loader_state,
+        )
+    };
+    let mut program_account_data = state_bytes.to_vec();
+    program_account_data.extend_from_slice(&program_elf);
+
+    let program_account = Account {
+        lamports: 1,
+        data: program_account_data,
+        owner: solana_sdk_ids::loader_v4::id(),
+        executable: true,
+        rent_epoch: u64::MAX,
+    };
+
     let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
-    let instruction = Instruction::new_with_bytes(
-        program_id,
-        &data[0..loader_v4_state::LoaderV4State::program_data_offset()],
-        account_metas,
-    );
-    bank_client
-        .send_and_confirm_instruction(&mint_keypair, instruction)
-        .unwrap();
+    let instruction = Instruction::new_with_bytes(program_id, state_bytes, account_metas);
+
+    let context = InstrContext {
+        feature_set,
+        accounts: vec![(program_id, program_account)],
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+    assert!(effects.result.is_none());
 }
 
 #[test]
@@ -2407,35 +2526,43 @@ fn test_program_reads_from_program_account() {
 fn test_program_sbf_c_dup() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("ser");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
+    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    harness::program_cache::add_program(
+        &mut program_cache,
+        &program_id,
+        &solana_sdk_ids::loader_v4::id(),
+        &program_elf,
+        &feature_set,
+        &compute_budget,
+    );
+
+    let sysvar_cache = default_sysvar_cache();
 
     let account_address = Pubkey::new_unique();
-    let account = AccountSharedData::new_data(42, &[1_u8, 2, 3], &system_program::id()).unwrap();
-    bank.store_account(&account_address, &account);
+    let account =
+        Account::new_data(42, &[1_u8, 2, 3], &solana_sdk_ids::system_program::id()).unwrap();
 
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "ser",
-    );
     let account_metas = vec![
         AccountMeta::new_readonly(account_address, false),
         AccountMeta::new_readonly(account_address, false),
     ];
     let instruction = Instruction::new_with_bytes(program_id, &[4, 5, 6, 7], account_metas);
-    bank_client
-        .send_and_confirm_instruction(&mint_keypair, instruction)
-        .unwrap();
+
+    let context = InstrContext {
+        feature_set,
+        accounts: vec![(account_address, account)],
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
+    assert!(effects.result.is_none());
 }
 
 #[test]
@@ -2643,61 +2770,43 @@ fn test_program_sbf_upgrade_via_cpi() {
 fn test_program_sbf_ro_account_modify() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_ro_account_modify");
+    let program_id = Pubkey::new_unique();
 
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let (bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_ro_account_modify",
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
-    let argument_keypair = Keypair::new();
-    let account = AccountSharedData::new(42, 100, &program_id);
-    bank.store_account(&argument_keypair.pubkey(), &account);
+    let argument_pubkey = Pubkey::new_unique();
+    let accounts = vec![(argument_pubkey, Account::new(42, 100, &program_id))];
 
-    let from_keypair = Keypair::new();
-    let account = AccountSharedData::new(84, 0, &system_program::id());
-    bank.store_account(&from_keypair.pubkey(), &account);
-
-    let mint_pubkey = mint_keypair.pubkey();
     let account_metas = vec![
-        AccountMeta::new_readonly(argument_keypair.pubkey(), false),
+        AccountMeta::new_readonly(argument_pubkey, false),
         AccountMeta::new_readonly(program_id, false),
     ];
 
-    let instruction = Instruction::new_with_bytes(program_id, &[0], account_metas.clone());
-    let message = Message::new(&[instruction], Some(&mint_pubkey));
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair], message);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified)
-    );
+    for case in [0, 1, 2] {
+        let instruction = Instruction::new_with_bytes(program_id, &[case], account_metas.clone());
 
-    let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas.clone());
-    let message = Message::new(&[instruction], Some(&mint_pubkey));
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair], message);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified)
-    );
+        let context = InstrContext {
+            feature_set: feature_set.clone(),
+            accounts: accounts.clone(),
+            instruction,
+        };
 
-    let instruction = Instruction::new_with_bytes(program_id, &[2], account_metas.clone());
-    let message = Message::new(&[instruction], Some(&mint_pubkey));
-    let result = bank_client.send_and_confirm_message(&[&mint_keypair], message);
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified)
-    );
+        let effects =
+            harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+                .unwrap();
+
+        assert_eq!(effects.result, Some(InstructionError::ReadonlyDataModified));
+    }
 }
 
 #[test]
@@ -3606,6 +3715,40 @@ fn test_program_sbf_realloc_invoke() {
             );
         }
     }
+
+    // Realloc shrink, then CPI, then realloc extend
+    let mut invoke_account = AccountSharedData::new(100_000_000, 10, &realloc_invoke_program_id);
+    invoke_account.set_data(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    bank.store_account(&invoke_pubkey, &invoke_account);
+    let mut instruction_data = vec![];
+    instruction_data.extend_from_slice(&[INVOKE_REALLOC_SHRINK_THEN_CPI_THEN_REALLOC_EXTEND, 1]);
+    instruction_data.extend_from_slice(&5_u64.to_le_bytes());
+    instruction_data.extend_from_slice(&10_u64.to_le_bytes());
+    let result = bank_client.send_and_confirm_message(
+        signer,
+        Message::new(
+            &[
+                Instruction::new_with_bytes(
+                    realloc_invoke_program_id,
+                    &instruction_data,
+                    vec![
+                        AccountMeta::new(invoke_pubkey, false),
+                        AccountMeta::new_readonly(realloc_invoke_program_id, false),
+                    ],
+                ),
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
+                    LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
+                ),
+            ],
+            Some(&mint_pubkey),
+        ),
+    );
+    assert!(result.is_ok());
+    let data = bank_client
+        .get_account_data(&invoke_pubkey)
+        .unwrap()
+        .unwrap();
+    assert_eq!(data, &[0, 1, 2, 3, 4, 0, 0, 0, 0, 0]);
 
     // Realloc invoke max twice
     let invoke_account = AccountSharedData::new(42, 0, &realloc_program_id);
@@ -4588,44 +4731,43 @@ fn test_deplete_cost_meter_with_access_violation() {
 fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
     agave_logger::setup();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
+    let program_elf = harness::file::load_program_elf("solana_sbf_rust_divide_by_zero");
+    let program_id = Pubkey::new_unique();
 
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
-    let (bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        bank_forks.as_ref(),
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_divide_by_zero",
+    let feature_set = FeatureSet::all_enabled();
+    let compute_budget = {
+        let mut budget = ComputeBudget::new_with_defaults(false, false);
+        budget.compute_unit_limit = 10_000u64;
+        budget
+    };
+
+    let mut program_cache = default_program_cache_with_program(
+        &program_id,
+        &program_elf,
+        &feature_set,
+        &compute_budget,
     );
+    let sysvar_cache = default_sysvar_cache();
 
     let instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
-    let compute_unit_limit = 10_000;
-    let message = Message::new(
-        &[
-            ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
-            instruction,
-        ],
-        Some(&mint_keypair.pubkey()),
-    );
-    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
-    let result = load_execute_and_commit_transaction(&bank, tx).unwrap();
+    let context = InstrContext {
+        feature_set,
+        accounts: vec![],
+        instruction,
+    };
+
+    let effects =
+        harness::execute_instr(context, &compute_budget, &mut program_cache, &sysvar_cache)
+            .unwrap();
 
     assert_eq!(
-        result.status.unwrap_err(),
-        TransactionError::InstructionError(1, InstructionError::ProgramFailedToComplete)
+        effects.result,
+        Some(InstructionError::ProgramFailedToComplete)
     );
 
     // all compute unit limit should be consumed due to SBF VM error
-    assert_eq!(result.executed_units, u64::from(compute_unit_limit));
+    assert_eq!(effects.cu_avail, 0);
 }
 
 #[test]

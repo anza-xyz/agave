@@ -1,4 +1,4 @@
-# Solana Coding Guidelines
+# Agave Style Guidelines
 
 The goal of these guidelines is to improve developer productivity by allowing
 developers to jump into any file in the codebase and not need to adapt to
@@ -6,7 +6,7 @@ inconsistencies in how the code is written. The codebase should appear as if it
 had been authored by a single developer. If you don't agree with a convention,
 submit a PR patching this document and let's discuss! Once the PR is accepted,
 *all* code should be updated as soon as possible to reflect the new
-conventions.
+conventions. These guidelines also outline the PR process etiquette.
 
 ## First Time Contributors
 
@@ -18,7 +18,8 @@ will be deemed consequential or not on a case by case basis. As an example,
 spelling and/or grammar fixes will almost always be considered inconsequential,
 unless they materially correct the message.
 
-## Pull Requests
+
+## Pull Request style
 
 Small, frequent PRs are much preferred to large, infrequent ones. A large PR is
 difficult to review, can block others from making progress, and can quickly get
@@ -51,6 +52,16 @@ cherry-picked commit:
 $ git pull --rebase upstream master
 ```
 
+Before pushing the code do not forget to run:
+
+```bash
+$ ./ci/test-sanity.sh
+$ ./ci/test-checks.sh
+$ ./ci/test-dev-context-only-utils.sh
+```
+before pushing the code. This will save everyone the time in review. For
+simple patches it may be reasonable to skip the `test-dev-context-only-utils.sh`.
+
 Any changes that break consensus must be behind a feature gate and must have
 a merged SIMD.
 
@@ -80,8 +91,6 @@ Avoid “hack” or “one-off” solutions, prefer well-architected designs whi
 Only use unwrap() in cases where you can prove it will never panic, and in cases where panic on
 unwrap() is desirable, prefer .expect().
 
-Prefer not to break semver, if absolutely necessary increment the appropriate versioning.
-
 Add a changelog entry for any appropriate changes that add features that should be called
 out in the release notes for new versions.
 
@@ -91,16 +100,15 @@ Don't mix refactoring changes and logical changes together.
 
 If there are no functional changes, PRs can be very large and that's no
 problem. If, however, your changes are making meaningful changes or additions,
-then about 1,000 lines of changes is about the most you should ask a Solana
-maintainer to review.
+then about 1,000 lines of changes is about the most you should ask a maintainer to review.
 
 ### Should I send small PRs as I develop large, new components?
 
 Add only code to the codebase that is ready to be deployed. If you are building
 a large library, consider developing it in a separate git repository. When it
-is ready to be integrated, the Solana Labs Maintainers will work with you to decide
+is ready to be integrated, the repository maintainers will work with you to decide
 on a path forward. Smaller libraries may be copied in whereas very large ones
-may be pulled in with a package manager.
+may be pulled in through crates.io.
 
 ## Getting Pull Requests Merged
 
@@ -114,10 +122,13 @@ the component author, you should aim to be inclusive of others. Providing a
 detailed problem description is the most effective means of engaging both the
 component author and other potentially interested parties.
 
+### Draft Pull Requests
+
 Consider opening all PRs as Draft Pull Requests first. Using a draft PR allows
-you to kickstart the CI automation, which typically takes between 10 and 30
-minutes to execute. Use that time to write a detailed problem description. Once
-the description is written and CI succeeds, click the "Ready to Review" button
+you to start the CI automation, review the changes, write a detailed problem
+description and explain your solution.
+
+Once the description is written and CI succeeds, click the "Ready to Review" button
 and add reviewers. Adding reviewers before CI succeeds is a fast path to losing
 reviewer engagement. Not only will they be notified and see the PR is not yet
 ready for them, they will also be bombarded with additional notifications
@@ -126,6 +137,15 @@ muted, you'll need to reach out over some other medium, such as Discord, to
 request they have another look. When you use draft PRs, no notifications are
 sent when you push commits and edit the PR description. Use draft PRs
 liberally.  Don't bug the humans until you have gotten past the bots.
+
+If your PR has received a lot of feedback and needs a lot of rework, feel free
+to convert it into a draft until issues are resolved and CI is green.
+
+Do not add reviewers to draft PRs.  GitHub doesn't automatically clear
+approvals when you click "Ready for Review", so a review that meant "I approve
+of the direction" suddenly has the appearance of "I approve of these changes."
+Instead, add a comment that mentions the usernames that you would like a review
+from. Ask explicitly what you would like feedback on.
 
 ### What should be in my PR description?
 
@@ -145,7 +165,7 @@ more important than competing issues, don't expect the reviewer to read on.
 
 Next, the reviewer will read the proposed changes. At this point, the reviewer
 needs to be convinced the proposed changes are a *good* solution to the problem
-described above.  If the proposed changes, not the code changes, generates
+described above. If the proposed changes, not the code changes, generates
 discussion, consider closing the PR and returning with a design proposal
 instead.
 
@@ -195,13 +215,13 @@ matches the logical flow in your PR description.
 ### The PR / Issue Labels
 
 Labels make it easier to manage and track PRs / issues.  Below some common labels
-that we use in Solana.  For the complete list of labels, please refer to the
+that we use in Anza.  For the complete list of labels, please refer to the
 [label page](https://github.com/anza-xyz/agave/issues/labels):
 
 * "feature-gate": when you add a new feature gate or modify the behavior of
 an existing feature gate, please add the "feature-gate" label to your PR.
 New feature gates should also always have a corresponding tracking issue
-(go to "New Issue" -> "Feature Gate Tracker [Get Started](https://github.com/anza-xyz/agave/issues/new?assignees=&labels=feature-gate&template=1-feature-gate.yml&title=Feature+Gate%3A+)")
+(go to "New Issue" -> "Feature Gate Tracker [Get Started](https://github.com/anza-xyz/agave/issues/new?template=2-feature-gate.yml)")
 and should be updated each time the feature is activated on a cluster.
 
 * "automerge": When a PR is labelled with "automerge", the PR will be
@@ -220,8 +240,7 @@ PRs are typically reviewed and merged in under 7 days. If your PR has been open
 for longer, it's a strong indicator that the reviewers aren't confident the
 change meets the quality standards of the codebase. You might consider closing
 it and coming back with smaller PRs and longer descriptions detailing what
-problem it solves and how it solves it. Old PRs will be marked stale and then
-closed automatically 7 days later.
+problem it solves and how it solves it.
 
 ### How to manage review feedback?
 
@@ -273,52 +292,91 @@ Non-exhaustive list of things that make it *easier* to review:
 Note that these lists are *independent* of how simple/complicated the actual
 *code* changes are.
 
-## Draft Pull Requests
-
-If you want early feedback on your PR, use GitHub's "Draft Pull Request"
-mechanism. Draft PRs are a convenient way to collaborate with the Agave
-maintainers without triggering notifications as you make changes. When you feel
-your PR is ready for a broader audience, you can transition your draft PR to a
-standard PR with the click of a button.
-
-Do not add reviewers to draft PRs.  GitHub doesn't automatically clear
-approvals when you click "Ready for Review", so a review that meant "I approve
-of the direction" suddenly has the appearance of "I approve of these changes."
-Instead, add a comment that mentions the usernames that you would like a review
-from. Ask explicitly what you would like feedback on.
-
 ## Rust coding conventions
 
 * All Rust code is formatted using the latest version of `rustfmt`. Once
   installed, it will be updated automatically when you update the compiler with
-`rustup`.
+  `rustup`. To run the formatter manually, execute `cargo +nightly fmt`.
 
-* All Rust code is linted with Clippy. If you'd prefer to ignore its advice, do
-  so explicitly:
+* Clippy config should not be changed without a good cause. If you'd prefer to ignore
+  Clippy's advice, do so explicitly, e.g.:
 
   ```rust
   #[allow(clippy::too_many_arguments)]
   ```
 
-  Note: Clippy defaults can be overridden in the top-level file `.clippy.toml`.
-
 * For variable names, when in doubt, spell it out. The mapping from type names
   to variable names is to lowercase the type name, putting an underscore before
-each capital letter. Variable names should *not* be abbreviated unless being
-used as closure arguments and the brevity improves readability. When a function
-has multiple instances of the same type, qualify each with a prefix and
-underscore (i.e. alice\_keypair) or a numeric suffix (i.e. tx0).
+  each capital letter. Variable names should *not* be abbreviated unless being
+  used as closure arguments and the brevity improves readability. When a function
+  has multiple instances of the same type, qualify each with a prefix and
+  underscore (i.e. alice\_keypair) or a numeric suffix (i.e. tx0).
+
+* Try to keep variable names consistent across functions. If the same object is
+  passed through multiple functions/structs, it is easier to track it if the
+  name is consistent.
 
 * For function and method names, use `<verb>_<subject>`. For unit tests, that
   verb should always be `test` and for benchmarks the verb should always be
-`bench`. Avoid namespacing function names with some arbitrary word. Avoid
-abbreviating words in function names.
+  `bench`. Avoid namespacing function names with some arbitrary word. Avoid
+  abbreviating words in function names.
 
 * As they say, "When in Rome, do as the Romans do." A good patch should
   acknowledge the coding conventions of the code that surrounds it, even in the
-case where that code has not yet been updated to meet the conventions described
-here.
+  case where that code has not yet been updated to meet the conventions described
+  here.
 
+### Test-only code
+
+We all love tests, but in order to write them one often needs "helper functions". For example,
+a complex struct may have a constructor function that instantiates it in a configuration that
+is well-suited for tests, but is not otherwise useful in production. Such functions should be
+clearly marked as intended for tests, as their code quality standard can be much lower than the
+production code (e.g. we can afford to freely use dynamic allocations without perf concerns).
+When within a crate, use
+```rust
+#[cfg(test)]
+```
+annotation as appropriate.
+
+If you want to use some functions or structures only for testing, but outside of the current module
+(integration test, other crates etc), use the following procedure:
+
+1. Mark test code with the `dev-context-only-utils` feature:
+```rust
+#[cfg(feature = "dev-context-only-utils")]
+pub fn my_function_for_testing_foo() {}
+```
+```rust
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
+```
+```rust
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+struct A {}
+```
+2. Ensure that `dev-context-only-utils` feature is present in the current crate's `Cargo.toml`.
+3. When using the functionality, make sure to enable the feature:
+```toml
+[dev-dependencies]
+solana-genesis = { workspace = true,  features = ["dev-context-only-utils"] }
+```
+
+### Public API
+
+While most Agave crates get pushed on crates.io, their API is not always guaranteed to be
+stable. Unstable API is gated behind `agave-unstable-api` feature. Breaking public API
+is acceptable only if it is gated behind `agave-unstable-api`. However, you should generally
+avoid doing so where practical, as some external teams use agave crates anyway.
+
+### Allocator usage
+
+When possible, avoid dynamic allocations of memory. While not particularly expensive in any one
+place, it adds up over time. Thus, if your code can be expected to run often:
+ * avoid `Box::clone()`, `Vec::clone()` and `.collect()` where possible
+ * use `::with_capacity()`, even if you do not know the exact length of the
+ resulting collection, slight overallocation is usually cheaper then reallocating
+ * consider using fixed length stack-allocated objects in favor of dynamic allocation
 
 ## Terminology
 

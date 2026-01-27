@@ -1,7 +1,7 @@
 use {
     super::{
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
-        AtomicRefCount, DiskIndexValue, IndexValue, RefCount, SlotList,
+        AtomicRefCount, DiskIndexValue, IndexValue, RefCount, SlotList, SlotListItem,
     },
     crate::{account_info::AccountInfo, is_zero_lamport::IsZeroLamport},
     solana_clock::Slot,
@@ -144,7 +144,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
 pub struct SlotListReadGuard<'a, T>(RwLockReadGuard<'a, SlotList<T>>);
 
 impl<T> Deref for SlotListReadGuard<'_, T> {
-    type Target = [(Slot, T)];
+    type Target = [SlotListItem<T>];
 
     fn deref(&self) -> &Self::Target {
         self.0.as_slice()
@@ -167,7 +167,7 @@ pub struct SlotListWriteGuard<'a, T>(RwLockWriteGuard<'a, SlotList<T>>);
 
 impl<T> SlotListWriteGuard<'_, T> {
     /// Append element to the end of slot list
-    pub fn push(&mut self, item: (Slot, T)) {
+    pub fn push(&mut self, item: SlotListItem<T>) {
         self.0.push(item);
     }
 
@@ -176,7 +176,7 @@ impl<T> SlotListWriteGuard<'_, T> {
     /// Returns number of preserved elements (size of the slot list after processing).
     pub fn retain_and_count<F>(&mut self, f: F) -> usize
     where
-        F: FnMut(&mut (Slot, T)) -> bool,
+        F: FnMut(&mut SlotListItem<T>) -> bool,
     {
         self.0.retain(f);
         self.0.len()
@@ -189,7 +189,7 @@ impl<T> SlotListWriteGuard<'_, T> {
     }
 
     #[cfg(test)]
-    pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
+    pub fn assign(&mut self, value: impl IntoIterator<Item = SlotListItem<T>>) {
         *self.0 = value.into_iter().collect();
     }
 
@@ -203,7 +203,7 @@ impl<T> SlotListWriteGuard<'_, T> {
 }
 
 impl<T> Deref for SlotListWriteGuard<'_, T> {
-    type Target = [(Slot, T)];
+    type Target = [SlotListItem<T>];
 
     fn deref(&self) -> &Self::Target {
         self.0.as_slice()
@@ -243,7 +243,7 @@ impl AccountMapEntryMeta {
 /// can be used to pre-allocate structures for insertion into accounts index outside of lock
 pub enum PreAllocatedAccountMapEntry<T: IndexValue> {
     Entry(Box<AccountMapEntry<T>>),
-    Raw((Slot, T)),
+    Raw(SlotListItem<T>),
 }
 
 impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
@@ -257,8 +257,8 @@ impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
     }
 }
 
-impl<T: IndexValue> From<PreAllocatedAccountMapEntry<T>> for (Slot, T) {
-    fn from(source: PreAllocatedAccountMapEntry<T>) -> (Slot, T) {
+impl<T: IndexValue> From<PreAllocatedAccountMapEntry<T>> for SlotListItem<T> {
+    fn from(source: PreAllocatedAccountMapEntry<T>) -> SlotListItem<T> {
         match source {
             PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list_read_lock()[0],
             PreAllocatedAccountMapEntry::Raw(raw) => raw,
