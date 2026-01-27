@@ -360,21 +360,19 @@ mod tests {
         let mut cache = PingCache::new(&mut rng, Instant::now(), ttl, delay, /*cap=*/ 1000);
         let this_node = Keypair::new();
         let keypairs: Vec<_> = repeat_with(Keypair::new).take(8).collect();
-        let sockets: Vec<_> = repeat_with(|| {
-            SocketAddr::V4(SocketAddrV4::new(
-                Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
-                rng.random(),
-            ))
-        })
-        .take(8)
-        .collect();
-        let remote_nodes: Vec<(&Keypair, SocketAddr)> = repeat_with(|| {
-            let keypair = &keypairs[rng.random_range(0..keypairs.len())];
-            let socket = sockets[rng.random_range(0..sockets.len())];
-            (keypair, socket)
-        })
-        .take(128)
-        .collect();
+        let sockets = [
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 8001)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(2, 2, 2, 2), 8002)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(3, 3, 3, 3), 8003)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(4, 4, 4, 4), 8004)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(5, 5, 5, 5), 8005)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(6, 6, 6, 6), 8006)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(7, 7, 7, 7), 8007)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(8, 8, 8, 8), 8008)),
+        ];
+        let remote_nodes: Vec<(&Keypair, SocketAddr)> = (0usize..128)
+            .map(|i| (&keypairs[i % keypairs.len()], sockets[i % sockets.len()]))
+            .collect();
 
         // Initially all checks should fail. The first observation of each node
         // should create a ping packet.
@@ -480,10 +478,7 @@ mod tests {
     fn test_expired_pong_returns_check_false() {
         let mut rng = rand::rng();
         let this_node = Keypair::new();
-        let remote_socket = SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
-            rng.random(),
-        ));
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 10, 10, 10), 8000));
         let ttl = Duration::from_secs(20 * 60); // 20 minutes
         let delay = ttl / 64;
         let mut now = Instant::now();
