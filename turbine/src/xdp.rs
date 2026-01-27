@@ -21,7 +21,7 @@ use {
     std::{
         error::Error,
         net::{Ipv4Addr, SocketAddr},
-        sync::{Arc, atomic::AtomicBool},
+        sync::{atomic::AtomicBool, Arc},
         thread,
     },
 };
@@ -102,7 +102,7 @@ impl AsRef<[SocketAddr]> for XdpAddrs {
 
 impl XdpSender {
     #[inline]
-    pub(crate) fn try_send(
+    pub fn try_send(
         &self,
         sender_index: usize,
         addr: impl Into<XdpAddrs>,
