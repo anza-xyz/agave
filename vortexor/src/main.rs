@@ -1,21 +1,21 @@
 use {
     agave_logger::redirect_stderr_to_file,
-    clap::{crate_name, Parser},
+    clap::{Parser, crate_name},
     crossbeam_channel::bounded,
     log::*,
     solana_core::banking_trace::BankingTracer,
     solana_keypair::read_keypair_file,
-    solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
+    solana_net_utils::sockets::{SocketConfiguration as SocketConfig, bind_in_range_with_config},
     solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::Cli,
         rpc_load_balancer::RpcLoadBalancer,
         sender::{
-            PacketBatchSender, DEFAULT_BATCH_SIZE, DEFAULT_RECV_TIMEOUT,
-            DEFAULT_SENDER_THREADS_COUNT,
+            DEFAULT_BATCH_SIZE, DEFAULT_RECV_TIMEOUT, DEFAULT_SENDER_THREADS_COUNT,
+            PacketBatchSender,
         },
-        stake_updater::{StakeUpdater, STAKE_REFRESH_SLEEP_DURATION},
+        stake_updater::{STAKE_REFRESH_SLEEP_DURATION, StakeUpdater},
         vortexor::Vortexor,
     },
     std::{
@@ -23,7 +23,7 @@ use {
         env,
         net::IpAddr,
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
     },
     tokio_util::sync::CancellationToken,
 };

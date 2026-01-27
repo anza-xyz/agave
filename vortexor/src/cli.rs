@@ -1,5 +1,5 @@
 use {
-    clap::{builder::ValueParser, crate_description, crate_name, ArgAction, ColorChoice, Parser},
+    clap::{ArgAction, ColorChoice, Parser, builder::ValueParser, crate_description, crate_name},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,

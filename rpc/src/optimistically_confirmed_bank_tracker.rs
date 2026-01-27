@@ -21,8 +21,8 @@ use {
     std::{
         collections::HashSet,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -111,25 +111,27 @@ impl OptimisticallyConfirmedBankTracker {
         let mut newest_root_slot: Slot = 0;
         let thread_hdl = Builder::new()
             .name("solOpConfBnkTrk".to_string())
-            .spawn(move || loop {
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
+            .spawn(move || {
+                loop {
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
 
-                if let Err(RecvTimeoutError::Disconnected) = Self::recv_notification(
-                    &receiver,
-                    &bank_forks,
-                    &optimistically_confirmed_bank,
-                    &subscriptions,
-                    &mut pending_optimistically_confirmed_banks,
-                    &mut last_notified_confirmed_slot,
-                    &mut highest_confirmed_slot,
-                    &mut newest_root_slot,
-                    &slot_notification_subscribers,
-                    prioritization_fee_cache.as_deref(),
-                    &dependency_tracker,
-                ) {
-                    break;
+                    if let Err(RecvTimeoutError::Disconnected) = Self::recv_notification(
+                        &receiver,
+                        &bank_forks,
+                        &optimistically_confirmed_bank,
+                        &subscriptions,
+                        &mut pending_optimistically_confirmed_banks,
+                        &mut last_notified_confirmed_slot,
+                        &mut highest_confirmed_slot,
+                        &mut newest_root_slot,
+                        &slot_notification_subscribers,
+                        prioritization_fee_cache.as_deref(),
+                        &dependency_tracker,
+                    ) {
+                        break;
+                    }
                 }
             })
             .unwrap();
@@ -416,7 +418,7 @@ mod tests {
     use {
         super::*,
         crossbeam_channel::unbounded,
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{commitment::BlockCommitmentCache, dependency_tracker},
         std::sync::atomic::AtomicU64,
