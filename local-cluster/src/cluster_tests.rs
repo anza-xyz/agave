@@ -390,8 +390,48 @@ pub fn check_for_new_roots(
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
     let mut num_roots_map = HashMap::new();
+    let mut previous_min_roots = 0;
+    let mut stall_start_time = None;
+    let mut iteration_count = 0;
+
+    info!(
+        "{test_name} starting root check: waiting for {num_new_roots} new roots across {} nodes",
+        contact_infos.len()
+    );
+
     while !done {
-        assert!(loop_start.elapsed() < loop_timeout);
+        iteration_count += 1;
+        let elapsed = loop_start.elapsed();
+
+        if elapsed >= loop_timeout {
+            error!(
+                "{test_name} TIMEOUT after {}s waiting for {num_new_roots} new roots. \
+                 Final state: {num_roots_map:?}, iterations: {iteration_count}",
+                elapsed.as_secs()
+            );
+
+            // Provide detailed diagnostic information
+            for (i, ingress_node) in contact_infos.iter().enumerate() {
+                let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+                let current_slot = client
+                    .rpc_client()
+                    .get_slot_with_commitment(CommitmentConfig::processed())
+                    .unwrap_or(0);
+                let finalized_slot = client
+                    .rpc_client()
+                    .get_slot_with_commitment(CommitmentConfig::finalized())
+                    .unwrap_or(0);
+                error!(
+                    "{test_name} Node {} ({}): processed_slot={}, finalized_slot={}, roots_count={}",
+                    i, ingress_node.pubkey(), current_slot, finalized_slot, roots[i].len()
+                );
+            }
+
+            panic!(
+                "{test_name} timed out after {}s waiting for {num_new_roots} new roots",
+                elapsed.as_secs()
+            );
+        }
 
         for (i, ingress_node) in contact_infos.iter().enumerate() {
             let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
@@ -401,18 +441,63 @@ pub fn check_for_new_roots(
                 .unwrap_or(0);
             roots[i].insert(root_slot);
             num_roots_map.insert(*ingress_node.pubkey(), roots[i].len());
-            let num_roots = roots.iter().map(|r| r.len()).min().unwrap();
-            done = num_roots >= num_new_roots;
-            if done || last_print.elapsed().as_secs() > 3 {
-                info!(
-                    "{test_name} waiting for {num_new_roots} new roots.. observed: \
-                     {num_roots_map:?}"
-                );
-                last_print = Instant::now();
-            }
         }
+
+        let num_roots = roots.iter().map(|r| r.len()).min().unwrap();
+        done = num_roots >= num_new_roots;
+
+        // Track progress stalls
+        if num_roots == previous_min_roots {
+            if stall_start_time.is_none() {
+                stall_start_time = Some(Instant::now());
+            }
+        } else {
+            if let Some(stall_time) = stall_start_time {
+                let stall_duration = stall_time.elapsed();
+                if stall_duration.as_secs() > 10 {
+                    warn!(
+                        "{test_name} recovered from {:.1}s stall at {} roots",
+                        stall_duration.as_secs_f64(),
+                        previous_min_roots
+                    );
+                }
+            }
+            stall_start_time = None;
+            previous_min_roots = num_roots;
+        }
+
+        // Enhanced logging with more details
+        if done || last_print.elapsed().as_secs() > 3 {
+            let progress_rate = if elapsed.as_secs() > 0 {
+                num_roots as f64 / elapsed.as_secs() as f64
+            } else {
+                0.0
+            };
+
+            let stall_info = if let Some(stall_time) = stall_start_time {
+                format!(", stalled_for={}s", stall_time.elapsed().as_secs())
+            } else {
+                String::new()
+            };
+
+            info!(
+                "{test_name} waiting for {num_new_roots} new roots.. observed: {num_roots_map:?} \
+                 (elapsed: {}s, rate: {:.2} roots/s, iterations: {}{stall_info})",
+                elapsed.as_secs(),
+                progress_rate,
+                iteration_count
+            );
+            last_print = Instant::now();
+        }
+
         sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
     }
+
+    let total_time = loop_start.elapsed();
+    info!(
+        "{test_name} successfully found {num_new_roots} new roots after {:.1}s ({} iterations, {:.2} roots/s)",
+        total_time.as_secs_f64(), iteration_count, num_new_roots as f64 / total_time.as_secs_f64()
+    );
 }
 
 pub fn check_no_new_roots(
