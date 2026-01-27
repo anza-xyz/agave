@@ -24,7 +24,7 @@ pub mod entry_notifier_service;
 pub mod genesis_utils;
 pub use solana_leader_schedule as leader_schedule;
 pub mod leader_schedule_cache;
-pub mod leader_schedule_utils;
+pub use solana_runtime::leader_schedule_utils;
 pub mod next_slots_iterator;
 pub mod rooted_slot_iterator;
 pub mod shred;
