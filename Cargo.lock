@@ -527,15 +527,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-verified-packet-receiver"
-version = "4.0.0-alpha.0"
-dependencies = [
- "assert_matches",
- "solana-perf",
- "solana-streamer",
-]
-
-[[package]]
 name = "agave-votor"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -8224,7 +8215,6 @@ dependencies = [
  "agave-scheduling-utils",
  "agave-snapshots",
  "agave-transaction-view",
- "agave-verified-packet-receiver",
  "agave-votor",
  "agave-votor-messages",
  "ahash 0.8.12",
@@ -11885,58 +11875,6 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-sanitize",
  "solana-serde-varint",
-]
-
-[[package]]
-name = "solana-vortexor"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-banking-stage-ingress-types",
- "agave-logger",
- "assert_matches",
- "bytes",
- "clap 4.5.31",
- "crossbeam-channel",
- "dashmap",
- "futures 0.3.31",
- "futures-util",
- "histogram",
- "indexmap 2.13.0",
- "itertools 0.14.0",
- "libc",
- "log",
- "nix 0.31.1",
- "pem",
- "percentage",
- "quinn",
- "quinn-proto",
- "rustls 0.23.36",
- "signal-hook",
- "smallvec",
- "socket2 0.6.2",
- "solana-clap-utils",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "solana-core",
- "solana-keypair",
- "solana-local-cluster",
- "solana-measure",
- "solana-metrics",
- "solana-native-token",
- "solana-net-utils",
- "solana-perf",
- "solana-pubkey 4.0.0",
- "solana-signer",
- "solana-streamer",
- "solana-tls-utils",
- "solana-transaction-metrics-tracker",
- "solana-version",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util 0.7.18",
- "url 2.5.8",
- "x509-parser",
 ]
 
 [[package]]

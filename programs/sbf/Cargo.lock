@@ -356,14 +356,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-verified-packet-receiver"
-version = "4.0.0-alpha.0"
-dependencies = [
- "solana-perf",
- "solana-streamer",
-]
-
-[[package]]
 name = "agave-votor"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -6700,7 +6692,6 @@ dependencies = [
  "agave-scheduling-utils",
  "agave-snapshots",
  "agave-transaction-view",
- "agave-verified-packet-receiver",
  "agave-votor",
  "agave-votor-messages",
  "ahash 0.8.12",

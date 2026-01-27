@@ -129,9 +129,7 @@ members = [
     "unified-scheduler-logic",
     "unified-scheduler-pool",
     "validator",
-    "verified-packet-receiver",
     "version",
-    "vortexor",
     "vote",
     "votor",
     "votor-messages",
@@ -212,7 +210,6 @@ agave-snapshots = { path = "snapshots", version = "=4.0.0-alpha.0", features = [
 agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 agave-thread-manager = { path = "thread-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "transaction-view", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp = { path = "xdp", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

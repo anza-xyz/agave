@@ -53,5 +53,4 @@ DCOU_TAINTED_PACKAGES=(
   solana-dos
   solana-local-cluster
   solana-transaction-dos
-  solana-vortexor
 )
