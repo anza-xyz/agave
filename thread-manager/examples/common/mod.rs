@@ -1,13 +1,13 @@
 use {
-    axum::{routing::get, Router},
+    axum::{Router, routing::get},
     hyper::{Body, Request},
     log::info,
     std::{
         future::IntoFuture,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
         time::{Duration, Instant},
     },

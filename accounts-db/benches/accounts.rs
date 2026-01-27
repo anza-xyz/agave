@@ -11,7 +11,7 @@ use {
     solana_accounts_db::{
         account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
-        accounts_db::{AccountFromStorage, AccountsDb, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS},
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, AccountFromStorage, AccountsDb},
         accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
@@ -68,10 +68,10 @@ where
     F: Fn(&Accounts, &[Pubkey]) + Send + Copy + 'static,
 {
     let num_readers = 5;
-    let accounts_db = new_accounts_db(vec![PathBuf::from(
-        std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()),
-    )
-    .join(bench_name)]);
+    let accounts_db = new_accounts_db(vec![
+        PathBuf::from(std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()))
+            .join(bench_name),
+    ]);
     let accounts = Arc::new(Accounts::new(Arc::new(accounts_db)));
     let num_keys = 1000;
     let slot = 0;
@@ -134,17 +134,19 @@ fn bench_concurrent_read_write(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_concurrent_scan_write(bencher: &mut Bencher) {
-    store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| loop {
-        test::black_box(
-            accounts
-                .load_by_program(
-                    &Ancestors::default(),
-                    0,
-                    AccountSharedData::default().owner(),
-                    &ScanConfig::default(),
-                )
-                .unwrap(),
-        );
+    store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| {
+        loop {
+            test::black_box(
+                accounts
+                    .load_by_program(
+                        &Ancestors::default(),
+                        0,
+                        AccountSharedData::default().owner(),
+                        &ScanConfig::default(),
+                    )
+                    .unwrap(),
+            );
+        }
     })
 }
 
@@ -161,8 +163,10 @@ fn bench_dashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
         let map = map.clone();
         Builder::new()
             .name("readers".to_string())
-            .spawn(move || loop {
-                test::black_box(map.entry(5).or_insert(2));
+            .spawn(move || {
+                loop {
+                    test::black_box(map.entry(5).or_insert(2));
+                }
             })
             .unwrap();
     }
@@ -186,8 +190,10 @@ fn bench_rwlock_hashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
         let map = map.clone();
         Builder::new()
             .name("readers".to_string())
-            .spawn(move || loop {
-                test::black_box(map.write().unwrap().get(&5));
+            .spawn(move || {
+                loop {
+                    test::black_box(map.write().unwrap().get(&5));
+                }
             })
             .unwrap();
     }
@@ -199,10 +205,10 @@ fn bench_rwlock_hashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
 }
 
 fn setup_bench_dashmap_iter() -> (Arc<Accounts>, DashMap<Pubkey, (AccountSharedData, Hash)>) {
-    let accounts_db = new_accounts_db(vec![PathBuf::from(
-        std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()),
-    )
-    .join("bench_dashmap_par_iter")]);
+    let accounts_db = new_accounts_db(vec![
+        PathBuf::from(std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()))
+            .join("bench_dashmap_par_iter"),
+    ]);
     let accounts = Arc::new(Accounts::new(Arc::new(accounts_db)));
 
     let dashmap = DashMap::new();

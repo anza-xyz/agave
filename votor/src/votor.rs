@@ -76,7 +76,7 @@ use {
     },
     std::{
         collections::HashMap,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
         time::Duration,
     },

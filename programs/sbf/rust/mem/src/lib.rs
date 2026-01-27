@@ -5,7 +5,7 @@ use {
     solana_program_error::ProgramResult,
     solana_program_memory::{sol_memcmp, sol_memcpy, sol_memmove, sol_memset},
     solana_pubkey::Pubkey,
-    solana_sbf_rust_mem_dep::{run_mem_tests, MemOps},
+    solana_sbf_rust_mem_dep::{MemOps, run_mem_tests},
 };
 
 solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);

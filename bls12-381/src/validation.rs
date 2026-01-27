@@ -1,6 +1,6 @@
 use crate::{
-    encoding::{Endianness, PodG1Point, PodG2Point},
     Version,
+    encoding::{Endianness, PodG1Point, PodG2Point},
 };
 
 /// Validates that a G1 point is on the curve and in the correct subgroup.

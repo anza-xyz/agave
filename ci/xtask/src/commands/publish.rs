@@ -1,6 +1,6 @@
 use {
     crate::common::{check_docker_available, get_git_root_path},
-    anyhow::{anyhow, Result},
+    anyhow::{Result, anyhow},
     cargo_metadata::{MetadataCommand, PackageId},
     clap::{Args, Subcommand},
     log::info,
@@ -14,7 +14,7 @@ use {
         sync::{Arc, RwLock},
         thread,
     },
-    toml_edit::{value, DocumentMut},
+    toml_edit::{DocumentMut, value},
 };
 
 #[derive(Debug, Clone, clap::ValueEnum)]

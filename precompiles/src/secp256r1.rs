@@ -9,9 +9,9 @@ use {
     },
     solana_precompile_error::PrecompileError,
     solana_secp256r1_program::{
-        Secp256r1SignatureOffsets, COMPRESSED_PUBKEY_SERIALIZED_SIZE, FIELD_SIZE,
-        SECP256R1_HALF_ORDER, SECP256R1_ORDER_MINUS_ONE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
-        SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
+        COMPRESSED_PUBKEY_SERIALIZED_SIZE, FIELD_SIZE, SECP256R1_HALF_ORDER,
+        SECP256R1_ORDER_MINUS_ONE, SIGNATURE_OFFSETS_SERIALIZED_SIZE, SIGNATURE_OFFSETS_START,
+        SIGNATURE_SERIALIZED_SIZE, Secp256r1SignatureOffsets,
     },
 };
 
@@ -172,7 +172,7 @@ mod tests {
         crate::test_verify_with_alignment,
         bytemuck::bytes_of,
         solana_secp256r1_program::{
-            new_secp256r1_instruction_with_signature, sign_message, DATA_START, SECP256R1_ORDER,
+            DATA_START, SECP256R1_ORDER, new_secp256r1_instruction_with_signature, sign_message,
         },
     };
 
@@ -380,13 +380,15 @@ mod tests {
         );
         let feature_set = FeatureSet::all_enabled();
 
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_ok()
+        );
 
         // The message is the last field in the instruction data so
         // changing its last byte will also change the signature validity
@@ -394,13 +396,15 @@ mod tests {
         instruction.data[message_byte_index] =
             instruction.data[message_byte_index].wrapping_add(12);
 
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_err());
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -500,13 +504,15 @@ mod tests {
             if r_bytes.len() == 31 || s_bytes.len() == 31 {
                 // Once found, verify the signature and break out of the loop
                 let feature_set = FeatureSet::all_enabled();
-                assert!(test_verify_with_alignment(
-                    verify,
-                    &instruction.data,
-                    &[&instruction.data],
-                    &feature_set
-                )
-                .is_ok());
+                assert!(
+                    test_verify_with_alignment(
+                        verify,
+                        &instruction.data,
+                        &[&instruction.data],
+                        &feature_set
+                    )
+                    .is_ok()
+                );
                 break;
             }
         }

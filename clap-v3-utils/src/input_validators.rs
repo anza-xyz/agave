@@ -7,7 +7,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_keypair::read_keypair_file,
-    solana_pubkey::{Pubkey, MAX_SEED_LEN},
+    solana_pubkey::{MAX_SEED_LEN, Pubkey},
     solana_signature::Signature,
     std::{fmt::Display, ops::RangeBounds, str::FromStr},
 };

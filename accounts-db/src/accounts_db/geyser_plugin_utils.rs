@@ -29,7 +29,7 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig, MarkObsoleteAccounts},
             accounts_update_notifier_interface::{
                 AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
             },
@@ -38,8 +38,8 @@ pub mod tests {
         dashmap::DashMap,
         solana_account::ReadableAccount as _,
         std::sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         test_case::test_case,
     };

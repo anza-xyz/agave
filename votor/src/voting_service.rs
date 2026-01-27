@@ -265,13 +265,13 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
-            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
+            quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_wighted_qos_server},
             streamer::StakedNodes,
         },
         std::{

@@ -1,28 +1,28 @@
 use {
     super::{
+        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, SlotListItem,
+        UpsertReclaim,
         account_map_entry::{
             AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry, SlotListWriteGuard,
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         stats::Stats,
-        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, SlotListItem,
-        UpsertReclaim,
     },
     crate::pubkey_bins::PubkeyBinCalculator24,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{
         cmp,
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{HashMap, HashSet, hash_map::Entry},
         fmt::Debug,
         mem,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
 };
@@ -1441,7 +1441,7 @@ enum ReasonToNotFlush {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{AccountsIndexConfig, IndexLimit, BINS_FOR_TESTING},
+        crate::accounts_index::{AccountsIndexConfig, BINS_FOR_TESTING, IndexLimit},
         assert_matches::assert_matches,
         itertools::Itertools,
         test_case::test_case,

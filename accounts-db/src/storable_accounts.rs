@@ -369,7 +369,7 @@ pub mod tests {
             accounts_file::AccountsFileProvider,
         },
         rand::Rng,
-        solana_account::{accounts_equal, AccountSharedData},
+        solana_account::{AccountSharedData, accounts_equal},
         std::sync::Arc,
     };
 

@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    solana_cli::cli::{process_command, CliCommand, CliConfig},
+    solana_cli::cli::{CliCommand, CliConfig, process_command},
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::Keypair,

@@ -21,8 +21,8 @@ use {
     std::{
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread,
         time::Duration,
@@ -208,55 +208,58 @@ impl GeyserPluginService {
     ) {
         thread::Builder::new()
             .name("SolGeyserPluginRpc".to_string())
-            .spawn(move || loop {
-                if let Ok(request) = request_receiver.recv_timeout(Duration::from_secs(5)) {
-                    match request {
-                        GeyserPluginManagerRequest::ListPlugins { response_sender } => {
-                            let plugin_list = plugin_manager.read().unwrap().list_plugins();
-                            response_sender
-                                .send(plugin_list)
-                                .expect("Admin rpc service will be waiting for response");
-                        }
+            .spawn(move || {
+                loop {
+                    if let Ok(request) = request_receiver.recv_timeout(Duration::from_secs(5)) {
+                        match request {
+                            GeyserPluginManagerRequest::ListPlugins { response_sender } => {
+                                let plugin_list = plugin_manager.read().unwrap().list_plugins();
+                                response_sender
+                                    .send(plugin_list)
+                                    .expect("Admin rpc service will be waiting for response");
+                            }
 
-                        GeyserPluginManagerRequest::ReloadPlugin {
-                            ref name,
-                            ref config_file,
-                            response_sender,
-                        } => {
-                            let reload_result = plugin_manager
-                                .write()
-                                .unwrap()
-                                .reload_plugin(name, config_file);
-                            response_sender
-                                .send(reload_result)
-                                .expect("Admin rpc service will be waiting for response");
-                        }
+                            GeyserPluginManagerRequest::ReloadPlugin {
+                                ref name,
+                                ref config_file,
+                                response_sender,
+                            } => {
+                                let reload_result = plugin_manager
+                                    .write()
+                                    .unwrap()
+                                    .reload_plugin(name, config_file);
+                                response_sender
+                                    .send(reload_result)
+                                    .expect("Admin rpc service will be waiting for response");
+                            }
 
-                        GeyserPluginManagerRequest::LoadPlugin {
-                            ref config_file,
-                            response_sender,
-                        } => {
-                            let load_result =
-                                plugin_manager.write().unwrap().load_plugin(config_file);
-                            response_sender
-                                .send(load_result)
-                                .expect("Admin rpc service will be waiting for response");
-                        }
+                            GeyserPluginManagerRequest::LoadPlugin {
+                                ref config_file,
+                                response_sender,
+                            } => {
+                                let load_result =
+                                    plugin_manager.write().unwrap().load_plugin(config_file);
+                                response_sender
+                                    .send(load_result)
+                                    .expect("Admin rpc service will be waiting for response");
+                            }
 
-                        GeyserPluginManagerRequest::UnloadPlugin {
-                            ref name,
-                            response_sender,
-                        } => {
-                            let unload_result = plugin_manager.write().unwrap().unload_plugin(name);
-                            response_sender
-                                .send(unload_result)
-                                .expect("Admin rpc service will be waiting for response");
+                            GeyserPluginManagerRequest::UnloadPlugin {
+                                ref name,
+                                response_sender,
+                            } => {
+                                let unload_result =
+                                    plugin_manager.write().unwrap().unload_plugin(name);
+                                response_sender
+                                    .send(unload_result)
+                                    .expect("Admin rpc service will be waiting for response");
+                            }
                         }
                     }
-                }
 
-                if exit.load(Ordering::Relaxed) {
-                    break;
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
                 }
             })
             .unwrap();

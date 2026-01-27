@@ -2,7 +2,7 @@
 
 use {
     crate::device::NetworkDevice,
-    aya::{programs::Xdp, Ebpf, EbpfLoader},
+    aya::{Ebpf, EbpfLoader, programs::Xdp},
     std::io::{Cursor, Write},
 };
 
@@ -163,7 +163,9 @@ fn write_section_header(
     addralign: u64,
     entsize: u64,
 ) -> std::io::Result<()> {
-    write_fields!(w, name, type_, flags, addr, offset, size, link, info, addralign, entsize);
+    write_fields!(
+        w, name, type_, flags, addr, offset, size, link, info, addralign, entsize
+    );
 
     Ok(())
 }

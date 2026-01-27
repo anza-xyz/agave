@@ -2,8 +2,8 @@
 
 use {
     crate::{
-        encoding::{serialize_gt, Endianness, PodG1Point, PodG2Point, PodGtElement},
         Version,
+        encoding::{Endianness, PodG1Point, PodG2Point, PodGtElement, serialize_gt},
     },
     blstrs::{Bls12, G1Affine, G2Prepared, Gt},
     group::Group,

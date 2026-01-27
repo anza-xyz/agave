@@ -3,7 +3,7 @@ use {
         admin_rpc_service,
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, App, Arg, ArgMatches, SubCommand},
+    clap::{App, Arg, ArgMatches, SubCommand, value_t},
     solana_clap_utils::input_validators::{is_parsable, is_pubkey},
     solana_pubkey::Pubkey,
     std::path::Path,

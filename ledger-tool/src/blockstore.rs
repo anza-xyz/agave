@@ -5,11 +5,11 @@ use {
         error::{LedgerToolError, Result},
         ledger_path::canonicalize_ledger_path,
         ledger_utils::get_program_ids,
-        output::{output_ledger, output_slot, CliDuplicateSlotProof, SlotBounds, SlotInfo},
+        output::{CliDuplicateSlotProof, SlotBounds, SlotInfo, output_ledger, output_slot},
     },
     chrono::{DateTime, Utc},
     clap::{
-        value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
+        App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit, values_t_or_exit,
     },
     itertools::Itertools,
     log::*,
@@ -22,8 +22,8 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{
-            column::{Column, ColumnName},
             Blockstore, BlockstoreError, PurgeType,
+            column::{Column, ColumnName},
         },
         blockstore_options::AccessType,
         shred::Shred,
@@ -32,7 +32,7 @@ use {
         borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
-        io::{stdout, BufRead, BufReader, Write},
+        io::{BufRead, BufReader, Write, stdout},
         path::{Path, PathBuf},
         sync::atomic::AtomicBool,
         time::{Duration, UNIX_EPOCH},

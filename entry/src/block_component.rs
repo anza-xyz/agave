@@ -139,11 +139,11 @@ use {
     solana_hash::Hash,
     std::mem::MaybeUninit,
     wincode::{
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         containers::{Pod, Vec as WincodeVec},
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
 };
 

@@ -1,7 +1,7 @@
 #[path = "receive_and_buffer_utils.rs"]
 mod utils;
 use {
-    criterion::{criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{Criterion, Throughput, criterion_group, criterion_main},
     solana_core::banking_stage::transaction_scheduler::{
         receive_and_buffer::{ReceiveAndBuffer, TransactionViewReceiveAndBuffer},
         transaction_state_container::StateContainer,

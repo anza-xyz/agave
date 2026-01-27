@@ -251,7 +251,7 @@ mod tests {
             bank::Bank,
             epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
         },
         solana_signer::Signer,
@@ -342,11 +342,13 @@ mod tests {
             );
         }
         assert_eq!(test_state.slots_aggregate.min_active_percent(), 0.0);
-        assert!(test_state
-            .slots_aggregate
-            .slots_to_repair_iter()
-            .next()
-            .is_none());
+        assert!(
+            test_state
+                .slots_aggregate
+                .slots_to_repair_iter()
+                .next()
+                .is_none()
+        );
 
         // Now add one more validator, min_active_percent should be 40% but repair
         // is still empty (< 42%).
@@ -380,11 +382,13 @@ mod tests {
             test_state.slots_aggregate.min_active_percent(),
             expected_active_percent
         );
-        assert!(test_state
-            .slots_aggregate
-            .slots_to_repair_iter()
-            .next()
-            .is_none());
+        assert!(
+            test_state
+                .slots_aggregate
+                .slots_to_repair_iter()
+                .next()
+                .is_none()
+        );
 
         // Add one more validator, then repair is > 42% and no longer empty.
         let new_active_validator = test_state.validator_voting_keypairs
@@ -715,38 +719,44 @@ mod tests {
         // Then test that it fails if the record is invalid.
 
         // Invalid pubkey.
-        assert!(test_state
-            .slots_aggregate
-            .aggregate_from_record("invalid_pubkey", &last_voted_fork_slots_record,)
-            .is_err());
+        assert!(
+            test_state
+                .slots_aggregate
+                .aggregate_from_record("invalid_pubkey", &last_voted_fork_slots_record,)
+                .is_err()
+        );
 
         // Invalid hash.
         last_voted_fork_slots_record.last_vote_bankhash.clear();
-        assert!(test_state
-            .slots_aggregate
-            .aggregate_from_record(
-                &test_state.validator_voting_keypairs[0]
-                    .node_keypair
-                    .pubkey()
-                    .to_string(),
-                &last_voted_fork_slots_record,
-            )
-            .is_err());
+        assert!(
+            test_state
+                .slots_aggregate
+                .aggregate_from_record(
+                    &test_state.validator_voting_keypairs[0]
+                        .node_keypair
+                        .pubkey()
+                        .to_string(),
+                    &last_voted_fork_slots_record,
+                )
+                .is_err()
+        );
         last_voted_fork_slots_record.last_vote_bankhash.pop();
 
         // Empty last voted fork.
         last_voted_fork_slots_record.last_vote_bankhash = last_vote_bankhash.to_string();
         last_voted_fork_slots_record.last_voted_fork_slots.clear();
-        assert!(test_state
-            .slots_aggregate
-            .aggregate_from_record(
-                &test_state.validator_voting_keypairs[0]
-                    .node_keypair
-                    .pubkey()
-                    .to_string(),
-                &last_voted_fork_slots_record,
-            )
-            .is_err());
+        assert!(
+            test_state
+                .slots_aggregate
+                .aggregate_from_record(
+                    &test_state.validator_voting_keypairs[0]
+                        .node_keypair
+                        .pubkey()
+                        .to_string(),
+                    &last_voted_fork_slots_record,
+                )
+                .is_err()
+        );
     }
 
     #[test]

@@ -5,8 +5,8 @@ use {
         device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
         netlink::MacAddress,
         packet::{
-            write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
-            UDP_HEADER_SIZE,
+            ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE, write_eth_header, write_ip_header,
+            write_udp_header,
         },
         route::NextHop,
         set_cpu_affinity,
@@ -14,7 +14,7 @@ use {
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
-    libc::{sysconf, _SC_PAGESIZE},
+    libc::{_SC_PAGESIZE, sysconf},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         thread,

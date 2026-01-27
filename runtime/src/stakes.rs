@@ -7,7 +7,7 @@ use {
     im::HashMap as ImHashMap,
     log::error,
     num_derive::ToPrimitive,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
@@ -29,7 +29,7 @@ use {
 
 mod serde_stakes;
 pub(crate) use serde_stakes::{
-    serialize_stake_accounts_to_delegation_format, DeserializableStakes, SerdeStakesToStakeFormat,
+    DeserializableStakes, SerdeStakesToStakeFormat, serialize_stake_accounts_to_delegation_format,
 };
 
 #[derive(Debug, Error)]
@@ -582,7 +582,7 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_stake_interface::{self as stake, state::StakeStateV2},
-        solana_vote_interface::state::{VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
+        solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
         solana_vote_program::vote_state,
     };
 

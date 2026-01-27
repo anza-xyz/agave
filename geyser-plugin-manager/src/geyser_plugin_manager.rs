@@ -445,7 +445,7 @@ pub(crate) fn load_plugin_from_config(
 mod tests {
     use {
         crate::geyser_plugin_manager::{
-            GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN2_CONFIG, TESTPLUGIN_CONFIG,
+            GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN_CONFIG, TESTPLUGIN2_CONFIG,
         },
         agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
         libloading::Library,

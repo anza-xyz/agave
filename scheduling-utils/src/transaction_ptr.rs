@@ -1,6 +1,6 @@
 use {
     agave_scheduler_bindings::{
-        SharableTransactionBatchRegion, SharableTransactionRegion, MAX_TRANSACTIONS_PER_MESSAGE,
+        MAX_TRANSACTIONS_PER_MESSAGE, SharableTransactionBatchRegion, SharableTransactionRegion,
     },
     agave_transaction_view::transaction_data::TransactionData,
     core::ptr::NonNull,
