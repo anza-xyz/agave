@@ -753,12 +753,17 @@ impl RingOp<BuffersState> for ReadOp {
         // Safety: we assert that the buffer is large enough to hold the read.
         let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset as usize) };
 
-        // align the read op read length to `DIRECT_IO_READ_LEN_ALIGNMENT` if necessary
+        // Align the read length if necessary
         let internal_read_len = if *is_direct_io {
-            read_len.next_multiple_of(DIRECT_IO_READ_LEN_ALIGNMENT)
+            // Direct io always does a full read of buf.len()
+            // The buffer length is always aligned to `DIRECT_IO_READ_LEN_ALIGNMENT` when
+            // we are in direct io mode
+            assert!(*buf_offset == 0);
+            buf.len()
         } else {
             *read_len
         };
+
         let entry = match buf.io_buf_index() {
             Some(io_buf_index) => {
                 opcode::ReadFixed::new(*fd, buf_ptr, internal_read_len, io_buf_index)
