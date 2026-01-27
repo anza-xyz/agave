@@ -9752,11 +9752,11 @@ version = "4.0.0-alpha.0"
 name = "solana-svm-test-harness-fixture"
 version = "4.0.0-alpha.0"
 dependencies = [
- "agave-feature-set",
  "solana-account",
  "solana-instruction",
  "solana-instruction-error",
  "solana-pubkey 4.0.0",
+ "solana-svm-feature-set",
  "thiserror 2.0.18",
 ]
 
@@ -9764,8 +9764,6 @@ dependencies = [
 name = "solana-svm-test-harness-instr"
 version = "4.0.0-alpha.0"
 dependencies = [
- "agave-feature-set",
- "agave-precompiles",
  "agave-syscalls",
  "bincode",
  "env_logger",
@@ -9785,6 +9783,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm",
  "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-test-harness-fixture",
  "solana-svm-timings",

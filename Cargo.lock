@@ -11143,6 +11143,7 @@ dependencies = [
  "solana-instruction",
  "solana-instruction-error",
  "solana-pubkey 4.0.0",
+ "solana-svm-feature-set",
  "thiserror 2.0.18",
 ]
 
@@ -11172,6 +11173,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm",
  "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-test-harness-fixture",
  "solana-svm-timings",

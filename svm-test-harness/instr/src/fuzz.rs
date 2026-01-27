@@ -2,20 +2,51 @@
 
 use {
     crate::{
-        execute_instr,
+        execute_instr_with_callback,
         fixture::{
             instr_context::InstrContext,
             proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
         },
         logger,
     },
-    agave_feature_set::{increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8},
+    agave_precompiles::{get_precompile, is_precompile},
     agave_syscalls::create_program_runtime_environment_v1,
     prost::Message,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_precompile_error::PrecompileError,
     solana_program_runtime::loaded_programs::ProgramRuntimeEnvironments,
+    solana_pubkey::Pubkey,
+    solana_svm_callback::InvokeContextCallback,
     std::{env, ffi::c_int, sync::Arc},
 };
+
+/// Callback with full precompile support for fuzz testing.
+///
+/// All precompiles are enabled for fuzz testing.
+struct FuzzInstrContextCallback;
+
+impl InvokeContextCallback for FuzzInstrContextCallback {
+    fn is_precompile(&self, program_id: &Pubkey) -> bool {
+        is_precompile(program_id, |_| true)
+    }
+
+    fn process_precompile(
+        &self,
+        program_id: &Pubkey,
+        data: &[u8],
+        instruction_datas: Vec<&[u8]>,
+    ) -> std::result::Result<(), PrecompileError> {
+        if let Some(precompile) = get_precompile(program_id, |_| true) {
+            precompile.verify(
+                data,
+                &instruction_datas,
+                &agave_feature_set::FeatureSet::all_enabled(),
+            )
+        } else {
+            Err(PrecompileError::InvalidPublicKey)
+        }
+    }
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
@@ -40,8 +71,8 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
     };
 
     let feature_set = &instr_context.feature_set;
-    let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
-    let simd_0339_active = feature_set.is_active(&increase_cpi_account_info_limit::id());
+    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
+    let simd_0339_active = feature_set.increase_cpi_account_info_limit;
 
     let compute_budget = {
         let mut budget = ComputeBudget::new_with_defaults(simd_0268_active, simd_0339_active);
@@ -62,7 +93,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
         let environments = ProgramRuntimeEnvironments {
             program_runtime_v1: Arc::new(
                 create_program_runtime_environment_v1(
-                    &instr_context.feature_set.runtime_features(),
+                    &instr_context.feature_set,
                     &compute_budget.to_budget(),
                     false, /* deployment */
                     false, /* debugging_features */
@@ -72,7 +103,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
             ..ProgramRuntimeEnvironments::default()
         };
 
-        let mut cache = crate::program_cache::new_with_builtins(&instr_context.feature_set, slot);
+        let mut cache = crate::program_cache::new_with_builtins(slot);
         crate::program_cache::fill_from_accounts(
             &mut cache,
             &environments,
@@ -84,8 +115,9 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
         cache
     };
 
-    let instr_effects = execute_instr(
-        instr_context,
+    let instr_effects = execute_instr_with_callback(
+        &instr_context,
+        &FuzzInstrContextCallback,
         &compute_budget,
         &mut program_cache,
         &sysvar_cache,

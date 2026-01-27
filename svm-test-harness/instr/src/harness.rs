@@ -2,14 +2,12 @@
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
-    agave_precompiles::{get_precompile, is_precompile},
     agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{AccountSharedData, WritableAccount},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
     solana_message::{LegacyMessage, Message, SanitizedMessage},
-    solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
@@ -24,32 +22,10 @@ use {
     std::{collections::HashSet, rc::Rc, sync::Arc},
 };
 
-/// Implement the callback trait so that the SVM API can be used to load
-/// program ELFs from accounts (ie. `load_program_with_pubkey`).
-struct InstrContextCallback<'a>(&'a InstrContext);
+/// Default callback with no precompile support.
+struct DefaultCallback;
 
-impl InvokeContextCallback for InstrContextCallback<'_> {
-    fn is_precompile(&self, program_id: &Pubkey) -> bool {
-        is_precompile(program_id, |feature_id: &Pubkey| {
-            self.0.feature_set.is_active(feature_id)
-        })
-    }
-
-    fn process_precompile(
-        &self,
-        program_id: &Pubkey,
-        data: &[u8],
-        instruction_datas: Vec<&[u8]>,
-    ) -> std::result::Result<(), PrecompileError> {
-        if let Some(precompile) = get_precompile(program_id, |feature_id: &Pubkey| {
-            self.0.feature_set.is_active(feature_id)
-        }) {
-            precompile.verify(data, &instruction_datas, &self.0.feature_set)
-        } else {
-            Err(PrecompileError::InvalidPublicKey)
-        }
-    }
-}
+impl InvokeContextCallback for DefaultCallback {}
 
 fn compile_message(
     instruction: &Instruction,
@@ -85,8 +61,28 @@ fn compile_message(
 }
 
 /// Execute a single instruction against the Solana VM.
+///
+/// This version does not support precompiles. Use [`execute_instr_with_callback`]
+/// if you need precompile support.
 pub fn execute_instr(
     input: InstrContext,
+    compute_budget: &ComputeBudget,
+    program_cache: &mut ProgramCacheForTxBatch,
+    sysvar_cache: &SysvarCache,
+) -> Option<InstrEffects> {
+    execute_instr_with_callback(
+        &input,
+        &DefaultCallback,
+        compute_budget,
+        program_cache,
+        sysvar_cache,
+    )
+}
+
+/// Execute a single instruction against the Solana VM with a custom callback.
+pub fn execute_instr_with_callback<C: InvokeContextCallback>(
+    input: &InstrContext,
+    callback: &C,
     compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
@@ -95,7 +91,7 @@ pub fn execute_instr(
     let mut timings = ExecuteTimings::default();
 
     let log_collector = LogCollector::new_ref();
-    let runtime_features = input.feature_set.runtime_features();
+    let feature_set = input.feature_set;
 
     let rent = sysvar_cache.get_rent().unwrap();
     let program_id = &input.instruction.program_id;
@@ -115,7 +111,7 @@ pub fn execute_instr(
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
             create_program_runtime_environment_v1(
-                &input.feature_set.runtime_features(),
+                &input.feature_set,
                 &compute_budget.to_budget(),
                 false, /* deployment */
                 false, /* debugging_features */
@@ -134,16 +130,14 @@ pub fn execute_instr(
             .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
             .unwrap_or_default();
 
-        let callback = InstrContextCallback(&input);
-
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             EnvironmentConfig::new(
                 blockhash,
                 blockhash_lamports_per_signature,
-                &callback,
-                &runtime_features,
+                callback,
+                &feature_set,
                 &environments,
                 &environments,
                 sysvar_cache,
@@ -198,11 +192,7 @@ pub fn execute_instr(
 
     Some(InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
-            if get_precompile(&input.instruction.program_id, |_| true).is_some() {
-                Some(0)
-            } else {
-                Some(code)
-            }
+            Some(code)
         } else {
             None
         },
@@ -223,8 +213,8 @@ pub fn execute_instr(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, agave_feature_set::FeatureSet, solana_account::Account,
-        solana_instruction::AccountMeta, solana_pubkey::Pubkey, solana_sysvar_id::SysvarId,
+        super::*, solana_account::Account, solana_instruction::AccountMeta, solana_pubkey::Pubkey,
+        solana_svm_feature_set::SVMFeatureSet, solana_sysvar_id::SysvarId,
     };
 
     #[test]
@@ -270,7 +260,7 @@ mod tests {
 
         let cu_avail = 10000u64;
         let slot = 10;
-        let feature_set = FeatureSet::default();
+        let feature_set = SVMFeatureSet::default();
 
         // Create Clock sysvar
         let clock = solana_clock::Clock {
@@ -285,7 +275,7 @@ mod tests {
 
         // Build the instruction context.
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: vec![
                 (
                     from_pubkey,
@@ -372,12 +362,12 @@ mod tests {
         crate::sysvar_cache::fill_from_accounts(&mut sysvar_cache, &context.accounts);
 
         // Create Program Cache
-        let mut program_cache = crate::program_cache::new_with_builtins(&feature_set, slot);
+        let mut program_cache = crate::program_cache::new_with_builtins(slot);
 
         let environments = ProgramRuntimeEnvironments {
             program_runtime_v1: Arc::new(
                 create_program_runtime_environment_v1(
-                    &feature_set.runtime_features(),
+                    &context.feature_set,
                     &compute_budget.to_budget(),
                     false, /* deployment */
                     false, /* debugging_features */
