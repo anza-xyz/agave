@@ -6,9 +6,8 @@ use {
         sparse_index::RegistryIndex,
     },
     hyper::{
-        body,
+        Method, Server, body,
         service::{make_service_fn, service_fn},
-        Method, Server,
     },
     log::*,
     std::{

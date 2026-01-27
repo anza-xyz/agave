@@ -3,7 +3,7 @@
 use jemallocator::Jemalloc;
 use {
     agave_validator::{
-        cli::{app, warn_for_deprecated_arguments, DefaultArgs},
+        cli::{DefaultArgs, app, warn_for_deprecated_arguments},
         commands,
     },
     log::error,

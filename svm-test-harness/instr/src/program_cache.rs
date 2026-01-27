@@ -1,6 +1,6 @@
 use {
     agave_feature_set::{
-        enable_loader_v4, zk_elgamal_proof_program_enabled, zk_token_sdk_enabled, FeatureSet,
+        FeatureSet, enable_loader_v4, zk_elgamal_proof_program_enabled, zk_token_sdk_enabled,
     },
     agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{Account, AccountSharedData},

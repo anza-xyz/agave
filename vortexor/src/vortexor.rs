@@ -6,14 +6,14 @@ use {
     },
     solana_keypair::Keypair,
     solana_net_utils::sockets::{
-        multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
+        SocketConfiguration as SocketConfig, multi_bind_in_range_with_config,
     },
     solana_perf::packet::PacketBatch,
     solana_streamer::{
         nonblocking::{quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, swqos::SwQosConfig},
         quic::{
-            spawn_stake_wighted_qos_server, EndpointKeyUpdater, QuicStreamerConfig,
-            SwQosQuicStreamerConfig,
+            EndpointKeyUpdater, QuicStreamerConfig, SwQosQuicStreamerConfig,
+            spawn_stake_wighted_qos_server,
         },
         streamer::StakedNodes,
     },

@@ -1,5 +1,6 @@
 use {
     super::{
+        BankingStageStats, SLOT_BOUNDARY_CHECK_PERIOD,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         latest_validator_vote_packet::VoteSource,
@@ -8,7 +9,6 @@ use {
         },
         vote_packet_receiver::VotePacketReceiver,
         vote_storage::VoteStorage,
-        BankingStageStats, SLOT_BOUNDARY_CHECK_PERIOD,
     },
     crate::banking_stage::{
         consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
@@ -38,8 +38,8 @@ use {
     solana_transaction_error::TransactionError,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::Instant,
     },
@@ -99,8 +99,11 @@ impl VoteWorker {
             if !self.storage.is_empty()
                 || last_metrics_update.elapsed() >= SLOT_BOUNDARY_CHECK_PERIOD
             {
-                let (_, process_buffered_packets_us) = measure_us!(self
-                    .process_buffered_packets(&mut banking_stage_stats, &mut slot_metrics_tracker));
+                let (_, process_buffered_packets_us) =
+                    measure_us!(self.process_buffered_packets(
+                        &mut banking_stage_stats,
+                        &mut slot_metrics_tracker
+                    ));
                 slot_metrics_tracker
                     .increment_process_buffered_packets_us(process_buffered_packets_us);
                 last_metrics_update = Instant::now();
@@ -306,8 +309,8 @@ impl VoteWorker {
             return None;
         }
 
-        let (process_transactions_summary, process_packets_transactions_us) = measure_us!(self
-            .process_packets_transactions(
+        let (process_transactions_summary, process_packets_transactions_us) =
+            measure_us!(self.process_packets_transactions(
                 bank,
                 sanitized_transactions,
                 banking_stage_stats,

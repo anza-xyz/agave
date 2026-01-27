@@ -11,7 +11,7 @@ use {
     handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
-    solana_bls_signatures::{keypair::Keypair as BLSKeypair, VerifiableProofOfPossession},
+    solana_bls_signatures::{VerifiableProofOfPossession, keypair::Keypair as BLSKeypair},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -21,8 +21,8 @@ use {
     solana_sdk_ids::system_program,
     solana_slot_hashes::SlotHash,
     solana_transaction_context::{
-        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
-        IndexOfAccount,
+        IndexOfAccount, instruction::InstructionContext,
+        instruction_accounts::BorrowedInstructionAccount,
     },
     solana_vote_interface::{error::VoteError, instruction::CommissionKind, program::id},
     std::{
@@ -1380,7 +1380,7 @@ mod tests {
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{
-            instruction_accounts::InstructionAccount, TransactionContext,
+            TransactionContext, instruction_accounts::InstructionAccount,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
         test_case::{test_case, test_matrix},
@@ -4271,19 +4271,21 @@ mod tests {
             .into_iter()
             .collect();
         let clock = Clock::default();
-        assert!(authorize(
-            &mut borrowed_account,
-            VoteStateTargetVersion::V4,
-            &new_node_pubkey,
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession
-            }),
-            &signers,
-            &clock,
-            true,
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                &mut borrowed_account,
+                VoteStateTargetVersion::V4,
+                &new_node_pubkey,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey,
+                    bls_proof_of_possession
+                }),
+                &signers,
+                &clock,
+                true,
+            )
+            .is_ok()
+        );
         let vote_state =
             VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
         assert_eq!(vote_state.bls_pubkey_compressed, Some(bls_pubkey));

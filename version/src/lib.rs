@@ -11,7 +11,7 @@
 
 pub use self::legacy::{LegacyVersion1, LegacyVersion2};
 use {
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     serde::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
     solana_serde_varint as serde_varint,

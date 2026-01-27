@@ -1,7 +1,7 @@
 use {
     crate::repair::request_response::RequestResponse,
     lru::LruCache,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_ledger::shred::Nonce,
 };
 
@@ -116,9 +116,11 @@ pub(crate) mod tests {
             .unwrap()
             .expire_timestamp;
 
-        assert!(outstanding_requests
-            .register_response(nonce, shred.payload(), expire_timestamp + 1, |_| ())
-            .is_none());
+        assert!(
+            outstanding_requests
+                .register_response(nonce, shred.payload(), expire_timestamp + 1, |_| ())
+                .is_none()
+        );
         assert!(outstanding_requests.requests.get(&nonce).is_none());
     }
 
@@ -142,9 +144,11 @@ pub(crate) mod tests {
         assert!(num_expected_responses > 1);
 
         // Response that passes all checks should decrease num_expected_responses
-        assert!(outstanding_requests
-            .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
-            .is_some());
+        assert!(
+            outstanding_requests
+                .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
+                .is_some()
+        );
         num_expected_responses -= 1;
         assert_eq!(
             outstanding_requests
@@ -156,12 +160,16 @@ pub(crate) mod tests {
         );
 
         // Response with incorrect nonce is ignored
-        assert!(outstanding_requests
-            .register_response(nonce + 1, shred.payload(), expire_timestamp - 1, |_| ())
-            .is_none());
-        assert!(outstanding_requests
-            .register_response(nonce + 1, shred.payload(), expire_timestamp, |_| ())
-            .is_none());
+        assert!(
+            outstanding_requests
+                .register_response(nonce + 1, shred.payload(), expire_timestamp - 1, |_| ())
+                .is_none()
+        );
+        assert!(
+            outstanding_requests
+                .register_response(nonce + 1, shred.payload(), expire_timestamp, |_| ())
+                .is_none()
+        );
         assert_eq!(
             outstanding_requests
                 .requests
@@ -173,9 +181,11 @@ pub(crate) mod tests {
 
         // Response with timestamp over limit should remove status, preventing late
         // responses from being accepted
-        assert!(outstanding_requests
-            .register_response(nonce, shred.payload(), expire_timestamp, |_| ())
-            .is_none());
+        assert!(
+            outstanding_requests
+                .register_response(nonce, shred.payload(), expire_timestamp, |_| ())
+                .is_none()
+        );
         assert!(outstanding_requests.requests.get(&nonce).is_none());
 
         // If number of outstanding requests hits zero, should also remove the entry
@@ -193,9 +203,11 @@ pub(crate) mod tests {
         assert!(num_expected_responses > 1);
         for _ in 0..num_expected_responses {
             assert!(outstanding_requests.requests.get(&nonce).is_some());
-            assert!(outstanding_requests
-                .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
-                .is_some());
+            assert!(
+                outstanding_requests
+                    .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
+                    .is_some()
+            );
         }
         assert!(outstanding_requests.requests.get(&nonce).is_none());
     }

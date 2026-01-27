@@ -7,7 +7,7 @@ use {
     bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
-    solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
+    solana_clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, Slot},
     solana_connection_cache::client_connection::ClientConnection,
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_measure::measure::Measure,

@@ -16,7 +16,7 @@ use {
     crate::{accounts_file::StoredAccountsInfo, storable_accounts::StorableAccounts},
     error::TieredStorageError,
     footer::{AccountBlockFormat, AccountMetaFormat},
-    hot::{HotStorageWriter, HOT_FORMAT},
+    hot::{HOT_FORMAT, HotStorageWriter},
     index::IndexBlockFormat,
     owners::OwnersBlockFormat,
     readable::TieredStorageReader,
@@ -24,8 +24,8 @@ use {
         fs, io,
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicBool, Ordering},
             OnceLock,
+            atomic::{AtomicBool, Ordering},
         },
     },
 };

@@ -17,6 +17,6 @@ impl From<SerdeAccountsLtHash> for AccountsLtHash {
 }
 impl From<AccountsLtHash> for SerdeAccountsLtHash {
     fn from(accounts_lt_hash: AccountsLtHash) -> Self {
-        Self(accounts_lt_hash.0 .0)
+        Self(accounts_lt_hash.0.0)
     }
 }

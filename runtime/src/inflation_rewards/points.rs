@@ -231,7 +231,7 @@ mod tests {
     use {
         super::*,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
+        solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandle},
     };
 
     impl<'a> From<&'a VoteStateV4> for DelegatedVoteState<'a> {

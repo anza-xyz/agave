@@ -32,7 +32,7 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::Blockstore,
-        blockstore_processor::{process_single_slot, ConfirmationProgress, ProcessOptions},
+        blockstore_processor::{ConfirmationProgress, ProcessOptions, process_single_slot},
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_pubkey::Pubkey,
@@ -52,13 +52,13 @@ use {
     solana_vote::vote_transaction::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},
-        fs::{read, File},
+        fs::{File, read},
         io::{Cursor, Write},
         path::{Path, PathBuf},
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
         time::{Duration, Instant},
@@ -1220,7 +1220,7 @@ pub(crate) fn increment_and_write_wen_restart_records(
             }
         }
         WenRestartProgressInternalState::Done { .. } => {
-            return Err(WenRestartError::UnexpectedState(RestartState::Done).into())
+            return Err(WenRestartError::UnexpectedState(RestartState::Done).into());
         }
     };
     write_wen_restart_records(records_path, progress)?;
@@ -1427,7 +1427,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore::{create_new_ledger, entries_to_test_shreds, Blockstore},
+            blockstore::{Blockstore, create_new_ledger, entries_to_test_shreds},
             blockstore_options::LedgerColumnOptions,
             blockstore_processor::{fill_blockstore_slot_with_ticks, test_process_blockstore},
             get_tmp_ledger_path_auto_delete,
@@ -1437,14 +1437,14 @@ mod tests {
         solana_runtime::{
             epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
-        solana_vote_interface::state::{TowerSync, Vote, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
+        solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, TowerSync, Vote},
         solana_vote_program::vote_state::create_v4_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},
         tempfile::TempDir,
@@ -1483,9 +1483,11 @@ mod tests {
         {
             let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
             for entry in entries {
-                assert!(gossip_crds
-                    .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                    .is_ok());
+                assert!(
+                    gossip_crds
+                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
+                        .is_ok()
+                );
             }
         }
     }
@@ -1507,17 +1509,19 @@ mod tests {
             observed_stake,
             shred_version: SHRED_VERSION,
         };
-        assert!(cluster_info
-            .gossip
-            .crds
-            .write()
-            .unwrap()
-            .insert(
-                CrdsValue::new(CrdsData::RestartHeaviestFork(heaviest_fork), node_keypair),
-                /*now=*/ 0,
-                GossipRoute::LocalMessage
-            )
-            .is_ok());
+        assert!(
+            cluster_info
+                .gossip
+                .crds
+                .write()
+                .unwrap()
+                .insert(
+                    CrdsValue::new(CrdsData::RestartHeaviestFork(heaviest_fork), node_keypair),
+                    /*now=*/ 0,
+                    GossipRoute::LocalMessage
+                )
+                .is_ok()
+        );
     }
 
     struct WenRestartTestInitResult {
@@ -1736,15 +1740,17 @@ mod tests {
         };
         let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
         // Trigger full snapshot generation on the old root bank.
-        assert!(bank_to_full_snapshot_archive(
-            snapshot_config.bank_snapshots_dir.clone(),
-            &old_root_bank,
-            Some(snapshot_config.snapshot_version),
-            snapshot_config.full_snapshot_archives_dir.clone(),
-            snapshot_config.incremental_snapshot_archives_dir.clone(),
-            snapshot_config.archive_format,
-        )
-        .is_ok());
+        assert!(
+            bank_to_full_snapshot_archive(
+                snapshot_config.bank_snapshots_dir.clone(),
+                &old_root_bank,
+                Some(snapshot_config.snapshot_version),
+                snapshot_config.full_snapshot_archives_dir.clone(),
+                snapshot_config.incremental_snapshot_archives_dir.clone(),
+                snapshot_config.archive_format,
+            )
+            .is_ok()
+        );
 
         let exit = Arc::new(AtomicBool::new(false));
         let (abs_request_sender, _abs_request_receiver) = unbounded();
@@ -2161,14 +2167,16 @@ mod tests {
             .unwrap(),
             WenRestartError::MissingLastVotedForkSlots,
         );
-        assert!(write_wen_restart_records(
-            &test_state.wen_restart_proto_path,
-            &WenRestartProgress {
-                state: RestartState::LastVotedForkSlots.into(),
-                ..Default::default()
-            },
-        )
-        .is_ok());
+        assert!(
+            write_wen_restart_records(
+                &test_state.wen_restart_proto_path,
+                &WenRestartProgress {
+                    state: RestartState::LastVotedForkSlots.into(),
+                    ..Default::default()
+                },
+            )
+            .is_ok()
+        );
         assert_eq!(
             initialize(
                 &test_state.wen_restart_proto_path,
@@ -2192,11 +2200,13 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert!(write_wen_restart_records(
-            &test_state.wen_restart_proto_path,
-            &progress_missing_heaviest_fork_aggregate,
-        )
-        .is_ok());
+        assert!(
+            write_wen_restart_records(
+                &test_state.wen_restart_proto_path,
+                &progress_missing_heaviest_fork_aggregate,
+            )
+            .is_ok()
+        );
         assert_eq!(
             initialize(
                 &test_state.wen_restart_proto_path,
@@ -2219,11 +2229,13 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert!(write_wen_restart_records(
-            &test_state.wen_restart_proto_path,
-            &progress_missing_my_heaviestfork,
-        )
-        .is_ok());
+        assert!(
+            write_wen_restart_records(
+                &test_state.wen_restart_proto_path,
+                &progress_missing_my_heaviestfork,
+            )
+            .is_ok()
+        );
         assert_eq!(
             initialize(
                 &test_state.wen_restart_proto_path,
@@ -2547,24 +2559,26 @@ mod tests {
         let last_vote_slot: Slot = test_state.last_voted_fork_slots[0];
         let last_vote_bankhash = Hash::new_unique();
         let start_time = timestamp();
-        assert!(write_wen_restart_records(
-            &test_state.wen_restart_proto_path,
-            &WenRestartProgress {
-                state: RestartState::LastVotedForkSlots.into(),
-                my_last_voted_fork_slots: Some(LastVotedForkSlotsRecord {
-                    last_voted_fork_slots: test_state.last_voted_fork_slots.clone(),
-                    last_vote_bankhash: last_vote_bankhash.to_string(),
-                    shred_version: SHRED_VERSION as u32,
-                    wallclock: start_time,
-                }),
-                last_voted_fork_slots_aggregate: Some(LastVotedForkSlotsAggregateRecord {
-                    received: HashMap::new(),
-                    final_result: None,
-                }),
-                ..Default::default()
-            }
-        )
-        .is_ok());
+        assert!(
+            write_wen_restart_records(
+                &test_state.wen_restart_proto_path,
+                &WenRestartProgress {
+                    state: RestartState::LastVotedForkSlots.into(),
+                    my_last_voted_fork_slots: Some(LastVotedForkSlotsRecord {
+                        last_voted_fork_slots: test_state.last_voted_fork_slots.clone(),
+                        last_vote_bankhash: last_vote_bankhash.to_string(),
+                        shred_version: SHRED_VERSION as u32,
+                        wallclock: start_time,
+                    }),
+                    last_voted_fork_slots_aggregate: Some(LastVotedForkSlotsAggregateRecord {
+                        received: HashMap::new(),
+                        final_result: None,
+                    }),
+                    ..Default::default()
+                }
+            )
+            .is_ok()
+        );
         let mut rng = rand::rng();
         let mut expected_messages = HashMap::new();
         let expected_slots_to_repair: Vec<Slot> =
@@ -2602,18 +2616,20 @@ mod tests {
             let wen_restart_thread_handle = Builder::new()
                 .name("solana-wen-restart".to_string())
                 .spawn(move || {
-                    assert!(aggregate_restart_last_voted_fork_slots(
-                        &wen_restart_proto_path_clone,
-                        WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT,
-                        cluster_info_clone,
-                        &last_voted_fork_slots,
-                        bank_forks_clone,
-                        blockstore_clone,
-                        Arc::new(RwLock::new(Vec::new())),
-                        exit_clone,
-                        &mut progress_clone,
-                    )
-                    .is_ok());
+                    assert!(
+                        aggregate_restart_last_voted_fork_slots(
+                            &wen_restart_proto_path_clone,
+                            WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT,
+                            cluster_info_clone,
+                            &last_voted_fork_slots,
+                            bank_forks_clone,
+                            blockstore_clone,
+                            Arc::new(RwLock::new(Vec::new())),
+                            exit_clone,
+                            &mut progress_clone,
+                        )
+                        .is_ok()
+                    );
                 })
                 .unwrap();
             let node_pubkey = keypairs.node_keypair.pubkey();
@@ -3238,12 +3254,14 @@ mod tests {
         )
         .unwrap();
         assert!(Path::new(&generated_record.path).exists());
-        assert!(generated_record.path.starts_with(
-            snapshot_config
-                .full_snapshot_archives_dir
-                .to_string_lossy()
-                .as_ref()
-        ));
+        assert!(
+            generated_record.path.starts_with(
+                snapshot_config
+                    .full_snapshot_archives_dir
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
             &snapshot_controller,
@@ -3370,12 +3388,14 @@ mod tests {
         )
         .unwrap();
         assert!(Path::new(&generated_record.path).exists());
-        assert!(generated_record.path.starts_with(
-            snapshot_config
-                .full_snapshot_archives_dir
-                .to_string_lossy()
-                .as_ref()
-        ));
+        assert!(
+            generated_record.path.starts_with(
+                snapshot_config
+                    .full_snapshot_archives_dir
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
     }
 
     #[test]
@@ -3398,14 +3418,16 @@ mod tests {
             genesis_config_hash: test_state.genesis_config_hash,
             exit: Arc::new(AtomicBool::new(false)),
         };
-        assert!(write_wen_restart_records(
-            &test_state.wen_restart_proto_path,
-            &WenRestartProgress {
-                state: RestartState::Done.into(),
-                ..Default::default()
-            }
-        )
-        .is_ok());
+        assert!(
+            write_wen_restart_records(
+                &test_state.wen_restart_proto_path,
+                &WenRestartProgress {
+                    state: RestartState::Done.into(),
+                    ..Default::default()
+                }
+            )
+            .is_ok()
+        );
         assert_eq!(
             wait_for_wen_restart(config.clone())
                 .unwrap_err()
@@ -3413,20 +3435,22 @@ mod tests {
                 .unwrap(),
             WenRestartError::MissingSnapshotInProtobuf
         );
-        assert!(write_wen_restart_records(
-            &test_state.wen_restart_proto_path,
-            &WenRestartProgress {
-                state: RestartState::Done.into(),
-                my_snapshot: Some(GenerateSnapshotRecord {
-                    slot: 0,
-                    bankhash: Hash::new_unique().to_string(),
-                    shred_version: SHRED_VERSION as u32,
-                    path: "snapshot".to_string(),
-                }),
-                ..Default::default()
-            }
-        )
-        .is_ok());
+        assert!(
+            write_wen_restart_records(
+                &test_state.wen_restart_proto_path,
+                &WenRestartProgress {
+                    state: RestartState::Done.into(),
+                    my_snapshot: Some(GenerateSnapshotRecord {
+                        slot: 0,
+                        bankhash: Hash::new_unique().to_string(),
+                        shred_version: SHRED_VERSION as u32,
+                        path: "snapshot".to_string(),
+                    }),
+                    ..Default::default()
+                }
+            )
+            .is_ok()
+        );
         assert!(wait_for_wen_restart(config).is_ok());
     }
 
@@ -3502,14 +3526,16 @@ mod tests {
         let repair_heaviest_fork_thread_handle = Builder::new()
             .name("solana-repair-heaviest-fork".to_string())
             .spawn(move || {
-                assert!(repair_heaviest_fork(
-                    my_heaviest_fork_slot,
-                    coordinator_heaviest_slot,
-                    exit_clone,
-                    blockstore_clone,
-                    wen_restart_repair_slots_clone
-                )
-                .is_ok());
+                assert!(
+                    repair_heaviest_fork(
+                        my_heaviest_fork_slot,
+                        coordinator_heaviest_slot,
+                        exit_clone,
+                        blockstore_clone,
+                        wen_restart_repair_slots_clone
+                    )
+                    .is_ok()
+                );
             })
             .unwrap();
         sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));

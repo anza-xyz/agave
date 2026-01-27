@@ -2,7 +2,7 @@ use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient, ValidatorInfo},
         cluster_tests,
-        integration_tests::{ValidatorKeys, DEFAULT_NODE_STAKE},
+        integration_tests::{DEFAULT_NODE_STAKE, ValidatorKeys},
         validator_configs::*,
     },
     agave_feature_set::FeatureSet,
@@ -12,7 +12,7 @@ use {
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client::connection_cache::ConnectionCache,
-    solana_clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
+    solana_clock::{DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
@@ -30,17 +30,17 @@ use {
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
+    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::genesis_utils::{
-        create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
-        ValidatorVoteKeypairs,
+        GenesisConfigInfo, ValidatorVoteKeypairs,
+        create_genesis_config_with_vote_accounts_and_cluster_type,
     },
-    solana_signer::{signers::Signers, Signer},
+    solana_signer::{Signer, signers::Signers},
     solana_stake_interface::{
         instruction as stake_instruction,
         state::{Authorized, Lockup, StakeStateV2},
@@ -48,7 +48,7 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{
-        TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC,
+        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC, TpuClient, TpuClientConfig,
     },
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
@@ -1140,7 +1140,7 @@ impl LocalCluster {
         let cache = match &*self.connection_cache {
             ConnectionCache::Quic(cache) => cache,
             ConnectionCache::Udp(_) => {
-                return Err(Error::other("Expected a Quic ConnectionCache. Got UDP"))
+                return Err(Error::other("Expected a Quic ConnectionCache. Got UDP"));
             }
         };
 

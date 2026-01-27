@@ -3,7 +3,7 @@ use {
         nonblocking::tpu_client::TpuClient,
         rpc_config::RpcSendTransactionConfig,
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_blocking_v2, SendAndConfirmConfigV2,
+            SendAndConfirmConfigV2, send_and_confirm_transactions_in_parallel_blocking_v2,
         },
     },
     solana_commitment_config::CommitmentConfig,

@@ -6,8 +6,8 @@ use {
     percentage::Percentage,
     std::{
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -276,9 +276,9 @@ pub mod test {
     use {
         super::*,
         crate::quic::{
-            StreamerStats, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, StreamerStats,
         },
-        std::sync::{atomic::Ordering, Arc},
+        std::sync::{Arc, atomic::Ordering},
     };
 
     #[test]

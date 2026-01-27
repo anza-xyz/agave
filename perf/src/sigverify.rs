@@ -10,7 +10,7 @@ use {
         recycled_vec::RecycledVec,
         recycler::Recycler,
     },
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     solana_hash::Hash,
     solana_message::{MESSAGE_HEADER_LENGTH, MESSAGE_VERSION_PREFIX},
     solana_pubkey::Pubkey,
@@ -570,8 +570,8 @@ mod tests {
         super::*,
         crate::{
             packet::{
-                to_packet_batches, BytesPacket, BytesPacketBatch, Packet, RecycledPacketBatch,
-                PACKETS_PER_BATCH,
+                BytesPacket, BytesPacketBatch, PACKETS_PER_BATCH, Packet, RecycledPacketBatch,
+                to_packet_batches,
             },
             sigverify::{self, PacketOffsets},
             test_tx::{
@@ -582,11 +582,11 @@ mod tests {
         bytes::{BufMut, Bytes, BytesMut},
         rand::Rng,
         solana_keypair::Keypair,
-        solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
+        solana_message::{Message, MessageHeader, compiled_instruction::CompiledInstruction},
         solana_packet::PACKET_DATA_SIZE,
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_transaction::{versioned::VersionedTransaction, Transaction},
+        solana_transaction::{Transaction, versioned::VersionedTransaction},
         std::iter::repeat_with,
         test_case::test_case,
     };
@@ -1015,10 +1015,12 @@ mod tests {
 
         // check result
         let should_discard = modify_data;
-        assert!(batches
-            .iter()
-            .flat_map(|batch| batch.iter())
-            .all(|p| p.meta().discard() == should_discard));
+        assert!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .all(|p| p.meta().discard() == should_discard)
+        );
     }
 
     fn ed25519_verify(batches: &mut [PacketBatch]) {
@@ -1037,10 +1039,12 @@ mod tests {
 
         // verify packets
         ed25519_verify(&mut batches);
-        assert!(batches
-            .iter()
-            .flat_map(|batch| batch.iter())
-            .all(|p| p.meta().discard()));
+        assert!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .all(|p| p.meta().discard())
+        );
     }
 
     #[test]
@@ -1103,17 +1107,19 @@ mod tests {
         let ref_ans = 1u8;
         let mut ref_vec = vec![vec![ref_ans; n]; num_batches];
         ref_vec[0].push(0u8);
-        assert!(batches
-            .iter()
-            .flat_map(|batch| batch.iter())
-            .zip(ref_vec.into_iter().flatten())
-            .all(|(p, discard)| {
-                if discard == 0 {
-                    p.meta().discard()
-                } else {
-                    !p.meta().discard()
-                }
-            }));
+        assert!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .zip(ref_vec.into_iter().flatten())
+                .all(|(p, discard)| {
+                    if discard == 0 {
+                        p.meta().discard()
+                    } else {
+                        !p.meta().discard()
+                    }
+                })
+        );
     }
 
     #[test]

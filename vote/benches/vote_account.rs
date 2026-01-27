@@ -1,5 +1,5 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{Bencher, benchmark_group, benchmark_main},
     rand::Rng,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,

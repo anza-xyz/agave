@@ -16,7 +16,7 @@ use {
 };
 pub use {
     crate::nonblocking::tpu_client::TpuSenderError,
-    solana_tpu_client::tpu_client::{TpuClientConfig, DEFAULT_FANOUT_SLOTS, MAX_FANOUT_SLOTS},
+    solana_tpu_client::tpu_client::{DEFAULT_FANOUT_SLOTS, MAX_FANOUT_SLOTS, TpuClientConfig},
 };
 
 pub enum TpuClientWrapper {
@@ -85,7 +85,7 @@ impl TpuClient<QuicPool, QuicConnectionManager, QuicConfig> {
             ConnectionCache::Udp(_) => {
                 return Err(TpuSenderError::Custom(String::from(
                     "Invalid default connection cache",
-                )))
+                )));
             }
         };
         Self::new_with_connection_cache(rpc_client, websocket_url, config, connection_cache)

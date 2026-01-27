@@ -1,21 +1,21 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    clap::{crate_description, crate_name, value_t, values_t_or_exit, App, Arg},
+    clap::{App, Arg, crate_description, crate_name, value_t, values_t_or_exit},
     log::*,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     rayon::prelude::*,
     solana_clap_utils::input_parsers::pubkey_of,
     solana_cli::{
-        cli::{process_command, CliCommand, CliConfig},
+        cli::{CliCommand, CliConfig, process_command},
         program::ProgramCliCommand,
     },
     solana_client::transaction_executor::TransactionExecutor,
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::{request_airdrop_transaction, FAUCET_PORT},
+    solana_faucet::faucet::{FAUCET_PORT, request_airdrop_transaction},
     solana_gossip::gossip_service::discover_peers,
     solana_instruction::{AccountMeta, Instruction},
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_message::Message,
     solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
@@ -28,8 +28,8 @@ use {
         net::{Ipv4Addr, SocketAddr},
         process::exit,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
         time::{Duration, Instant},
