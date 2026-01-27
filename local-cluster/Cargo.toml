@@ -40,6 +40,7 @@ solana-gossip = { workspace = true }
 solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
+solana-leader-schedule = { workspace = true }
 solana-ledger = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }

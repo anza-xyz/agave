@@ -19,12 +19,14 @@ use {
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_ledger::leader_schedule_utils::{
-        first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
-    },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{
+        bank::Bank,
+        leader_schedule_utils::{
+            first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
+        },
+    },
     solana_signer::Signer,
     std::{
         collections::{BTreeMap, BTreeSet},

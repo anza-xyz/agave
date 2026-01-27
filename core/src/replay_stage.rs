@@ -50,7 +50,6 @@ use {
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
-        leader_schedule_utils::first_of_consecutive_leader_slots,
     },
     solana_measure::measure::Measure,
     solana_poh::{
@@ -69,6 +68,7 @@ use {
         bank_forks::{BankForks, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
+        leader_schedule_utils::first_of_consecutive_leader_slots,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
         vote_sender_types::ReplayVoteSender,

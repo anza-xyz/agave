@@ -35,12 +35,12 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
         blockstore::{entries_to_test_shreds, Blockstore},
         blockstore_processor::{self, ProcessOptions},
-        leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },

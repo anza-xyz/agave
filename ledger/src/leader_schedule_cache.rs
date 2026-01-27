@@ -1,12 +1,12 @@
 use {
-    crate::{blockstore::Blockstore, leader_schedule_utils},
+    crate::blockstore::Blockstore,
     itertools::Itertools,
     log::*,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_leader_schedule::{FixedSchedule, LeaderSchedule},
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, leader_schedule_utils},
     std::{
         collections::{hash_map::Entry, HashMap, VecDeque},
         sync::{
