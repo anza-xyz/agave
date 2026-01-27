@@ -1481,9 +1481,13 @@ enum ReasonToNotFlush {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{AccountsIndexConfig, IndexLimit, BINS_FOR_TESTING},
+        crate::accounts_index::{
+            bucket_map_holder::ThresholdEntriesPerBin, AccountsIndexConfig, IndexLimit,
+            ACCOUNTS_INDEX_CONFIG_FOR_TESTING, BINS_FOR_TESTING,
+        },
         assert_matches::assert_matches,
         itertools::Itertools,
+        std::iter,
         test_case::test_case,
     };
 
@@ -2534,5 +2538,51 @@ mod tests {
                 assert_eq!(total_capacity, 0);
             }
         }
+    }
+
+    /// Ensure `write_startup_info()` respects the configured memory threshold
+    /// when populating the in-mem index.
+    #[test]
+    fn test_write_startup_info() {
+        let num_bins = 1;
+        let config = AccountsIndexConfig {
+            bins: Some(num_bins),
+            index_limit: {
+                // Ensure we use an IndexLimit that (1) enables the disk index,
+                // and (2) is a valid threshold, as per the logic in BucketMapHolder::new().
+                // We will override the threshold afterwards, so the actual value doesn't matter.
+                IndexLimit::Threshold(25_000_000_000)
+            },
+            ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
+        };
+        let mut holder = BucketMapHolder::new(num_bins, &config, 1);
+
+        // Override the threshold values to make testing faster.
+        let low_water_mark = 100;
+        let high_water_mark = low_water_mark + 200;
+        holder.threshold_entries_per_bin = Some(ThresholdEntriesPerBin {
+            _target_entries: high_water_mark + 300,
+            high_water_mark,
+            low_water_mark,
+        });
+        let holder = Arc::new(holder);
+        let index = InMemAccountsIndex::<u64, u64>::new(&holder, num_bins - 1, None);
+
+        // Emulate index generation where we push startup values into the `startup_info`
+        // side-band struct when disk index is enabled.  Ensure we push more than
+        // `low_water_mark` number of values.
+        let to_insert = iter::repeat_with(|| {
+            // the addresses need to be unique, but the actual values do not matter
+            (Pubkey::new_unique(), (/*slot*/ 11, /*T*/ 42))
+        })
+        .take(high_water_mark);
+        index.startup_info.insert.lock().unwrap().extend(to_insert);
+        assert!(index.map_internal.read().unwrap().is_empty());
+
+        // Index generation calls `write_startup_info()`, which is responsible for writing the
+        // values to disk, and also populating the in-mem index. So call `write_startup_info()`
+        // here, and ensure we end up with the expected number of items in the in-mem index.
+        index.write_startup_info();
+        assert_eq!(index.map_internal.read().unwrap().len(), low_water_mark);
     }
 }
