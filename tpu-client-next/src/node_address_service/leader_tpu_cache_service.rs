@@ -12,7 +12,6 @@ use {
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_commitment_config::CommitmentConfig,
     solana_pubkey::Pubkey,
-    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error::Error as ClientError, response::RpcContactInfo},
     std::{
@@ -534,14 +533,7 @@ fn extract_cluster_tpu_sockets(
         .into_iter()
         .filter_map(|contact_info| {
             let pubkey = Pubkey::from_str(&contact_info.pubkey).ok()?;
-            let socket = {
-                contact_info.tpu_quic.or_else(|| {
-                    let mut socket = contact_info.tpu?;
-                    let port = socket.port().checked_add(QUIC_PORT_OFFSET)?;
-                    socket.set_port(port);
-                    Some(socket)
-                })
-            }?;
+            let socket = contact_info.tpu_quic?;
             Some((pubkey, socket))
         })
         .collect()

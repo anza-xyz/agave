@@ -26,6 +26,8 @@ mod program;
 #[cfg(target_os = "linux")]
 pub mod route;
 #[cfg(target_os = "linux")]
+pub mod route_monitor;
+#[cfg(target_os = "linux")]
 pub mod socket;
 #[cfg(target_os = "linux")]
 pub mod tx_loop;
@@ -60,5 +62,23 @@ pub fn set_cpu_affinity(cpus: impl IntoIterator<Item = usize>) -> Result<(), io:
 
 #[cfg(not(target_os = "linux"))]
 pub fn set_cpu_affinity(_cpus: impl IntoIterator<Item = usize>) -> Result<(), io::Error> {
+    unimplemented!()
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_cpu() -> Result<usize, io::Error> {
+    unsafe {
+        let result = libc::sched_getcpu();
+        if result < 0 {
+            assert_eq!(result, -1);
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(result as usize)
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn get_cpu() -> Result<usize, io::Error> {
     unimplemented!()
 }

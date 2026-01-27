@@ -16,6 +16,10 @@ use {
         instruction::{InstructionContext, InstructionFrame},
         instruction_accounts::InstructionAccount,
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
+        vm_addresses::{
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+        },
+        vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
@@ -71,6 +75,35 @@ static_assertions::const_assert_eq!(
 /// Index of an account inside of the transaction or an instruction.
 pub type IndexOfAccount = u16;
 
+/// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
+pub type InstructionTrace<'ix_data> = (
+    Vec<InstructionFrame>,
+    Vec<Box<[InstructionAccount]>>,
+    Vec<Cow<'ix_data, [u8]>>,
+);
+
+/// This data structure is shared with programs in ABIv2, providing information about the
+/// transaction metadata.
+///
+/// Modifications without a feature gate and proper versioning might break programs.
+#[repr(C)]
+#[derive(Debug)]
+struct TransactionFrame {
+    /// Pubkey of the last program to write to the return data scratchpad
+    return_data_pubkey: Pubkey,
+    return_data_scratchpad: VmSlice<u8>,
+    /// Scratchpad for programs to write CPI instruction data
+    cpi_scratchpad: VmSlice<u8>,
+    /// Index of current executing instruction
+    current_executing_instruction: u16,
+    /// Number of instructions in transaction
+    number_of_instructions: u16,
+    /// Number of executed CPIs
+    number_of_executed_cpis: u16,
+    /// Number of transaction accounts
+    number_of_transaction_accounts: u16,
+}
+
 /// Loaded transaction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a transaction being processed.
@@ -81,17 +114,17 @@ pub struct TransactionContext<'ix_data> {
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
     instruction_trace: Vec<InstructionFrame>,
+    transaction_frame: TransactionFrame,
+    return_data_bytes: Vec<u8>,
     top_level_instruction_index: usize,
-    return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
     rent: Rent,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
-    /// This is a vector of u8s to save memory, since many entries may be unused.
-    /// Each deduplication map contains 256 entries and is concatenated to `deduplication_maps`.
-    deduplication_maps: Vec<u16>,
-    /// The instruction accounts for all accounts are concatenated in `instruction_accounts`
-    instruction_accounts: Vec<InstructionAccount>,
+    /// Each entry in `deduplication_maps` represents the deduplication map for each instruction.
+    deduplication_maps: Vec<Box<[u16]>>,
+    /// Each entry in `instruction_accounts` represents the array of accounts for each instruction.
+    instruction_accounts: Vec<Box<[InstructionAccount]>>,
     /// Each entry in `instruction_data` represents the data for instruction at the corresponding
     /// index.
     instruction_data: Vec<Cow<'ix_data, [u8]>>,
@@ -105,22 +138,35 @@ impl<'ix_data> TransactionContext<'ix_data> {
         rent: Rent,
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
+        number_of_top_level_instructions: usize,
     ) -> Self {
+        let transaction_frame = TransactionFrame {
+            return_data_pubkey: Pubkey::default(),
+            return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
+            cpi_scratchpad: VmSlice::new(
+                GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                    GUEST_REGION_SIZE.saturating_mul(number_of_top_level_instructions as u64),
+                ),
+                0,
+            ),
+            current_executing_instruction: 0,
+            number_of_instructions: number_of_top_level_instructions as u16,
+            number_of_executed_cpis: 0,
+            number_of_transaction_accounts: transaction_accounts.len() as u16,
+        };
+
         Self {
             accounts: Rc::new(TransactionAccounts::new(transaction_accounts)),
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
             instruction_trace: vec![InstructionFrame::default()],
+            return_data_bytes: Vec::new(),
+            transaction_frame,
             top_level_instruction_index: 0,
-            return_data: TransactionReturnData::default(),
             rent,
-            instruction_accounts: Vec::with_capacity(
-                MAX_ACCOUNTS_PER_INSTRUCTION.saturating_mul(instruction_trace_capacity),
-            ),
-            deduplication_maps: Vec::with_capacity(
-                MAX_ACCOUNTS_PER_TRANSACTION.saturating_mul(instruction_trace_capacity),
-            ),
+            instruction_accounts: Vec::with_capacity(instruction_trace_capacity),
+            deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
             instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
     }
@@ -199,11 +245,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
         // that hasn't been configured yet.
         let instruction_accounts = self
             .instruction_accounts
-            .get(instruction.instruction_accounts_range())
+            .get(index_in_trace)
+            .map(|item| item.as_ref())
             .unwrap_or_default();
         let dedup_map = self
             .deduplication_maps
-            .get(InstructionFrame::deduplication_map_range(index_in_trace))
+            .get(index_in_trace)
+            .map(|item| item.as_ref())
             .unwrap_or_default();
         let instruction_data = self
             .instruction_data
@@ -213,8 +261,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(InstructionContext {
             transaction_context: self,
             index_in_trace,
-            nesting_level: instruction.nesting_level,
-            program_account_index_in_tx: instruction.program_account_index_in_tx,
+            nesting_level: instruction.nesting_level as usize,
+            program_account_index_in_tx: instruction.program_account_index_in_tx as IndexOfAccount,
             instruction_accounts,
             dedup_map,
             instruction_data,
@@ -246,14 +294,18 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.instruction_stack.len()
     }
 
+    /// Returns the index in the instruction trace of the current executing instruction
+    pub fn get_current_instruction_index(&self) -> Result<usize, InstructionError> {
+        self.get_instruction_stack_height()
+            .checked_sub(1)
+            .ok_or(InstructionError::CallDepth)
+    }
+
     /// Returns a view on the current instruction
     pub fn get_current_instruction_context(
         &self,
     ) -> Result<InstructionContext<'_, '_>, InstructionError> {
-        let level = self
-            .get_instruction_stack_height()
-            .checked_sub(1)
-            .ok_or(InstructionError::CallDepth)?;
+        let level = self.get_current_instruction_index()?;
         self.get_instruction_context_at_nesting_level(level)
     }
 
@@ -280,31 +332,44 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
         instruction_data: Cow<'ix_data, [u8]>,
+        caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         let trace_len = self.instruction_trace.len();
         let instruction_index = trace_len.saturating_sub(1);
-        let penultimate_instruction_accounts = self
-            .instruction_trace
-            .get(trace_len.wrapping_sub(2))
-            .map(|item| item.instruction_accounts);
 
         let instruction = self
             .instruction_trace
             .last_mut()
             .ok_or(InstructionError::CallDepth)?;
 
+        // If we have a parent index, then we are dealing with a CPI.
+        if let Some(caller_index) = caller_index {
+            self.transaction_frame.number_of_instructions = self
+                .transaction_frame
+                .number_of_instructions
+                .saturating_add(1);
+            instruction.index_of_caller_instruction = caller_index;
+        }
+
+        self.transaction_frame.cpi_scratchpad = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                GUEST_REGION_SIZE
+                    .saturating_mul(self.transaction_frame.number_of_instructions as u64),
+            ),
+            0,
+        );
+
         instruction.program_account_index_in_tx = program_index;
         instruction.configure_vm_slices(
             instruction_index as u64,
-            penultimate_instruction_accounts,
             instruction_accounts.len(),
             instruction_data.len() as u64,
         );
-        self.instruction_accounts
-            .extend_from_slice(&instruction_accounts);
         self.deduplication_maps
-            .extend_from_slice(&deduplication_map);
+            .push(deduplication_map.into_boxed_slice());
+        self.instruction_accounts
+            .push(instruction_accounts.into_boxed_slice());
         self.instruction_data.push(instruction_data);
         Ok(())
     }
@@ -331,6 +396,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts,
             dedup_map,
             Cow::Owned(instruction_data),
+            None,
         )
     }
 
@@ -346,7 +412,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .instruction_trace
                 .last_mut()
                 .ok_or(InstructionError::CallDepth)?;
-            instruction.nesting_level = nesting_level;
+            instruction.nesting_level = nesting_level as u16;
         }
         let index_in_trace = self.get_instruction_trace_length();
         if index_in_trace >= self.instruction_trace_capacity {
@@ -356,6 +422,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
+        self.transaction_frame.current_executing_instruction = index_in_trace as u16;
         self.instruction_stack.push(index_in_trace);
         if let Some(index_in_transaction) = self.find_index_of_account(&instructions::id()) {
             let mut mut_account_ref = self.accounts.try_borrow_mut(index_in_transaction)?;
@@ -396,7 +463,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();
-        if self.instruction_stack.is_empty() {
+        if let Some(instr_idx) = self.instruction_stack.last() {
+            self.transaction_frame.number_of_executed_cpis = self
+                .transaction_frame
+                .number_of_executed_cpis
+                .saturating_add(1);
+            self.transaction_frame.current_executing_instruction = *instr_idx as u16;
+        } else {
             self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
         }
         if detected_an_unbalanced_instruction? {
@@ -408,7 +481,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
     /// Gets the return data of the current instruction or any above
     pub fn get_return_data(&self) -> (&Pubkey, &[u8]) {
-        (&self.return_data.program_id, &self.return_data.data)
+        (
+            &self.transaction_frame.return_data_pubkey,
+            &self.return_data_bytes,
+        )
     }
 
     /// Set the return data of the current instruction
@@ -417,7 +493,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
         program_id: Pubkey,
         data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        self.return_data = TransactionReturnData { program_id, data };
+        self.transaction_frame.return_data_pubkey = program_id;
+        // SAFETY: `return_data_scratchpad` is backed by `self.return_data_bytes`
+        // and `return_data_bytes` is being reset to `data`
+        // in the next statement.
+        unsafe {
+            self.transaction_frame
+                .return_data_scratchpad
+                .set_len(data.len() as u64);
+        }
+        self.return_data_bytes = data;
         Ok(())
     }
 
@@ -494,13 +579,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Take ownership of the instruction trace
-    pub fn take_instruction_trace(
-        &mut self,
-    ) -> (
-        Vec<InstructionFrame>,
-        Vec<InstructionAccount>,
-        Vec<Cow<'ix_data, [u8]>>,
-    ) {
+    pub fn take_instruction_trace(&mut self) -> InstructionTrace<'_> {
         // The last frame is a placeholder for the next instruction to be executed, so it
         // is empty.
         self.instruction_trace.pop();
@@ -541,9 +620,15 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
             .fold(0usize, |accumulator, was_touched| {
                 accumulator.saturating_add(was_touched.get() as usize)
             }) as u64;
+
+        let return_data = TransactionReturnData {
+            program_id: context.transaction_frame.return_data_pubkey,
+            data: context.return_data_bytes,
+        };
+
         Self {
             accounts,
-            return_data: context.return_data,
+            return_data,
             touched_account_count,
             accounts_resize_delta: Cell::into_inner(resize_delta),
         }
@@ -565,6 +650,7 @@ mod tests {
                 Rent::default(),
                 /* max_instruction_stack_depth */ 2,
                 /* max_instruction_trace_length */ 2,
+                /* number_of_top_level_instructions */ 1,
             )
         };
 
@@ -606,6 +692,7 @@ mod tests {
             Rent::default(),
             20,
             20,
+            1,
         );
 
         transaction_context
@@ -631,7 +718,7 @@ mod tests {
     fn test_instruction_shared_items() {
         let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 10];
         let mut transaction_context =
-            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20);
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
 
         let instruction_accounts_1 = vec![
             InstructionAccount::new(0, false, true),
@@ -744,5 +831,140 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_number_of_instructions() {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            3
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            0
+        );
+
+        transaction_context
+            .configure_next_instruction(
+                0,
+                vec![InstructionAccount::new(1, false, false)],
+                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                Vec::new().into(),
+                None,
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            0
+        );
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            3
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            0
+        );
+
+        transaction_context
+            .configure_next_instruction(
+                0,
+                vec![InstructionAccount::new(1, false, false)],
+                vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
+                Vec::new().into(),
+                None,
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            1
+        );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
+        );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.len(),
+            0,
+        );
+
+        transaction_context
+            .configure_next_instruction(
+                0,
+                vec![InstructionAccount::new(2, false, true)],
+                vec![0; 256],
+                Vec::new().into(),
+                Some(2),
+            )
+            .unwrap();
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            4
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            0
+        );
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            2
+        );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(4))
+        );
+        assert_eq!(
+            transaction_context.transaction_frame.cpi_scratchpad.len(),
+            0,
+        );
+
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            4
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            1
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            1
+        );
+        transaction_context.pop().unwrap();
+
+        assert_eq!(
+            transaction_context.transaction_frame.number_of_instructions,
+            4
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .number_of_executed_cpis,
+            1
+        );
     }
 }

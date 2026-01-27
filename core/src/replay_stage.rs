@@ -287,7 +287,7 @@ pub struct ReplayStageConfig {
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub log_messages_bytes_limit: Option<usize>,
-    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
 }
@@ -801,7 +801,7 @@ impl ReplayStage {
                     log_messages_bytes_limit,
                     &replay_mode,
                     &replay_tx_thread_pool,
-                    &prioritization_fee_cache,
+                    prioritization_fee_cache.as_deref(),
                     &mut purge_repair_slot_counter,
                     &poh_recorder,
                     first_alpenglow_slot,
@@ -2299,7 +2299,7 @@ impl ReplayStage {
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
@@ -2950,7 +2950,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         active_bank_slots: &[Slot],
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         // Make mutable shared structures thread safe.
         let progress = RwLock::new(progress);
@@ -3018,7 +3018,7 @@ impl ReplayStage {
                     let replay_progress = bank_progress.replay_progress.clone();
                     drop(progress_lock);
 
-                    if bank.collector_id() != my_pubkey {
+                    if bank.leader_id() != my_pubkey {
                         let mut replay_blockstore_time =
                             Measure::start("replay_blockstore_into_bank");
                         let blockstore_result = Self::replay_blockstore_into_bank(
@@ -3063,7 +3063,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         bank_slot: Slot,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> ReplaySlotFromBlockstore {
         let mut replay_result = ReplaySlotFromBlockstore {
             is_slot_dead: false,
@@ -3106,7 +3106,7 @@ impl ReplayStage {
                 )
             });
 
-            if bank.collector_id() != my_pubkey {
+            if bank.leader_id() != my_pubkey {
                 let mut replay_blockstore_time = Measure::start("replay_blockstore_into_bank");
                 let blockstore_result = Self::replay_blockstore_into_bank(
                     &bank,
@@ -3129,7 +3129,7 @@ impl ReplayStage {
     }
 
     fn maybe_initiate_alpenglow_migration(
-        poh_recorder: &RwLock<PohRecorder>,
+        _poh_recorder: &RwLock<PohRecorder>,
         is_alpenglow_migration_complete: &mut bool,
     ) {
         if *is_alpenglow_migration_complete {
@@ -3139,9 +3139,7 @@ impl ReplayStage {
         info!("initiating alpenglow migration");
         // This by itself does not do anything, a follow up PR will enact action to
         // turn off PoH based on this flag
-        poh_recorder.write().unwrap().is_alpenglow_enabled = true;
 
-        *is_alpenglow_migration_complete = true;
         info!("alpenglow migration complete!");
     }
 
@@ -3263,7 +3261,7 @@ impl ReplayStage {
                     }
                 }
 
-                let is_leader_block = bank.collector_id() == my_pubkey;
+                let is_leader_block = bank.leader_id() == my_pubkey;
                 let block_id = if !is_leader_block {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
                     // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
@@ -3426,6 +3424,9 @@ impl ReplayStage {
                         .parent()
                         .map(|bank| bank.last_blockhash())
                         .unwrap_or_default();
+                    let commission_rate_in_basis_points = bank
+                        .feature_set
+                        .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
                     block_metadata_notifier.notify_block_metadata(
                         bank.parent_slot(),
                         &parent_blockhash.to_string(),
@@ -3436,6 +3437,7 @@ impl ReplayStage {
                         Some(bank.block_height()),
                         bank.executed_transaction_count(),
                         r_replay_progress.num_entries as u64,
+                        commission_rate_in_basis_points,
                     )
                 }
                 bank_complete_time.stop();
@@ -3485,7 +3487,7 @@ impl ReplayStage {
         log_messages_bytes_limit: Option<usize>,
         replay_mode: &ForkReplayMode,
         replay_tx_thread_pool: &ThreadPool,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         poh_recorder: &RwLock<PohRecorder>,
         first_alpenglow_slot: Option<Slot>,
@@ -4141,7 +4143,6 @@ impl ReplayStage {
                 )
             },
         )
-        .expect("rooting must succeed")
     }
 
     // To avoid code duplication and keep compatibility with alpenglow, we add this
@@ -4626,10 +4627,8 @@ pub(crate) mod tests {
             1,
             ForkProgress::new_from_bank(
                 &bank1,
-                bank1.collector_id(),
-                validator_node_to_vote_keys
-                    .get(bank1.collector_id())
-                    .unwrap(),
+                bank1.leader_id(),
+                validator_node_to_vote_keys.get(bank1.leader_id()).unwrap(),
                 Some(0),
                 0,
                 0,
@@ -5184,7 +5183,7 @@ pub(crate) mod tests {
                 None,
                 &replay_vote_sender,
                 None,
-                &PrioritizationFeeCache::new(0u64),
+                None,
             );
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
             let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -6606,10 +6605,8 @@ pub(crate) mod tests {
                 3,
                 ForkProgress::new_from_bank(
                     &bank3,
-                    bank3.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank3.collector_id())
-                        .unwrap(),
+                    bank3.leader_id(),
+                    validator_node_to_vote_keys.get(bank3.leader_id()).unwrap(),
                     Some(1),
                     0,
                     0,
@@ -6636,10 +6633,8 @@ pub(crate) mod tests {
                 5,
                 ForkProgress::new_from_bank(
                     &bank5,
-                    bank5.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank5.collector_id())
-                        .unwrap(),
+                    bank5.leader_id(),
+                    validator_node_to_vote_keys.get(bank5.leader_id()).unwrap(),
                     Some(3),
                     0,
                     0,
@@ -6667,10 +6662,8 @@ pub(crate) mod tests {
                 6,
                 ForkProgress::new_from_bank(
                     &bank6,
-                    bank6.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank6.collector_id())
-                        .unwrap(),
+                    bank6.leader_id(),
+                    validator_node_to_vote_keys.get(bank6.leader_id()).unwrap(),
                     Some(5),
                     0,
                     0,
@@ -7729,14 +7722,7 @@ pub(crate) mod tests {
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         progress.insert(
             bank0.slot(),
-            ForkProgress::new_from_bank(
-                &bank0,
-                bank0.collector_id(),
-                &Pubkey::default(),
-                None,
-                0,
-                0,
-            ),
+            ForkProgress::new_from_bank(&bank0, bank0.leader_id(), &Pubkey::default(), None, 0, 0),
         );
 
         let (voting_sender, voting_receiver) = unbounded();
@@ -7751,14 +7737,7 @@ pub(crate) mod tests {
         bank1.fill_bank_with_ticks_for_tests();
         progress.insert(
             bank1.slot(),
-            ForkProgress::new_from_bank(
-                &bank1,
-                bank1.collector_id(),
-                &Pubkey::default(),
-                None,
-                0,
-                0,
-            ),
+            ForkProgress::new_from_bank(&bank1, bank1.leader_id(), &Pubkey::default(), None, 0, 0),
         );
         tower.record_bank_vote(&bank0);
         ReplayStage::push_vote(
@@ -7823,14 +7802,7 @@ pub(crate) mod tests {
         bank2.freeze();
         progress.insert(
             bank2.slot(),
-            ForkProgress::new_from_bank(
-                &bank2,
-                bank2.collector_id(),
-                &Pubkey::default(),
-                None,
-                0,
-                0,
-            ),
+            ForkProgress::new_from_bank(&bank2, bank2.leader_id(), &Pubkey::default(), None, 0, 0),
         );
         for refresh_bank in &[bank1.clone(), bank2.clone()] {
             progress
@@ -7970,7 +7942,7 @@ pub(crate) mod tests {
             expired_bank.slot(),
             ForkProgress::new_from_bank(
                 &expired_bank,
-                expired_bank.collector_id(),
+                expired_bank.leader_id(),
                 &Pubkey::default(),
                 None,
                 0,
@@ -8441,10 +8413,8 @@ pub(crate) mod tests {
             1,
             ForkProgress::new_from_bank(
                 &bank1,
-                bank1.collector_id(),
-                validator_node_to_vote_keys
-                    .get(bank1.collector_id())
-                    .unwrap(),
+                bank1.leader_id(),
+                validator_node_to_vote_keys.get(bank1.leader_id()).unwrap(),
                 Some(0),
                 0,
                 0,
@@ -8622,10 +8592,8 @@ pub(crate) mod tests {
                 i,
                 ForkProgress::new_from_bank(
                     &bank,
-                    bank.collector_id(),
-                    validator_node_to_vote_keys
-                        .get(bank.collector_id())
-                        .unwrap(),
+                    bank.leader_id(),
+                    validator_node_to_vote_keys.get(bank.leader_id()).unwrap(),
                     Some(0),
                     0,
                     0,
@@ -8711,9 +8679,9 @@ pub(crate) mod tests {
             slot_to_dump,
             ForkProgress::new_from_bank(
                 &bank_to_dump,
-                bank_to_dump.collector_id(),
+                bank_to_dump.leader_id(),
                 validator_node_to_vote_keys
-                    .get(bank_to_dump.collector_id())
+                    .get(bank_to_dump.leader_id())
                     .unwrap(),
                 Some(0),
                 0,
@@ -9745,245 +9713,5 @@ pub(crate) mod tests {
             &ancestor_hashes_replay_update_sender,
             &mut PurgeRepairSlotCounter::default(),
         );
-    }
-
-    #[test]
-    fn test_alpenglow_poh_migration_from_leader() {
-        agave_logger::setup();
-
-        let ReplayBlockstoreComponents {
-            blockstore,
-            my_pubkey,
-            leader_schedule_cache,
-            poh_recorder,
-            mut poh_controller,
-            vote_simulator,
-            rpc_subscriptions,
-            ..
-        } = replay_blockstore_components(None, 1, None);
-        let VoteSimulator {
-            bank_forks,
-            mut progress,
-            ..
-        } = vote_simulator;
-        let rpc_subscriptions = Some(rpc_subscriptions);
-
-        let working_bank = bank_forks.read().unwrap().working_bank();
-        assert!(working_bank.is_complete());
-        assert!(working_bank.is_frozen());
-
-        let poh_slot = working_bank.slot() + 2;
-        let alpenglow_slot = working_bank.slot() + 3;
-        let initial_slot = working_bank.slot();
-        let mut is_alpenglow_migration_complete = false;
-
-        // Reset PoH recorder to the completed bank to ensure consistent state
-        ReplayStage::reset_poh_recorder(
-            &my_pubkey,
-            &blockstore,
-            working_bank.clone(),
-            &mut poh_controller,
-            &leader_schedule_cache,
-        );
-        wait_for_poh_service(&poh_controller);
-
-        // Register just over one slot worth of ticks directly with PoH recorder
-        let num_poh_ticks =
-            (working_bank.ticks_per_slot() * working_bank.hashes_per_tick().unwrap()) + 1;
-        poh_recorder
-            .write()
-            .map(|mut poh_recorder| {
-                for _ in 0..num_poh_ticks + 1 {
-                    poh_recorder.tick();
-                }
-            })
-            .unwrap();
-
-        let poh_recorder = Arc::new(poh_recorder);
-        let (retransmit_slots_sender, _) = unbounded();
-        let (banking_tracer, _) = BankingTracer::new(None).unwrap();
-        let has_new_vote_been_rooted = true;
-
-        // We should start leader for the poh slot, however alpenglow migration should not be started
-        assert!(ReplayStage::maybe_start_leader(
-            &my_pubkey,
-            &bank_forks,
-            &poh_recorder,
-            &mut poh_controller,
-            &leader_schedule_cache,
-            rpc_subscriptions.as_deref(),
-            &None,
-            &mut progress,
-            &retransmit_slots_sender,
-            &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
-            has_new_vote_been_rooted,
-            &None,
-            &mut is_alpenglow_migration_complete,
-        )
-        .is_some());
-        assert!(!is_alpenglow_migration_complete);
-        wait_for_poh_service(&poh_controller);
-        let working_bank = bank_forks.read().unwrap().working_bank();
-        assert_eq!(working_bank.slot(), poh_slot);
-        assert_eq!(working_bank.parent_slot(), initial_slot);
-
-        // Register another slots worth of ticks with PoH recorder
-        poh_recorder
-            .write()
-            .map(|mut poh_recorder| {
-                for _ in 0..num_poh_ticks + 1 {
-                    poh_recorder.tick();
-                }
-            })
-            .unwrap();
-
-        // We should now *fail* to start leader for the alpenglow slot,
-        // however the migration must have succeeded
-        assert!(ReplayStage::maybe_start_leader(
-            &my_pubkey,
-            &bank_forks,
-            &poh_recorder,
-            &mut poh_controller,
-            &leader_schedule_cache,
-            rpc_subscriptions.as_deref(),
-            &None,
-            &mut progress,
-            &retransmit_slots_sender,
-            &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
-            has_new_vote_been_rooted,
-            &Some(alpenglow_slot),
-            &mut is_alpenglow_migration_complete,
-        )
-        .is_none());
-        assert!(is_alpenglow_migration_complete);
-        wait_for_poh_service(&poh_controller);
-
-        // Working bank should not be updated past the poh slot
-        let working_bank = bank_forks.read().unwrap().working_bank();
-        assert_eq!(working_bank.slot(), poh_slot);
-        assert_eq!(working_bank.parent_slot(), initial_slot);
-    }
-
-    #[test]
-    fn test_alpenglow_poh_migration_from_replay() {
-        agave_logger::setup();
-
-        let ReplayBlockstoreComponents {
-            blockstore,
-            my_pubkey,
-            poh_recorder,
-            vote_simulator,
-            ..
-        } = replay_blockstore_components(Some(tr(0) / tr(1) / tr(2) / tr(3) / tr(4)), 1, None);
-        let VoteSimulator {
-            bank_forks,
-            mut progress,
-            mut latest_validator_votes_for_frozen_banks,
-            mut tbft_structs,
-            ..
-        } = vote_simulator;
-        let (cluster_slots_update_sender, _cluster_slots_update_receiver) = unbounded();
-        let (cost_update_sender, _cost_update_receiver) = unbounded();
-        let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
-            unbounded();
-
-        let poh_slot = bank_forks.read().unwrap().highest_slot() + 1;
-        let first_alpenglow_slot = bank_forks.read().unwrap().highest_slot() + 2;
-        let mut is_alpenglow_migration_complete = false;
-
-        // Finishing the poh slot should not trigger migration
-        let parent_bank = bank_forks.read().unwrap().working_bank();
-        let poh_bank = Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), poh_slot);
-        poh_bank.set_tick_height(poh_bank.max_tick_height());
-        progress.insert(
-            poh_slot,
-            ForkProgress::new_from_bank(
-                &poh_bank,
-                poh_bank.collector_id(),
-                &Pubkey::new_unique(),
-                Some(0),
-                0,
-                0,
-            ),
-        );
-        bank_forks.write().unwrap().insert(poh_bank);
-        let replay_result_vec = vec![ReplaySlotFromBlockstore {
-            is_slot_dead: false,
-            bank_slot: poh_slot,
-            replay_result: None,
-        }];
-
-        ReplayStage::process_replay_results(
-            &blockstore,
-            &bank_forks,
-            &mut progress,
-            None,
-            &None,
-            None,
-            &None,
-            &mut latest_validator_votes_for_frozen_banks,
-            &cluster_slots_update_sender,
-            &cost_update_sender,
-            &mut DuplicateSlotsToRepair::default(),
-            &ancestor_hashes_replay_update_sender,
-            None,
-            &replay_result_vec,
-            &mut PurgeRepairSlotCounter::default(),
-            &my_pubkey,
-            Some(first_alpenglow_slot),
-            &poh_recorder,
-            &mut is_alpenglow_migration_complete,
-            Some(&mut tbft_structs),
-        );
-        assert!(!is_alpenglow_migration_complete);
-
-        // Finishing the alpenglow slot should now trigger the migration
-        let parent_bank = bank_forks.read().unwrap().working_bank();
-        let ag_bank =
-            Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), first_alpenglow_slot);
-        ag_bank.set_tick_height(ag_bank.max_tick_height());
-        progress.insert(
-            first_alpenglow_slot,
-            ForkProgress::new_from_bank(
-                &ag_bank,
-                ag_bank.collector_id(),
-                &Pubkey::new_unique(),
-                Some(0),
-                0,
-                0,
-            ),
-        );
-        bank_forks.write().unwrap().insert(ag_bank);
-        let replay_result_vec = vec![ReplaySlotFromBlockstore {
-            is_slot_dead: false,
-            bank_slot: first_alpenglow_slot,
-            replay_result: None,
-        }];
-
-        ReplayStage::process_replay_results(
-            &blockstore,
-            &bank_forks,
-            &mut progress,
-            None,
-            &None,
-            None,
-            &None,
-            &mut latest_validator_votes_for_frozen_banks,
-            &cluster_slots_update_sender,
-            &cost_update_sender,
-            &mut DuplicateSlotsToRepair::default(),
-            &ancestor_hashes_replay_update_sender,
-            None,
-            &replay_result_vec,
-            &mut PurgeRepairSlotCounter::default(),
-            &my_pubkey,
-            Some(first_alpenglow_slot),
-            &poh_recorder,
-            &mut is_alpenglow_migration_complete,
-            Some(&mut tbft_structs),
-        );
-        assert!(is_alpenglow_migration_complete);
     }
 }

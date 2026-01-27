@@ -110,11 +110,11 @@ use {
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction::{sanitized::SanitizedTransaction, Hash},
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
-        collections::{BTreeMap, VecDeque},
+        collections::{BTreeMap, HashSet, VecDeque},
         mem,
         sync::Arc,
     },
@@ -205,6 +205,11 @@ mod utils {
 
         pub(super) fn decrement_self(&mut self) -> &mut Self {
             *self = self.decrement();
+            self
+        }
+
+        pub(super) fn max_self(&mut self, other: &Self) -> &mut Self {
+            self.0 = self.0.max(other.0);
             self
         }
 
@@ -510,6 +515,10 @@ impl TaskInner {
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
         &self.transaction
+    }
+
+    pub fn hash(&self) -> &TaskHash {
+        self.transaction.message_hash()
     }
 
     fn lock_contexts(&self) -> &[LockContext] {
@@ -1041,6 +1050,8 @@ impl UsageQueue {
     }
 }
 
+type TaskHash = Hash;
+
 /// A high-level `struct`, managing the overall scheduling of [tasks](Task), to be used by
 /// `solana-unified-scheduler-pool`.
 pub struct SchedulingStateMachine {
@@ -1050,6 +1061,10 @@ pub struct SchedulingStateMachine {
     /// words, they are running right now or buffered by explicit request or by implicit blocking
     /// due to one of other _active_ (= running or buffered) conflicting tasks.
     active_task_count: ShortCounter,
+    peak_active_task_count: ShortCounter,
+    dropped_task_count: ShortCounter,
+    max_unique_active_task_count: Option<usize>,
+    unique_active_task_hashes: HashSet<TaskHash>,
     /// The number of tasks which are running right now.
     running_task_count: ShortCounter,
     /// The maximum number of running tasks at any given moment. While this could be tightly
@@ -1063,7 +1078,7 @@ pub struct SchedulingStateMachine {
     count_token: BlockedUsageCountToken,
     usage_queue_token: UsageQueueToken,
 }
-const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 56);
+const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 128);
 
 impl SchedulingStateMachine {
     pub fn has_no_running_task(&self) -> bool {
@@ -1095,6 +1110,14 @@ impl SchedulingStateMachine {
         self.active_task_count.current()
     }
 
+    pub fn peak_active_task_count(&self) -> usize {
+        self.peak_active_task_count.current().try_into().unwrap()
+    }
+
+    pub fn dropped_task_count(&self) -> usize {
+        self.dropped_task_count.current().try_into().unwrap()
+    }
+
     #[cfg(test)]
     fn handled_task_count(&self) -> CounterInner {
         self.handled_task_count.current()
@@ -1105,15 +1128,17 @@ impl SchedulingStateMachine {
         self.unblocked_task_count.current()
     }
 
-    #[cfg(test)]
-    fn total_task_count(&self) -> CounterInner {
-        self.total_task_count.current()
+    pub fn total_task_count(&self) -> usize {
+        self.total_task_count.current().try_into().unwrap()
     }
 
     /// Schedules given `task`, returning it if successful.
     ///
     /// Returns `Some(task)` if it's immediately scheduled. Otherwise, returns `None`,
     /// indicating the scheduled task is blocked currently.
+    ///
+    /// Alternatively, the task might be silently ignored instead (= dropped), when
+    /// [`SchedulingStateMachine`] is capped with max_unique_active_task_count, returning `None`.
     ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
     #[cfg(any(test, doc))]
@@ -1131,12 +1156,18 @@ impl SchedulingStateMachine {
     /// task is blocked or not. Eventually, the buffered task will be returned by one of later
     /// invocations [`schedule_next_unblocked_task()`](Self::schedule_next_unblocked_task).
     ///
+    /// Alternatively, the task might be silently ignored instead (= dropped), when
+    /// [`SchedulingStateMachine`] is capped with max_unique_active_task_count.
+    ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
     pub fn buffer_task(&mut self, task: Task) {
         self.schedule_or_buffer_task(task, true).unwrap_none();
     }
 
     /// Schedules or buffers given `task`, returning successful one unless buffering is forced.
+    ///
+    /// Alternatively, the task might be silently ignored instead (= dropped), when
+    /// [`SchedulingStateMachine`] is capped with max_unique_active_task_count.
     ///
     /// Refer to [`schedule_task()`](Self::schedule_task) and
     /// [`buffer_task()`](Self::buffer_task) for the difference between _scheduling_ and
@@ -1146,7 +1177,21 @@ impl SchedulingStateMachine {
     #[must_use]
     pub fn schedule_or_buffer_task(&mut self, task: Task, force_buffering: bool) -> Option<Task> {
         self.total_task_count.increment_self();
+        if let Some(max_unique_active_task_count) = self.max_unique_active_task_count {
+            let is_excess = self.unique_active_task_hashes.len() >= max_unique_active_task_count;
+            if is_excess {
+                self.dropped_task_count.increment_self();
+                return None;
+            }
+            let is_duplicate = !self.unique_active_task_hashes.insert(*task.hash());
+            if is_duplicate {
+                self.dropped_task_count.increment_self();
+                return None;
+            }
+        }
         self.active_task_count.increment_self();
+        self.peak_active_task_count
+            .max_self(&self.active_task_count);
         self.try_lock_usage_queues(task).and_then(|task| {
             // locking succeeded, and then ...
             if !self.is_task_runnable() || force_buffering {
@@ -1186,6 +1231,9 @@ impl SchedulingStateMachine {
     /// opportunity for callers.
     pub fn deschedule_task(&mut self, task: &Task) {
         self.running_task_count.decrement_self();
+        if self.max_unique_active_task_count.is_some() {
+            assert!(self.unique_active_task_hashes.remove(task.hash()));
+        }
         self.active_task_count.decrement_self();
         self.handled_task_count.increment_self();
         self.unlock_usage_queues(task);
@@ -1372,12 +1420,17 @@ impl SchedulingStateMachine {
     /// There's a related method called [`clear_and_reinitialize()`](Self::clear_and_reinitialize).
     pub fn reinitialize(&mut self) {
         assert!(self.has_no_active_task());
+        assert_eq!(self.unique_active_task_hashes.len(), 0);
         assert_eq!(self.running_task_count.current(), 0);
         assert_eq!(self.unblocked_task_queue.len(), 0);
         // nice trick to ensure all fields are handled here if new one is added.
         let Self {
             unblocked_task_queue: _,
             active_task_count,
+            peak_active_task_count,
+            dropped_task_count,
+            max_unique_active_task_count: _,
+            unique_active_task_hashes: _,
             running_task_count: _,
             max_running_task_count: _,
             handled_task_count,
@@ -1388,6 +1441,8 @@ impl SchedulingStateMachine {
             // don't add ".." here
         } = self;
         active_task_count.reset_to_zero();
+        peak_active_task_count.reset_to_zero();
+        dropped_task_count.reset_to_zero();
         handled_task_count.reset_to_zero();
         unblocked_task_count.reset_to_zero();
         total_task_count.reset_to_zero();
@@ -1434,6 +1489,7 @@ impl SchedulingStateMachine {
     #[must_use]
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling(
         max_running_task_count: Option<usize>,
+        max_unique_active_task_count: Option<usize>,
     ) -> Self {
         // As documented at `CounterInner`, don't expose rather opinionated choice of unsigned
         // integer type (`u32`) to outer world. So, take more conventional `usize` and convert it
@@ -1448,6 +1504,10 @@ impl SchedulingStateMachine {
             // `UsageQueueInner::blocked_usages_from_tasks`'s cap.
             unblocked_task_queue: VecDeque::with_capacity(1024),
             active_task_count: ShortCounter::zero(),
+            peak_active_task_count: ShortCounter::zero(),
+            dropped_task_count: ShortCounter::zero(),
+            max_unique_active_task_count,
+            unique_active_task_hashes: HashSet::default(),
             running_task_count: ShortCounter::zero(),
             max_running_task_count,
             handled_task_count: ShortCounter::zero(),
@@ -1460,7 +1520,7 @@ impl SchedulingStateMachine {
 
     #[cfg(test)]
     unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test() -> Self {
-        unsafe { Self::exclusively_initialize_current_thread_for_scheduling(None) }
+        unsafe { Self::exclusively_initialize_current_thread_for_scheduling(None, None) }
     }
 }
 
@@ -2171,5 +2231,177 @@ mod tests {
             s.deschedule_task(&t1_reblocked);
             assert!(s.has_no_active_task());
         }
+    }
+
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_max_unique_active_task_no_drop_under_cap(capability: Capability) {
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
+                None,
+                Some(3),
+            )
+        };
+        let sanitized1 = transaction_with_readonly_address(Pubkey::new_unique());
+        let sanitized2 = transaction_with_readonly_address(Pubkey::new_unique());
+        let sanitized3 = transaction_with_readonly_address(Pubkey::new_unique());
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task2.clone())
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task3.clone())
+                .map(|t| t.task_id()),
+            Some(103)
+        );
+
+        assert_eq!(state_machine.dropped_task_count(), 0);
+        assert_eq!(state_machine.active_task_count(), 3);
+        assert_eq!(state_machine.peak_active_task_count(), 3);
+        state_machine.deschedule_task(&task1.clone());
+        state_machine.deschedule_task(&task2.clone());
+        state_machine.deschedule_task(&task3.clone());
+        assert!(state_machine.has_no_active_task());
+        assert_eq!(state_machine.dropped_task_count(), 0);
+        assert_eq!(state_machine.active_task_count(), 0);
+        assert_eq!(state_machine.peak_active_task_count(), 3);
+        state_machine.reinitialize();
+        assert_eq!(state_machine.peak_active_task_count(), 0);
+    }
+
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_max_unique_active_task_drop_excess(capability: Capability) {
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
+                None,
+                Some(2),
+            )
+        };
+        let sanitized1 = transaction_with_readonly_address(Pubkey::new_unique());
+        let sanitized2 = transaction_with_readonly_address(Pubkey::new_unique());
+        let sanitized3 = transaction_with_readonly_address(Pubkey::new_unique());
+        let sanitized4 = transaction_with_readonly_address(Pubkey::new_unique());
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
+        let task4 = SchedulingStateMachine::create_task(sanitized4, 104, address_loader);
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task2.clone())
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task3.clone())
+                .map(|t| t.task_id()),
+            None
+        );
+
+        assert_eq!(state_machine.dropped_task_count(), 1);
+        assert_eq!(state_machine.active_task_count(), 2);
+        assert_eq!(state_machine.peak_active_task_count(), 2);
+        state_machine.deschedule_task(&task1.clone());
+        state_machine.deschedule_task(&task2.clone());
+        assert!(state_machine.has_no_active_task());
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task4.clone())
+                .map(|t| t.task_id()),
+            Some(104)
+        );
+        state_machine.deschedule_task(&task4.clone());
+
+        assert_eq!(state_machine.dropped_task_count(), 1);
+        assert_eq!(state_machine.active_task_count(), 0);
+        assert_eq!(state_machine.peak_active_task_count(), 2);
+        state_machine.reinitialize();
+        assert_eq!(state_machine.dropped_task_count(), 0);
+        assert_eq!(state_machine.peak_active_task_count(), 0);
+    }
+
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_max_unique_active_task_drop_duplicate(capability: Capability) {
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
+                None,
+                Some(100),
+            )
+        };
+        let sanitized1 = transaction_with_readonly_address(Pubkey::new_unique());
+        let sanitized2 = transaction_with_readonly_address(Pubkey::new_unique());
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2a = SchedulingStateMachine::create_task(sanitized2.clone(), 102, address_loader);
+        let task2b = SchedulingStateMachine::create_task(sanitized2, 103, address_loader);
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task2a.clone())
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task2b.clone())
+                .map(|t| t.task_id()),
+            None
+        );
+
+        assert_eq!(state_machine.dropped_task_count(), 1);
+        assert_eq!(state_machine.active_task_count(), 2);
+        assert_eq!(state_machine.peak_active_task_count(), 2);
+        state_machine.deschedule_task(&task1.clone());
+        state_machine.deschedule_task(&task2a.clone());
+        assert!(state_machine.has_no_active_task());
+        assert_matches!(
+            state_machine
+                .schedule_task(task2b.clone())
+                .map(|t| t.task_id()),
+            Some(103)
+        );
+        state_machine.deschedule_task(&task2b.clone());
+        assert!(state_machine.has_no_active_task());
+        assert_eq!(state_machine.dropped_task_count(), 1);
+        assert_eq!(state_machine.peak_active_task_count(), 2);
+        state_machine.reinitialize();
+        assert_eq!(state_machine.dropped_task_count(), 0);
+        assert_eq!(state_machine.peak_active_task_count(), 0);
+        assert_matches!(
+            state_machine
+                .schedule_task(task2b.clone())
+                .map(|t| t.task_id()),
+            Some(103)
+        );
+        state_machine.deschedule_task(&task2b.clone());
+        state_machine.reinitialize();
     }
 }

@@ -1,6 +1,6 @@
 use {
-    agave_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
-    ed25519_dalek::{ed25519::signature::Signature, Verifier},
+    agave_feature_set::FeatureSet,
+    ed25519_dalek::ed25519::signature::Signature,
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
@@ -11,7 +11,7 @@ use {
 pub fn verify(
     data: &[u8],
     instruction_datas: &[&[u8]],
-    feature_set: &FeatureSet,
+    _feature_set: &FeatureSet,
 ) -> Result<(), PrecompileError> {
     if data.len() < SIGNATURE_OFFSETS_START {
         return Err(PrecompileError::InvalidInstructionDataSize);
@@ -71,16 +71,9 @@ pub fn verify(
             offsets.message_data_offset,
             offsets.message_data_size as usize,
         )?;
-
-        if feature_set.is_active(&ed25519_precompile_verify_strict::id()) {
-            publickey
-                .verify_strict(message, &signature)
-                .map_err(|_| PrecompileError::InvalidSignature)?;
-        } else {
-            publickey
-                .verify(message, &signature)
-                .map_err(|_| PrecompileError::InvalidSignature)?;
-        }
+        publickey
+            .verify_strict(message, &signature)
+            .map_err(|_| PrecompileError::InvalidSignature)?;
     }
     Ok(())
 }
@@ -482,17 +475,8 @@ pub mod tests {
         let message = b"ed25519vectors 3";
         let instruction = new_ed25519_instruction_raw(pubkey, signature, message);
 
+        // verify_strict does NOT pass for malleable signature
         let feature_set = FeatureSet::default();
-        assert!(test_verify_with_alignment(
-            verify,
-            &instruction.data,
-            &[&instruction.data],
-            &feature_set
-        )
-        .is_ok());
-
-        // verify_strict does NOT pass
-        let feature_set = FeatureSet::all_enabled();
         assert!(test_verify_with_alignment(
             verify,
             &instruction.data,

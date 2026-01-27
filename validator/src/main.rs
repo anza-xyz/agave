@@ -23,7 +23,30 @@ pub fn main() {
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
-    match matches.subcommand() {
+    let (subcommand, maybe_subcommand_matches) = matches.subcommand();
+
+    #[cfg(target_os = "linux")]
+    {
+        use caps::CapSet;
+        // we don't aim to execve from the validator, so we can clear most of the
+        // capability sets. clear the ambient set explicitly even though it is
+        // implicitly cleared by clearing the inheritable set
+        caps::clear(None, CapSet::Ambient).expect("linux allows ambient capset to be cleared");
+        caps::clear(None, CapSet::Inheritable)
+            .expect("linux allows inheritable capset to be cleared");
+
+        // we'll raise caps when and where we need them
+        caps::clear(None, CapSet::Effective).expect("linux allows effective capset to be cleared");
+
+        if !(subcommand.is_empty() || subcommand == "run") {
+            // we only need caps to run the actual valididator. clear them here
+            // for all other subcommands
+            caps::clear(None, CapSet::Permitted)
+                .expect("linux allows permitted capset to be cleared")
+        }
+    }
+
+    match (subcommand, maybe_subcommand_matches) {
         ("init", _) => commands::run::execute(
             &matches,
             solana_version,

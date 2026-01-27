@@ -1,12 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 //! File i/o helper functions.
-use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, BufWriter, Write},
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
+use {
+    crate::{io_setup::IoSetupState, FileInfo, FileSize},
+    std::{
+        fs::{self, File, OpenOptions},
+        io::{self, BufWriter, Seek, Write},
+        ops::Range,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
 };
 
 /// `buffer` contains `valid_bytes` of data at its end.
@@ -15,8 +18,8 @@ use std::{
 /// `valid_file_len` is # of valid bytes in the file. This may be <= file length.
 pub fn read_more_buffer(
     file: &File,
-    valid_file_len: usize,
-    offset: &mut usize,
+    valid_file_len: FileSize,
+    offset: &mut FileSize,
     buffer: &mut [u8],
     valid_bytes: &mut Range<usize>,
 ) -> std::io::Result<()> {
@@ -31,7 +34,7 @@ pub fn read_more_buffer(
         *offset,
         &mut buffer[valid_bytes.len()..],
     )?;
-    *offset += bytes_read;
+    *offset += bytes_read as FileSize;
     *valid_bytes = 0..(valid_bytes.len() + bytes_read);
 
     Ok(())
@@ -85,8 +88,8 @@ pub fn write_buffer_to_file(file: &File, mut buffer: &[u8], mut offset: u64) -> 
 /// return # bytes read
 pub fn read_into_buffer(
     file: &File,
-    valid_file_len: usize,
-    start_offset: usize,
+    valid_file_len: FileSize,
+    start_offset: FileSize,
     buffer: &mut [u8],
 ) -> std::io::Result<usize> {
     let mut offset = start_offset;
@@ -97,7 +100,7 @@ pub fn read_into_buffer(
     }
 
     while buffer_offset < buffer.len() {
-        match arch_read_at(file, &mut buffer[buffer_offset..], offset as u64) {
+        match arch_read_at(file, &mut buffer[buffer_offset..], offset as FileSize) {
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::Interrupted {
                     continue;
@@ -106,14 +109,15 @@ pub fn read_into_buffer(
             }
             Ok(bytes_read_this_time) => {
                 total_bytes_read += bytes_read_this_time;
-                if total_bytes_read + start_offset >= valid_file_len {
-                    total_bytes_read -= (total_bytes_read + start_offset) - valid_file_len;
+                if total_bytes_read as FileSize + start_offset >= valid_file_len {
+                    total_bytes_read -=
+                        ((total_bytes_read as FileSize + start_offset) - valid_file_len) as usize;
                     // we've read all there is in the file
                     break;
                 }
                 // There is possibly more to read. `read_at` may have returned partial results, so prepare to loop and read again.
                 buffer_offset += bytes_read_this_time;
-                offset += bytes_read_this_time;
+                offset += bytes_read_this_time as FileSize;
             }
         }
     }
@@ -135,7 +139,7 @@ pub trait FileCreator {
     ) -> io::Result<()>;
 
     /// Invoke implementation specific logic to handle file creation completion.
-    fn file_complete(&mut self, path: PathBuf);
+    fn file_complete(&mut self, created_file: File, path: PathBuf, file_size: u64);
 
     /// Waits for all operations to be completed
     fn drain(&mut self) -> io::Result<()>;
@@ -143,27 +147,34 @@ pub trait FileCreator {
 
 pub fn file_creator<'a>(
     buf_size: usize,
-    file_complete: impl FnMut(PathBuf) + 'a,
+    io_setup: &IoSetupState,
+    file_complete: impl FnMut(FileInfo) -> Option<File> + 'a,
 ) -> io::Result<Box<dyn FileCreator + 'a>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
-        use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
+        use crate::io_uring::file_creator::{IoUringFileCreatorBuilder, DEFAULT_WRITE_SIZE};
 
-        if buf_size >= DEFAULT_WRITE_SIZE {
-            let io_uring_creator =
-                IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
+        if buf_size >= DEFAULT_WRITE_SIZE as usize {
+            let io_uring_creator = IoUringFileCreatorBuilder::new()
+                .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+                .shared_sqpoll(io_setup.shared_sqpoll_fd())
+                .build(buf_size, file_complete)?;
             return Ok(Box::new(io_uring_creator));
         }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = io_setup;
     }
     Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
 }
 
 pub struct SyncIoFileCreator<'a> {
-    file_complete: Box<dyn FnMut(PathBuf) + 'a>,
+    file_complete: Box<dyn FnMut(FileInfo) -> Option<File> + 'a>,
 }
 
 impl<'a> SyncIoFileCreator<'a> {
-    fn new(_buf_size: usize, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
+    fn new(_buf_size: usize, file_complete: impl FnMut(FileInfo) -> Option<File> + 'a) -> Self {
         Self {
             file_complete: Box::new(file_complete),
         }
@@ -199,7 +210,7 @@ impl FileCreator for SyncIoFileCreator<'_> {
     ) -> io::Result<()> {
         // Open for writing (also allows overwrite) and apply `mode`
         let mut options = OpenOptions::new();
-        options.create(true).truncate(true).write(true);
+        options.create(true).truncate(true).read(true).write(true);
 
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
@@ -212,12 +223,15 @@ impl FileCreator for SyncIoFileCreator<'_> {
         #[cfg(not(unix))]
         set_path_permissions(&path, mode)?;
 
-        self.file_complete(path);
+        let mut file = file_buf.into_inner()?;
+        file.rewind()?;
+        let file_info = FileInfo::new_from_path_and_file(path, file)?;
+        (self.file_complete)(file_info);
         Ok(())
     }
 
-    fn file_complete(&mut self, path: PathBuf) {
-        (self.file_complete)(path)
+    fn file_complete(&mut self, file: File, path: PathBuf, size: u64) {
+        (self.file_complete)(FileInfo { file, path, size });
     }
 
     fn drain(&mut self) -> io::Result<()> {
@@ -231,9 +245,10 @@ mod tests {
         super::*,
         std::{
             fs,
-            io::{Cursor, Write},
+            io::{Cursor, Read, Write},
         },
         tempfile::tempfile,
+        test_case::test_case,
     };
 
     #[test]
@@ -259,9 +274,9 @@ mod tests {
         buffer_len = buffer.len();
         let num_bytes_read =
             read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
-        assert_eq!(num_bytes_read, valid_len);
-        assert_eq!(bytes, buffer[0..valid_len]);
-        assert_eq!(buffer[valid_len..buffer_len], [0; 32]);
+        assert_eq!(num_bytes_read, valid_len as usize);
+        assert_eq!(bytes, buffer[0..valid_len as usize]);
+        assert_eq!(buffer[valid_len as usize..buffer_len], [0; 32]);
 
         // Given the `valid_file_len` is 16, it should only read 16 bytes into the buffer
         let mut buffer = [0; 32];
@@ -269,12 +284,15 @@ mod tests {
         valid_len = 16;
         let num_bytes_read =
             read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
-        assert_eq!(num_bytes_read, valid_len);
-        assert_eq!(bytes[0..valid_len], buffer[0..valid_len]);
+        assert_eq!(num_bytes_read, valid_len as usize);
+        assert_eq!(bytes[0..valid_len as usize], buffer[0..valid_len as usize]);
         // As a side effect of the `read_into_buffer` the data passed `valid_file_len` was
         // read and put into the buffer, though these data should not be
         // consumed.
-        assert_eq!(buffer[valid_len..buffer_len], bytes[valid_len..buffer_len]);
+        assert_eq!(
+            buffer[valid_len as usize..buffer_len],
+            bytes[valid_len as usize..buffer_len]
+        );
 
         // Given the start offset 8, it should only read 24 bytes into buffer
         let mut buffer = [0; 32];
@@ -283,8 +301,11 @@ mod tests {
         start_offset = 8;
         let num_bytes_read =
             read_into_buffer(&sample_file, valid_len, start_offset, &mut buffer).unwrap();
-        assert_eq!(num_bytes_read, valid_len - start_offset);
-        assert_eq!(buffer[0..num_bytes_read], bytes[start_offset..buffer_len]);
+        assert_eq!(num_bytes_read as FileSize, valid_len - start_offset);
+        assert_eq!(
+            buffer[0..num_bytes_read],
+            bytes[start_offset as usize..buffer_len]
+        );
         assert_eq!(buffer[num_bytes_read..buffer_len], [0; 8])
     }
 
@@ -311,7 +332,7 @@ mod tests {
             &mut valid_bytes,
         )
         .unwrap();
-        assert_eq!(offset, buffer_len - valid_bytes_len);
+        assert_eq!(offset as usize, buffer_len - valid_bytes_len);
         assert_eq!(valid_bytes, 0..buffer_len);
         assert_eq!(buffer[0..valid_bytes_len], [0xFFu8; 8]);
         assert_eq!(
@@ -338,7 +359,7 @@ mod tests {
         assert_eq!(buffer[0..valid_bytes_len], [0xFFu8; 8]);
         assert_eq!(
             buffer[valid_bytes_len..valid_bytes.end],
-            bytes[start_offset..file_size]
+            bytes[start_offset as usize..file_size as usize]
         );
     }
 
@@ -357,8 +378,9 @@ mod tests {
         let mut callback_invoked_path = None;
 
         // Instantiate FileCreator
-        let mut creator = file_creator(2 << 20, |path| {
-            callback_invoked_path.replace(path);
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+            callback_invoked_path.replace(file_info.path);
+            Some(file_info.file)
         })?;
 
         let dir = Arc::new(File::open(temp_dir.path())?);
@@ -382,10 +404,11 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let mut callback_counter = 0;
 
-        let mut creator = file_creator(2 << 20, |path: PathBuf| {
-            let contents = read_file_to_string(&path);
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
+            let contents = read_file_to_string(&file_info.path);
             assert!(contents.starts_with("File "));
             callback_counter += 1;
+            Some(file_info.file)
         })?;
 
         let dir = Arc::new(File::open(temp_dir.path())?);
@@ -403,6 +426,45 @@ mod tests {
         drop(creator);
 
         assert_eq!(callback_counter, 5);
+        Ok(())
+    }
+
+    // Test sync io (small buf size) and io-uring (large buf size) file creator
+    #[test_case(1024)]
+    #[test_case(2 * 1024 * 1024)]
+    fn test_create_callback_claims_owned_file(buf_size: usize) -> io::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.txt");
+        let contents = "Hello, world!";
+
+        // Shared state to capture callback invocations
+        let mut callback_provided_file_info = None;
+
+        let mut creator = file_creator(buf_size, &IoSetupState::default(), |file_info| {
+            callback_provided_file_info = Some(file_info);
+            None
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        creator.schedule_create_at_dir(
+            file_path.clone(),
+            0o644,
+            dir,
+            &mut Cursor::new(contents),
+        )?;
+        creator.drain()?;
+        drop(creator);
+
+        let mut read_buf = String::new();
+        let mut file_info = callback_provided_file_info.unwrap();
+        assert_eq!(
+            file_info.file.metadata().unwrap().len(),
+            contents.len() as u64
+        );
+        assert_eq!(file_info.size, contents.len() as u64);
+        file_info.file.read_to_string(&mut read_buf).unwrap();
+        assert_eq!(&read_buf, contents);
+
         Ok(())
     }
 }

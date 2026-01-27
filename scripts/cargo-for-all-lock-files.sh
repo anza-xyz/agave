@@ -40,6 +40,10 @@ else
 fi
 
 for lock_file in $files; do
+  if [[ $lock_file = *ci/xtask/tests/dummy-workspace* ]]; then
+    continue
+  fi
+
   if [[ -n $CI ]]; then
     echo "--- [$lock_file]: cargo " "${shifted_args[@]}" "$@"
   fi

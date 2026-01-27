@@ -179,11 +179,33 @@ wait_step() {
   echo "  - wait" >> "$output_file"
 }
 
+generate_feature_steps() {
+	cat >> "$output_file" <<EOF
+  - group: "feature-checks"
+    steps:
+EOF
+  total_feature_checks=5
+  for i in $(seq 1 $total_feature_checks); do
+    cat >> "$output_file" <<EOF
+      - name: "feature-check-part-$i"
+        command: "ci/docker-run-default-image.sh ci/feature-check/test-feature.sh $i/$total_feature_checks"
+        timeout_in_minutes: 20
+        agents:
+          queue: "solana"
+EOF
+	done
+	cat >> "$output_file" <<EOF
+      - name: "feature-check-dev-bins"
+        command: "ci/docker-run-default-image.sh ci/feature-check/test-feature-dev-bins.sh"
+        timeout_in_minutes: 20
+        agents:
+          queue: "solana"
+EOF
+}
+
 all_test_steps() {
   command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 check
-  command_step dcou-1-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/3" 20 check
-  command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 check
-  command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 check
+  generate_feature_steps
   command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
   command_step frozen-abi "ci/docker-run-default-image.sh ci/test-frozen-abi.sh" 30 check
   wait_step

@@ -57,7 +57,7 @@ impl FaultyBlockhash {
     }
 
     pub fn get<R: Rng>(&self, rng: &mut R) -> Hash {
-        if rng.gen::<f64>() < self.probability_invalid_blockhash {
+        if rng.random::<f64>() < self.probability_invalid_blockhash {
             Hash::default()
         } else {
             self.blockhash
@@ -83,7 +83,7 @@ fn generate_transactions(
     }
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let mut fee_payers = fee_payers.iter().cycle();
 
@@ -95,7 +95,7 @@ fn generate_transactions(
             let mut instructions = Vec::with_capacity(num_instructions_per_tx);
             if set_rand_cu_price {
                 // Experiments with different distributions didn't show much of the effect on the performance.
-                let compute_unit_price = rng.gen_range(0..1000);
+                let compute_unit_price = rng.random_range(0..1000);
                 instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
                     compute_unit_price,
                 ));
@@ -140,7 +140,7 @@ impl ReceiveAndBufferCreator for TransactionViewReceiveAndBuffer {
     ) -> Self {
         TransactionViewReceiveAndBuffer {
             receiver,
-            bank_forks,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
         }
     }
 }

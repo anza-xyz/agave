@@ -5,7 +5,10 @@ use {
     },
     chrono::DateTime,
     clap::ArgMatches,
-    solana_bls_signatures::Pubkey as BLSPubkey,
+    solana_bls_signatures::{
+        keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey,
+        PubkeyCompressed as BLSPubkeyCompressed,
+    },
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -105,12 +108,24 @@ pub fn pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Pubkey>> {
     })
 }
 
-pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPubkey>> {
+pub fn bls_keypair_of(matches: &ArgMatches<'_>, name: &str) -> Option<BLSKeypair> {
+    matches
+        .value_of(name)
+        .and_then(|path| BLSKeypair::read_json_file(path).ok())
+}
+
+pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPubkeyCompressed>> {
     matches.values_of(name).map(|values| {
         values
             .map(|value| {
-                BLSPubkey::from_str(value).unwrap_or_else(|_| {
-                    panic!("Failed to parse BLS public key from value: {value}")
+                // Most of the case it is just a compressed BLS pubkey string
+                // If the conversion fails, we try to read it as uncompressed BLS pubkey string
+                BLSPubkeyCompressed::from_str(value).unwrap_or_else(|_| {
+                    let bls_pubkey = BLSPubkey::from_str(value)
+                        .expect("Failed to parse BLS pubkey or compressed BLS pubkey from string");
+                    bls_pubkey
+                        .try_into()
+                        .expect("Failed to convert to compressed BLS pubkey")
                 })
             })
             .collect()
@@ -266,7 +281,6 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
-        solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
         solana_keypair::write_keypair_file,
         std::fs,
     };
@@ -431,9 +445,29 @@ mod tests {
     }
 
     #[test]
+    fn test_bls_keypair_of() {
+        let bls_keypair = BLSKeypair::new();
+        let outfile = tmp_file_path("test_bls_keypair_of.json", &Pubkey::new_unique());
+        bls_keypair.write_json_file(&outfile).unwrap();
+
+        let matches = app().get_matches_from(vec!["test", "--single", &outfile]);
+        let parsed = bls_keypair_of(&matches, "single").unwrap();
+        assert_eq!(parsed.public, bls_keypair.public);
+        assert!(bls_keypair_of(&matches, "multiple").is_none());
+
+        // Non-existent file should return None
+        let matches = app().get_matches_from(vec!["test", "--single", "random_bls_keypair.json"]);
+        assert!(bls_keypair_of(&matches, "single").is_none());
+
+        fs::remove_file(&outfile).unwrap();
+    }
+
+    #[test]
     fn test_bls_pubkeys_of() {
-        let bls_pubkey1: BLSPubkey = BLSKeypair::new().public;
-        let bls_pubkey2: BLSPubkey = BLSKeypair::new().public;
+        let bls_pubkey1: BLSPubkey = BLSKeypair::new().public.into();
+        let bls_pubkey2: BLSPubkey = BLSKeypair::new().public.into();
+        let bls_pubkey1_compressed: BLSPubkeyCompressed = bls_pubkey1.try_into().unwrap();
+        let bls_pubkey2_compressed: BLSPubkeyCompressed = bls_pubkey2.try_into().unwrap();
         let matches = app().get_matches_from(vec![
             "test",
             "--multiple",
@@ -443,7 +477,20 @@ mod tests {
         ]);
         assert_eq!(
             bls_pubkeys_of(&matches, "multiple"),
-            Some(vec![bls_pubkey1, bls_pubkey2])
+            Some(vec![bls_pubkey1_compressed, bls_pubkey2_compressed])
+        );
+
+        // Test that compressed BLS pubkey strings also work
+        let matches = app().get_matches_from(vec![
+            "test",
+            "--multiple",
+            &bls_pubkey1_compressed.to_string(),
+            "--multiple",
+            &bls_pubkey2_compressed.to_string(),
+        ]);
+        assert_eq!(
+            bls_pubkeys_of(&matches, "multiple"),
+            Some(vec![bls_pubkey1_compressed, bls_pubkey2_compressed])
         );
     }
 

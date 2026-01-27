@@ -205,7 +205,7 @@ build() {
 
     $MAYBE_DOCKER bash -c "
       set -ex
-      $profilerFlags scripts/cargo-install-all.sh farf $buildVariant --validator-only --no-spl-token
+      $profilerFlags scripts/cargo-install-all.sh farf $buildVariant --no-build-dev-bins --no-build-deprecated-bins --no-build-platform-tools --no-spl-token
     "
   )
 

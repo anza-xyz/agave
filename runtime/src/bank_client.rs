@@ -280,11 +280,11 @@ impl BankClient {
         &mut self,
         by: u64,
         bank_forks: &RwLock<BankForks>,
-        collector_id: &Pubkey,
+        leader_id: &Pubkey,
     ) -> Option<Arc<Bank>> {
         let new_bank = Bank::new_from_parent(
             self.bank.clone(),
-            collector_id,
+            leader_id,
             self.bank.slot().checked_add(by)?,
         );
         self.bank = bank_forks

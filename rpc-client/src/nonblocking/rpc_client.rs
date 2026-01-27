@@ -681,16 +681,42 @@ impl RpcClient {
         &self,
         transaction: &impl SerializableTransaction,
     ) -> ClientResult<Signature> {
+        self.send_and_confirm_transaction_with_config(
+            transaction,
+            self.commitment(),
+            RpcSendTransactionConfig {
+                preflight_commitment: Some(self.commitment().commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await
+    }
+
+    /// Send a transaction and wait for confirmation with custom configuration.
+    ///
+    /// This method is similar to [`send_and_confirm_transaction`] but allows
+    /// specifying both a commitment level and transaction send configuration.
+    ///
+    /// [`send_and_confirm_transaction`]: RpcClient::send_and_confirm_transaction
+    pub async fn send_and_confirm_transaction_with_config(
+        &self,
+        transaction: &impl SerializableTransaction,
+        commitment: CommitmentConfig,
+        config: RpcSendTransactionConfig,
+    ) -> ClientResult<Signature> {
         const SEND_RETRIES: usize = 1;
         const GET_STATUS_RETRIES: usize = usize::MAX;
 
         'sending: for _ in 0..SEND_RETRIES {
             let (latest_blockhash, signature) = self
-                .send_transaction_and_get_latest_blockhash(transaction, None)
+                .send_transaction_and_get_latest_blockhash(transaction, Some(config))
                 .await?;
 
             for status_retry in 0..GET_STATUS_RETRIES {
-                match self.get_signature_status(&signature).await? {
+                match self
+                    .get_signature_status_with_commitment(&signature, commitment)
+                    .await?
+                {
                     Some(Ok(_)) => return Ok(signature),
                     Some(Err(e)) => return Err(e.into()),
                     None => {
@@ -4441,7 +4467,7 @@ impl RpcClient {
         };
 
         self.send(
-            RpcRequest::GetTokenAccountsByOwner,
+            RpcRequest::GetTokenAccountsByDelegate,
             json!([delegate.to_string(), token_account_filter, config]),
         )
         .await
@@ -4964,4 +4990,44 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     mocks.insert(get_account_request, get_account_response);
 
     mocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_token_accounts_by_delegate_uses_correct_rpc_method() {
+        let delegate = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let pubkey = Pubkey::new_unique();
+        let account = mock_encoded_account(&pubkey);
+        let keyed_account = RpcKeyedAccount {
+            pubkey: pubkey.to_string(),
+            account,
+        };
+
+        let get_account_request = RpcRequest::GetTokenAccountsByDelegate;
+        let get_account_response = serde_json::to_value(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None,
+            },
+            value: { [keyed_account.clone()] },
+        })
+        .unwrap();
+
+        let mut mocks = crate::mock_sender::Mocks::default();
+        mocks.insert(get_account_request, get_account_response);
+        let client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
+        let resp = client
+            .get_token_accounts_by_delegate_with_commitment(
+                &delegate,
+                TokenAccountsFilter::Mint(mint),
+                CommitmentConfig::processed(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(&resp.value, &[keyed_account]);
+    }
 }

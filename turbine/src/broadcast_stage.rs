@@ -9,12 +9,11 @@ use {
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
-        cluster_nodes::{self, ClusterNodes, ClusterNodesCache},
+        cluster_nodes::{ClusterNodes, ClusterNodesCache},
         xdp::XdpSender,
     },
-    bytes::Bytes,
-    crossbeam_channel::{unbounded, Receiver, RecvError, RecvTimeoutError, Sender},
-    itertools::{Either, Itertools},
+    crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
+    itertools::Itertools,
     solana_clock::Slot,
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
@@ -23,25 +22,24 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, shred::Shred},
     solana_measure::measure::Measure,
-    solana_metrics::{inc_new_counter_error, inc_new_counter_info},
+    solana_metrics::inc_new_counter_error,
     solana_net_utils::SocketAddrSpace,
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
-    solana_streamer::sendmmsg::{batch_send, SendPktsError},
-    solana_time_utils::{timestamp, AtomicInterval},
+    solana_streamer::sendmmsg::{SendPktsError, batch_send},
+    solana_time_utils::{AtomicInterval, timestamp},
     std::{
         collections::{HashMap, HashSet},
-        net::{SocketAddr, UdpSocket},
+        net::UdpSocket,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
     thiserror::Error,
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 pub mod broadcast_duplicates_run;
@@ -124,7 +122,6 @@ impl BroadcastStageType {
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
-        quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         xdp_sender: Option<XdpSender>,
     ) -> BroadcastStage {
         match self {
@@ -136,7 +133,6 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                quic_endpoint_sender,
                 StandardBroadcastRun::new(shred_version),
                 xdp_sender,
             ),
@@ -149,7 +145,6 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                quic_endpoint_sender,
                 FailEntryVerificationBroadcastRun::new(shred_version),
                 xdp_sender,
             ),
@@ -162,7 +157,6 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                quic_endpoint_sender,
                 BroadcastFakeShredsRun::new(0, shred_version),
                 xdp_sender,
             ),
@@ -175,7 +169,6 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                quic_endpoint_sender,
                 BroadcastDuplicatesRun::new(shred_version, config.clone()),
                 xdp_sender,
             ),
@@ -198,7 +191,6 @@ trait BroadcastRun {
         cluster_info: &ClusterInfo,
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()>;
     fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()>;
 }
@@ -293,7 +285,6 @@ impl BroadcastStage {
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
-        quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         mut broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
         xdp_sender: Option<XdpSender>,
     ) -> Self {
@@ -353,7 +344,6 @@ impl BroadcastStage {
             let mut bs_transmit = broadcast_stage_run.clone();
             let cluster_info = cluster_info.clone();
             let bank_forks = bank_forks.clone();
-            let quic_endpoint_sender = quic_endpoint_sender.clone();
             let xdp_sender = xdp_sender.clone();
             let run_transmit = move || loop {
                 let sock_variant = match xdp_sender.as_ref() {
@@ -369,7 +359,6 @@ impl BroadcastStage {
                     &cluster_info,
                     sock_variant,
                     &bank_forks,
-                    &quic_endpoint_sender,
                 );
                 if let Some(res) = Self::handle_error(res, "solana-broadcaster-transmit") {
                     return res;
@@ -400,16 +389,18 @@ impl BroadcastStage {
 
         let retransmit_thread = Builder::new()
             .name("solBroadcastRtx".to_string())
-            .spawn(move || loop {
-                if let Some(res) = Self::handle_error(
-                    Self::check_retransmit_signals(
-                        &blockstore,
-                        &retransmit_slots_receiver,
-                        &socket_sender,
-                    ),
-                    "solana-broadcaster-retransmit-check_retransmit_signals",
-                ) {
-                    return res;
+            .spawn(move || {
+                loop {
+                    if let Some(res) = Self::handle_error(
+                        Self::check_retransmit_signals(
+                            &blockstore,
+                            &retransmit_slots_receiver,
+                            &socket_sender,
+                        ),
+                        "solana-broadcaster-retransmit-check_retransmit_signals",
+                    ) {
+                        return res;
+                    }
                 }
             })
             .unwrap();
@@ -435,9 +426,11 @@ impl BroadcastStage {
                     .get_data_shreds_for_slot(new_retransmit_slot, 0)
                     .expect("My own shreds must be reconstructable"),
             );
-            debug_assert!(data_shreds
-                .iter()
-                .all(|shred| shred.slot() == new_retransmit_slot));
+            debug_assert!(
+                data_shreds
+                    .iter()
+                    .all(|shred| shred.slot() == new_retransmit_slot)
+            );
             if !data_shreds.is_empty() {
                 socket_sender.send((data_shreds, None))?;
             }
@@ -448,9 +441,11 @@ impl BroadcastStage {
                     .expect("My own shreds must be reconstructable"),
             );
 
-            debug_assert!(coding_shreds
-                .iter()
-                .all(|shred| shred.slot() == new_retransmit_slot));
+            debug_assert!(
+                coding_shreds
+                    .iter()
+                    .all(|shred| shred.slot() == new_retransmit_slot)
+            );
             if !coding_shreds.is_empty() {
                 socket_sender.send((coding_shreds, None))?;
             }
@@ -493,16 +488,15 @@ pub fn broadcast_shreds(
     cluster_info: &ClusterInfo,
     bank_forks: &RwLock<BankForks>,
     socket_addr_space: &SocketAddrSpace,
-    quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
 ) -> Result<()> {
     let mut result = Ok(());
-    // Compute destinations & transmission protocols for each of the shreds to be sent
+    // Compute destinations for each of the shreds to be sent
     let mut shred_select = Measure::start("shred_select");
     let (root_bank, working_bank) = {
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
     };
-    let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
+    let packets: Vec<_> = shreds
         .iter()
         .chunk_by(|shred| shred.slot())
         .into_iter()
@@ -510,22 +504,19 @@ pub fn broadcast_shreds(
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
+
             shreds.filter_map(move |shred| {
                 let key = shred.id();
-                let protocol = cluster_nodes::get_broadcast_protocol(&key);
-                cluster_nodes
+                let addr = cluster_nodes
                     .get_broadcast_peer(&key)?
-                    .tvu(protocol)
-                    .filter(|addr| socket_addr_space.check(addr))
-                    .map(|addr| {
-                        (match protocol {
-                            Protocol::QUIC => Either::Right,
-                            Protocol::UDP => Either::Left,
-                        })((shred.payload(), addr))
-                    })
+                    .tvu(Protocol::UDP)
+                    .filter(|addr| socket_addr_space.check(addr))?;
+
+                Some((shred.payload(), addr))
             })
         })
-        .partition_map(std::convert::identity);
+        .collect();
+
     shred_select.stop();
     transmit_stats.shred_select += shred_select.as_us();
     let num_udp_packets = packets.len();
@@ -556,27 +547,12 @@ pub fn broadcast_shreds(
         }
     }
 
-    let mut quic_send_time = Measure::start("send shreds via quic");
-    transmit_stats.total_packets += num_udp_packets + quic_packets.len();
-    for (payload, addr) in quic_packets {
-        if let Err(err) = quic_endpoint_sender.blocking_send((addr, payload.bytes.clone())) {
-            transmit_stats.dropped_packets_quic += 1;
-            result = Err(Error::from(err));
-        }
-    }
-    quic_send_time.stop();
-    transmit_stats.send_quic_elapsed = quic_send_time.as_us();
+    transmit_stats.total_packets += num_udp_packets;
     result
 }
 
 impl<T> From<crossbeam_channel::SendError<T>> for Error {
     fn from(_: crossbeam_channel::SendError<T>) -> Error {
-        Error::Send
-    }
-}
-
-impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
-    fn from(_: tokio::sync::mpsc::error::SendError<T>) -> Error {
         Error::Send
     }
 }
@@ -593,15 +569,15 @@ pub mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
-            shred::{max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shredder},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{
             path::Path,
-            sync::{atomic::AtomicBool, Arc},
+            sync::{Arc, atomic::AtomicBool},
             thread::sleep,
         },
     };
@@ -628,7 +604,7 @@ pub mod test {
             &entries,
             true, // is_last_in_slot
             // chained_merkle_root
-            Hash::new_from_array(rand::thread_rng().gen()),
+            Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index,
             0, // next_code_index
             &ReedSolomonCache::default(),
@@ -732,8 +708,6 @@ pub mod test {
     ) -> MockBroadcastStage {
         // Make the database ledger
         let blockstore = Arc::new(Blockstore::open(ledger_path).unwrap());
-        let (quic_endpoint_sender, _quic_endpoint_receiver) =
-            tokio::sync::mpsc::channel(/*capacity:*/ 128);
 
         // Make the leader node and scheduler
         let leader_info = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
@@ -767,7 +741,6 @@ pub mod test {
             exit_sender,
             blockstore.clone(),
             bank_forks,
-            quic_endpoint_sender,
             StandardBroadcastRun::new(0),
             None,
         );
