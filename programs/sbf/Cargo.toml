@@ -120,10 +120,10 @@ solana-accounts-db = { path = "../../accounts-db", version = "=4.0.0-alpha.0" }
 solana-big-mod-exp = "=3.0.0"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
-solana-bpf-loader-program = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-bpf-loader-program = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
 solana-cli-output = { path = "../../cli-output", version = "=4.0.0-alpha.0" }
 solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
-solana-compute-budget = { path = "../../compute-budget", version = "=4.0.0-alpha.0" }
+solana-compute-budget = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.0.0-alpha.0" }
 solana-cpi = "=3.1.0"
 solana-curve25519 = "=4.0.0"
@@ -141,7 +141,7 @@ solana-program = "=3.0.0"
 solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.0"
 solana-program-memory = "=3.1.0"
-solana-program-runtime = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-program-runtime = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
 solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-runtime = { path = "../../runtime", version = "=4.0.0-alpha.0" }
 solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.0.0-alpha.0" }
@@ -159,17 +159,17 @@ solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.1.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
 solana-stake-interface = { version = "=2.0.2", features = ["bincode"] }
-solana-svm = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-callback = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-feature-set = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-log-collector = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-callback = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-feature-set = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-log-collector = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
 solana-svm-test-harness-instr = { path = "../../svm-test-harness/instr", version = "=4.0.0-alpha.0" }
-solana-svm-timings = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-transaction = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-type-overrides = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-svm-timings = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-transaction = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-type-overrides = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
 solana-system-interface = { version = "=3.0", features = ["bincode"] }
 solana-sysvar = "=3.1.1"
-solana-transaction-context = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-transaction-context = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
 solana-transaction-status = { path = "../../transaction-status", version = "=4.0.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.0.0-alpha.0" }
 solana-vote-interface = "5.0.0"
@@ -263,18 +263,18 @@ solana-vote-program = { workspace = true }
 test-case = { workspace = true }
 
 [patch."https://github.com/anza-xyz/agave"]
-solana-program-runtime = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-callback = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-feature-set = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-log-collector = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-measure = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-timings = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-transaction = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-svm-type-overrides = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-transaction-context = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-bpf-loader-program = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
-solana-loader-v4-program = { git = "https://github.com/mircea-c/svm", branch = "copy-files-and-history" }
+solana-program-runtime = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-callback = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-feature-set = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-log-collector = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-measure = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-timings = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-transaction = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-svm-type-overrides = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-transaction-context = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-bpf-loader-program = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
+solana-loader-v4-program = { git = "https://github.com/mircea-c/svm", branch = "sync-agave-jan27" }
 
 [profile.release]
 # The test programs are build in release mode
