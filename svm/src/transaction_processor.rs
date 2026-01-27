@@ -10,7 +10,9 @@ use {
         nonce_info::NonceInfo,
         program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
-        transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_account_state_info::{
+            new_post_exec, new_post_exec_legacy, new_pre_exec, new_pre_exec_legacy, verify_changes,
+        },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
@@ -955,8 +957,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             tx.num_instructions(),
         );
 
-        let pre_account_state_info =
-            TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
+        let pre_account_state_info = if environment.feature_set.relax_post_exec_min_balance_check {
+            new_pre_exec(&transaction_context, tx)
+        } else {
+            new_pre_exec_legacy(&transaction_context, tx, &environment.rent)
+        };
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -1004,15 +1009,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
         let mut status = process_result
-            .and_then(|info| {
+            .and_then(|_info| {
                 let post_account_state_info =
-                    TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
-                TransactionAccountStateInfo::verify_changes(
+                    if environment.feature_set.relax_post_exec_min_balance_check {
+                        new_post_exec(
+                            &transaction_context,
+                            &pre_account_state_info,
+                            tx,
+                            &environment.rent,
+                        )
+                    } else {
+                        new_post_exec_legacy(&transaction_context, tx, &environment.rent)
+                    };
+                verify_changes(
                     &pre_account_state_info,
                     &post_account_state_info,
                     &transaction_context,
                 )
-                .map(|_| info)
+                .map(|_| ())
             })
             .map_err(|err| {
                 match err {
@@ -1056,7 +1070,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         {
             status = Err(TransactionError::UnbalancedTransaction);
         }
-        let status = status.map(|_| ());
+        let status = status.as_ref().map(|_| ()).map_err(|err| err.clone());
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
