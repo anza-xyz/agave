@@ -526,7 +526,15 @@ mod tests {
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
     ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::SimpleVote { transaction }
+        TransactionCost::Transaction(UsageCostDetails {
+            transaction,
+            signature_cost: 1,
+            write_lock_cost: 2,
+            data_bytes_cost: 0,
+            programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
+            loaded_accounts_data_size_cost: 8,
+            allocated_accounts_data_size: 0,
+        })
     }
 
     #[test]
