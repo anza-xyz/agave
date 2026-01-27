@@ -7114,6 +7114,141 @@ fn test_block_limits() {
     );
 }
 
+#[test]
+fn test_simd_0437_rent_feature_gates_epoch_transition() {
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    genesis_config.rent.lamports_per_byte_year = 0;
+    let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    let rent_feature_gates = [
+        (
+            feature_set::set_lamports_per_byte_to_6333::id(),
+            feature_set::set_lamports_per_byte_to_6333::LAMPORTS_PER_BYTE,
+        ),
+        (
+            feature_set::set_lamports_per_byte_to_5080::id(),
+            feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE,
+        ),
+        (
+            feature_set::set_lamports_per_byte_to_2575::id(),
+            feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
+        ),
+        (
+            feature_set::set_lamports_per_byte_to_1322::id(),
+            feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE,
+        ),
+        (
+            feature_set::set_lamports_per_byte_to_696::id(),
+            feature_set::set_lamports_per_byte_to_696::LAMPORTS_PER_BYTE,
+        ),
+    ];
+    let feature_account_balance =
+        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+
+    for (feature_id, expected_lamports_per_byte_year) in rent_feature_gates {
+        assert!(
+            !bank.feature_set.is_active(&feature_id),
+            "feature should be inactive before activation"
+        );
+        bank.store_account(
+            &feature_id,
+            &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+        );
+
+        // Cross the epoch boundary to apply feature activation.
+        goto_end_of_slot(bank.clone());
+        bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+
+        assert!(
+            bank.feature_set.is_active(&feature_id),
+            "feature should be active after epoch transition"
+        );
+        assert_eq!(
+            bank.rent_collector.rent.lamports_per_byte_year, expected_lamports_per_byte_year,
+            "rent collector should reflect the active gate"
+        );
+
+        let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
+        let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
+        assert_eq!(
+            rent.lamports_per_byte_year, expected_lamports_per_byte_year,
+            "rent sysvar should be updated after activation"
+        );
+    }
+}
+
+#[test]
+fn test_simd_0437_rent_feature_gate_activation_ordering() {
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    genesis_config.rent.lamports_per_byte_year = 0;
+    let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    let feature_account_balance =
+        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+
+    // Multiple activations in a single epoch boundary should settle on the lowest value.
+    let multiple_activation_features = [
+        (
+            feature_set::set_lamports_per_byte_to_6333::id(),
+            feature_set::set_lamports_per_byte_to_6333::LAMPORTS_PER_BYTE,
+        ),
+        (
+            feature_set::set_lamports_per_byte_to_2575::id(),
+            feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
+        ),
+    ];
+    for (feature_id, _) in multiple_activation_features {
+        bank.store_account(
+            &feature_id,
+            &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+        );
+    }
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::set_lamports_per_byte_to_6333::id()));
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::set_lamports_per_byte_to_2575::id()));
+    assert_eq!(
+        bank.rent_collector.rent.lamports_per_byte_year,
+        feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
+        "lowest activated value should win when multiple activate in one epoch"
+    );
+
+    // Out-of-order activation across epochs should use the most recent activation.
+    bank.store_account(
+        &feature_set::set_lamports_per_byte_to_1322::id(),
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::set_lamports_per_byte_to_1322::id()));
+    assert_eq!(
+        bank.rent_collector.rent.lamports_per_byte_year,
+        feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE,
+        "first activation should be applied after its epoch boundary"
+    );
+
+    bank.store_account(
+        &feature_set::set_lamports_per_byte_to_5080::id(),
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::set_lamports_per_byte_to_5080::id()));
+    assert_eq!(
+        bank.rent_collector.rent.lamports_per_byte_year,
+        feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE,
+        "most recent activation should win even when out of order"
+    );
+}
+
 fn min_rent_exempt_balance_for_sysvars(bank: &Bank, sysvar_ids: &[Pubkey]) -> u64 {
     sysvar_ids
         .iter()

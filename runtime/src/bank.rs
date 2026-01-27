@@ -5398,31 +5398,38 @@ impl Bank {
             self.update_rent();
         }
 
-        // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated (SIMD-0194),
-        // so rent.lamports_per_byte_year can be set directly
-        {
-            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_6333::id()) {
-                self.rent_collector.rent.lamports_per_byte_year =
-                    feature_set::set_lamports_per_byte_to_6333::LAMPORTS_PER_BYTE;
+        // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated
+        // (SIMD-0194), so rent.lamports_per_byte_year can be set directly. These gates are
+        // expected to activate in order; if multiple activate in one epoch, the lowest
+        // activated lamports_per_byte value will be used. If features are activated out of
+        // order, the most recently activated value will be used.
+        let rent_feature_gates = [
+            (
+                feature_set::set_lamports_per_byte_to_6333::id(),
+                feature_set::set_lamports_per_byte_to_6333::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_5080::id(),
+                feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_2575::id(),
+                feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_1322::id(),
+                feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_696::id(),
+                feature_set::set_lamports_per_byte_to_696::LAMPORTS_PER_BYTE,
+            ),
+        ];
+        for (feature_id, lamports_per_byte_year) in rent_feature_gates {
+            if new_feature_activations.contains(&feature_id) {
+                self.rent_collector.rent.lamports_per_byte_year = lamports_per_byte_year;
+                self.update_rent();
             }
-            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_5080::id()) {
-                self.rent_collector.rent.lamports_per_byte_year =
-                    feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE;
-            }
-            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_2575::id()) {
-                self.rent_collector.rent.lamports_per_byte_year =
-                    feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE;
-            }
-            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_1322::id()) {
-                self.rent_collector.rent.lamports_per_byte_year =
-                    feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE;
-            }
-            if new_feature_activations.contains(&feature_set::set_lamports_per_byte_to_696::id()) {
-                self.rent_collector.rent.lamports_per_byte_year =
-                    feature_set::set_lamports_per_byte_to_696::LAMPORTS_PER_BYTE;
-            }
-
-            self.update_rent();
         }
 
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
