@@ -10,6 +10,7 @@
 //! This allows to efficiently reassign underutilized bandwidth to other
 //! users, as their effective stake in the overall allocation grows.
 
+#![deny(clippy::arithmetic_side_effects)]
 use {
     crate::{
         nonblocking::{qos::OpaqueStreamerCounter, quic::ConnectionTable},
@@ -126,8 +127,8 @@ impl StreamRateLimiter {
                 } else {
                     Some(
                         BucketState {
-                            tokens: tokens - 1,
-                            consumed: consumed + 1,
+                            tokens: tokens.saturating_sub(1),
+                            consumed: consumed.saturating_add(1),
                             last_refill,
                         }
                         .into(),
@@ -201,7 +202,7 @@ impl StreamRateLimiter {
                 consumed_snapshot = consumed;
                 last_refill_snapshot = last_refill;
 
-                let new_tokens = (tokens + refill_amount).min(my_max_tokens);
+                let new_tokens = (tokens.saturating_add(refill_amount)).min(my_max_tokens);
 
                 Some(
                     BucketState {
@@ -216,13 +217,13 @@ impl StreamRateLimiter {
 
         self.wake_notify.notify_waiters();
         // compute effective stake based on the utiliation of last refill
-        // last_refill would be zero immediately after creation of the connection
-        let effective_stake = if last_refill_snapshot > 0 {
-            self.true_stake_sol * consumed_snapshot as u64 / last_refill_snapshot as u64
-        } else {
-            self.true_stake_sol
-        }
-        .clamp(FULLY_DECAYED_STAKE_SOL, self.true_stake_sol);
+        let effective_stake = self
+            .true_stake_sol
+            .saturating_mul(consumed_snapshot as u64)
+            // last_refill would be zero immediately after creation of the connection
+            .checked_div(last_refill_snapshot as u64)
+            .unwrap_or(self.true_stake_sol)
+            .clamp(FULLY_DECAYED_STAKE_SOL, self.true_stake_sol);
 
         self.effective_stake_sol
             .store(effective_stake, Ordering::Relaxed);
@@ -236,10 +237,11 @@ impl StreamRateLimiter {
 }
 
 const fn token_fill_per_interval(max_tps: u64) -> u64 {
-    max_tps * REFILL_INTERVAL.as_millis() as u64 / 1000
+    max_tps
+        .saturating_mul(REFILL_INTERVAL.as_millis() as u64)
+        .saturating_div(1000)
 }
 
-#[allow(clippy::arithmetic_side_effects)]
 pub async fn refill_task(
     staked_connection_table: Arc<Mutex<ConnectionTable<StreamRateLimiter>>>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable<StreamRateLimiter>>>,
@@ -272,12 +274,13 @@ impl Refiller {
         let last_iter_total_stake = {
             // initialize effective stake of unstaked connections based on their number
             let guard = unstaked_connection_table.lock().await;
-            guard.table_size() as u64 * BASE_STAKE_SOL
-        } + {
+            (guard.table_size() as u64).saturating_mul(BASE_STAKE_SOL)
+        }
+        .saturating_add({
             // and for staked use actual stake
             let guard = staked_connection_table.lock().await;
             guard.connected_stake() / LAMPORTS_PER_SOL
-        };
+        });
 
         Self {
             last_iter_total_stake,
@@ -288,6 +291,7 @@ impl Refiller {
     }
 
     ///Refill the rate limiters in connection tables
+    #[allow(clippy::arithmetic_side_effects)]
     pub async fn do_refill(&mut self, max_tps: u64) -> u64 {
         // counts allocated tokens for debugging
         let mut allocated_tokens = 0;
@@ -390,6 +394,7 @@ impl From<BucketState> for u64 {
 }
 #[cfg(test)]
 pub mod test {
+    #![allow(clippy::arithmetic_side_effects)]
     use {
         crate::{
             nonblocking::{
