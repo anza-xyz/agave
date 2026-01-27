@@ -8,7 +8,6 @@ use {
     async_trait::async_trait,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
-    solana_connection_cache::client_connection::ClientConnection,
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
