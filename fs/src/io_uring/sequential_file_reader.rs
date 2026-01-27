@@ -226,6 +226,10 @@ impl<'a> SequentialFileReader<'a> {
 
     /// Add `file` to read. Starts reading the file as soon as a buffer is available.
     ///
+    /// This function derives the direct io settings from `open_file_flags`.
+    /// It is up to the end user to ensure that they are passing files that align with
+    /// the direct io settings of this `SequentialFileReader`.
+    ///
     /// The read finishes when EOF is reached or `read_limit` bytes are read.
     /// Multiple files can be added to the reader and they will be read-ahead in FIFO order.
     ///
@@ -247,7 +251,12 @@ impl<'a> SequentialFileReader<'a> {
 
     /// Caller must ensure that the file is not closed while the reader is using it.
     fn add_file_by_fd(&mut self, fd: RawFd, read_limit: FileSize) -> io::Result<()> {
-        self.state.files.push_back(FileState::new(fd, read_limit));
+        // Use `open_file_flags` to set the `is_direct_io` parameter
+        self.state.files.push_back(FileState::new(
+            fd,
+            self.open_file_flags & libc::O_DIRECT == libc::O_DIRECT,
+            read_limit,
+        ));
 
         if self.state.all_buffers_used(self.ring.context()) {
             // Just added file to backlog, no reads can be started yet.
@@ -572,6 +581,8 @@ impl SequentialFileReaderState {
 #[derive(Debug)]
 struct FileState {
     raw_fd: RawFd,
+    /// Is the file opened with direct io
+    is_direct_io: bool,
     /// Limit file offset to read up to.
     read_limit: FileSize,
     /// Offset of the next byte to read from the file
@@ -581,9 +592,10 @@ struct FileState {
 }
 
 impl FileState {
-    fn new(raw_fd: RawFd, read_limit: FileSize) -> Self {
+    fn new(raw_fd: RawFd, is_direct_io: bool, read_limit: FileSize) -> Self {
         Self {
             raw_fd,
+            is_direct_io,
             read_limit,
             next_read_offset: 0,
             start_buf_index: None,
@@ -606,6 +618,7 @@ impl FileState {
         let Self {
             start_buf_index,
             raw_fd,
+            is_direct_io,
             next_read_offset: offset,
             read_limit,
         } = self;
@@ -620,6 +633,7 @@ impl FileState {
         let op = ReadOp {
             fd: types::Fd(*raw_fd),
             buf,
+            is_direct_io: *is_direct_io,
             buf_offset: 0,
             file_offset: *offset,
             read_len: read_len as u32, // it's trimmed by u32 buf.len() above
@@ -706,6 +720,7 @@ impl ReadBufState {
 struct ReadOp {
     fd: types::Fd,
     buf: IoBufferChunk,
+    is_direct_io: bool,
     /// This is the offset inside the buffer. It's typically 0, but can be non-zero if a previous
     /// read returned less data than requested (because of EINTR or whatever) and we submitted a new
     /// read for the remaining data.
@@ -727,6 +742,7 @@ impl RingOp<BuffersState> for ReadOp {
         let ReadOp {
             fd,
             buf,
+            is_direct_io,
             buf_offset,
             file_offset,
             read_len,
@@ -737,12 +753,20 @@ impl RingOp<BuffersState> for ReadOp {
         // Safety: we assert that the buffer is large enough to hold the read.
         let buf_ptr = unsafe { buf.as_mut_ptr().byte_add(*buf_offset as usize) };
 
+        // align the read op read length to `DIRECT_IO_READ_LEN_ALIGNMENT` if necessary
+        let internal_read_len = if *is_direct_io {
+            read_len.next_multiple_of(DIRECT_IO_READ_LEN_ALIGNMENT)
+        } else {
+            *read_len
+        };
         let entry = match buf.io_buf_index() {
-            Some(io_buf_index) => opcode::ReadFixed::new(*fd, buf_ptr, *read_len, io_buf_index)
-                .offset(*file_offset)
-                .ioprio(IO_PRIO_BE_HIGHEST)
-                .build(),
-            None => opcode::Read::new(*fd, buf_ptr, *read_len)
+            Some(io_buf_index) => {
+                opcode::ReadFixed::new(*fd, buf_ptr, internal_read_len, io_buf_index)
+                    .offset(*file_offset)
+                    .ioprio(IO_PRIO_BE_HIGHEST)
+                    .build()
+            }
+            None => opcode::Read::new(*fd, buf_ptr, internal_read_len)
                 .offset(*file_offset)
                 .ioprio(IO_PRIO_BE_HIGHEST)
                 .build(),
@@ -758,6 +782,7 @@ impl RingOp<BuffersState> for ReadOp {
         let ReadOp {
             fd,
             buf,
+            is_direct_io,
             buf_offset,
             file_offset,
             read_len,
@@ -772,13 +797,24 @@ impl RingOp<BuffersState> for ReadOp {
         let buf = mem::replace(buf, IoBufferChunk::empty());
 
         if last_read_len > 0 && last_read_len < *read_len {
-            // Partial read, retry the op with updated offsets
+            let (buf_offset, file_offset, read_len) = if *is_direct_io {
+                // Partial direct io read, retry the op without updating offsets to preserve alignment
+                (*buf_offset, *file_offset, *read_len)
+            } else {
+                // Partial regular read, retry the op with updated offsets
+                (
+                    total_read_len,
+                    *file_offset + last_read_len as FileSize,
+                    *read_len - last_read_len,
+                )
+            };
             let op: ReadOp = ReadOp {
                 fd: *fd,
                 buf,
-                buf_offset: total_read_len,
-                file_offset: *file_offset + last_read_len as FileSize,
-                read_len: *read_len - last_read_len,
+                is_direct_io: *is_direct_io,
+                buf_offset,
+                file_offset,
+                read_len,
                 reader_buf_index: *reader_buf_index,
                 is_last_read: *is_last_read,
             };
