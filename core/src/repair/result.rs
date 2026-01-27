@@ -32,7 +32,7 @@ pub enum Error {
     #[error(transparent)]
     Serialize(#[from] std::boxed::Box<bincode::ErrorKind>),
     #[error(transparent)]
-    WeightedIndex(#[from] rand::distributions::weighted::WeightedError),
+    WeightedIndex(#[from] rand::distr::weighted::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

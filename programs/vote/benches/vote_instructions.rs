@@ -15,6 +15,7 @@ use {
     solana_sdk_ids::{sysvar, vote::id},
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_processor::Entrypoint,
@@ -136,9 +137,12 @@ fn create_test_account() -> (Pubkey, AccountSharedData) {
         create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &vote_pubkey,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &vote_pubkey,
-            None,
             0,
+            &vote_pubkey,
+            0,
+            &vote_pubkey,
             balance,
         ),
     )
@@ -156,9 +160,12 @@ fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountShar
         create_v4_account_with_authorized(
             &solana_pubkey::new_rand(),
             &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
-            None,
             0,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             100,
         ),
     )
@@ -727,9 +734,12 @@ impl BenchAuthorizeWithSeed {
         let vote_account = create_v4_account_with_authorized(
             &Pubkey::new_unique(),
             &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
-            None,
             0,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             100,
         );
         let clock_account = account::create_account_shared_data_for_test(&clock);
@@ -816,9 +826,12 @@ impl BenchAuthorizeCheckedWithSeed {
         let vote_account = create_v4_account_with_authorized(
             &Pubkey::new_unique(),
             &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &authorized_withdrawer,
-            None,
             0,
+            &authorized_withdrawer,
+            0,
+            &authorized_withdrawer,
             100,
         );
         let new_authority_pubkey = Pubkey::new_unique();

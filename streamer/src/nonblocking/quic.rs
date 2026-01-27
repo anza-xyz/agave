@@ -98,7 +98,9 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 #[derive(Clone)]
 struct PacketAccumulator {
     pub meta: Meta,
-    pub chunks: SmallVec<[Bytes; 2]>,
+    // the capacity here should match or exceed the capacity of the chunks
+    // array used by handle_connection()
+    pub chunks: SmallVec<[Bytes; 4]>,
     pub start_time: Instant,
 }
 
@@ -784,7 +786,6 @@ fn handle_chunks(
     // done receiving chunks
     let bytes_sent = accum.meta.size;
 
-    //
     // 86% of transactions/packets come in one chunk. In that case,
     // we can just move the chunk to the `Packet` and no copy is
     // made.
@@ -797,8 +798,7 @@ fn handle_chunks(
             accum.meta.clone(),
         )
     } else {
-        let size: usize = accum.chunks.iter().map(Bytes::len).sum();
-        let mut buf = BytesMut::with_capacity(size);
+        let mut buf = BytesMut::with_capacity(bytes_sent);
         for chunk in &accum.chunks {
             buf.put_slice(chunk);
         }

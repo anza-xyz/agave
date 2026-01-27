@@ -31,12 +31,13 @@ struct CalculatedStakeRewards {
 pub(crate) fn redeem_rewards(
     rewarded_epoch: Epoch,
     stake_state: &StakeStateV2,
-    voter_commission: u8,
+    voter_commission_bps: u16,
     vote_state: DelegatedVoteState,
     point_value: &PointValue,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
+    commission_rate_in_basis_points: bool,
 ) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
@@ -50,9 +51,16 @@ pub(crate) fn redeem_rewards(
             inflation_point_calc_tracer(&InflationPointCalculationEvent::RentExemptReserve(
                 meta.rent_exempt_reserve,
             ));
-            inflation_point_calc_tracer(&InflationPointCalculationEvent::Commission(
-                voter_commission,
-            ));
+            // Choose which trace to emit based on the `commission_rate_in_basis_points` feature.
+            if commission_rate_in_basis_points {
+                inflation_point_calc_tracer(&InflationPointCalculationEvent::CommissionBps(
+                    voter_commission_bps,
+                ));
+            } else {
+                inflation_point_calc_tracer(&InflationPointCalculationEvent::Commission(
+                    (voter_commission_bps / 100) as u8,
+                ));
+            }
         }
 
         let mut stake = *stake;
@@ -60,7 +68,7 @@ pub(crate) fn redeem_rewards(
             rewarded_epoch,
             &mut stake,
             point_value,
-            voter_commission,
+            voter_commission_bps,
             vote_state,
             stake_history,
             inflation_point_calc_tracer,
@@ -79,7 +87,7 @@ fn redeem_stake_rewards(
     rewarded_epoch: Epoch,
     stake: &mut Stake,
     point_value: &PointValue,
-    voter_commission: u8,
+    voter_commission_bps: u16,
     vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
@@ -95,7 +103,7 @@ fn redeem_stake_rewards(
         rewarded_epoch,
         stake,
         point_value,
-        voter_commission,
+        voter_commission_bps,
         vote_state,
         stake_history,
         inflation_point_calc_tracer.as_ref(),
@@ -128,7 +136,7 @@ fn calculate_stake_rewards(
     rewarded_epoch: Epoch,
     stake: &Stake,
     point_value: &PointValue,
-    voter_commission: u8,
+    voter_commission_bps: u16,
     vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
@@ -199,7 +207,7 @@ fn calculate_stake_rewards(
         }
         return None;
     }
-    let (voter_rewards, staker_rewards, is_split) = commission_split(voter_commission, rewards);
+    let (voter_rewards, staker_rewards, is_split) = commission_split(voter_commission_bps, rewards);
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::SplitRewards(
             rewards,
@@ -232,10 +240,12 @@ fn calculate_stake_rewards(
 ///   indicate with false for was_split
 ///
 /// DEVELOPER NOTE:  This function used to be a method on VoteState, but was moved here
-fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
-    match commission.min(100) {
+fn commission_split(commission_bps: u16, on: u64) -> (u64, u64, bool) {
+    const MAX_BPS: u16 = 10_000;
+    const MAX_BPS_U128: u128 = MAX_BPS as u128;
+    match commission_bps.min(MAX_BPS) {
         0 => (0, on, false),
-        100 => (on, 0, false),
+        MAX_BPS => (on, 0, false),
         split => {
             let on = u128::from(on);
             // Calculate mine and theirs independently and symmetrically instead of
@@ -245,16 +255,16 @@ fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
             // Thus, note that we intentionally discard any residual fractional lamports.
             let mine = on
                 .checked_mul(u128::from(split))
-                .expect("multiplication of a u64 and u8 should not overflow")
-                / 100u128;
+                .expect("multiplication of a u64 and u16 should not overflow")
+                / MAX_BPS_U128;
             let theirs = on
                 .checked_mul(u128::from(
-                    100u8
+                    MAX_BPS
                         .checked_sub(split)
-                        .expect("commission cannot be greater than 100"),
+                        .expect("commission cannot be greater than MAX_BPS"),
                 ))
-                .expect("multiplication of a u64 and u8 should not overflow")
-                / 100u128;
+                .expect("multiplication of a u64 and u16 should not overflow")
+                / MAX_BPS_U128;
 
             (mine as u64, theirs as u64, true)
         }
@@ -303,7 +313,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -325,7 +335,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -357,7 +367,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -383,7 +393,7 @@ mod tests {
                     rewards: 2,
                     points: 2 // all his
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -406,7 +416,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -432,7 +442,7 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -456,7 +466,7 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -482,7 +492,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -502,7 +512,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -519,7 +529,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -543,7 +553,7 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -567,7 +577,7 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -642,7 +652,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -667,7 +677,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -689,7 +699,7 @@ mod tests {
             0,
             &stake,
             &PointValue { rewards, points: 1 },
-            (vote_state.inflation_rewards_commission_bps / 100) as u8,
+            vote_state.inflation_rewards_commission_bps,
             DelegatedVoteState::from(&vote_state),
             &StakeHistory::default(),
             null_tracer(),
@@ -720,7 +730,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                vote_state.inflation_rewards_commission_bps,
                 DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -730,22 +740,39 @@ mod tests {
     }
 
     #[test]
-    fn test_commission_split() {
-        let mut commission = 0;
-        assert_eq!(commission_split(commission, 1), (0, 1, false));
+    fn test_commission_split_bps() {
+        // 0% commission
+        assert_eq!(commission_split(0, 1), (0, 1, false));
 
-        commission = u8::MAX;
-        assert_eq!(commission_split(commission, 1), (1, 0, false));
+        // 100% commission (10,000 bps)
+        assert_eq!(commission_split(10_000, 1), (1, 0, false));
 
-        commission = 99;
-        assert_eq!(commission_split(commission, 10), (9, 0, true));
+        // Values > 10,000 bps are capped at 100%
+        assert_eq!(commission_split(u16::MAX, 1), (1, 0, false));
 
-        commission = 1;
-        assert_eq!(commission_split(commission, 10), (0, 9, true));
+        // 99% commission (9,900 bps) - voter gets floored 99% of 10 = 9
+        assert_eq!(commission_split(9_900, 10), (9, 0, true));
 
-        commission = 50;
-        let (voter_portion, staker_portion, was_split) = commission_split(commission, 10);
+        // 1% commission (100 bps) - voter gets floored 1% of 10 = 0
+        assert_eq!(commission_split(100, 10), (0, 9, true));
 
+        // 50% commission (5,000 bps)
+        let (voter_portion, staker_portion, was_split) = commission_split(5_000, 10);
         assert_eq!((voter_portion, staker_portion, was_split), (5, 5, true));
+
+        // Test fractional bps: 12.34% = 1,234 bps
+        // voter gets 1234/10000 * 1000 = 123.4 -> 123
+        // staker gets 8766/10000 * 1000 = 876.6 -> 876
+        let (voter_portion, staker_portion, was_split) = commission_split(1_234, 1_000);
+        assert_eq!((voter_portion, staker_portion, was_split), (123, 876, true));
+
+        // Test another fractional: 33.33% = 3,333 bps on 10,000 rewards
+        // voter gets 3333/10000 * 10000 = 3333
+        // staker gets 6667/10000 * 10000 = 6667
+        let (voter_portion, staker_portion, was_split) = commission_split(3_333, 10_000);
+        assert_eq!(
+            (voter_portion, staker_portion, was_split),
+            (3_333, 6_667, true)
+        );
     }
 }

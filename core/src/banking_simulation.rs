@@ -14,9 +14,10 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_votor_messages::migration::MigrationStatus,
     assert_matches::assert_matches,
     bincode::deserialize_from,
-    crossbeam_channel::{unbounded, Sender},
+    crossbeam_channel::{bounded, unbounded, Sender},
     itertools::Itertools,
     log::*,
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
@@ -732,7 +733,9 @@ impl BankingSimulator {
         {
             info!("purging slots {}, {}", self.first_simulated_slot, end_slot);
             blockstore.purge_from_next_slots(self.first_simulated_slot, end_slot);
-            blockstore.purge_slots(self.first_simulated_slot, end_slot, PurgeType::Exact);
+            blockstore
+                .purge_slots(self.first_simulated_slot, end_slot, PurgeType::Exact)
+                .unwrap();
             info!("done: purging");
         } else {
             info!("skipping purging...");
@@ -757,6 +760,7 @@ impl BankingSimulator {
         let (record_sender, record_receiver) = record_channels(false);
         let transaction_recorder = TransactionRecorder::new(record_sender);
         let (poh_controller, poh_service_message_receiver) = PohController::new();
+        let (record_receiver_sender, _record_receiver_receiver) = bounded(1);
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -766,6 +770,8 @@ impl BankingSimulator {
             DEFAULT_HASHES_PER_BATCH,
             record_receiver,
             poh_service_message_receiver,
+            Arc::new(MigrationStatus::default()),
+            record_receiver_sender,
         );
 
         // Enable BankingTracer to approximate the real environment as close as possible because
@@ -814,7 +820,6 @@ impl BankingSimulator {
             &genesis_config.hash(),
             Some(&bank_forks.read().unwrap().root_bank().hard_forks()),
         );
-        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
 
         // Create a completely-dummy ClusterInfo for the broadcast stage.
         // We only need it to write shreds into the blockstore and it seems given ClusterInfo is
@@ -842,7 +847,6 @@ impl BankingSimulator {
             blockstore.clone(),
             bank_forks.clone(),
             shred_version,
-            sender,
             None,
         );
 

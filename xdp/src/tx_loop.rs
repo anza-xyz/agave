@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        device::{NetworkDevice, QueueId, RingSizes},
+        device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
         netlink::MacAddress,
         packet::{
             write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
@@ -11,11 +11,7 @@ use {
         route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
-        umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
-    },
-    caps::{
-        CapSet,
-        Capability::{CAP_NET_ADMIN, CAP_NET_RAW},
+        umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
@@ -26,278 +22,407 @@ use {
     },
 };
 
-#[allow(clippy::too_many_arguments)]
-pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
+pub struct TxLoopConfigBuilder {
+    zero_copy: bool,
+    maybe_src_mac: Option<MacAddress>,
+    maybe_src_ip: Option<Ipv4Addr>,
+    src_port: u16,
+}
+
+impl TxLoopConfigBuilder {
+    pub fn new(src_port: u16) -> Self {
+        Self {
+            zero_copy: false,
+            maybe_src_mac: None,
+            maybe_src_ip: None,
+            src_port,
+        }
+    }
+
+    pub fn zero_copy(&mut self, enable: bool) -> &mut Self {
+        self.zero_copy = enable;
+        self
+    }
+
+    pub fn override_src_mac(&mut self, mac: MacAddress) -> &mut Self {
+        self.maybe_src_mac = Some(mac);
+        self
+    }
+
+    pub fn override_src_ip(&mut self, ip: Ipv4Addr) -> &mut Self {
+        self.maybe_src_ip = Some(ip);
+        self
+    }
+
+    pub fn build_with_src_device(self, src_device: &NetworkDevice) -> TxLoopConfig {
+        let Self {
+            zero_copy,
+            maybe_src_mac,
+            maybe_src_ip,
+            src_port,
+        } = self;
+
+        let src_mac = maybe_src_mac.unwrap_or_else(|| {
+            // if no source MAC is provided, use the device's MAC address
+            src_device
+                .mac_addr()
+                .expect("no src_mac provided, device must have a MAC address")
+        });
+
+        let src_ip = maybe_src_ip.unwrap_or_else(|| {
+            // if no source IP is provided, use the device's IPv4 address
+            src_device
+                .ipv4_addr()
+                .expect("no src_ip provided, device must have an IPv4 address")
+        });
+
+        TxLoopConfig {
+            zero_copy,
+            src_mac,
+            src_ip,
+            src_port,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TxLoopConfig {
+    zero_copy: bool,
+    src_mac: MacAddress,
+    src_ip: Ipv4Addr,
+    src_port: u16,
+}
+
+pub struct TxLoopBuilder<U: Umem> {
     cpu_id: usize,
-    dev: &NetworkDevice,
     queue_id: QueueId,
     zero_copy: bool,
-    src_mac: Option<MacAddress>,
-    src_ip: Option<Ipv4Addr>,
+    src_mac: MacAddress,
+    src_ip: Ipv4Addr,
     src_port: u16,
-    receiver: Receiver<(A, T)>,
-    drop_sender: Sender<(A, T)>,
-    route_fn: R,
-) {
-    log::info!(
-        "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
-        dev.name()
-    );
+    queue: DeviceQueue,
+    tx_size: usize,
+    umem: U,
+}
 
-    // each queue is bound to its own CPU core
-    set_cpu_affinity([cpu_id]).unwrap();
+impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
+    pub fn new(
+        cpu_id: usize,
+        queue_id: QueueId,
+        config: TxLoopConfig,
+        dev: &NetworkDevice,
+    ) -> TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
+        let TxLoopConfig {
+            zero_copy,
+            src_mac,
+            src_ip,
+            src_port,
+        } = config;
 
-    let src_mac = src_mac.unwrap_or_else(|| {
-        // if no source MAC is provided, use the device's MAC address
-        dev.mac_addr()
-            .expect("no src_mac provided, device must have a MAC address")
-    });
-
-    let src_ip = src_ip.unwrap_or_else(|| {
-        // if no source IP is provided, use the device's IPv4 address
-        dev.ipv4_addr()
-            .expect("no src_ip provided, device must have an IPv4 address")
-    });
-
-    // some drivers require frame_size=page_size
-    let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
-
-    let queue = dev
-        .open_queue(queue_id)
-        .expect("failed to open queue for AF_XDP socket");
-    let RingSizes {
-        rx: rx_size,
-        tx: tx_size,
-    } = queue.ring_sizes().unwrap_or_else(|| {
         log::info!(
-            "using default ring sizes for {} queue {queue_id:?}",
+            "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
             dev.name()
         );
-        RingSizes::default()
-    });
 
-    let frame_count = (rx_size + tx_size) * 2;
+        // some drivers require frame_size=page_size
+        let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
 
-    // try to allocate huge pages first, then fall back to regular pages
-    const HUGE_2MB: usize = 2 * 1024 * 1024;
-    let mut memory =
-        PageAlignedMemory::alloc_with_page_size(frame_size, frame_count, HUGE_2MB, true)
-            .or_else(|_| {
-                log::warn!("huge page alloc failed, falling back to regular page size");
-                PageAlignedMemory::alloc(frame_size, frame_count)
-            })
-            .unwrap();
-    let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
+        let queue = dev
+            .open_queue(queue_id)
+            .expect("failed to open queue for AF_XDP socket");
+        let RingSizes {
+            rx: rx_size,
+            tx: tx_size,
+        } = queue.ring_sizes().unwrap_or_else(|| {
+            log::info!(
+                "using default ring sizes for {} queue {queue_id:?}",
+                dev.name()
+            );
+            RingSizes::default()
+        });
 
-    // we need NET_ADMIN and NET_RAW for the socket
-    for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
-        caps::raise(None, CapSet::Effective, cap).unwrap();
+        let frame_count = (rx_size + tx_size) * 2;
+
+        // try to allocate huge pages first, then fall back to regular pages
+        const HUGE_2MB: usize = 2 * 1024 * 1024;
+        let memory =
+            PageAlignedMemory::alloc_with_page_size(frame_size, frame_count, HUGE_2MB, true)
+                .or_else(|_| {
+                    log::warn!("huge page alloc failed, falling back to regular page size");
+                    PageAlignedMemory::alloc(frame_size, frame_count)
+                })
+                .unwrap();
+        let umem = OwnedUmem::new(memory, frame_size as u32).unwrap();
+
+        TxLoopBuilder {
+            cpu_id,
+            queue_id,
+            zero_copy,
+            src_mac,
+            src_ip,
+            src_port,
+            queue,
+            tx_size,
+            umem,
+        }
     }
 
-    let Ok((mut socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
-        panic!("failed to create AF_XDP socket on queue {queue_id:?}");
-    };
+    pub fn build(self) -> TxLoop<OwnedUmem<PageAlignedMemory>> {
+        let TxLoopBuilder {
+            cpu_id,
+            queue_id,
+            zero_copy,
+            src_mac,
+            src_ip,
+            src_port,
+            queue,
+            tx_size,
+            umem,
+        } = self;
 
-    let umem = socket.umem();
-    let umem_tx_capacity = umem.available();
-    let Tx {
-        // this is where we'll queue frames
-        ring,
-        // this is where we'll get completion events once frames have been picked up by the NIC
-        mut completion,
-    } = tx;
-    let mut ring = ring.unwrap();
-
-    // we don't need higher caps anymore
-    for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
-        caps::drop(None, CapSet::Effective, cap).unwrap();
-    }
-
-    // How long we sleep waiting to receive shreds from the channel.
-    const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
-
-    const MAX_TIMEOUTS: usize = 1;
-
-    // We try to collect _at least_ BATCH_SIZE packets before queueing into the NIC. This is to
-    // avoid introducing too much per-packet overhead and giving the NIC time to complete work
-    // before we queue the next chunk of packets.
-    const BATCH_SIZE: usize = 64;
-
-    // Local buffer where we store packets before sending themi.
-    let mut batched_items = Vec::with_capacity(BATCH_SIZE);
-
-    // How many packets we've batched. This is _not_ batched_items.len(), but item * peers. For
-    // example if we have 3 packets to transmit to 2 destination addresses each, we have 6 batched
-    // packets.
-    let mut batched_packets = 0;
-
-    let mut timeouts = 0;
-    loop {
-        match receiver.try_recv() {
-            Ok((addrs, payload)) => {
-                batched_packets += addrs.as_ref().len();
-                batched_items.push((addrs, payload));
-                timeouts = 0;
-                if batched_packets < BATCH_SIZE {
-                    continue;
-                }
-            }
-            Err(TryRecvError::Empty) => {
-                if timeouts < MAX_TIMEOUTS {
-                    timeouts += 1;
-                    thread::sleep(RECV_TIMEOUT);
-                } else {
-                    timeouts = 0;
-                    // we haven't received anything in a while, kick the driver
-                    ring.commit();
-                    kick(&ring);
-                }
-            }
-            Err(TryRecvError::Disconnected) => {
-                // keep looping until we've flushed all the packets
-                if batched_packets == 0 {
-                    break;
-                }
-            }
+        let Ok((socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
+            panic!("failed to create AF_XDP socket on queue {queue_id:?}");
         };
 
-        // this is the number of packets after which we commit the ring and kick the driver if
-        // necessary
-        let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
+        let Tx {
+            // this is where we'll queue frames
+            ring,
+            // this is where we'll get completion events once frames have been picked up by the NIC
+            completion,
+        } = tx;
+        let ring = ring.unwrap();
 
-        for (addrs, payload) in batched_items.drain(..) {
-            for addr in addrs.as_ref() {
-                if ring.available() == 0 || umem.available() == 0 {
-                    // loop until we have space for the next packet
-                    loop {
-                        completion.sync(true);
-                        // we haven't written any frames so we only need to sync the consumer position
-                        ring.sync(false);
+        TxLoop {
+            cpu_id,
+            src_mac,
+            src_ip,
+            src_port,
+            socket,
+            ring,
+            completion,
+        }
+    }
+}
 
-                        // check if any frames were completed
-                        while let Some(frame_offset) = completion.read() {
-                            umem.release(frame_offset);
-                        }
+pub struct TxLoop<U: Umem> {
+    cpu_id: usize,
+    src_mac: MacAddress,
+    src_ip: Ipv4Addr,
+    src_port: u16,
+    socket: Socket<U>,
+    ring: TxRing<U::Frame>,
+    completion: TxCompletionRing,
+}
 
-                        if ring.available() > 0 && umem.available() > 0 {
-                            // we have space for the next packet, break out of the loop
-                            break;
-                        }
+impl<U: Umem> TxLoop<U> {
+    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
+        self,
+        receiver: Receiver<(A, T)>,
+        drop_sender: Sender<(A, T)>,
+        route_fn: R,
+    ) {
+        // How long we sleep waiting to receive shreds from the channel.
+        const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
 
-                        // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
-                        // complete some work
+        const MAX_TIMEOUTS: usize = 1;
+
+        // We try to collect _at least_ BATCH_SIZE packets before queueing into the NIC. This is to
+        // avoid introducing too much per-packet overhead and giving the NIC time to complete work
+        // before we queue the next chunk of packets.
+        const BATCH_SIZE: usize = 64;
+
+        let TxLoop {
+            cpu_id,
+            src_mac,
+            src_ip,
+            src_port,
+            mut socket,
+            mut ring,
+            mut completion,
+        } = self;
+
+        // each queue is bound to its own CPU core
+        set_cpu_affinity([cpu_id]).unwrap();
+
+        let umem = socket.umem();
+        let umem_tx_capacity = umem.available();
+
+        // Local buffer where we store packets before sending themi.
+        let mut batched_items = Vec::with_capacity(BATCH_SIZE);
+
+        // How many packets we've batched. This is _not_ batched_items.len(), but item * peers. For
+        // example if we have 3 packets to transmit to 2 destination addresses each, we have 6 batched
+        // packets.
+        let mut batched_packets = 0;
+
+        let mut timeouts = 0;
+        loop {
+            match receiver.try_recv() {
+                Ok((addrs, payload)) => {
+                    batched_packets += addrs.as_ref().len();
+                    batched_items.push((addrs, payload));
+                    timeouts = 0;
+                    if batched_packets < BATCH_SIZE {
+                        continue;
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    if timeouts < MAX_TIMEOUTS {
+                        timeouts += 1;
+                        thread::sleep(RECV_TIMEOUT);
+                    } else {
+                        timeouts = 0;
+                        // we haven't received anything in a while, kick the driver
+                        ring.commit();
                         kick(&ring);
                     }
                 }
-
-                // at this point we're guaranteed to have a frame to write the next packet into and
-                // a slot in the ring to submit it
-                let mut frame = umem.reserve().unwrap();
-                let IpAddr::V4(dst_ip) = addr.ip() else {
-                    panic!("IPv6 not supported");
-                };
-
-                let dest_mac = {
-                    let ip = addr.ip();
-                    let Some(next_hop) = route_fn(&ip) else {
-                        log::warn!("dropping packet: no route for peer {addr}");
-                        batched_packets -= 1;
-                        umem.release(frame.offset());
-                        continue;
-                    };
-
-                    // we need the MAC address to send the packet
-                    let Some(dest_mac) = next_hop.mac_addr else {
-                        log::warn!(
-                            "dropping packet: peer {addr} must be routed through {} which has no \
-                             known MAC address",
-                            next_hop.ip_addr
-                        );
-                        batched_packets -= 1;
-                        umem.release(frame.offset());
-                        continue;
-                    };
-
-                    dest_mac
-                };
-
-                const PACKET_HEADER_SIZE: usize =
-                    ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                let len = payload.as_ref().len();
-                frame.set_len(PACKET_HEADER_SIZE + len);
-                let packet = umem.map_frame_mut(&frame);
-
-                // write the payload first as it's needed for checksum calculation (if enabled)
-                packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
-
-                write_eth_header(packet, &src_mac.0, &dest_mac.0);
-
-                write_ip_header(
-                    &mut packet[ETH_HEADER_SIZE..],
-                    &src_ip,
-                    &dst_ip,
-                    (UDP_HEADER_SIZE + len) as u16,
-                );
-
-                write_udp_header(
-                    &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
-                    &src_ip,
-                    src_port,
-                    &dst_ip,
-                    addr.port(),
-                    len as u16,
-                    // don't do checksums
-                    false,
-                );
-
-                // write the packet into the ring
-                ring.write(frame, 0)
-                    .map_err(|_| "ring full")
-                    // this should never happen as we check for available slots above
-                    .expect("failed to write to ring");
-
-                batched_packets -= 1;
-                chunk_remaining -= 1;
-
-                // check if it's time to commit the ring and kick the driver
-                if chunk_remaining == 0 {
-                    chunk_remaining = BATCH_SIZE.min(batched_packets);
-
-                    // commit new frames
-                    ring.commit();
-                    kick(&ring);
+                Err(TryRecvError::Disconnected) => {
+                    // keep looping until we've flushed all the packets
+                    if batched_packets == 0 {
+                        break;
+                    }
                 }
+            };
+
+            // this is the number of packets after which we commit the ring and kick the driver if
+            // necessary
+            let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
+
+            for (addrs, payload) in batched_items.drain(..) {
+                for addr in addrs.as_ref() {
+                    if ring.available() == 0 || umem.available() == 0 {
+                        // loop until we have space for the next packet
+                        loop {
+                            completion.sync(true);
+                            // we haven't written any frames so we only need to sync the consumer position
+                            ring.sync(false);
+
+                            // check if any frames were completed
+                            while let Some(frame_offset) = completion.read() {
+                                umem.release(frame_offset);
+                            }
+
+                            if ring.available() > 0 && umem.available() > 0 {
+                                // we have space for the next packet, break out of the loop
+                                break;
+                            }
+
+                            // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
+                            // complete some work
+                            kick(&ring);
+                        }
+                    }
+
+                    // at this point we're guaranteed to have a frame to write the next packet into and
+                    // a slot in the ring to submit it
+                    let mut frame = umem.reserve().unwrap();
+                    let IpAddr::V4(dst_ip) = addr.ip() else {
+                        panic!("IPv6 not supported");
+                    };
+
+                    let dest_mac = {
+                        let ip = addr.ip();
+                        let Some(next_hop) = route_fn(&ip) else {
+                            log::warn!("dropping packet: no route for peer {addr}");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+
+                        // we need the MAC address to send the packet
+                        let Some(dest_mac) = next_hop.mac_addr else {
+                            log::warn!(
+                                "dropping packet: peer {addr} must be routed through {} which has \
+                                 no known MAC address",
+                                next_hop.ip_addr
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+
+                        dest_mac
+                    };
+
+                    const PACKET_HEADER_SIZE: usize =
+                        ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
+                    let len = payload.as_ref().len();
+                    frame.set_len(PACKET_HEADER_SIZE + len);
+                    let packet = umem.map_frame_mut(&frame);
+
+                    // write the payload first as it's needed for checksum calculation (if enabled)
+                    packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
+
+                    write_eth_header(packet, &src_mac.0, &dest_mac.0);
+
+                    write_ip_header(
+                        &mut packet[ETH_HEADER_SIZE..],
+                        &src_ip,
+                        &dst_ip,
+                        (UDP_HEADER_SIZE + len) as u16,
+                    );
+
+                    write_udp_header(
+                        &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
+                        &src_ip,
+                        src_port,
+                        &dst_ip,
+                        addr.port(),
+                        len as u16,
+                        // don't do checksums
+                        false,
+                    );
+
+                    // write the packet into the ring
+                    ring.write(frame, 0)
+                        .map_err(|_| "ring full")
+                        // this should never happen as we check for available slots above
+                        .expect("failed to write to ring");
+
+                    batched_packets -= 1;
+                    chunk_remaining -= 1;
+
+                    // check if it's time to commit the ring and kick the driver
+                    if chunk_remaining == 0 {
+                        chunk_remaining = BATCH_SIZE.min(batched_packets);
+
+                        // commit new frames
+                        ring.commit();
+                        kick(&ring);
+                    }
+                }
+                let _ = drop_sender.try_send((addrs, payload));
             }
-            let _ = drop_sender.try_send((addrs, payload));
+            debug_assert_eq!(batched_packets, 0);
         }
-        debug_assert_eq!(batched_packets, 0);
-    }
-    assert_eq!(batched_packets, 0);
+        assert_eq!(batched_packets, 0);
 
-    // drain the ring
-    while umem.available() < umem_tx_capacity || ring.available() < ring.capacity() {
-        log::debug!(
-            "draining xdp ring umem {}/{} ring {}/{}",
-            umem.available(),
-            umem_tx_capacity,
-            ring.available(),
-            ring.capacity()
-        );
+        // drain the ring
+        while umem.available() < umem_tx_capacity || ring.available() < ring.capacity() {
+            log::debug!(
+                "draining xdp ring umem {}/{} ring {}/{}",
+                umem.available(),
+                umem_tx_capacity,
+                ring.available(),
+                ring.capacity()
+            );
 
-        completion.sync(true);
-        while let Some(frame_offset) = completion.read() {
-            umem.release(frame_offset);
+            completion.sync(true);
+            while let Some(frame_offset) = completion.read() {
+                umem.release(frame_offset);
+            }
+
+            ring.sync(false);
+            kick(&ring);
         }
-
-        ring.sync(false);
-        kick(&ring);
     }
 }
 
 // With some drivers, or always when we work in SKB mode, we need to explicitly kick the driver once
 // we want the NIC to do something.
 #[inline(always)]
-fn kick(ring: &TxRing<SliceUmemFrame<'_>>) {
+fn kick<F: Frame>(ring: &TxRing<F>) {
     if !ring.needs_wakeup() {
         return;
     }

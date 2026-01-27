@@ -1,5 +1,5 @@
 use {
-    crate::rent_calculator::{check_rent_state, get_account_rent_state, RentState},
+    crate::rent_calculator::{RentState, check_rent_state, get_account_rent_state},
     solana_account::ReadableAccount,
     solana_rent::Rent,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -73,8 +73,8 @@ mod test {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{
-            compiled_instruction::CompiledInstruction, LegacyMessage, Message, MessageHeader,
-            SanitizedMessage,
+            LegacyMessage, Message, MessageHeader, SanitizedMessage,
+            compiled_instruction::CompiledInstruction,
         },
         solana_rent::Rent,
         solana_signer::Signer,
@@ -118,7 +118,7 @@ mod test {
             (key3.pubkey(), AccountSharedData::default()),
         ];
 
-        let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20);
+        let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20, 1);
         let result = TransactionAccountStateInfo::new(&context, &sanitized_message, &rent);
         assert_eq!(
             result,
@@ -170,7 +170,7 @@ mod test {
             (key3.pubkey(), AccountSharedData::default()),
         ];
 
-        let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20);
+        let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20, 1);
         let _result = TransactionAccountStateInfo::new(&context, &sanitized_message, &rent);
     }
 
@@ -195,7 +195,7 @@ mod test {
             (key2.pubkey(), AccountSharedData::default()),
         ];
 
-        let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20);
+        let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 1);
 
         let result = TransactionAccountStateInfo::verify_changes(
             &pre_rent_state,
@@ -219,7 +219,7 @@ mod test {
             (key2.pubkey(), AccountSharedData::default()),
         ];
 
-        let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20);
+        let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 1);
         let result = TransactionAccountStateInfo::verify_changes(
             &pre_rent_state,
             &post_rent_state,

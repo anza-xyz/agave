@@ -596,6 +596,7 @@ pub struct ConfirmedTransactionWithStatusMeta {
     pub slot: Slot,
     pub tx_with_meta: TransactionWithStatusMeta,
     pub block_time: Option<UnixTimestamp>,
+    pub index: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -619,6 +620,7 @@ impl ConfirmedTransactionWithStatusMeta {
                 true,
             )?,
             block_time: self.block_time,
+            transaction_index: Some(self.index),
         })
     }
 
@@ -963,5 +965,64 @@ mod test {
             serde_json::to_value(ui_meta_parse_no_rewards).unwrap(),
             expected_json_output_value
         );
+    }
+
+    #[test]
+    fn test_confirmed_transaction_with_status_meta_encode() {
+        use solana_transaction::versioned::VersionedTransaction;
+
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
+
+        let message = solana_message::v0::Message {
+            header: solana_message::MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            account_keys: vec![pubkey1, pubkey2],
+            recent_blockhash: solana_hash::Hash::default(),
+            instructions: vec![],
+            address_table_lookups: vec![],
+        };
+
+        let tx = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::from([1u8; 64])],
+            message: solana_message::VersionedMessage::V0(message),
+        };
+
+        let meta = TransactionStatusMeta {
+            status: Ok(()),
+            fee: 5000,
+            pre_balances: vec![1_000_000, 0],
+            post_balances: vec![994_900, 100],
+            inner_instructions: None,
+            log_messages: None,
+            pre_token_balances: None,
+            post_token_balances: None,
+            rewards: None,
+            loaded_addresses: LoadedAddresses::default(),
+            return_data: None,
+            compute_units_consumed: None,
+            cost_units: None,
+        };
+
+        let confirmed_tx = ConfirmedTransactionWithStatusMeta {
+            slot: 42,
+            tx_with_meta: TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
+                transaction: tx,
+                meta,
+            }),
+            block_time: Some(1234567890),
+            index: 7,
+        };
+
+        let encoded = confirmed_tx
+            .encode(UiTransactionEncoding::Base64, Some(0))
+            .unwrap();
+
+        assert_eq!(encoded.slot, 42);
+        assert_eq!(encoded.block_time, Some(1234567890));
+        assert_eq!(encoded.transaction_index, Some(7));
     }
 }

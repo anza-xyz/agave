@@ -10,9 +10,9 @@ encryption over the elliptic curve
 verification instructions in the ZK ElGamal Proof program are flexibly designed
 so that they can be combined to enable a number different applications.
 
-- Program id: `ZkE1Gama1Proof11111111111111111111111111111`
+- Program id: see `solana_sdk_ids::zk_elgamal_proof_program::ID`
 - Instructions:
-  [ProofInstruction](https://github.com/anza-xyz/agave/blob/master/zk-sdk/src/zk_elgamal_proof_program/instruction.rs)
+  [ProofInstruction](https://github.com/solana-program/zk-elgamal-proof/blob/main/zk-sdk/src/zk_elgamal_proof_program/instruction.rs)
 
 ### Pedersen commitments and ElGamal encryption
 
@@ -67,7 +67,7 @@ logically divided into two parts:
 - The <em>proof</em> component contains the actual mathematical pieces that
   certify different properties of the context data.
 
-The ZK Token proof program processes a proof instruction in two steps:
+The ZK ElGamal Proof program processes a proof instruction in two steps:
 
 1. Verify the zero-knowledge proof data associated with the proof instruction.
 2. If specified in the instruction, the program stores the context data in a

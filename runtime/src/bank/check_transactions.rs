@@ -1,23 +1,17 @@
 use {
     super::{Bank, BankStatusCache},
     agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet},
-    solana_account::{state_traits::StateMut, AccountSharedData},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
     solana_fee::{calculate_fee_details, FeeFeatures},
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
-    solana_nonce::{
-        state::{Data as NonceData, DurableNonce, State as NonceState},
-        versions::Versions as NonceVersions,
-        NONCED_TX_MARKER_IX_INDEX,
-    },
+    solana_nonce::state::{Data as NonceData, DurableNonce},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
-        nonce_info::NonceInfo,
         transaction_error_metrics::TransactionErrorMetrics,
     },
     solana_svm_transaction::svm_message::SVMMessage,
@@ -99,10 +93,6 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
-        // safe so long as the BlockhashQueue is consistent
-        let next_lamports_per_signature = hash_queue
-            .get_lamports_per_signature(&last_blockhash)
-            .unwrap();
 
         let feature_set: &FeatureSet = &self.feature_set;
         let fee_features = FeeFeatures::from(feature_set);
@@ -151,7 +141,6 @@ impl Bank {
                         max_age,
                         &next_durable_nonce,
                         &hash_queue,
-                        next_lamports_per_signature,
                         error_counters,
                         compute_budget_and_limits,
                     )
@@ -162,7 +151,7 @@ impl Bank {
     }
 
     fn checked_transactions_details_with_test_override(
-        nonce: Option<NonceInfo>,
+        nonce_address: Option<Pubkey>,
         lamports_per_signature: u64,
         mut compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> CheckedTransactionDetails {
@@ -172,7 +161,7 @@ impl Bank {
             compute_budget_and_limits.fee_details = FeeDetails::default();
         }
 
-        CheckedTransactionDetails::new(nonce, compute_budget_and_limits)
+        CheckedTransactionDetails::new(nonce_address, compute_budget_and_limits)
     }
 
     fn check_transaction_age(
@@ -181,7 +170,6 @@ impl Bank {
         max_age: usize,
         next_durable_nonce: &DurableNonce,
         hash_queue: &BlockhashQueue,
-        next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
         compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> TransactionCheckResult {
@@ -192,15 +180,11 @@ impl Bank {
                 hash_info.lamports_per_signature(),
                 compute_budget,
             ))
-        } else if let Some((nonce, previous_lamports_per_signature)) = self
-            .check_load_and_advance_message_nonce_account(
-                tx,
-                next_durable_nonce,
-                next_lamports_per_signature,
-            )
+        } else if let Some((nonce_address, previous_lamports_per_signature)) =
+            self.check_nonce_transaction_validity(tx, next_durable_nonce)
         {
             Ok(Self::checked_transactions_details_with_test_override(
-                Some(nonce),
+                Some(nonce_address),
                 previous_lamports_per_signature,
                 compute_budget,
             ))
@@ -210,40 +194,26 @@ impl Bank {
         }
     }
 
-    pub(super) fn check_load_and_advance_message_nonce_account(
+    pub(super) fn check_nonce_transaction_validity(
         &self,
         message: &impl SVMMessage,
         next_durable_nonce: &DurableNonce,
-        next_lamports_per_signature: u64,
-    ) -> Option<(NonceInfo, u64)> {
+    ) -> Option<(Pubkey, u64)> {
         let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
         if !nonce_is_advanceable {
             return None;
         }
 
-        let (nonce_address, mut nonce_account, nonce_data) =
-            self.load_message_nonce_account(message)?;
-
+        let (nonce_address, nonce_data) = self.load_message_nonce_data(message)?;
         let previous_lamports_per_signature = nonce_data.get_lamports_per_signature();
-        let next_nonce_state = NonceState::new_initialized(
-            &nonce_data.authority,
-            *next_durable_nonce,
-            next_lamports_per_signature,
-        );
-        nonce_account
-            .set_state(&NonceVersions::new(next_nonce_state))
-            .ok()?;
 
-        Some((
-            NonceInfo::new(nonce_address, nonce_account),
-            previous_lamports_per_signature,
-        ))
+        Some((nonce_address, previous_lamports_per_signature))
     }
 
-    pub(super) fn load_message_nonce_account(
+    pub(super) fn load_message_nonce_data(
         &self,
         message: &impl SVMMessage,
-    ) -> Option<(Pubkey, AccountSharedData, NonceData)> {
+    ) -> Option<(Pubkey, NonceData)> {
         let require_static_nonce_account = self
             .feature_set
             .is_active(&agave_feature_set::require_static_nonce_account::id());
@@ -252,14 +222,7 @@ impl Bank {
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
 
-        let nonce_is_authorized = message
-            .get_ix_signers(NONCED_TX_MARKER_IX_INDEX as usize)
-            .any(|signer| signer == &nonce_data.authority);
-        if !nonce_is_authorized {
-            return None;
-        }
-
-        Some((*nonce_address, nonce_account, nonce_data))
+        Some((*nonce_address, nonce_data))
     }
 
     fn check_status_cache<Tx: TransactionWithMeta>(
@@ -322,6 +285,7 @@ mod tests {
             get_nonce_blockhash, get_nonce_data_from_account, new_sanitized_message,
             setup_nonce_with_bank,
         },
+        solana_account::state_traits::StateMut,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{
@@ -330,6 +294,7 @@ mod tests {
             Message, MessageHeader, SanitizedMessage, SanitizedVersionedMessage,
             SimpleAddressLoader, VersionedMessage,
         },
+        solana_nonce::{state::State as NonceState, versions::Versions as NonceVersions},
         solana_signer::Signer,
         solana_system_interface::{
             instruction::{self as system_instruction, SystemInstruction},
@@ -340,7 +305,7 @@ mod tests {
     };
 
     #[test]
-    fn test_check_and_load_message_nonce_account_ok() {
+    fn test_check_nonce_transaction_validity_ok() {
         const STALE_LAMPORTS_PER_SIGNATURE: u64 = 42;
         let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
@@ -376,29 +341,14 @@ mod tests {
             .unwrap();
         bank.store_account(&nonce_pubkey, &nonce_account);
 
-        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
-        let (_, next_lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
-        let mut expected_nonce_info = NonceInfo::new(nonce_pubkey, nonce_account);
-        expected_nonce_info
-            .try_advance_nonce(bank.next_durable_nonce(), next_lamports_per_signature)
-            .unwrap();
-
-        // we now expect to:
-        // * advance the nonce account to the current durable nonce value
-        // * set the blockhash queue's last blockhash's lamports_per_signature value in the nonce data
-        // * retrieve the previous lamports_per_signature value set on the nonce data for transaction fee checks
         assert_eq!(
-            bank.check_load_and_advance_message_nonce_account(
-                &message,
-                &bank.next_durable_nonce(),
-                next_lamports_per_signature
-            ),
-            Some((expected_nonce_info, STALE_LAMPORTS_PER_SIGNATURE)),
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce()),
+            Some((nonce_pubkey, STALE_LAMPORTS_PER_SIGNATURE)),
         );
     }
 
     #[test]
-    fn test_check_and_load_message_nonce_account_not_nonce_fail() {
+    fn test_check_nonce_transaction_validity_not_nonce_fail() {
         let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
             |_| {},
@@ -420,18 +370,13 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
-        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_load_and_advance_message_nonce_account(
-                &message,
-                &bank.next_durable_nonce(),
-                lamports_per_signature
-            )
+            .check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
             .is_none());
     }
 
     #[test]
-    fn test_check_and_load_message_nonce_account_missing_ix_pubkey_fail() {
+    fn test_check_nonce_transaction_validity_missing_ix_pubkey_fail() {
         let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
             |_| {},
@@ -454,18 +399,16 @@ mod tests {
             &nonce_hash,
         );
         message.instructions[0].accounts.clear();
-        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_load_and_advance_message_nonce_account(
+            .check_nonce_transaction_validity(
                 &new_sanitized_message(message),
                 &bank.next_durable_nonce(),
-                lamports_per_signature,
             )
             .is_none());
     }
 
     #[test]
-    fn test_check_and_load_message_nonce_account_nonce_acc_does_not_exist_fail() {
+    fn test_check_nonce_transaction_validity_nonce_acc_does_not_exist_fail() {
         let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
             |_| {},
@@ -489,18 +432,13 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
-        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_load_and_advance_message_nonce_account(
-                &message,
-                &bank.next_durable_nonce(),
-                lamports_per_signature
-            )
+            .check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
             .is_none());
     }
 
     #[test]
-    fn test_check_and_load_message_nonce_account_bad_tx_hash_fail() {
+    fn test_check_nonce_transaction_validity_bad_tx_hash_fail() {
         let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
             |_| {},
@@ -521,19 +459,14 @@ mod tests {
             Some(&custodian_pubkey),
             &Hash::default(),
         ));
-        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_load_and_advance_message_nonce_account(
-                &message,
-                &bank.next_durable_nonce(),
-                lamports_per_signature,
-            )
+            .check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
             .is_none());
     }
 
-    #[test_case(true; "test_check_and_load_message_nonce_account_nonce_is_alt_disallowed")]
-    #[test_case(false; "test_check_and_load_message_nonce_account_nonce_is_alt_allowed")]
-    fn test_check_and_load_message_nonce_account_nonce_is_alt(require_static_nonce_account: bool) {
+    #[test_case(true; "test_check_nonce_transaction_validity_nonce_is_alt_disallowed")]
+    #[test_case(false; "test_check_nonce_transaction_validity_nonce_is_alt_allowed")]
+    fn test_check_nonce_transaction_validity_nonce_is_alt(require_static_nonce_account: bool) {
         let feature_set = if require_static_nonce_account {
             FeatureSet::all_enabled()
         } else {
@@ -590,14 +523,9 @@ mod tests {
         )
         .unwrap();
 
-        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert_eq!(
-            bank.check_load_and_advance_message_nonce_account(
-                &message,
-                &bank.next_durable_nonce(),
-                lamports_per_signature
-            )
-            .is_none(),
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce())
+                .is_none(),
             require_static_nonce_account,
         );
     }

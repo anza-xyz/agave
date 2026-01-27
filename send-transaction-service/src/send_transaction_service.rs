@@ -547,6 +547,8 @@ mod test {
         tokio::runtime::Handle,
     };
 
+    const GENESIS_LAMPORTS: u64 = 10_000_000_000;
+
     #[tokio::test(flavor = "multi_thread")]
     async fn service_exit() {
         let bank = Bank::default_for_tests();
@@ -629,7 +631,7 @@ mod test {
     async fn process_transactions() {
         agave_logger::setup();
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(GENESIS_LAMPORTS);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
@@ -912,7 +914,7 @@ mod test {
     async fn retry_durable_nonce_transactions() {
         agave_logger::setup();
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(GENESIS_LAMPORTS);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let leader_forward_count = 1;

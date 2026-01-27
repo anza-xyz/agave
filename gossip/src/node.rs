@@ -10,9 +10,9 @@ use {
         find_available_ports_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{
-            bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
-            bind_to_with_config, localhost_port_range_for_tests, multi_bind_in_range_with_config,
-            SocketConfiguration as SocketConfig,
+            SocketConfiguration as SocketConfig, bind_gossip_port_in_range,
+            bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
+            localhost_port_range_for_tests, multi_bind_in_range_with_config,
         },
     },
     solana_pubkey::Pubkey,
@@ -128,16 +128,6 @@ impl Node {
         );
         let tvu_addresses = Self::get_socket_addrs(&tvu_sockets);
 
-        let (tvu_quic_port, tvu_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-                .expect("tvu_quic bind");
-
-        let (tpu_port, tpu_socket) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-                .expect("tpu_socket primary bind");
-        let tpu_sockets =
-            bind_more_with_config(tpu_socket, 32, socket_config).expect("tpu_sockets multi_bind");
-
         let (tpu_port_quic, tpu_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("tpu_quic primary bind");
@@ -151,11 +141,6 @@ impl Node {
         );
         let tpu_quic_addresses = Self::get_socket_addrs(&tpu_quic);
 
-        let (tpu_forwards_port, tpu_forwards_socket) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-                .expect("tpu_forwards primary bind");
-        let tpu_forwards_sockets = bind_more_with_config(tpu_forwards_socket, 8, socket_config)
-            .expect("tpu_forwards multi_bind");
         let (tpu_forwards_quic_port, tpu_forwards_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("tpu_forwards_quic primary bind");
@@ -294,15 +279,25 @@ impl Node {
             public_tvu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tvu_port)),
         )
         .unwrap();
-        info.set_tvu(QUIC, (advertised_ip, tvu_quic_port)).unwrap();
-        info.set_tpu(UDP, (advertised_ip, tpu_port)).unwrap();
+        // placeholder to prevent legacy nodes from assuming we do not have open TPU ports
+        // see https://github.com/anza-xyz/agave/pull/10174
+        info.set_tpu(
+            UDP,
+            public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, 1)),
+        )
+        .unwrap();
         info.set_tpu(
             QUIC,
             public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port_quic)),
         )
         .unwrap();
-        info.set_tpu_forwards(UDP, (advertised_ip, tpu_forwards_port))
-            .unwrap();
+        // placeholder to prevent legacy nodes from assuming we do not have open TPU ports
+        // see https://github.com/anza-xyz/agave/pull/10174
+        info.set_tpu_forwards(
+            UDP,
+            public_tpu_forwards_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, 1)),
+        )
+        .unwrap();
         info.set_tpu_forwards(
             QUIC,
             public_tpu_forwards_addr
@@ -341,9 +336,6 @@ impl Node {
             alpenglow: Some(alpenglow),
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
-            tvu_quic,
-            tpu: tpu_sockets,
-            tpu_forwards: tpu_forwards_sockets,
             tpu_vote: tpu_vote_sockets,
             broadcast,
             repair,
@@ -531,10 +523,7 @@ pub use multihoming::*;
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::contact_info::Protocol::{QUIC, UDP},
-    };
+    use {super::*, crate::contact_info::Protocol::QUIC};
 
     /// Regression test for fix where tpu_forwards_quic was incorrectly
     /// using tpu_forwards_port (UDP) instead of tpu_forwards_quic_port (QUIC)
@@ -544,7 +533,6 @@ mod tests {
         let node = Node::new_localhost_with_pubkey(&pubkey);
 
         let tpu_forwards_quic = node.info.tpu_forwards(QUIC).unwrap();
-        let tpu_forwards_udp = node.info.tpu_forwards(UDP).unwrap();
 
         let actual_quic_port = node.sockets.tpu_forwards_quic[0]
             .local_addr()
@@ -555,12 +543,6 @@ mod tests {
             tpu_forwards_quic.port(),
             actual_quic_port,
             "TPU forwards QUIC advertised port should match actual bound QUIC socket"
-        );
-
-        assert_ne!(
-            tpu_forwards_quic.port(),
-            tpu_forwards_udp.port(),
-            "TPU forwards QUIC and UDP should use different ports"
         );
     }
 }

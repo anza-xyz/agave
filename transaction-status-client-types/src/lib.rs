@@ -93,6 +93,7 @@ pub struct ConfirmedTransactionStatusWithSignature {
     pub err: Option<TransactionError>,
     pub memo: Option<String>,
     pub block_time: Option<i64>,
+    pub index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,6 +213,8 @@ pub struct Reward {
     pub post_balance: u64, // Account balance in lamports after `lamports` was applied
     pub reward_type: Option<RewardType>,
     pub commission: Option<u8>, // Vote account commission when the reward was credited, only present for voting and staking rewards
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commission_bps: Option<u16>, // Vote account commission in basis points (SIMD-0232)
 }
 
 pub type Rewards = Vec<Reward>;
@@ -710,6 +713,8 @@ pub struct EncodedConfirmedTransactionWithStatusMeta {
     #[serde(flatten)]
     pub transaction: EncodedTransactionWithStatusMeta,
     pub block_time: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_index: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

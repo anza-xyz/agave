@@ -271,7 +271,7 @@ impl TransactionFrame {
 mod tests {
     use {
         super::*,
-        solana_message::{v0, AddressLookupTableAccount, Message, MessageHeader, VersionedMessage},
+        solana_message::{AddressLookupTableAccount, Message, MessageHeader, VersionedMessage, v0},
         solana_pubkey::Pubkey,
         solana_signature::Signature,
         solana_system_interface::instruction::{self as system_instruction, SystemInstruction},

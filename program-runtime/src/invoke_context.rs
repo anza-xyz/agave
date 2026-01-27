@@ -8,10 +8,10 @@ use {
         stable_log,
         sysvar_cache::SysvarCache,
     },
-    solana_account::{create_account_shared_data_for_test, AccountSharedData},
+    solana_account::{AccountSharedData, create_account_shared_data_for_test},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -26,15 +26,15 @@ use {
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_log_collector::{ic_msg, LogCollector},
+    solana_svm_log_collector::{LogCollector, ic_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
+        IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, TransactionContext,
         instruction::InstructionContext, instruction_accounts::InstructionAccount,
-        transaction_accounts::KeyedAccountSharedData, IndexOfAccount, TransactionContext,
-        MAX_ACCOUNTS_PER_TRANSACTION,
+        transaction_accounts::KeyedAccountSharedData,
     },
     std::{
         alloc::Layout,
@@ -423,11 +423,15 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             program_account_index_in_transaction.unwrap()
         };
 
+        // This ? operator should not error out because `fn get_current_instruction_index` is also called
+        // in `get_current_instruction_context`
+        let caller_index = self.transaction_context.get_current_instruction_index()?;
         self.transaction_context.configure_next_instruction(
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
             Cow::Owned(instruction.data),
+            Some(caller_index as u16),
         )?;
         Ok(())
     }
@@ -470,6 +474,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             instruction_accounts,
             transaction_callee_map,
             Cow::Borrowed(data),
+            None,
         )?;
         Ok(())
     }
@@ -793,6 +798,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
+            /* number_of_top_level_instructions */ 1,
         );
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {
@@ -979,7 +985,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_rent::Rent,
         solana_signer::Signer,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION,
         std::collections::HashSet,
         test_case::test_case,
@@ -1163,6 +1169,7 @@ mod tests {
             )],
             Rent::default(),
             1,
+            MAX_INSTRUCTIONS,
             MAX_INSTRUCTIONS,
         );
         for _ in 0..MAX_INSTRUCTIONS {

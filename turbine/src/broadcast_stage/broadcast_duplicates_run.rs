@@ -275,12 +275,16 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             // Store the original shreds that this node replayed
             blockstore_sender.send((original_last_data_shred.clone(), None))?;
 
-            assert!(original_last_data_shred
-                .iter()
-                .all(|shred| shred.slot() == bank.slot()));
-            assert!(partition_last_data_shred
-                .iter()
-                .all(|shred| shred.slot() == bank.slot()));
+            assert!(
+                original_last_data_shred
+                    .iter()
+                    .all(|shred| shred.slot() == bank.slot())
+            );
+            assert!(
+                partition_last_data_shred
+                    .iter()
+                    .all(|shred| shred.slot() == bank.slot())
+            );
 
             if let Some(duplicate_slot_sender) = &self.config.duplicate_slot_sender {
                 let _ = duplicate_slot_sender.send(bank.slot());
@@ -297,7 +301,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         cluster_info: &ClusterInfo,
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
-        _quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (shreds, _) = receiver.recv()?;
         if shreds.is_empty() {

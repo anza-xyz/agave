@@ -11,7 +11,7 @@ use {
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
         simple_vote_transaction_checker::is_simple_vote_transaction,
-        versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
+        versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     solana_transaction_error::TransactionResult as Result,
     std::{borrow::Cow, collections::HashSet},
@@ -175,7 +175,7 @@ mod tests {
         solana_message::{Message, SimpleAddressLoader},
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{versioned::VersionedTransaction, Transaction},
+        solana_transaction::{Transaction, versioned::VersionedTransaction},
         solana_vote_interface::{self as vote, state::Vote},
     };
 

@@ -112,8 +112,8 @@ impl RestartLastVotedForkSlots {
     /// New random Version for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
-        let num_slots = rng.gen_range(2..20);
-        let slots = std::iter::repeat_with(|| 47825632 + rng.gen_range(0..512))
+        let num_slots = rng.random_range(2..20);
+        let slots = std::iter::repeat_with(|| 47825632 + rng.random_range(0..512))
             .take(num_slots)
             .collect::<Vec<Slot>>();
         RestartLastVotedForkSlots::new(
@@ -151,9 +151,9 @@ impl RestartHeaviestFork {
         Self {
             from,
             wallclock: new_rand_timestamp(rng),
-            last_slot: rng.gen_range(0..1000),
+            last_slot: rng.random_range(0..1000),
             last_slot_hash: Hash::new_unique(),
-            observed_stake: rng.gen_range(1..u64::MAX),
+            observed_stake: rng.random_range(1..u64::MAX),
             shred_version: 1,
         }
     }
@@ -233,7 +233,7 @@ mod test {
     };
 
     fn make_rand_slots<R: Rng>(rng: &mut R) -> impl Iterator<Item = Slot> + '_ {
-        repeat_with(|| rng.gen_range(1..5)).scan(0, |slot, step| {
+        repeat_with(|| rng.random_range(1..5)).scan(0, |slot, step| {
             *slot += step;
             Some(*slot)
         })
@@ -257,7 +257,7 @@ mod test {
         );
 
         // Create large enough slots to make sure we are discarding some to make slots fit.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let large_length = 8000;
         let range: Vec<Slot> = make_rand_slots(&mut rng).take(large_length).collect();
         let large_slots = RestartLastVotedForkSlots::new(
@@ -351,7 +351,7 @@ mod test {
         );
         check_run_length_encoding((1000..1800).step_by(2).map(|x| x as Slot).collect_vec());
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let large_length = 500;
         let range: Vec<Slot> = make_rand_slots(&mut rng).take(large_length).collect();
         check_run_length_encoding(range);

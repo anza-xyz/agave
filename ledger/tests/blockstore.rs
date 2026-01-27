@@ -43,6 +43,8 @@ fn test_multiple_threads_insert_shred() {
         assert_eq!(meta0.next_slots, expected_next_slots);
 
         // Delete slots for next iteration
-        blockstore.purge_and_compact_slots(0, num_threads + 1);
+        blockstore
+            .purge_and_compact_slots(0, num_threads + 1)
+            .unwrap();
     }
 }

@@ -7,6 +7,7 @@ use {
             instr_context::InstrContext,
             proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
         },
+        logger,
     },
     agave_feature_set::{increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8},
     agave_syscalls::create_program_runtime_environment_v1,
@@ -24,7 +25,7 @@ pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
     }
     if env::var("ENABLE_SOLANA_LOGGER").is_ok() {
         /* Pairs with RUST_LOG={trace,debug,info,etc} */
-        agave_logger::setup();
+        logger::setup();
     }
 }
 

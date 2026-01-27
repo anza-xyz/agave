@@ -408,9 +408,19 @@ pub fn load_and_process_ledger(
     };
 
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+
+    // If snapshot_slot is present, then ledger-tool is attempting to generate a snapshot. Setting
+    // new_generate_snapshots_externally ensures the accounts database retains zero lamport
+    // accounts needed to correctly generate incremental snapshots
+    let snapshot_config = if arg_matches.is_present("snapshot_slot") {
+        SnapshotConfig::new_generate_snapshots_externally()
+    } else {
+        SnapshotConfig::new_load_only()
+    };
+
     let snapshot_controller = Arc::new(SnapshotController::new(
         snapshot_request_sender,
-        SnapshotConfig::new_load_only(),
+        snapshot_config,
         bank_forks.read().unwrap().root(),
     ));
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));

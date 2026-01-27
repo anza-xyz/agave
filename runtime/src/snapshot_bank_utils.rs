@@ -869,12 +869,6 @@ mod tests {
             bank_fields: bank.get_fields_to_serialize(),
             bank_hash_stats: bank.get_bank_hash_stats(),
             status_cache_slot_deltas: bank.status_cache.read().unwrap().root_slot_deltas(),
-            write_version: bank
-                .rc
-                .accounts
-                .accounts_db
-                .write_version
-                .load(Ordering::Acquire),
         };
 
         let snapshot_storages = bank.get_snapshot_storages(None);
