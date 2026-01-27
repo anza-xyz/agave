@@ -9171,6 +9171,18 @@ dependencies = [
 [[package]]
 name = "solana-leader-schedule"
 version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-random",
+ "bs58",
+ "itertools 0.14.0",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+ "sha2 0.10.9",
+ "solana-clock",
+ "solana-pubkey 4.0.0",
+ "solana-vote",
+ "test-case",
+]
 
 [[package]]
 name = "solana-ledger"
@@ -9231,6 +9243,7 @@ dependencies = [
  "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-message",

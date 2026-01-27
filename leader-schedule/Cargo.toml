@@ -20,8 +20,20 @@ name = "solana_leader_schedule"
 agave-unstable-api = []
 
 [dependencies]
+agave-random = { workspace = true }
+itertools = { workspace = true }
+rand_chacha = { workspace = true }
+solana-clock = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-vote = { workspace = true }
 
 [dev-dependencies]
+bs58 = { workspace = true, features = ["alloc"] }
+rand = { workspace = true }
+sha2 = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
+test-case = { workspace = true }
 
 [lints]
 workspace = true
