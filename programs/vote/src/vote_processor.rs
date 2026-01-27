@@ -27,7 +27,7 @@ fn process_authorize_with_seed_instruction<F>(
     authorization_type: VoteAuthorize,
     current_authority_derived_key_owner: &Pubkey,
     current_authority_derived_key_seed: &str,
-    is_bls_pubkey_feature_enabled: bool,
+    is_vote_authorize_with_bls_enabled: bool,
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
@@ -55,16 +55,22 @@ where
         authorization_type,
         &expected_authority_keys,
         &clock,
-        is_bls_pubkey_feature_enabled,
+        is_vote_authorize_with_bls_enabled,
         consume_pop_compute_units,
     )
 }
 
-fn is_bls_pubkey_feature_enabled(invoke_context: &InvokeContext) -> bool {
-    invoke_context
-        .get_feature_set()
-        .bls_pubkey_management_in_vote_account
-        && invoke_context.get_feature_set().vote_state_v4
+fn is_init_account_v2_enabled(invoke_context: &InvokeContext) -> bool {
+    let feature_set = invoke_context.get_feature_set();
+    feature_set.vote_state_v4
+        && feature_set.commission_rate_in_basis_points
+        && feature_set.custom_commission_collector
+        && feature_set.bls_pubkey_management_in_vote_account
+}
+
+fn is_vote_authorize_with_bls_enabled(invoke_context: &InvokeContext) -> bool {
+    let feature_set = invoke_context.get_feature_set();
+    feature_set.vote_state_v4 && feature_set.bls_pubkey_management_in_vote_account
 }
 
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
@@ -94,7 +100,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     };
 
     let signers = instruction_context.get_signers()?;
-    let is_bls_pubkey_feature_enabled = is_bls_pubkey_feature_enabled(invoke_context);
+    let is_init_account_v2_enabled = is_init_account_v2_enabled(invoke_context);
+    let is_vote_authorize_with_bls_enabled = is_vote_authorize_with_bls_enabled(invoke_context);
     let consume_pop_compute_units = || {
         invoke_context
             .consume_checked(BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS)
@@ -102,8 +109,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     };
     match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {
         VoteInstruction::InitializeAccount(vote_init) => {
-            // If the BLS pubkey feature is active, reject the instruction
-            if is_bls_pubkey_feature_enabled {
+            if is_init_account_v2_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let rent =
@@ -125,7 +131,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 vote_authorize,
                 &signers,
                 &clock,
-                is_bls_pubkey_feature_enabled,
+                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
@@ -140,7 +146,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
-                is_bls_pubkey_feature_enabled,
+                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
@@ -159,7 +165,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
-                is_bls_pubkey_feature_enabled,
+                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
@@ -295,12 +301,12 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 vote_authorize,
                 &signers,
                 &clock,
-                is_bls_pubkey_feature_enabled,
+                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
         VoteInstruction::InitializeAccountV2(vote_init_v2) => {
-            if !is_bls_pubkey_feature_enabled {
+            if !is_init_account_v2_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let rent = invoke_context.get_sysvar_cache().get_rent()?;
@@ -878,10 +884,17 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true], [false, true])]
+    #[test_matrix(
+        [false, true],
+        [false, true],
+        [false, true],
+        [false, true]
+    )]
     fn test_initialize_vote_account(
         vote_state_v4: bool,
         bls_pubkey_management_in_vote_account: bool,
+        commission_rate_in_basis_points: bool,
+        custom_commission_collector: bool,
     ) {
         let vote_pubkey = solana_pubkey::new_rand();
         let vote_account = AccountSharedData::new(100, vote_state_size_of(vote_state_v4), &id());
@@ -920,12 +933,18 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
-            ..Default::default()
+            commission_rate_in_basis_points,
+            custom_commission_collector,
         };
 
+        let all_v2_features_enabled = vote_state_v4
+            && bls_pubkey_management_in_vote_account
+            && commission_rate_in_basis_points
+            && custom_commission_collector;
+
         // processing incompatible instruction should fail
-        if vote_state_v4 && bls_pubkey_management_in_vote_account {
-            // If both features are enabled, the old instruction should be rejected
+        if all_v2_features_enabled {
+            // If all four features are enabled, the old instruction should be rejected
             process_instruction(
                 features,
                 &instruction_data,
@@ -940,7 +959,7 @@ mod tests {
             );
             return;
         } else {
-            // If either feature is disabled, the new instruction should be rejected
+            // If any feature is disabled, the new instruction should be rejected
             let bad_instruction_data =
                 serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
                     node_pubkey,
@@ -1023,10 +1042,17 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true], [false, true])]
+    #[test_matrix(
+        [false, true],
+        [false, true],
+        [false, true],
+        [false, true]
+    )]
     fn test_initialize_vote_account_v2(
         vote_state_v4: bool,
         bls_pubkey_management_in_vote_account: bool,
+        commission_rate_in_basis_points: bool,
+        custom_commission_collector: bool,
     ) {
         let vote_pubkey = solana_pubkey::new_rand();
         let vote_account = AccountSharedData::new(100, vote_state_size_of(vote_state_v4), &id());
@@ -1069,12 +1095,18 @@ mod tests {
         let features = VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
-            ..Default::default()
+            commission_rate_in_basis_points,
+            custom_commission_collector,
         };
 
+        let all_v2_features_enabled = vote_state_v4
+            && bls_pubkey_management_in_vote_account
+            && commission_rate_in_basis_points
+            && custom_commission_collector;
+
         // processing incompatible instruction should fail
-        if vote_state_v4 && bls_pubkey_management_in_vote_account {
-            // If both features are enabled, the old instruction should be rejected
+        if all_v2_features_enabled {
+            // If all four features are enabled, the old instruction should be rejected
             let bad_instruction_data = serialize(&VoteInstruction::InitializeAccount(VoteInit {
                 node_pubkey,
                 authorized_voter: vote_pubkey,
@@ -1095,7 +1127,7 @@ mod tests {
                 Err(InstructionError::InvalidInstructionData),
             );
         } else {
-            // If either feature is disabled, the new instruction should be rejected
+            // If any feature is disabled, the new instruction should be rejected
             process_instruction(
                 features,
                 &instruction_data,
@@ -1212,11 +1244,7 @@ mod tests {
             },
         ];
         process_instruction_with_cu_check(
-            VoteProgramFeatures {
-                vote_state_v4: true,
-                bls_pubkey_management_in_vote_account: true,
-                ..Default::default()
-            },
+            VoteProgramFeatures::all_enabled(),
             &instruction_with_bad_pop,
             vec![
                 (vote_pubkey, vote_account),
