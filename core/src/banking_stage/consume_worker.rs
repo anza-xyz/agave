@@ -759,6 +759,9 @@ pub(crate) mod external {
             let enable_static_instruction_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
+            let enable_instruction_accounts_limit = bank
+                .feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             for (tx_ptr, _) in batch.iter() {
@@ -766,6 +769,7 @@ pub(crate) mod external {
                 match SanitizedTransactionView::try_new_sanitized(
                     tx_ptr,
                     enable_static_instruction_limit,
+                    enable_instruction_accounts_limit,
                 ) {
                     Ok(view) => {
                         parsing_results.push(Ok(()));
@@ -950,6 +954,9 @@ pub(crate) mod external {
             let enable_static_instruction_limit = root_bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
+            let enable_instruction_accounts_limit = root_bank
+                .feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
             let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -962,6 +969,7 @@ pub(crate) mod external {
                     root_bank,
                     enable_static_instruction_limit,
                     transaction_account_lock_limit,
+                    enable_instruction_accounts_limit,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -981,6 +989,7 @@ pub(crate) mod external {
             root_bank: &Bank,
             enable_static_instruction_limit: bool,
             transaction_account_lock_limit: usize,
+            enable_instruction_accounts_limit: bool,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
@@ -988,6 +997,7 @@ pub(crate) mod external {
                 root_bank,
                 enable_static_instruction_limit,
                 transaction_account_lock_limit,
+                enable_instruction_accounts_limit,
             )
             .map(|(view, deactivation_slot)| {
                 (
@@ -1170,6 +1180,7 @@ pub(crate) mod external {
                         &bank,
                         true,
                         bank.get_transaction_account_lock_limit(),
+                        true,
                     )
                     .ok()
                     .unwrap()
@@ -1348,8 +1359,8 @@ pub(crate) mod external {
 
             let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
             let parsed_transactions = [
-                SanitizedTransactionView::try_new_sanitized(&tx1[..], true).unwrap(),
-                SanitizedTransactionView::try_new_sanitized(&tx2[..], true).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx1[..], true, true).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx2[..], true, true).unwrap(),
             ];
             bank.store_account(
                 &parsed_transactions[1].static_account_keys()[0],
@@ -1399,7 +1410,7 @@ pub(crate) mod external {
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
                 RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                        SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
+                        SanitizedTransactionView::try_new_sanitized(tx, true, true).unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
                     )
@@ -2549,6 +2560,8 @@ mod tests {
                 &HashSet::default(),
                 bank.feature_set
                     .is_active(&agave_feature_set::static_instruction_limit::id()),
+                bank.feature_set
+                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
             )
             .unwrap()
         };

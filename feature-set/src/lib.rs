@@ -1244,6 +1244,10 @@ pub mod enable_bls12_381_syscall {
     solana_pubkey::declare_id!("b1sraWPVFdcUizB2LV5wQTeMuK8M313bi5bHjco5eVU");
 }
 
+pub mod limit_instruction_accounts {
+    solana_pubkey::declare_id!("DqbnFPASg7tHmZ6qfpdrt2M6MWoSeiicWPXxPhxqFCQ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2231,7 +2235,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             enable_bls12_381_syscall::id(),
             "SIMD-0388: BLS12-381 syscalls",
         ),
-        /*************** ADD NEW FEATURES HERE ***************/
+        (
+            limit_instruction_accounts::id(),
+            "SIMD-406: Limit the number of accounts a top-level instruction may reference",
+        ), /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
     .cloned()

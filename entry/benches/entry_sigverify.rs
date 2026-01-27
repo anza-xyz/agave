@@ -37,6 +37,7 @@ fn bench_cpusigverify(bencher: &mut Bencher) {
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
                     true,
+                    true,
                 )
             }?;
 
