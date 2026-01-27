@@ -12,12 +12,9 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-// `maybe_runtime` argument is introduced to be able to use runtime from test
-// for the TpuClientNext, while ConnectionCache uses runtime created internally
-// in the quic-client module and it is impossible to pass test runtime there.
 pub trait CreateClient: TransactionClient + Clone {
     fn create_client(
-        maybe_runtime: Option<Handle>,
+        runtime_handle: Handle,
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_forward_count: u64,
@@ -26,13 +23,11 @@ pub trait CreateClient: TransactionClient + Clone {
 
 impl CreateClient for TpuClientNextClient {
     fn create_client(
-        maybe_runtime: Option<Handle>,
+        runtime_handle: Handle,
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_forward_count: u64,
     ) -> Self {
-        let runtime_handle =
-            maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
         let port_range = localhost_port_range_for_tests();
         let bind_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
             .expect("Should be able to open UdpSocket for tests.");

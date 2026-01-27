@@ -476,7 +476,7 @@ impl JsonRpcRequestProcessor {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
+        let client = Client::create_client(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
             &bank_forks,
@@ -6908,12 +6908,8 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
-            my_tpu_address,
-            None,
-            1,
-        );
+        let client =
+            TpuClientNextClient::create_client(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -7206,12 +7202,8 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
-            my_tpu_address,
-            None,
-            1,
-        );
+        let client =
+            TpuClientNextClient::create_client(runtime.handle().clone(), my_tpu_address, None, 1);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,
