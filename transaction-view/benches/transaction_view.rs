@@ -65,8 +65,8 @@ fn bench_transactions_parsing(
     group.bench_function("TransactionView (Sanitized)", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ =
-                    TransactionView::try_new_sanitized(black_box(bytes.as_ref()), true).unwrap();
+                let _ = TransactionView::try_new_sanitized(black_box(bytes.as_ref()), true, true)
+                    .unwrap();
             }
         });
     });

@@ -81,6 +81,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
         enable_static_instruction_limit: bool,
+        enable_instruction_account_limit: bool,
     ) -> Result<Self> {
         if enable_static_instruction_limit
             && tx.message.instructions().len()
@@ -88,6 +89,15 @@ impl RuntimeTransaction<SanitizedTransaction> {
         {
             return Err(solana_transaction_error::TransactionError::SanitizeFailure);
         }
+
+        if enable_instruction_account_limit {
+            for instr in tx.message.instructions() {
+                if instr.accounts.len() > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION {
+                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+                }
+            }
+        }
+
         let statically_loaded_runtime_tx =
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 SanitizedVersionedTransaction::try_from(tx)?,
@@ -150,6 +160,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
     pub fn from_transaction_for_tests(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
         let enable_static_instruction_limit = true;
+        let enable_instruction_accounts_limit = true;
         Self::try_create(
             versioned_transaction,
             MessageHash::Compute,
@@ -157,6 +168,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
             enable_static_instruction_limit,
+            enable_instruction_accounts_limit,
         )
         .expect("failed to create RuntimeTransaction from Transaction")
     }
