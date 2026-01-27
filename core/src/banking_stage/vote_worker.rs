@@ -587,9 +587,12 @@ mod tests {
     };
 
     fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
-        let tx =
-            SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
-                .unwrap();
+        let tx = SanitizedTransactionView::try_new_sanitized(
+            Arc::new(packet.buffer().to_vec()),
+            false,
+            true,
+        )
+        .unwrap();
         let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             tx,
             MessageHash::Compute,

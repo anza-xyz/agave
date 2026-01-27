@@ -290,7 +290,7 @@ mod tests {
             }),
         };
         let bytes = bincode::serialize(&transaction).unwrap();
-        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
         let result = ResolvedTransactionView::try_new(view, None, &HashSet::default());
         assert!(matches!(
             result,
@@ -321,7 +321,7 @@ mod tests {
             }),
         };
         let bytes = bincode::serialize(&transaction).unwrap();
-        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
         let result =
             ResolvedTransactionView::try_new(view, Some(loaded_addresses), &HashSet::default());
         assert!(matches!(
@@ -358,7 +358,7 @@ mod tests {
             }),
         };
         let bytes = bincode::serialize(&transaction).unwrap();
-        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
         let result =
             ResolvedTransactionView::try_new(view, Some(loaded_addresses), &HashSet::default());
         assert!(matches!(
@@ -408,7 +408,8 @@ mod tests {
             };
             let transaction = create_transaction_with_keys(static_keys, &loaded_addresses);
             let bytes = bincode::serialize(&transaction).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
             let resolved_view = ResolvedTransactionView::try_new(
                 view,
                 Some(loaded_addresses),
@@ -431,7 +432,8 @@ mod tests {
             };
             let transaction = create_transaction_with_keys(static_keys, &loaded_addresses);
             let bytes = bincode::serialize(&transaction).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
             let resolved_view = ResolvedTransactionView::try_new(
                 view,
                 Some(loaded_addresses),
@@ -454,7 +456,8 @@ mod tests {
             };
             let transaction = create_transaction_with_keys(static_keys, &loaded_addresses);
             let bytes = bincode::serialize(&transaction).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
             let resolved_view = ResolvedTransactionView::try_new(
                 view,
                 Some(loaded_addresses),
@@ -515,7 +518,8 @@ mod tests {
             let static_keys = vec![key0, key1, key2];
             let transaction = create_transaction_with_static_keys(static_keys, &loaded_addresses);
             let bytes = bincode::serialize(&transaction).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
             let resolved_view = ResolvedTransactionView::try_new(
                 view,
                 Some(loaded_addresses.clone()),
@@ -534,7 +538,8 @@ mod tests {
             let static_keys = vec![key0, key1, bpf_loader_upgradeable::ID];
             let transaction = create_transaction_with_static_keys(static_keys, &loaded_addresses);
             let bytes = bincode::serialize(&transaction).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
             let resolved_view = ResolvedTransactionView::try_new(
                 view,
                 Some(loaded_addresses.clone()),
@@ -557,7 +562,8 @@ mod tests {
             };
             let transaction = create_transaction_with_static_keys(static_keys, &loaded_addresses);
             let bytes = bincode::serialize(&transaction).unwrap();
-            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true).unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(bytes.as_ref(), true, true).unwrap();
 
             let resolved_view = ResolvedTransactionView::try_new(
                 view,

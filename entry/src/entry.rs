@@ -698,6 +698,7 @@ mod tests {
                         SimpleAddressLoader::Disabled,
                         &ReservedAccountKeys::empty_key_set(),
                         true,
+                        true,
                     )
                 }?;
 

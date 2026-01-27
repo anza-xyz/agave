@@ -109,6 +109,7 @@ impl LatestValidatorVote {
         let vote = SanitizedTransactionView::try_new_sanitized(
             std::sync::Arc::new(packet.data(..).unwrap().to_vec()),
             false,
+            true,
         )
         .unwrap();
 
