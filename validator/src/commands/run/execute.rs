@@ -1064,10 +1064,13 @@ pub fn execute(
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
+    let enable_0rtt = matches.is_present("enable_tpu_quic_0rtt");
+
     let tpu_quic_server_config = SwQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_receive_threads,
+            enable_0rtt,
             ..Default::default()
         },
         qos_config: SwQosConfig {
@@ -1087,6 +1090,7 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_transaction_forward_receive_threads,
+            enable_0rtt,
             ..Default::default()
         },
         qos_config: SwQosConfig {
@@ -1106,6 +1110,7 @@ pub fn execute(
         quic_streamer_config: QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_vote_transaction_receive_threads,
+            enable_0rtt,
             ..Default::default()
         },
         qos_config: SimpleQosConfig {

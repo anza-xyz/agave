@@ -332,7 +332,7 @@ mod tests {
         client_keypair: &Keypair,
     ) -> (Connection, Endpoint, Endpoint) {
         // Create server endpoint
-        let (server_config, _) = configure_server(server_keypair).unwrap();
+        let (server_config, _) = configure_server(server_keypair, false).unwrap();
         let server_socket = bind_to_localhost_unique().expect("should bind - server");
         let server_addr = server_socket.local_addr().unwrap();
         let server_endpoint = Endpoint::new(
