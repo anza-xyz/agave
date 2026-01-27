@@ -1,5 +1,3 @@
-// re-export since this is needed at validator startup
-pub use agave_xdp::{get_cpu, set_cpu_affinity};
 #[cfg(target_os = "linux")]
 use {
     agave_xdp::{
@@ -15,7 +13,13 @@ use {
     crossbeam_channel::TryRecvError,
     std::{thread::Builder, time::Duration},
 };
+// re-export since this is needed at validator startup
+pub use {
+    agave_xdp::{get_cpu, set_cpu_affinity},
+    agave_xdp_ebpf::{FirewallConfig, FirewallRule},
+};
 use {
+    agave_xdp_ebpf::MAX_FIREWALL_RULES,
     crossbeam_channel::{Sender, TrySendError},
     solana_ledger::shred,
     std::{
@@ -37,6 +41,10 @@ pub struct XdpConfig {
     // The capacity of the channel that sits between retransmit stage and each XDP thread that
     // enqueues packets to the NIC.
     pub rtx_channel_cap: usize,
+    // Overall firewall configuration. None allows all traffic.
+    pub firewall_config: Option<FirewallConfig>,
+    // Per-port definitions for ingress firewall
+    pub firewall_rules: Vec<FirewallRule>,
 }
 
 impl XdpConfig {
@@ -51,6 +59,8 @@ impl Default for XdpConfig {
             cpus: vec![],
             zero_copy: false,
             rtx_channel_cap: Self::DEFAULT_RTX_CHANNEL_CAP,
+            firewall_config: None,
+            firewall_rules: Vec::new(),
         }
     }
 }
@@ -62,6 +72,8 @@ impl XdpConfig {
             cpus,
             zero_copy,
             rtx_channel_cap: XdpConfig::DEFAULT_RTX_CHANNEL_CAP,
+            firewall_config: None,
+            firewall_rules: Vec::new(),
         }
     }
 }
@@ -158,6 +170,8 @@ impl XdpRetransmitBuilder {
             cpus,
             zero_copy,
             rtx_channel_cap,
+            firewall_config,
+            firewall_rules,
         } = config;
 
         let dev = Arc::new(if let Some(interface) = maybe_interface {
@@ -206,13 +220,13 @@ impl XdpRetransmitBuilder {
             .expect("raise CAP_NET_ADMIN capability");
         caps::raise(None, CapSet::Effective, CAP_NET_RAW).expect("raise CAP_NET_RAW capability");
 
-        let maybe_ebpf_result = if zero_copy {
+        let maybe_ebpf_result = if zero_copy || firewall_config.is_some() {
             caps::raise(None, CapSet::Effective, CAP_BPF).expect("raise CAP_BPF capability");
             caps::raise(None, CapSet::Effective, CAP_PERFMON)
                 .expect("raise CAP_PERFMON capability");
 
-            let load_result =
-                load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"));
+            let load_result = load_xdp_program(&dev, firewall_config, &firewall_rules)
+                .map_err(|e| format!("failed to attach xdp program: {e}"));
 
             caps::drop(None, CapSet::Effective, CAP_PERFMON).expect("drop CAP_PERFMON capability");
             caps::drop(None, CapSet::Effective, CAP_BPF).expect("drop CAP_BPF capability");
@@ -360,4 +374,29 @@ pub fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
 #[cfg(not(target_os = "linux"))]
 pub fn master_ip_if_bonded(_interface: &str) -> Option<Ipv4Addr> {
     None
+}
+
+/// Converts an iterator of (port:FirewallRule) into a dense
+/// array suitable to be used for XDP firewall configuration
+pub fn rule_iter_to_dense_array<I>(base_port: u16, input: I) -> Result<Vec<FirewallRule>, String>
+where
+    I: IntoIterator<Item = (u16, FirewallRule)>,
+{
+    let mut out = vec![FirewallRule::default(); MAX_FIREWALL_RULES as usize];
+
+    for (port, value) in input {
+        if port < base_port {
+            return Err(String::from("Invalid base port"));
+        }
+        let idx = port.saturating_sub(base_port);
+        if idx >= MAX_FIREWALL_RULES {
+            return Err(format!(
+                "Port number {port} out of bounds {base_port}..{}",
+                base_port + MAX_FIREWALL_RULES
+            ));
+        }
+        out[idx as usize] = value;
+    }
+
+    Ok(out)
 }

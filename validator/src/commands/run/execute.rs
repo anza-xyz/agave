@@ -66,14 +66,16 @@ use {
     },
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
-        xdp::{set_cpu_affinity, XdpConfig},
+        xdp::{
+            rule_iter_to_dense_array, set_cpu_affinity, FirewallConfig, FirewallRule, XdpConfig,
+        },
     },
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
         env,
         fs::{self, File},
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::{self, FromStr},
@@ -150,8 +152,9 @@ pub fn execute(
     }
 
     let xdp_interface = matches.value_of("retransmit_xdp_interface");
+    let xdp_enable_firewall = matches.is_present("enable_xdp_firewall");
     let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
+    let mut retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
         XdpConfig::new(
             xdp_interface,
             parse_cpu_ranges(cpus).unwrap(),
@@ -267,6 +270,57 @@ pub fn execute(
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
+
+    fn port(sock: Option<&UdpSocket>) -> u16 {
+        let Some(sock) = sock else {
+            return 0;
+        };
+        sock.local_addr().map(|sa| sa.port()).unwrap_or(0)
+    }
+
+    if xdp_enable_firewall {
+        let IpAddr::V4(primary_ipv4) = advertised_ip else {
+            Err("XDP firewall only supported in IPv4 mode".to_string())?;
+            unreachable!()
+        };
+
+        let firewall_config = FirewallConfig {
+            solana_min_port: dynamic_port_range.0,
+            my_ip: primary_ipv4,
+            strip_gre: true, // support operating with DZ turned on
+            drop_frags: false,
+            enforce: true,
+        };
+        if let Some(ref mut config) = retransmit_xdp {
+            let firewall_rules = rule_iter_to_dense_array(
+                dynamic_port_range.0,
+                [
+                    (port(node.sockets.gossip.first()), FirewallRule::Gossip),
+                    // Turbine ingress
+                    (port(node.sockets.tvu.first()), FirewallRule::Turbine),
+                    // Turbine repair ingress
+                    (port(Some(&node.sockets.repair)), FirewallRule::Turbine),
+                    // TPU vote
+                    (port(node.sockets.tpu_vote.first()), FirewallRule::Vote),
+                    (port(node.sockets.tpu_vote_quic.first()), FirewallRule::Quic),
+                    // TPU transaction ingestion
+                    (port(node.sockets.tpu_quic.first()), FirewallRule::Quic),
+                    (
+                        port(node.sockets.tpu_forwards_quic.first()),
+                        FirewallRule::Quic,
+                    ),
+                    // Repair signaling ports
+                    (port(Some(&node.sockets.serve_repair)), FirewallRule::Repair),
+                    (
+                        port(Some(&node.sockets.ancestor_hashes_requests)),
+                        FirewallRule::Repair,
+                    ),
+                ],
+            )?;
+            config.firewall_config = Some(firewall_config);
+            config.firewall_rules = firewall_rules;
+        }
+    };
 
     let exit = Arc::new(AtomicBool::new(false));
 
