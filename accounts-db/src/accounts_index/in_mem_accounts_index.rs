@@ -1007,9 +1007,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // it is a duplicate.  We could merge them here, however duplicates
                         // handling happens later during startup/index generation, in
                         // populate_and_retrieve_duplicate_keys_from_startup(), which will insert
-                        // them back into the in-mem index.  Thus we should *not* insert them here!
-                        // Going further, we actually need to remove them here, so there aren't
-                        // issues later.
+                        // them back into the in-mem index.  Thus we should *not* insert any
+                        // accounts with duplicate entries here.
+                        // Additionally, once marking obsolete accounts is always on, we then
+                        // should no longer have any duplicates to worry about.
                         occupied.remove_entry();
                     }
                 }
