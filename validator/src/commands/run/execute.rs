@@ -64,6 +64,7 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
+    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
         xdp::{set_cpu_affinity, XdpConfig},
@@ -505,7 +506,11 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
-    let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
+    let tpu_connection_pool_size = matches
+        .value_of("tpu_connection_pool_size")
+        .unwrap_or("")
+        .parse()
+        .unwrap_or(DEFAULT_TPU_CONNECTION_POOL_SIZE);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
