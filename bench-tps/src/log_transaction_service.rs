@@ -4,18 +4,18 @@
 use {
     crate::rpc_with_retry_utils::{get_blocks_with_retry, get_slot_with_retry},
     chrono::{DateTime, TimeZone, Utc},
-    crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, select, tick, unbounded},
     log::*,
     serde::Serialize,
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
+    solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, Slot},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_measure::measure::Measure,
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_signature::Signature,
     solana_tps_client::TpsClient,
     solana_transaction_status::{
-        option_serializer::OptionSerializer, EncodedTransactionWithStatusMeta, RewardType,
-        TransactionDetails, UiConfirmedBlock, UiTransactionEncoding, UiTransactionStatusMeta,
+        EncodedTransactionWithStatusMeta, RewardType, TransactionDetails, UiConfirmedBlock,
+        UiTransactionEncoding, UiTransactionStatusMeta, option_serializer::OptionSerializer,
     },
     std::{
         collections::HashMap,
