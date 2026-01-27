@@ -1,0 +1,27 @@
+[package]
+name = "solana-leader-schedule"
+description = "Solana leader schedule"
+documentation = "https://docs.rs/solana-leader-schedule"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_leader_schedule"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true
