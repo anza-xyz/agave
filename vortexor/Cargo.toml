@@ -18,6 +18,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_vortexor"
 
+[[bin]]
+name = "solana-vortexor"
+path = "src/main.rs"
+required-features = ["agave-unstable-api"]
+
 [features]
 default = ["agave-unstable-api"]
 agave-unstable-api = []
