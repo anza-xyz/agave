@@ -54,6 +54,7 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
 solana-slot-hashes = { workspace = true }
+solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
@@ -73,6 +74,7 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-system-program = { workspace = true }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
