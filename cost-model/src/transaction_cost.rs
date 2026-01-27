@@ -327,7 +327,7 @@ mod tests {
     use {
         super::*,
         crate::cost_model::CostModel,
-        agave_feature_set::FeatureSet,
+        agave_feature_set::{bls_pubkey_management_in_vote_account, FeatureSet},
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -439,17 +439,38 @@ mod tests {
         let signature_cost = 1440;
         let write_lock_cost = 600;
         let data_bytes_cost = 19;
-        let programs_execution_cost = 3000;
         let loaded_accounts_data_size_cost = 16384;
-        let expected_non_vote_cost = signature_cost
-            + write_lock_cost
-            + data_bytes_cost
-            + programs_execution_cost
-            + loaded_accounts_data_size_cost;
 
-        // Verify actual cost matches expected.
-        let non_vote_cost =
-            CostModel::calculate_cost(&non_vote_transaction, &FeatureSet::all_enabled());
-        assert_eq!(expected_non_vote_cost, non_vote_cost.sum());
+        let compute_expected_non_vote_cost = |programs_execution_cost: u64| {
+            signature_cost
+                + write_lock_cost
+                + data_bytes_cost
+                + programs_execution_cost
+                + loaded_accounts_data_size_cost
+        };
+
+        // SIMD-0387 inactive.
+        // Vote program uses builtin cost modeling (3,000 CUs).
+        {
+            let mut feature_set = FeatureSet::all_enabled();
+            feature_set.deactivate(&bls_pubkey_management_in_vote_account::id());
+
+            let expected_non_vote_cost = compute_expected_non_vote_cost(3_000);
+
+            let non_vote_cost = CostModel::calculate_cost(&non_vote_transaction, &feature_set);
+            assert_eq!(expected_non_vote_cost, non_vote_cost.sum());
+        }
+
+        // SIMD-0387 active.
+        // Vote program removed from builtin cost modeling.
+        // Uses the default non-builtin cost (200,000 CUs).
+        {
+            let feature_set = FeatureSet::all_enabled();
+
+            let expected_non_vote_cost = compute_expected_non_vote_cost(200_000);
+
+            let non_vote_cost = CostModel::calculate_cost(&non_vote_transaction, &feature_set);
+            assert_eq!(expected_non_vote_cost, non_vote_cost.sum());
+        }
     }
 }
