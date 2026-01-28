@@ -565,7 +565,7 @@ pub mod test {
     use {
         super::*,
         agave_votor_messages::migration::MigrationStatus,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::{bounded, unbounded},
         rand::Rng,
         solana_entry::entry::create_ticks,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -737,7 +737,7 @@ pub mod test {
         let bank = bank_forks.read().unwrap().root_bank();
 
         // Create votor event channel for test
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let (votor_event_sender, _votor_event_receiver) = bounded(100);
 
         // Start up the broadcast stage
         let broadcast_service = BroadcastStage::new(
