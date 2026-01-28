@@ -137,7 +137,7 @@ impl Blockstore {
         from_slot: Slot,
         to_slot: Slot,
         purge_type: PurgeType,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         self.run_purge_with_stats(from_slot, to_slot, purge_type, &mut PurgeStats::default())
     }
 
@@ -147,13 +147,13 @@ impl Blockstore {
     /// the parent's `next_slots`. We reinsert an orphaned `slot_meta` for `slot`
     /// that preserves `slot`'s `next_slots`. This ensures that `slot`'s fork is
     /// replayable upon repair of `slot`.
-    pub(crate) fn purge_slot_cleanup_chaining(&self, slot: Slot) -> Result<bool> {
+    pub(crate) fn purge_slot_cleanup_chaining(&self, slot: Slot) -> Result<()> {
         let Some(mut slot_meta) = self.meta(slot)? else {
             return Err(BlockstoreError::SlotUnavailable);
         };
         let mut write_batch = self.get_write_batch()?;
 
-        let columns_purged = self.purge_range(&mut write_batch, slot, slot, PurgeType::Exact)?;
+        self.purge_range(&mut write_batch, slot, slot, PurgeType::Exact)?;
 
         if let Some(parent_slot) = slot_meta.parent_slot {
             let parent_slot_meta = self.meta(parent_slot)?;
@@ -181,7 +181,8 @@ impl Blockstore {
         self.write_batch(write_batch).inspect_err(|e| {
             error!("Error: {e:?} while submitting write batch for slot {slot:?}")
         })?;
-        Ok(columns_purged)
+
+        Ok(())
     }
 
     /// A helper function to `purge_slots` that executes the ledger clean up.
@@ -199,11 +200,11 @@ impl Blockstore {
         to_slot: Slot,
         purge_type: PurgeType,
         purge_stats: &mut PurgeStats,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let mut write_batch = self.get_write_batch()?;
 
         let mut delete_range_timer = Measure::start("delete_range");
-        let columns_purged = self.purge_range(&mut write_batch, from_slot, to_slot, purge_type)?;
+        self.purge_range(&mut write_batch, from_slot, to_slot, purge_type)?;
         delete_range_timer.stop();
 
         let mut write_timer = Measure::start("write_batch");
@@ -227,8 +228,8 @@ impl Blockstore {
         // efficient than the compaction filter (which runs key-by-key)
         // because all the sst files that have key range below to_slot
         // can be deleted immediately.
-        if columns_purged && from_slot == 0 {
-            self.purge_files_in_range(from_slot, to_slot);
+        if from_slot == 0 {
+            self.purge_files_in_range(from_slot, to_slot)?;
         }
         purge_files_in_range_timer.stop();
 
@@ -236,7 +237,7 @@ impl Blockstore {
         purge_stats.write_batch += write_timer.as_us();
         purge_stats.delete_file_in_range += purge_files_in_range_timer.as_us();
 
-        Ok(columns_purged)
+        Ok(())
     }
 
     fn purge_range(
@@ -245,151 +246,78 @@ impl Blockstore {
         from_slot: Slot,
         to_slot: Slot,
         purge_type: PurgeType,
-    ) -> Result<bool> {
-        let columns_purged = self
-            .meta_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot)
-            .is_ok()
-            & self
-                .bank_hash_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .roots_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .data_shred_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .code_shred_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .dead_slots_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .duplicate_slots_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .erasure_meta_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .orphans_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .index_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .rewards_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .blocktime_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .perf_samples_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .block_height_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .optimistic_slots_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok()
-            & self
-                .merkle_root_meta_cf
-                .delete_range_in_batch(write_batch, from_slot, to_slot)
-                .is_ok();
+    ) -> Result<()> {
+        self.meta_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.bank_hash_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.roots_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.data_shred_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.code_shred_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.dead_slots_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.duplicate_slots_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.erasure_meta_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.orphans_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.index_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.rewards_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.blocktime_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.perf_samples_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.block_height_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.optimistic_slots_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
+        self.merkle_root_meta_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)?;
 
         match purge_type {
-            PurgeType::Exact => {
-                self.purge_special_columns_exact(write_batch, from_slot, to_slot)?;
-            }
+            PurgeType::Exact => self.purge_special_columns_exact(write_batch, from_slot, to_slot),
             PurgeType::CompactionFilter => {
-                // No explicit action is required here because this purge type completely and
-                // indefinitely relies on the proper working of compaction filter for those
-                // special column families, never toggling the primary index from the current
-                // one. Overall, this enables well uniformly distributed writes, resulting
-                // in no spiky periodic huge delete_range for them.
+                // Relying on the compaction filter means there is no action
+                // required here. Instead, the compaction filter cleans the
+                // key/value pairs in the special columns once they reach a
+                // certain age. This is done to amortize the cleaning cost.
+                Ok(())
             }
         }
-        Ok(columns_purged)
     }
 
-    fn purge_files_in_range(&self, from_slot: Slot, to_slot: Slot) -> bool {
-        self.meta_cf
+    fn purge_files_in_range(&self, from_slot: Slot, to_slot: Slot) -> Result<()> {
+        self.meta_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.bank_hash_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.roots_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.data_shred_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.code_shred_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.dead_slots_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.duplicate_slots_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.erasure_meta_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.orphans_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.index_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.rewards_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.blocktime_cf.delete_file_in_range(from_slot, to_slot)?;
+        self.perf_samples_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.block_height_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.optimistic_slots_cf
+            .delete_file_in_range(from_slot, to_slot)?;
+        self.merkle_root_meta_cf
             .delete_file_in_range(from_slot, to_slot)
-            .is_ok()
-            & self
-                .bank_hash_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .roots_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .data_shred_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .code_shred_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .dead_slots_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .duplicate_slots_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .erasure_meta_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .orphans_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .index_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .rewards_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .blocktime_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .perf_samples_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .block_height_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .optimistic_slots_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
-            & self
-                .merkle_root_meta_cf
-                .delete_file_in_range(from_slot, to_slot)
-                .is_ok()
     }
 
     /// Returns true if the special columns, TransactionStatus and

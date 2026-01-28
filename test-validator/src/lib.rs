@@ -1132,7 +1132,6 @@ impl TestValidator {
                 num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
                 num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                     .expect("Number of QUIC endpoints can not be zero"),
-                vortexor_receiver_addr: None,
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);

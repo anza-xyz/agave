@@ -69,7 +69,6 @@ impl Node {
             num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
             num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                 .expect("Number of QUIC endpoints can not be zero"),
-            vortexor_receiver_addr: None,
         };
         let mut node = Self::new_with_external_ip(pubkey, config);
         let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
@@ -92,7 +91,6 @@ impl Node {
             num_tvu_receive_sockets,
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
-            vortexor_receiver_addr,
         } = config;
         let bind_ip_addr = bind_ip_addrs.active();
 
@@ -314,23 +312,6 @@ impl Node {
         info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
             .unwrap();
 
-        let vortexor_receivers = vortexor_receiver_addr.map(|vortexor_receiver_addr| {
-            multi_bind_in_range_with_config(
-                vortexor_receiver_addr.ip(),
-                (
-                    vortexor_receiver_addr.port(),
-                    vortexor_receiver_addr.port() + 1,
-                ),
-                socket_config,
-                32,
-            )
-            .unwrap_or_else(|_| {
-                panic!("Could not bind to the set vortexor_receiver_addr {vortexor_receiver_addr}")
-            })
-            .1
-        });
-
-        info!("vortexor_receivers is {vortexor_receivers:?}");
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             alpenglow: Some(alpenglow),
@@ -354,7 +335,6 @@ impl Node {
             quic_alpenglow_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
-            vortexor_receivers,
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node {

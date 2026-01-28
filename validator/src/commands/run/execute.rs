@@ -238,19 +238,6 @@ pub fn execute(
         ))?;
     }
 
-    let tpu_vortexor_receiver_address =
-        matches
-            .value_of("tpu_vortexor_receiver_address")
-            .map(|tpu_vortexor_receiver_address| {
-                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
-                    |err| {
-                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
-                        std::process::exit(1);
-                    },
-                )
-            });
-
-    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
 
     let node_config = NodeConfig {
@@ -264,7 +251,6 @@ pub fn execute(
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
-        vortexor_receiver_addr: tpu_vortexor_receiver_address,
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
@@ -472,10 +458,6 @@ pub fn execute(
                 "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
                  validator will advertise the first --bind-address as this node's public IP \
                  address.",
-            ),
-            (
-                "tpu_vortexor_receiver_address",
-                "--tpu-vortexor-receiver-address can not be used in a multihoming context",
             ),
             (
                 "public_tpu_addr",

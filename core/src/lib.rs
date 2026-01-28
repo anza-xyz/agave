@@ -46,7 +46,6 @@ mod tpu_entry_notifier;
 pub mod tvu;
 pub mod unfrozen_gossip_verified_vote_hashes;
 pub mod validator;
-mod vortexor_receiver_adapter;
 pub mod vote_simulator;
 pub mod voting_service;
 pub mod warm_quic_cache_service;
