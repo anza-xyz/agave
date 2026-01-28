@@ -10,7 +10,6 @@ use {
     },
     agave_snapshots::{
         error::SnapshotError,
-        paths as snapshot_paths,
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
@@ -85,44 +84,9 @@ pub fn load_bank_forks(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> LoadResult {
-    fn get_snapshots_to_load(
-        snapshot_config: &SnapshotConfig,
-    ) -> Option<(
-        FullSnapshotArchiveInfo,
-        Option<IncrementalSnapshotArchiveInfo>,
-    )> {
-        if !snapshot_config.should_load_snapshots() {
-            info!("Snapshots disabled; will load from genesis");
-            return None;
-        };
-
-        let Some(full_snapshot_archive_info) =
-            snapshot_paths::get_highest_full_snapshot_archive_info(
-                &snapshot_config.full_snapshot_archives_dir,
-            )
-        else {
-            warn!(
-                "No snapshot package found in directory: {}; will load from genesis",
-                snapshot_config.full_snapshot_archives_dir.display()
-            );
-            return None;
-        };
-
-        let incremental_snapshot_archive_info =
-            snapshot_paths::get_highest_incremental_snapshot_archive_info(
-                &snapshot_config.incremental_snapshot_archives_dir,
-                full_snapshot_archive_info.slot(),
-            );
-
-        Some((
-            full_snapshot_archive_info,
-            incremental_snapshot_archive_info,
-        ))
-    }
-
     let (bank_forks, starting_snapshot_hashes) =
         if let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
-            get_snapshots_to_load(snapshot_config)
+            snapshot_config.get_snapshots_to_load()
         {
             info!(
                 "Initializing bank snapshots dir: {}",

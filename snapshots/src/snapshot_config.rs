@@ -1,5 +1,12 @@
 use {
     super::{ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
+    crate::{
+        paths,
+        snapshot_archive_info::{
+            FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter as _,
+        },
+    },
+    log::{info, warn},
     std::{
         num::{NonZeroU64, NonZeroUsize},
         path::PathBuf,
@@ -120,6 +127,39 @@ impl SnapshotConfig {
     /// Should snapshots be loaded?
     pub fn should_load_snapshots(&self) -> bool {
         self.usage == SnapshotUsage::LoadAndGenerate || self.usage == SnapshotUsage::LoadOnly
+    }
+
+    pub fn get_snapshots_to_load(
+        &self,
+    ) -> Option<(
+        FullSnapshotArchiveInfo,
+        Option<IncrementalSnapshotArchiveInfo>,
+    )> {
+        if !self.should_load_snapshots() {
+            info!("Snapshots disabled; will load from genesis");
+            return None;
+        };
+
+        let Some(full_snapshot_archive_info) =
+            paths::get_highest_full_snapshot_archive_info(&self.full_snapshot_archives_dir)
+        else {
+            warn!(
+                "No snapshot package found in directory: {}; will load from genesis",
+                self.full_snapshot_archives_dir.display()
+            );
+            return None;
+        };
+
+        let incremental_snapshot_archive_info =
+            paths::get_highest_incremental_snapshot_archive_info(
+                &self.incremental_snapshot_archives_dir,
+                full_snapshot_archive_info.slot(),
+            );
+
+        Some((
+            full_snapshot_archive_info,
+            incremental_snapshot_archive_info,
+        ))
     }
 }
 
