@@ -427,7 +427,7 @@ impl<'de> Deserialize<'de> for Vote {
 pub(crate) struct LegacyVersion {
     from: Pubkey,
     wallclock: u64,
-    version: solana_version::LegacyVersion1,
+    version: solana_version::v1::Version,
 }
 reject_deserialize!(LegacyVersion, "LegacyVersion is deprecated");
 
@@ -444,7 +444,7 @@ impl Sanitize for LegacyVersion {
 pub(crate) struct Version {
     from: Pubkey,
     wallclock: u64,
-    version: solana_version::LegacyVersion2,
+    version: solana_version::v2::Version,
 }
 reject_deserialize!(Version, "Version is deprecated");
 
@@ -612,7 +612,7 @@ mod test {
             commit: Option<u32>,
         }
 
-        let legacy_v1: solana_version::LegacyVersion1 = {
+        let legacy_v1: solana_version::v1::Version = {
             let bytes = bincode::serialize(&LegacyVersion1Mirror {
                 major: 0,
                 minor: 0,
@@ -636,7 +636,7 @@ mod test {
         let version = CrdsData::Version(Version {
             from: keypair.pubkey(),
             wallclock: timestamp(),
-            version: solana_version::LegacyVersion2::default(),
+            version: solana_version::v2::Version::default(),
         });
         let bytes = bincode::serialize(&version).unwrap();
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
