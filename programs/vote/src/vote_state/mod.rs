@@ -727,7 +727,7 @@ pub fn authorize<S: std::hash::BuildHasher, F>(
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
-    F: Fn() -> Result<(), InstructionError>,
+    F: FnOnce() -> Result<(), InstructionError>,
 {
     let mut vote_state = get_vote_state_handler_checked(
         vote_account,
@@ -776,7 +776,7 @@ where
                 vote_account.get_key(),
                 &args.bls_pubkey,
                 &args.bls_proof_of_possession,
-                &consume_pop_compute_units,
+                consume_pop_compute_units,
             )?;
 
             vote_state.set_new_authorized_voter(
@@ -1111,7 +1111,7 @@ pub fn initialize_account_v2<S: std::hash::BuildHasher, F>(
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
-    F: Fn() -> Result<(), InstructionError>,
+    F: FnOnce() -> Result<(), InstructionError>,
 {
     VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersions>()?;

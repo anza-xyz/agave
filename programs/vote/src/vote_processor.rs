@@ -31,7 +31,7 @@ fn process_authorize_with_seed_instruction<F>(
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
-    F: Fn() -> Result<(), InstructionError>,
+    F: FnOnce() -> Result<(), InstructionError>,
 {
     let clock = get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
     let mut expected_authority_keys: HashSet<Pubkey> = HashSet::default();
