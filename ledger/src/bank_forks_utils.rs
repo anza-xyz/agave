@@ -58,9 +58,6 @@ pub enum BankForksUtilsError {
 
     #[error("failed to process blockstore from genesis: {0}")]
     ProcessBlockstoreFromGenesis(#[source] BlockstoreProcessorError),
-
-    #[error("failed to process blockstore from root: {0}")]
-    ProcessBlockstoreFromRoot(#[source] BlockstoreProcessorError),
 }
 
 pub type LoadResult = result::Result<
