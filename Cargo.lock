@@ -5845,16 +5845,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "protosol"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e70d64aff3756d57a2b5e84ee2a01923f2a5350a51b93e8ec4631b817d8dcd"
-dependencies = [
- "prost",
- "prost-build",
-]
-
-[[package]]
 name = "qstring"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7635,7 +7625,7 @@ dependencies = [
 [[package]]
 name = "solana-bpf-loader-program"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "agave-syscalls 4.0.0-alpha.0 (git+https://github.com/anza-xyz/agave?rev=3432d0bed2)",
  "bincode",
@@ -8131,7 +8121,7 @@ dependencies = [
 [[package]]
 name = "solana-compute-budget"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "solana-fee-structure",
  "solana-frozen-abi",
@@ -8182,7 +8172,7 @@ dependencies = [
 [[package]]
 name = "solana-compute-budget-program"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "solana-program-runtime",
 ]
@@ -9368,7 +9358,7 @@ dependencies = [
 [[package]]
 name = "solana-loader-v4-program"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "log",
  "solana-account",
@@ -9892,7 +9882,7 @@ dependencies = [
 [[package]]
 name = "solana-program-runtime"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -11043,7 +11033,7 @@ dependencies = [
 [[package]]
 name = "solana-svm"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "ahash 0.8.12",
  "log",
@@ -11088,7 +11078,7 @@ dependencies = [
 [[package]]
 name = "solana-svm-callback"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "solana-account",
  "solana-clock",
@@ -11099,12 +11089,12 @@ dependencies = [
 [[package]]
 name = "solana-svm-feature-set"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 
 [[package]]
 name = "solana-svm-log-collector"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "log",
 ]
@@ -11112,75 +11102,12 @@ dependencies = [
 [[package]]
 name = "solana-svm-measure"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
-
-[[package]]
-name = "solana-svm-test-harness"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "clap 4.5.54",
- "prost",
- "solana-svm-test-harness-fixture",
- "solana-svm-test-harness-instr",
-]
-
-[[package]]
-name = "solana-svm-test-harness-fixture"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "bincode",
- "prost",
- "prost-build",
- "protosol",
- "solana-account",
- "solana-instruction",
- "solana-instruction-error",
- "solana-pubkey 4.0.0",
- "solana-svm-feature-set",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "solana-svm-test-harness-instr"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "agave-precompiles",
- "agave-syscalls 4.0.0-alpha.0",
- "bincode",
- "env_logger",
- "prost",
- "solana-account",
- "solana-builtins",
- "solana-clock",
- "solana-compute-budget",
- "solana-epoch-schedule",
- "solana-instruction",
- "solana-instruction-error",
- "solana-last-restart-slot",
- "solana-message",
- "solana-precompile-error",
- "solana-program-runtime",
- "solana-pubkey 4.0.0",
- "solana-rent",
- "solana-sdk-ids",
- "solana-svm",
- "solana-svm-callback",
- "solana-svm-feature-set",
- "solana-svm-log-collector",
- "solana-svm-test-harness-fixture",
- "solana-svm-timings",
- "solana-svm-transaction",
- "solana-sysvar-id",
- "solana-transaction-context",
-]
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 
 [[package]]
 name = "solana-svm-timings"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "eager",
  "enum-iterator",
@@ -11190,7 +11117,7 @@ dependencies = [
 [[package]]
 name = "solana-svm-transaction"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "solana-hash 3.1.0",
  "solana-message",
@@ -11203,7 +11130,7 @@ dependencies = [
 [[package]]
 name = "solana-svm-type-overrides"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "rand 0.9.2",
  "shuttle",
@@ -11242,7 +11169,7 @@ dependencies = [
 [[package]]
 name = "solana-system-program"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "bincode",
  "log",
@@ -11569,7 +11496,7 @@ dependencies = [
 [[package]]
 name = "solana-transaction-context"
 version = "4.0.0-alpha.0"
-source = "git+https://github.com/mircea-c/svm?branch=sync-agave-jan27#d9a063ae365788a422ac4db857629797ac520ae6"
+source = "git+https://github.com/mircea-c/svm?branch=master#85289846fcabcf202bd511479ea7ca8d1573a876"
 dependencies = [
  "bincode",
  "qualifier_attr",
