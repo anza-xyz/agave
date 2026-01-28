@@ -72,47 +72,10 @@ pub type LoadResult = result::Result<
     BankForksUtilsError,
 >;
 
-/// Load the banks via genesis or a snapshot then processes all full blocks in blockstore
+/// Load the banks via genesis or a snapshot
 ///
-/// If a snapshot config is given, and a snapshot is found, it will be loaded.  Otherwise, load
+/// If a snapshot config is given, and a snapshot is found, it will be loaded. Otherwise, load
 /// from genesis.
-#[allow(clippy::too_many_arguments)]
-pub fn load(
-    genesis_config: &GenesisConfig,
-    blockstore: &Blockstore,
-    account_paths: Vec<PathBuf>,
-    snapshot_config: &SnapshotConfig,
-    process_options: ProcessOptions,
-    transaction_status_sender: Option<&TransactionStatusSender>,
-    entry_notification_sender: Option<&EntryNotifierSender>,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
-) -> LoadResult {
-    let (bank_forks, leader_schedule_cache, starting_snapshot_hashes, ..) = load_bank_forks(
-        genesis_config,
-        blockstore,
-        account_paths,
-        snapshot_config,
-        &process_options,
-        transaction_status_sender,
-        entry_notification_sender,
-        accounts_update_notifier,
-        exit,
-    )?;
-    blockstore_processor::process_blockstore_from_root(
-        blockstore,
-        &bank_forks,
-        &leader_schedule_cache,
-        &process_options,
-        transaction_status_sender,
-        entry_notification_sender,
-        None, // snapshot_controller
-    )
-    .map_err(BankForksUtilsError::ProcessBlockstoreFromRoot)?;
-
-    Ok((bank_forks, leader_schedule_cache, starting_snapshot_hashes))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn load_bank_forks(
     genesis_config: &GenesisConfig,

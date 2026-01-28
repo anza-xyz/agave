@@ -39,7 +39,7 @@ use {
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
         blockstore::{entries_to_test_shreds, Blockstore},
-        blockstore_processor::ProcessOptions,
+        blockstore_processor::{self, ProcessOptions},
         leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
@@ -2346,7 +2346,7 @@ fn create_snapshot_to_hard_fork(
     let ledger_path = blockstore.ledger_path();
     let genesis_config = open_genesis_config(ledger_path, u64::MAX).unwrap();
     let snapshot_config = create_simple_snapshot_config(ledger_path);
-    let (bank_forks, ..) = bank_forks_utils::load(
+    let (bank_forks, leader_schedule_cache, _) = bank_forks_utils::load_bank_forks(
         &genesis_config,
         blockstore,
         vec![
@@ -2355,13 +2355,24 @@ fn create_snapshot_to_hard_fork(
                 .0,
         ],
         &snapshot_config,
-        process_options,
+        &process_options,
         None,
         None,
         None,
         Arc::default(),
     )
-    .unwrap();
+    .expect("must load bank forks");
+    blockstore_processor::process_blockstore_from_root(
+        blockstore,
+        &bank_forks,
+        &leader_schedule_cache,
+        &process_options,
+        None,
+        None,
+        None, // snapshot_controller
+    )
+    .expect("must process blockstore from root");
+
     let bank = bank_forks.read().unwrap().get(snapshot_slot).unwrap();
     let full_snapshot_archive_info = snapshot_bank_utils::bank_to_full_snapshot_archive(
         ledger_path,
