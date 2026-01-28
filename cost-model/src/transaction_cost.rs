@@ -360,6 +360,13 @@ mod tests {
     fn test_vote_transaction_cost(stop_use_static_simple_vote_tx_cost: bool) {
         agave_logger::setup();
 
+        use {
+            crate::block_cost_limits::INSTRUCTION_DATA_BYTES_COST,
+            solana_compute_budget::compute_budget_limits::{
+                MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            },
+        };
+
         // Create a sanitized vote transaction.
         let vote_transaction = RuntimeTransaction::try_create(
             get_example_transaction(),
@@ -373,7 +380,34 @@ mod tests {
 
         // Verify actual cost matches expected.
         let (feature_set, expected_cost) = if stop_use_static_simple_vote_tx_cost {
-            (FeatureSet::all_enabled(), 21443)
+            let feature_set = FeatureSet::all_enabled();
+            // when feature `stop-use-static-simple-vote-tx-cost` is enabled, vote transaction
+            // cost is calculated based on its UsageCostDetails too:
+            //
+            // sample transaction has 2 signatures
+            let signature_cost = 2 * block_cost_limits::SIGNATURE_COST;
+            // sample transaction has 2 write lock
+            let write_lock_cost = 2 * block_cost_limits::WRITE_LOCK_UNITS;
+            let data_bytes_cost =
+                vote_transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16);
+            // it's estimated execution cost is default builtin cost
+            let programs_execution_cost = MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT as u64;
+            // and it has default loaded_account_data_size
+            let loaded_accounts_data_size_cost =
+                CostModel::calculate_loaded_accounts_data_size_cost(
+                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into(),
+                    &feature_set,
+                );
+            let vote_program_usage_details = UsageCostDetails {
+                transaction: &vote_transaction,
+                signature_cost,
+                write_lock_cost,
+                data_bytes_cost,
+                programs_execution_cost,
+                loaded_accounts_data_size_cost,
+                allocated_accounts_data_size: 0,
+            };
+            (feature_set, vote_program_usage_details.sum())
         } else {
             let mut feature_set = FeatureSet::all_enabled();
             feature_set.deactivate(&agave_feature_set::stop_use_static_simple_vote_tx_cost::id());
