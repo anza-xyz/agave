@@ -1472,7 +1472,7 @@ mod tests {
         assert_ne!(stored_commission_bps, commission_bps); // New value not set
 
         // Should fail - authorized withdrawer didn't sign the transaction.
-        let mut unsigned_instruction_accounts = instruction_accounts.clone();
+        let mut unsigned_instruction_accounts = instruction_accounts;
         unsigned_instruction_accounts[1].is_signer = false;
         let accounts = process_instruction(
             features,
@@ -1487,7 +1487,7 @@ mod tests {
 
         // Should fail - wrong signature for authorized withdrawer.
         let wrong_signer = Pubkey::new_unique();
-        let mut wrong_signer_transaction_accounts = transaction_accounts.clone();
+        let mut wrong_signer_transaction_accounts = transaction_accounts;
         wrong_signer_transaction_accounts.push((wrong_signer, AccountSharedData::default()));
         let wrong_signer_instruction_accounts = vec![
             AccountMeta {
@@ -1533,7 +1533,7 @@ mod tests {
 
         let transaction_accounts = vec![
             (vote_pubkey, vote_account.clone()),
-            (new_collector_pubkey, new_collector_account.clone()),
+            (new_collector_pubkey, new_collector_account),
             (authorized_withdrawer, AccountSharedData::default()),
             (sysvar::rent::id(), rent_sysvar_account),
         ];
@@ -1865,12 +1865,12 @@ mod tests {
         );
 
         // Should fail - new collector not writable (reserved account check).
-        let mut not_writable_instruction_accounts = instruction_accounts.clone();
+        let mut not_writable_instruction_accounts = instruction_accounts;
         not_writable_instruction_accounts[1].is_writable = false;
         let accounts = process_instruction(
             features,
             &instruction_data,
-            transaction_accounts.clone(),
+            transaction_accounts,
             not_writable_instruction_accounts,
             Err(InstructionError::InvalidArgument),
         );

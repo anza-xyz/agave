@@ -1419,7 +1419,7 @@ mod tests {
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 4, &program_id),
                 ), // readonly
-                (Pubkey::new_unique(), shared_account), // writable shared
+                (Pubkey::new_unique(), shared_account.clone()), // writable shared
                 (
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 0, &program_id),
@@ -1440,7 +1440,7 @@ mod tests {
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 0x3000, &program_id),
                 ), // writable dummy to burn accounts_resize_delta
-                (program_id, AccountSharedData::default()), // program
+                (program_id, AccountSharedData::default()),     // program
             ],
             Rent::default(),
             /* max_instruction_stack_depth */ 1,
@@ -1508,7 +1508,10 @@ mod tests {
             .store::<u32>(0, account_start_offsets[0])
             .unwrap_err();
 
-        // Writing to shared writable account makes it unique (CoW logic)
+        // Writing to shared writable account makes it unique (CoW logic.)
+        // It has been previously been made non-unique at the beginning of
+        // the test through a clone.
+        let _shared_account_ref = shared_account;
         assert!(
             transaction_context
                 .accounts()
