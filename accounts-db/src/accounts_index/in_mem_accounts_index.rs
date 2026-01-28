@@ -970,62 +970,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         possible_evictions
     }
 
-    /// Takes self's `startup_info` and writes it to disk and in-mem.
-    ///
-    /// If the configured memory limit is "minimal", nothing is writen to in-mem.
-    /// Otherwise write to in-mem (and respect the memory limit).
-    fn write_startup_info(&self) {
+    fn write_startup_info_to_disk(&self) {
         let insert = std::mem::take(&mut *self.startup_info.insert.lock().unwrap());
         if insert.is_empty() {
             // nothing to insert for this bin
             return;
         }
 
-        if let Some(threshold_entries_per_bin) = self.storage.threshold_entries_per_bin.as_ref() {
-            // If a memory threshold is set, then insert into the in-mem index here,
-            // up to that limit.  This way we pre-populate the in-mem index, and can
-            // avoid having to load some entries from disk on first access.
-            let mut map = self.map_internal.write().unwrap();
-            // Insert up to the low water mark.  Purposely do not insert all the way up  to the
-            // high water mark, as that then causes the flush loop condition to immediately trigger
-            // and evict down to the low water mark anyway.
-            let num_available = threshold_entries_per_bin
-                .low_water_mark
-                .saturating_sub(map.len());
-            for (address, (slot, disk_index_value)) in insert.iter().take(num_available) {
-                match map.entry(*address) {
-                    Entry::Vacant(vacant) => {
-                        let index_value = (*disk_index_value).into();
-                        let slot_list = SlotList::from([(*slot, index_value)]);
-                        let ref_count = 1;
-                        let meta = AccountMapEntryMeta::new_clean(&self.storage);
-                        let account_map_entry = AccountMapEntry::new(slot_list, ref_count, meta);
-                        vacant.insert(Box::new(account_map_entry));
-                    }
-                    Entry::Occupied(occupied) => {
-                        // If the account already has an entry in the in-mem index, then that means
-                        // it is a duplicate.  We could merge them here, however duplicates
-                        // handling happens later during startup/index generation, in
-                        // populate_and_retrieve_duplicate_keys_from_startup(), which will insert
-                        // them back into the in-mem index.  Thus we should *not* insert any
-                        // accounts with duplicate entries here.
-                        // Additionally, once marking obsolete accounts is always on, we then
-                        // should no longer have any duplicates to worry about.
-                        occupied.remove_entry();
-                    }
-                }
-            }
-        } else {
-            // Else, we should not have anything in the in-mem index at all.
-            let map_internal = self.map_internal.read().unwrap();
-            assert!(
-                map_internal.is_empty(),
-                "len: {}, first: {:?}",
-                map_internal.len(),
-                map_internal.iter().take(1).collect::<Vec<_>>()
-            );
-            drop(map_internal);
-        }
+        // during startup, nothing should be in the in-mem map
+        let map_internal = self.map_internal.read().unwrap();
+        assert!(
+            map_internal.is_empty(),
+            "len: {}, first: {:?}",
+            map_internal.len(),
+            map_internal.iter().take(1).collect::<Vec<_>>()
+        );
+        drop(map_internal);
 
         // this fn should only be called from a single thread, so holding the lock is fine
         let mut duplicates = self.startup_info.duplicates.lock().unwrap();
@@ -1132,7 +1092,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // At startup we do not insert index entries into the normal in-mem index.
             // Instead, they are written to a startup-only struct.  Thus, at startup
             // we only need to flush that startup struct and then can return early.
-            self.write_startup_info();
+            self.write_startup_info_to_disk();
             if iterate_for_age {
                 // Note we still have to iterate ages too, since it is checked when
                 // transitioning from startup back to normal/steady state.
@@ -1316,12 +1276,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self::update_stat(stat, value);
     }
 
-    /// Returns the length and capacity of this bin's map
+    /// Returns the capacity for this bin's map
     ///
     /// Only intended to be called at startup, since it grabs the map's read lock.
-    pub(crate) fn len_and_cap_for_startup(&self) -> (usize, usize) {
-        let map = self.map_internal.read().unwrap();
-        (map.len(), map.capacity())
+    pub(crate) fn capacity_for_startup(&self) -> usize {
+        self.map_internal.read().unwrap().capacity()
     }
 }
 
@@ -1482,13 +1441,9 @@ enum ReasonToNotFlush {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{
-            bucket_map_holder::ThresholdEntriesPerBin, AccountsIndexConfig, IndexLimit,
-            ACCOUNTS_INDEX_CONFIG_FOR_TESTING, BINS_FOR_TESTING,
-        },
+        crate::accounts_index::{AccountsIndexConfig, IndexLimit, BINS_FOR_TESTING},
         assert_matches::assert_matches,
         itertools::Itertools,
-        std::iter,
         test_case::test_case,
     };
 
@@ -2539,51 +2494,5 @@ mod tests {
                 assert_eq!(total_capacity, 0);
             }
         }
-    }
-
-    /// Ensure `write_startup_info()` respects the configured memory threshold
-    /// when populating the in-mem index.
-    #[test]
-    fn test_write_startup_info() {
-        let num_bins = 1;
-        let config = AccountsIndexConfig {
-            bins: Some(num_bins),
-            index_limit: {
-                // Ensure we use an IndexLimit that (1) enables the disk index,
-                // and (2) is a valid threshold, as per the logic in BucketMapHolder::new().
-                // We will override the threshold afterwards, so the actual value doesn't matter.
-                IndexLimit::Threshold(25_000_000_000)
-            },
-            ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
-        };
-        let mut holder = BucketMapHolder::new(num_bins, &config, 1);
-
-        // Override the threshold values to make testing faster.
-        let low_water_mark = 100;
-        let high_water_mark = low_water_mark + 200;
-        holder.threshold_entries_per_bin = Some(ThresholdEntriesPerBin {
-            _target_entries: high_water_mark + 300,
-            high_water_mark,
-            low_water_mark,
-        });
-        let holder = Arc::new(holder);
-        let index = InMemAccountsIndex::<u64, u64>::new(&holder, num_bins - 1, None);
-
-        // Emulate index generation where we push startup values into the `startup_info`
-        // side-band struct when disk index is enabled.  Ensure we push more than
-        // `low_water_mark` number of values.
-        let to_insert = iter::repeat_with(|| {
-            // the addresses need to be unique, but the actual values do not matter
-            (Pubkey::new_unique(), (/*slot*/ 11, /*T*/ 42))
-        })
-        .take(high_water_mark);
-        index.startup_info.insert.lock().unwrap().extend(to_insert);
-        assert!(index.map_internal.read().unwrap().is_empty());
-
-        // Index generation calls `write_startup_info()`, which is responsible for writing the
-        // values to disk, and also populating the in-mem index. So call `write_startup_info()`
-        // here, and ensure we end up with the expected number of items in the in-mem index.
-        index.write_startup_info();
-        assert_eq!(index.map_internal.read().unwrap().len(), low_water_mark);
     }
 }
