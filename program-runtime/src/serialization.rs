@@ -510,9 +510,14 @@ fn serialize_parameters_for_abiv1(
             }
         }
     }
+
     size += size_of::<u64>() // data len
     + instruction_data.len()
-    + size_of::<Pubkey>(); // program id;
+    + size_of::<Pubkey>(); // program id
+
+    // account pointers array
+    let accounts_pointer_offset = (size as *const u8).align_offset(BPF_ALIGN_OF_U128);
+    size += accounts_pointer_offset + accounts.len() * size_of::<u64>();
 
     let mut s = Serializer::new(
         size,
@@ -522,12 +527,14 @@ fn serialize_parameters_for_abiv1(
         account_data_direct_mapping,
     );
 
+    let mut accounts_pointer = Vec::with_capacity(accounts.len());
     // Serialize into the buffer
     s.write::<u64>((accounts.len() as u64).to_le());
     for account in accounts {
         match account {
             SerializeAccount::Account(_, mut borrowed_account) => {
-                s.write::<u8>(NON_DUP_MARKER);
+                // Store the pointer for the account
+                accounts_pointer.push(s.write::<u8>(NON_DUP_MARKER));
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
                 #[allow(deprecated)]
@@ -549,6 +556,8 @@ fn serialize_parameters_for_abiv1(
                 });
             }
             SerializeAccount::Duplicate(position) => {
+                // Use the same pointer as the original account
+                accounts_pointer.push(*accounts_pointer.get(position as usize).unwrap());
                 accounts_metadata.push(accounts_metadata.get(position as usize).unwrap().clone());
                 s.write::<u8>(position as u8);
                 s.write_all(&[0u8, 0, 0, 0, 0, 0, 0]);
@@ -558,6 +567,11 @@ fn serialize_parameters_for_abiv1(
     s.write::<u64>((instruction_data.len() as u64).to_le());
     let instruction_data_offset = s.write_all(instruction_data);
     s.write_all(program_id.as_ref());
+    s.fill_write(accounts_pointer_offset, 0)
+        .map_err(|_| InstructionError::InvalidArgument)?;
+    accounts_pointer.iter().for_each(|offset| {
+        s.write::<u64>(offset.to_le());
+    });
 
     let (mem, regions) = s.finish();
     Ok((
