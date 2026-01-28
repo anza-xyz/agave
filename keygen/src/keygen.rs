@@ -788,17 +788,14 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                 total_matches_found += 1;
                                 continue;
                             }
-                            if (!grind_matches_thread_safe[i].starts.is_empty()
-                                && grind_matches_thread_safe[i].ends.is_empty()
-                                && pubkey.starts_with(&grind_matches_thread_safe[i].starts))
-                                || (grind_matches_thread_safe[i].starts.is_empty()
-                                    && !grind_matches_thread_safe[i].ends.is_empty()
-                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends))
-                                || (!grind_matches_thread_safe[i].starts.is_empty()
-                                    && !grind_matches_thread_safe[i].ends.is_empty()
-                                    && pubkey.starts_with(&grind_matches_thread_safe[i].starts)
-                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends))
-                            {
+
+                            let pubkey_matches_start =
+                                grind_matches_thread_safe[i].starts.is_empty()
+                                    || pubkey.starts_with(&grind_matches_thread_safe[i].starts);
+                            let pubkey_matches_end = grind_matches_thread_safe[i].ends.is_empty()
+                                || pubkey.ends_with(&grind_matches_thread_safe[i].ends);
+
+                            if pubkey_matches_start && pubkey_matches_end {
                                 let _found = found.fetch_add(1, Ordering::Relaxed);
                                 grind_matches_thread_safe[i]
                                     .count
