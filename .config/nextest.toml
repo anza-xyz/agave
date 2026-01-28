@@ -124,9 +124,10 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 filter = 'package(solana-runtime) & test(/^bank::tests::test_race_register_tick_freeze/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
-[[profile.ci.overrides]]
-filter = 'package(solana-svm) & test(/^execute_fixtures/)'
-slow-timeout = { period = "60s", terminate-after = 2 }
+# [[profile.ci.overrides]]
+# filter = 'package(solana-svm) & test(/^execute_fixtures/)'
+# slow-timeout = { period = "60s", terminate-after = 2 }
+# Note: solana-svm package extracted to standalone repository
 
 [[profile.ci.overrides]]
 filter = "package(solana-accounts-cluster-bench)"
