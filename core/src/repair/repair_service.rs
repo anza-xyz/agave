@@ -753,10 +753,13 @@ impl RepairService {
         repair_info: RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
     ) {
-        let bank_forks_r = repair_info.bank_forks.read().unwrap();
-        let sharable_banks = bank_forks_r.sharable_banks();
-        let migration_status = bank_forks_r.migration_status();
-        drop(bank_forks_r);
+        let (sharable_banks, migration_status) = {
+            let bank_forks_r = repair_info.bank_forks.read().unwrap();
+            (
+                bank_forks_r.sharable_banks(),
+                bank_forks_r.migration_status(),
+            )
+        };
         let root_bank_slot = sharable_banks.root().slot();
         let mut repair_tracker = RepairTracker {
             sharable_banks: sharable_banks.clone(),
