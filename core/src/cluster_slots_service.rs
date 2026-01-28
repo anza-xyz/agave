@@ -98,6 +98,7 @@ impl ClusterSlotsService {
                     "ClusterSlotsService has stopped because we have finished the alpenglow \
                      migration epoch"
                 );
+                break;
             }
 
             let slots = match cluster_slots_update_receiver.recv_timeout(Duration::from_millis(200))
