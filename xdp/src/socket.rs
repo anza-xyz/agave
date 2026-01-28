@@ -1,20 +1,17 @@
 use {
     crate::{
-        device::{
-            mmap_ring, DeviceQueue, RxFillRing, RxRing, TxCompletionRing, TxRing, XdpDesc
-        },
+        device::{mmap_ring, DeviceQueue, RxFillRing, RxRing, TxCompletionRing, TxRing, XdpDesc},
         umem::{Frame, Umem},
     },
     libc::{
-        bind, getsockopt, sa_family_t, setsockopt, sockaddr, sockaddr_xdp, socket,
-        socklen_t, xdp_mmap_offsets, xdp_umem_reg, AF_XDP, SOCK_RAW, SOL_XDP, XDP_COPY,
-        XDP_MMAP_OFFSETS, XDP_PGOFF_RX_RING, XDP_PGOFF_TX_RING, XDP_RX_RING,
-        XDP_TX_RING, XDP_UMEM_COMPLETION_RING, XDP_UMEM_FILL_RING, XDP_UMEM_PGOFF_COMPLETION_RING,
-        XDP_UMEM_PGOFF_FILL_RING, XDP_USE_NEED_WAKEUP, XDP_ZEROCOPY,
+        bind, getsockopt, sa_family_t, setsockopt, sockaddr, sockaddr_xdp, socket, socklen_t,
+        xdp_mmap_offsets, xdp_umem_reg, AF_XDP, SOCK_RAW, SOL_XDP, XDP_COPY, XDP_MMAP_OFFSETS,
+        XDP_PGOFF_RX_RING, XDP_PGOFF_TX_RING, XDP_RX_RING, XDP_TX_RING, XDP_UMEM_COMPLETION_RING,
+        XDP_UMEM_FILL_RING, XDP_UMEM_PGOFF_COMPLETION_RING, XDP_UMEM_PGOFF_FILL_RING,
+        XDP_USE_NEED_WAKEUP, XDP_ZEROCOPY,
     },
     std::{
-        io,
-        mem,
+        io, mem,
         os::fd::{AsFd, AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd},
     },
 };
