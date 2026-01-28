@@ -14,7 +14,7 @@ use {
             QuicLazyInitializedEndpoint,
         },
         quic_client::{
-            close_quic_connection, QuicClientConnection as BlockingQuicClientConnection,
+            QuicClientConnection as BlockingQuicClientConnection, close_quic_connection,
         },
     },
     log::debug,
@@ -31,7 +31,7 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
-    solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
+    solana_tls_utils::{QuicClientCertificate, new_dummy_x509_certificate},
     std::{
         net::{IpAddr, SocketAddr, UdpSocket},
         sync::{Arc, RwLock},

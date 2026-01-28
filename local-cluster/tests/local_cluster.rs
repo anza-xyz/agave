@@ -1,11 +1,11 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig, SnapshotArchiveKind, SnapshotInterval,
+        SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
+        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
     assert_matches::assert_matches,
-    crossbeam_channel::{unbounded, Receiver},
+    crossbeam_channel::{Receiver, unbounded},
     gag::BufferRedirect,
     itertools::Itertools,
     log::*,
@@ -15,13 +15,13 @@ use {
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client_traits::AsyncClient,
     solana_clock::{
-        self as clock, Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
+        self as clock, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, Slot,
     },
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
         consensus::{
-            tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD, VOTE_THRESHOLD_DEPTH,
+            SWITCH_FORK_THRESHOLD, Tower, VOTE_THRESHOLD_DEPTH, tower_storage::FileTowerStorage,
         },
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
@@ -38,7 +38,7 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
-        blockstore::{entries_to_test_shreds, Blockstore},
+        blockstore::{Blockstore, entries_to_test_shreds},
         blockstore_processor::ProcessOptions,
         leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
@@ -48,16 +48,16 @@ use {
         cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient},
         cluster_tests,
         integration_tests::{
-            copy_blocks, create_custom_leader_schedule,
+            DEFAULT_NODE_STAKE, RUST_LOG_FILTER, SnapshotValidatorConfig, ValidatorKeys,
+            ValidatorTestConfig, copy_blocks, create_custom_leader_schedule,
             create_custom_leader_schedule_with_random_keys, farf_dir, generate_account_paths,
             last_root_in_tower, last_vote_in_tower, ms_for_n_slots, open_blockstore,
             purge_slots_with_count, remove_tower, remove_tower_if_exists, restore_tower,
             run_cluster_partition, run_kill_partition_switch_threshold, save_tower,
             setup_snapshot_validator_config, test_faulty_node, wait_for_duplicate_proof,
-            wait_for_last_vote_in_tower_to_land_in_ledger, SnapshotValidatorConfig, ValidatorKeys,
-            ValidatorTestConfig, DEFAULT_NODE_STAKE, RUST_LOG_FILTER,
+            wait_for_last_vote_in_tower_to_land_in_ledger,
         },
-        local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
+        local_cluster::{ClusterConfig, DEFAULT_MINT_LAMPORTS, LocalCluster},
         validator_configs::*,
     },
     solana_net_utils::SocketAddrSpace,
@@ -78,8 +78,8 @@ use {
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_turbine::broadcast_stage::{
-        broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
         BroadcastStageType,
+        broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
     },
     solana_vote::{vote_parser, vote_transaction},
     solana_vote_interface::state::TowerSync,
@@ -92,10 +92,10 @@ use {
         num::NonZeroU64,
         path::Path,
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
     strum::{EnumCount, IntoEnumIterator},
@@ -2055,12 +2055,12 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
 
     let validator_keypairs = match cluster_mode {
         ClusterMode::MasterOnly => vec![
-        "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
-    ],
+            "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
+        ],
         ClusterMode::MasterSlave => vec![
-        "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
-        "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
-    ],
+            "4qhhXNTbKD1a5vxDDLZcHKj7ELNeiivtUBxn3wUK1F5VRsQVP89VUhfXqSfgiFB14GfuBgtrQ96n9NvWQADVkcCg",
+            "3kHBzVwie5vTEaY6nFCPeFT8qDpoXzn7dCEioGRNBTnUDpvwnG85w8Wq63gVWpVTP8k2a8cgcWRjSXyUkEygpXWS",
+        ],
     };
 
     let validator_keys = create_test_validator_keys(&validator_keypairs);

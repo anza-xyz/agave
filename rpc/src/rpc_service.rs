@@ -10,14 +10,14 @@ use {
         rpc_health::*,
     },
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig, SnapshotInterval,
+        SnapshotInterval, paths as snapshot_paths,
+        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
     crossbeam_channel::unbounded,
-    jsonrpc_core::{futures::prelude::*, MetaIoHandler},
+    jsonrpc_core::{MetaIoHandler, futures::prelude::*},
     jsonrpc_http_server::{
-        hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
-        RequestMiddlewareAction, ServerBuilder,
+        AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
+        RequestMiddlewareAction, ServerBuilder, hyper,
     },
     regex::Regex,
     solana_cli_output::display::build_balance_message,
@@ -51,8 +51,8 @@ use {
         path::{Path, PathBuf},
         pin::Pin,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         task::{Context, Poll},
         thread::{self, Builder, JoinHandle},
@@ -827,7 +827,7 @@ mod tests {
         solana_cluster_type::ClusterType,
         solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
         solana_ledger::{
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
         },
         solana_rpc_client_api::config::RpcContextConfig,
@@ -1031,10 +1031,15 @@ mod tests {
         assert!(!rrm_with_snapshot_config.is_file_get_path(
             "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
         ));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
+        assert!(
+            !rrm_with_snapshot_config.is_file_get_path(
+                "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"
+            )
+        );
+        assert!(
+            !rrm_with_snapshot_config
+                .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar")
+        );
 
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
@@ -1065,8 +1070,10 @@ mod tests {
         assert!(
             !rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar.zst")
         );
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar.zst"));
+        assert!(
+            !rrm_with_snapshot_config
+                .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar.zst")
+        );
 
         assert!(!rrm.is_file_get_path("/"));
         assert!(!rrm.is_file_get_path("//"));

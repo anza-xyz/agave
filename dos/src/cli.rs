@@ -1,5 +1,5 @@
 use {
-    clap::{crate_description, crate_name, crate_version, ArgEnum, Args, Parser},
+    clap::{ArgEnum, Args, Parser, crate_description, crate_name, crate_version},
     serde::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     std::{net::SocketAddr, process::exit, str::FromStr},

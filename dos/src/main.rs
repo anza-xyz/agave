@@ -42,10 +42,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 #![allow(deprecated)]
 use {
-    crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, select, tick, unbounded},
     itertools::Itertools,
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{Rng, thread_rng},
     solana_bench_tps::bench::generate_and_fund_keypairs,
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
@@ -58,8 +58,8 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_message::{compiled_instruction::CompiledInstruction, Message},
-    solana_net_utils::{bind_to_unspecified, SocketAddrSpace},
+    solana_message::{Message, compiled_instruction::CompiledInstruction},
+    solana_net_utils::{SocketAddrSpace, bind_to_unspecified},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,

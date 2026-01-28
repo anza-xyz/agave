@@ -1,16 +1,16 @@
 use {
     crate::{
         input_validators::normalize_to_url_if_moniker,
-        keypair::{keypair_from_seed_phrase, ASK_KEYWORD, SKIP_SEED_PHRASE_VALIDATION_ARG},
+        keypair::{ASK_KEYWORD, SKIP_SEED_PHRASE_VALIDATION_ARG, keypair_from_seed_phrase},
     },
     chrono::DateTime,
     clap::ArgMatches,
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_native_token::sol_str_to_lamports,
-    solana_pubkey::{Pubkey, MAX_SEED_LEN},
+    solana_pubkey::{MAX_SEED_LEN, Pubkey},
     solana_signer::Signer,
     std::str::FromStr,
 };
@@ -23,8 +23,8 @@ pub mod signer;
 )]
 #[allow(deprecated)]
 pub use signer::{
-    pubkey_of_signer, pubkeys_of_multiple_signers, pubkeys_sigs_of, resolve_signer, signer_of,
-    STDOUT_OUTFILE_TOKEN,
+    STDOUT_OUTFILE_TOKEN, pubkey_of_signer, pubkeys_of_multiple_signers, pubkeys_sigs_of,
+    resolve_signer, signer_of,
 };
 
 // Return parsed values from matches at `name`
