@@ -723,7 +723,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
     vote_authorize: VoteAuthorize,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
-    is_bls_pubkey_feature_enabled: bool,
+    is_vote_authorize_with_bls_enabled: bool,
 ) -> Result<(), InstructionError> {
     let mut vote_state = get_vote_state_handler_checked(
         vote_account,
@@ -732,7 +732,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
 
     match vote_authorize {
         VoteAuthorize::Voter => {
-            if is_bls_pubkey_feature_enabled && vote_state.has_bls_pubkey() {
+            if is_vote_authorize_with_bls_enabled && vote_state.has_bls_pubkey() {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let authorized_withdrawer_signer =
@@ -762,7 +762,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
             vote_state.set_authorized_withdrawer(*authorized);
         }
         VoteAuthorize::VoterWithBLS(args) => {
-            if !is_bls_pubkey_feature_enabled {
+            if !is_vote_authorize_with_bls_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let authorized_withdrawer_signer =
