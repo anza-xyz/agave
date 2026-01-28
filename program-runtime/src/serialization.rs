@@ -1413,6 +1413,7 @@ mod tests {
     fn test_access_violation_handler() {
         let program_id = Pubkey::new_unique();
         let shared_account = AccountSharedData::new(0, 4, &program_id);
+        let shared_account_ref = shared_account.clone();
         let mut transaction_context = TransactionContext::new(
             vec![
                 (
@@ -1526,6 +1527,7 @@ mod tests {
                 .unwrap()
                 .is_shared()
         );
+        drop(shared_account_ref);
         assert_eq!(
             transaction_context
                 .accounts()
