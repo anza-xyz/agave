@@ -176,7 +176,9 @@ impl RouteMonitorState {
         update_interval: Duration,
     ) {
         if self.dirty && self.last_publish.elapsed() >= update_interval {
-            atomic_router.store(Arc::new(self.router.clone()));
+            let mut router = self.router.clone();
+            let _ = router.build_caches();
+            atomic_router.store(Arc::new(router));
             self.last_publish = Instant::now();
             self.dirty = false;
         }

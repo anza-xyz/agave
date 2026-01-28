@@ -310,25 +310,14 @@ impl XdpRetransmitBuilder {
             let (sender, receiver) = crossbeam_channel::bounded(rtx_channel_cap);
             let drop_sender = drop_sender.clone();
             let routes = Arc::clone(&atomic_router);
-            let interfaces = Arc::clone(&atomic_router);
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
                     .spawn(move || {
-                        tx_loop.run(
-                            receiver,
-                            drop_sender,
-                            move |ip| {
-                                let r = routes.load();
-                                r.route(*ip)
-                                    .ok()
-                                    .map(|next_hop| (next_hop, r.route_version()))
-                            },
-                            move |if_index| {
-                                let r = interfaces.load();
-                                r.interface_info(if_index).ok().cloned()
-                            },
-                        )
+                        tx_loop.run(receiver, drop_sender, move |ip| {
+                            let r = routes.load();
+                            r.route(*ip).ok()
+                        })
                     })
                     .unwrap(),
             );

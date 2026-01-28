@@ -1,7 +1,7 @@
 use {
     crate::netlink::{
-        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes, InterfaceInfo,
-        MacAddress, NeighborEntry, RouteEntry,
+        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes, GreTunnelInfo,
+        InterfaceInfo, MacAddress, NeighborEntry, RouteEntry,
     },
     libc::{AF_INET, AF_INET6},
     std::{
@@ -27,12 +27,20 @@ pub enum RouteError {
     UnknownInterfaceIndex(u32),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct GreRouteInfo {
+    pub if_index: u32,
+    pub tunnel_info: GreTunnelInfo,
+    pub mac_addr: MacAddress,
+}
+
+#[derive(Debug, Clone)]
 pub struct NextHop {
     pub mac_addr: Option<MacAddress>,
     pub ip_addr: IpAddr,
     pub if_index: u32,
     pub preferred_src_ip: Option<Ipv4Addr>,
+    pub gre: Option<GreRouteInfo>,
 }
 
 fn lookup_route<'a, I>(routes: I, dest: IpAddr) -> Option<&'a RouteEntry>
@@ -209,7 +217,11 @@ pub struct Router {
     arp_table: ArpTable,
     route_table: RouteTable,
     interface_table: InterfaceTable,
-    route_version: u64,
+    // cache for the default route next hop so we can avoid arp table lookups on the common case
+    cached_default_route: Option<NextHop>,
+    // cache for gre route info to avoid repeated lookups in the common case
+    // where there is only one gre interface
+    cached_gre_info: Option<GreRouteInfo>,
 }
 
 impl Router {
@@ -218,11 +230,12 @@ impl Router {
             arp_table: ArpTable::new()?,
             route_table: RouteTable::new()?,
             interface_table: InterfaceTable::new()?,
-            route_version: 0,
+            cached_default_route: None,
+            cached_gre_info: None,
         })
     }
 
-    pub fn default(&self) -> Result<NextHop, RouteError> {
+    fn default_route(&self) -> Result<NextHop, RouteError> {
         let default_route = self
             .route_table
             .iter()
@@ -244,12 +257,27 @@ impl Router {
             _ => None,
         };
 
+        let gre = self
+            .interface_table
+            .iter()
+            .find(|i| i.if_index == if_index)
+            .and_then(|interface| self.interface_gre_route_info(interface));
+
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
             if_index,
             preferred_src_ip,
+            gre,
         })
+    }
+
+    pub fn default(&self) -> Result<NextHop, RouteError> {
+        if let Some(default_route) = &self.cached_default_route {
+            Ok(default_route.clone())
+        } else {
+            self.default_route()
+        }
     }
 
     pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
@@ -265,83 +293,99 @@ impl Router {
             None => dest_ip,
         };
 
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
         let preferred_src_ip = match route.pref_src {
             Some(IpAddr::V4(v4)) => Some(v4),
             _ => None,
         };
+
+        if let Some(default_route) = &self.cached_default_route {
+            if default_route.ip_addr == next_hop_ip && default_route.if_index == if_index {
+                return Ok(default_route.clone());
+            }
+        }
+
+        if let Some(gre) = &self.cached_gre_info {
+            if gre.if_index == if_index {
+                return Ok(NextHop {
+                    if_index,
+                    ip_addr: next_hop_ip,
+                    mac_addr: Some(gre.mac_addr),
+                    preferred_src_ip,
+                    gre: Some(gre.clone()),
+                });
+            }
+        }
+
+        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
 
         let next_hop = NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
             if_index,
             preferred_src_ip,
+            gre: None,
         };
         Ok(next_hop)
     }
 
-    pub fn route_version(&self) -> u64 {
-        self.route_version
-    }
-
-    fn bump_route_version(&mut self) {
-        self.route_version = self.route_version.wrapping_add(1);
-    }
-
-    pub fn interface_info(&self, if_index: u32) -> Result<&InterfaceInfo, RouteError> {
-        self.interface_table
+    // called to rebuild cached values after route/neigh/interface updates right
+    // before a new Router instance is published
+    pub(crate) fn build_caches(&mut self) -> Result<(), io::Error> {
+        self.cached_gre_info = self
+            .interface_table
             .iter()
-            .find(|i| i.if_index == if_index)
-            .map(|i| i.as_ref())
-            .ok_or(RouteError::UnknownInterfaceIndex(if_index))
+            .find(|i| i.gre_tunnel.is_some())
+            .and_then(|interface| self.interface_gre_route_info(interface));
+        self.cached_default_route = match self.default_route() {
+            Ok(hop) => Some(hop),
+            Err(RouteError::NoRouteFound(_)) => None,
+            Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e)),
+        };
+
+        Ok(())
+    }
+
+    fn interface_gre_route_info(&self, interface: &InterfaceInfo) -> Option<GreRouteInfo> {
+        let tunnel_info = interface.gre_tunnel.as_ref()?;
+        let mac_addr = self
+            .arp_table
+            .lookup(
+                tunnel_info
+                    .remote
+                    .expect("FIXME: I don't think this can be optional"),
+                interface.if_index,
+            )?
+            .clone();
+
+        Some(GreRouteInfo {
+            if_index: interface.if_index,
+            tunnel_info: tunnel_info.clone(),
+            mac_addr,
+        })
     }
 
     pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
-        let updated = self.route_table.upsert(new_route);
-        if updated {
-            self.bump_route_version();
-        }
-        updated
+        self.route_table.upsert(new_route)
     }
 
     pub fn remove_route(&mut self, new_route: RouteEntry) -> bool {
-        let updated = self.route_table.remove(new_route);
-        if updated {
-            self.bump_route_version();
-        }
-        updated
+        self.route_table.remove(new_route)
     }
 
     pub fn upsert_neighbor(&mut self, new_neighbor: NeighborEntry) -> bool {
-        let updated = self.arp_table.upsert(new_neighbor);
-        if updated {
-            self.bump_route_version();
-        }
-        updated
+        self.arp_table.upsert(new_neighbor)
     }
 
     pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
-        let updated = self.arp_table.remove(ip, if_index);
-        if updated {
-            self.bump_route_version();
-        }
-        updated
+        self.arp_table.remove(ip, if_index)
     }
 
     pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) -> bool {
-        let updated = self.interface_table.upsert(new_interface);
-        if updated {
-            self.bump_route_version();
-        }
-        updated
+        self.interface_table.upsert(new_interface)
     }
 
     pub fn remove_interface(&mut self, if_index: u32) -> bool {
-        let updated = self.interface_table.remove(if_index);
-        if updated {
-            self.bump_route_version();
-        }
-        updated
+        self.interface_table.remove(if_index)
     }
 }
 
