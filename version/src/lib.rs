@@ -1,137 +1,19 @@
 #![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
-pub use self::legacy::{LegacyVersion1, LegacyVersion2};
-use {
-    rand::{rng, Rng},
-    serde::{Deserialize, Serialize},
-    solana_sanitize::Sanitize,
-    solana_serde_varint as serde_varint,
-    std::{convert::TryInto, fmt},
-};
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
 
-mod legacy;
+mod client_ids;
+pub mod v1;
+pub mod v2;
+pub mod v3;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum ClientId {
-    SolanaLabs,
-    JitoLabs,
-    Frankendancer,
-    Agave,
-    AgavePaladin,
-    Firedancer,
-    AgaveBam,
-    Sig,
-    // If new variants are added, update From<u16> and TryFrom<ClientId>.
-    Unknown(u16),
-}
+pub use {client_ids::*, v3::*};
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct Version {
-    #[serde(with = "serde_varint")]
-    pub major: u16,
-    #[serde(with = "serde_varint")]
-    pub minor: u16,
-    #[serde(with = "serde_varint")]
-    pub patch: u16,
-    pub commit: u32,      // first 4 bytes of the sha1 commit hash
-    pub feature_set: u32, // first 4 bytes of the FeatureSet identifier
-    #[serde(with = "serde_varint")]
-    client: u16,
-}
-
-impl Version {
-    pub fn as_semver_version(&self) -> semver::Version {
-        semver::Version::new(self.major as u64, self.minor as u64, self.patch as u64)
-    }
-
-    pub fn client(&self) -> ClientId {
-        ClientId::from(self.client)
-    }
-}
-
-fn compute_commit(sha1: Option<&'static str>) -> Option<u32> {
+pub(crate) fn compute_commit(sha1: Option<&'static str>) -> Option<u32> {
     u32::from_str_radix(sha1?.get(..8)?, /*radix:*/ 16).ok()
-}
-
-impl Default for Version {
-    fn default() -> Self {
-        let feature_set =
-            u32::from_le_bytes(agave_feature_set::ID.as_ref()[..4].try_into().unwrap());
-        Self {
-            major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
-            minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
-            patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
-            commit: compute_commit(option_env!("CI_COMMIT"))
-                .or(compute_commit(option_env!("AGAVE_GIT_COMMIT_HASH")))
-                .unwrap_or_else(|| rng().random::<u32>()),
-            feature_set,
-            // Other client implementations need to modify this line.
-            client: u16::try_from(ClientId::Agave).unwrap(),
-        }
-    }
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch,)
-    }
-}
-
-impl fmt::Debug for Version {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}.{}.{} (src:{:08x}; feat:{}, client:{:?})",
-            self.major,
-            self.minor,
-            self.patch,
-            self.commit,
-            self.feature_set,
-            self.client(),
-        )
-    }
-}
-
-impl Sanitize for Version {}
-
-impl From<u16> for ClientId {
-    fn from(client: u16) -> Self {
-        match client {
-            0u16 => Self::SolanaLabs,
-            1u16 => Self::JitoLabs,
-            2u16 => Self::Frankendancer,
-            3u16 => Self::Agave,
-            4u16 => Self::AgavePaladin,
-            5u16 => Self::Firedancer,
-            6u16 => Self::AgaveBam,
-            7u16 => Self::Sig,
-            _ => Self::Unknown(client),
-        }
-    }
-}
-
-impl TryFrom<ClientId> for u16 {
-    type Error = String;
-
-    fn try_from(client: ClientId) -> Result<Self, Self::Error> {
-        match client {
-            ClientId::SolanaLabs => Ok(0u16),
-            ClientId::JitoLabs => Ok(1u16),
-            ClientId::Frankendancer => Ok(2u16),
-            ClientId::Agave => Ok(3u16),
-            ClientId::AgavePaladin => Ok(4u16),
-            ClientId::Firedancer => Ok(5u16),
-            ClientId::AgaveBam => Ok(6u16),
-            ClientId::Sig => Ok(7u16),
-            ClientId::Unknown(client @ 0u16..=7u16) => Err(format!("Invalid client: {client}")),
-            ClientId::Unknown(client) => Ok(client),
-        }
-    }
 }
 
 #[macro_export]
@@ -158,37 +40,5 @@ mod test {
         assert_eq!(compute_commit(Some("1234567890")), Some(0x1234_5678));
         assert_eq!(compute_commit(Some("HEAD")), None);
         assert_eq!(compute_commit(Some("garbagein")), None);
-    }
-
-    #[test]
-    fn test_client_id() {
-        assert_eq!(ClientId::from(0u16), ClientId::SolanaLabs);
-        assert_eq!(ClientId::from(1u16), ClientId::JitoLabs);
-        assert_eq!(ClientId::from(2u16), ClientId::Frankendancer);
-        assert_eq!(ClientId::from(3u16), ClientId::Agave);
-        assert_eq!(ClientId::from(4u16), ClientId::AgavePaladin);
-        assert_eq!(ClientId::from(5u16), ClientId::Firedancer);
-        assert_eq!(ClientId::from(6u16), ClientId::AgaveBam);
-        assert_eq!(ClientId::from(7u16), ClientId::Sig);
-        for client in 8u16..=u16::MAX {
-            assert_eq!(ClientId::from(client), ClientId::Unknown(client));
-        }
-        assert_eq!(u16::try_from(ClientId::SolanaLabs), Ok(0u16));
-        assert_eq!(u16::try_from(ClientId::JitoLabs), Ok(1u16));
-        assert_eq!(u16::try_from(ClientId::Frankendancer), Ok(2u16));
-        assert_eq!(u16::try_from(ClientId::Agave), Ok(3u16));
-        assert_eq!(u16::try_from(ClientId::AgavePaladin), Ok(4u16));
-        assert_eq!(u16::try_from(ClientId::Firedancer), Ok(5u16));
-        assert_eq!(u16::try_from(ClientId::AgaveBam), Ok(6u16));
-        assert_eq!(u16::try_from(ClientId::Sig), Ok(7u16));
-        for client in 0..=7u16 {
-            assert_eq!(
-                u16::try_from(ClientId::Unknown(client)),
-                Err(format!("Invalid client: {client}"))
-            );
-        }
-        for client in 8u16..=u16::MAX {
-            assert_eq!(u16::try_from(ClientId::Unknown(client)), Ok(client));
-        }
     }
 }
