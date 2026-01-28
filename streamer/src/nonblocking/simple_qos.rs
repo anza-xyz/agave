@@ -4,8 +4,8 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
-                ConnectionTableType, MAX_RTT, MIN_RTT,
+                ConnectionPeerType, ConnectionTable, ConnectionTableKey, ConnectionTableType,
+                MAX_RTT, MIN_RTT,
             },
         },
         quic::{
@@ -86,7 +86,7 @@ impl SimpleQos {
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable<TokenBucket>>,
         conn_context: &SimpleQosConnectionContext,
-    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
+    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ()> {
         let remote_addr = connection.remote_address();
 
         // this will never overflow u32 for reasonable MAX_RTT
@@ -130,7 +130,7 @@ impl SimpleQos {
             self.stats
                 .connection_add_failed
                 .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::ConnectionAddError)
+            Err(())
         }
     }
 }
