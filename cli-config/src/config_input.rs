@@ -116,10 +116,17 @@ impl ConfigInput {
 
 impl Default for ConfigInput {
     fn default() -> ConfigInput {
+        let Config {
+            json_rpc_url,
+            websocket_url,
+            keypair_path,
+            ..
+        } = Config::default();
+
         ConfigInput {
-            json_rpc_url: Self::default_json_rpc_url(),
-            websocket_url: Self::default_websocket_url(),
-            keypair_path: Self::default_keypair_path(),
+            json_rpc_url,
+            websocket_url,
+            keypair_path,
             commitment: CommitmentConfig::confirmed(),
         }
     }
