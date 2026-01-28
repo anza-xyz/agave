@@ -10,7 +10,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
-    solana_commitment_config::{CommitmentConfig, CommitmentLevel},
+    solana_commitment_config::CommitmentConfig,
     solana_entry::entry::{self, Entry, EntrySlice},
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
@@ -398,11 +398,6 @@ fn check_for_new_slots_with_commitment(
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
     let mut num_slots_map = HashMap::new();
-    let slot_type = match commitment.commitment {
-        CommitmentLevel::Processed => "processed slots",
-        CommitmentLevel::Confirmed => "confirmed slots",
-        CommitmentLevel::Finalized => "roots",
-    };
     while !done {
         assert!(loop_start.elapsed() < loop_timeout);
 
@@ -418,8 +413,9 @@ fn check_for_new_slots_with_commitment(
             done = num_slots >= num_new_slots;
             if done || last_print.elapsed().as_secs() > 3 {
                 info!(
-                    "{test_name} waiting for {num_new_slots} new {slot_type}.. observed: \
-                     {num_slots_map:?}"
+                    "{test_name} waiting for {num_new_slots} new {} slots .. observed: \
+                     {num_slots_map:?}",
+                    commitment.commitment,
                 );
                 last_print = Instant::now();
             }
