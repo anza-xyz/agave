@@ -772,13 +772,11 @@ where
             let authorized_withdrawer_signer =
                 verify_authorized_signer(vote_state.authorized_withdrawer(), signers).is_ok();
 
-            // Consume CUs for BLS verification (SIMD-0387).
-            consume_pop_compute_units()?;
-
             verify_bls_proof_of_possession(
                 vote_account.get_key(),
                 &args.bls_pubkey,
                 &args.bls_proof_of_possession,
+                &consume_pop_compute_units,
             )?;
 
             vote_state.set_new_authorized_voter(
@@ -1024,11 +1022,18 @@ pub(crate) fn generate_pop_message(
     message
 }
 
-pub fn verify_bls_proof_of_possession(
+pub fn verify_bls_proof_of_possession<F>(
     vote_account_pubkey: &Pubkey,
     bls_pubkey_compressed_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
     bls_proof_of_possession_compressed_bytes: &[u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
-) -> Result<(), InstructionError> {
+    consume_pop_compute_units: F,
+) -> Result<(), InstructionError>
+where
+    F: FnOnce() -> Result<(), InstructionError>,
+{
+    // Consume CUs for BLS verification (SIMD-0387).
+    consume_pop_compute_units()?;
+
     let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
     bls_proof_of_possession_compressed_bytes
         .verify(bls_pubkey_compressed_bytes, Some(&message))
@@ -1118,14 +1123,12 @@ where
     // node must agree to accept this vote account
     verify_authorized_signer(&vote_init.node_pubkey, signers)?;
 
-    // Consume CUs for BLS verification (SIMD-0387).
-    consume_pop_compute_units()?;
-
     // verify the BLS pubkey proof of possession
     verify_bls_proof_of_possession(
         vote_account.get_key(),
         &vote_init.authorized_voter_bls_pubkey,
         &vote_init.authorized_voter_bls_proof_of_possession,
+        consume_pop_compute_units,
     )?;
 
     VoteStateHandler::init_vote_account_state_v2(vote_account, vote_init, clock, target_version)
