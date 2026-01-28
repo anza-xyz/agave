@@ -241,9 +241,9 @@ impl XdpRetransmitBuilder {
             ROUTE_MONITOR_UPDATE_INTERVAL,
             || {
                 // we need to retain CAP_NET_ADMIN in case the netlink socket needs reinitialized
-                let retained_caps = caps::CapsHashSet::from_iter([caps::Capability::CAP_NET_ADMIN]);
-                caps::set(None, caps::CapSet::Permitted, &retained_caps)
-                    .expect("linux allows permitted capset to be set");
+                // let retained_caps = caps::CapsHashSet::from_iter([caps::Capability::CAP_NET_ADMIN]);
+                // caps::set(None, caps::CapSet::Permitted, &retained_caps)
+                //     .expect("linux allows permitted capset to be set");
                 info!("route monitor thread started");
             },
         );
