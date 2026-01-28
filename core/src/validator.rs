@@ -2265,6 +2265,19 @@ fn load_blockstore(
     info!("loading ledger from {ledger_path:?}...");
     *start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
 
+    let mut process_options = blockstore_processor::ProcessOptions {
+        run_verification: config.run_verification,
+        halt_at_slot: None,
+        new_hard_forks: config.new_hard_forks.clone(),
+        debug_keys: config.debug_keys.clone(),
+        accounts_db_config: config.accounts_db_config.clone(),
+        accounts_db_skip_shrink: config.accounts_db_skip_shrink,
+        accounts_db_force_initial_clean: config.accounts_db_force_initial_clean,
+        runtime_config: config.runtime_config.clone(),
+        use_snapshot_archives_at_startup: config.use_snapshot_archives_at_startup,
+        ..blockstore_processor::ProcessOptions::default()
+    };
+
     let blockstore = Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
         .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
 
@@ -2277,20 +2290,7 @@ fn load_blockstore(
 
     let blockstore = Arc::new(blockstore);
     let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit.clone());
-    let halt_at_slot = blockstore.highest_slot().unwrap_or(None);
-
-    let process_options = blockstore_processor::ProcessOptions {
-        run_verification: config.run_verification,
-        halt_at_slot,
-        new_hard_forks: config.new_hard_forks.clone(),
-        debug_keys: config.debug_keys.clone(),
-        accounts_db_config: config.accounts_db_config.clone(),
-        accounts_db_skip_shrink: config.accounts_db_skip_shrink,
-        accounts_db_force_initial_clean: config.accounts_db_force_initial_clean,
-        runtime_config: config.runtime_config.clone(),
-        use_snapshot_archives_at_startup: config.use_snapshot_archives_at_startup,
-        ..blockstore_processor::ProcessOptions::default()
-    };
+    process_options.halt_at_slot = blockstore.highest_slot().unwrap_or(None);
 
     let enable_rpc_transaction_history =
         config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history;
