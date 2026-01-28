@@ -2278,18 +2278,31 @@ fn load_blockstore(
         ..blockstore_processor::ProcessOptions::default()
     };
 
-    let blockstore = Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
-        .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+    let (blockstore, bank_from_snapshot_opt) = thread::scope(|scope| {
+        let load_snapshot_handle = thread::Builder::new()
+            .name("solBnkFrkSnap".into())
+            .spawn_scoped(scope, || {
+                bank_forks_utils::try_load_bank_forks_from_snapshot(
+                    genesis_config,
+                    &config.account_paths,
+                    &config.snapshot_config,
+                    &process_options,
+                    accounts_update_notifier.clone(),
+                    exit.clone(),
+                )
+            })
+            .expect("should spawn thread");
+        let blockstore =
+            Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
+                .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+        let bank_from_snapshot_result = load_snapshot_handle.join().expect("join thread");
 
-    let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
-    blockstore.add_new_shred_signal(ledger_signal_sender);
+        Ok::<_, String>((Arc::new(blockstore), bank_from_snapshot_result.transpose()))
+    })?;
 
     // following boot sequence (esp BankForks) could set root. so stash the original value
     // of blockstore root away here as soon as possible.
     let original_blockstore_root = blockstore.max_root();
-
-    let blockstore = Arc::new(blockstore);
-    let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit.clone());
     process_options.halt_at_slot = blockstore.highest_slot().unwrap_or(None);
 
     let enable_rpc_transaction_history =
@@ -2312,22 +2325,24 @@ fn load_blockstore(
     let entry_notifier_service = entry_notifier
         .map(|entry_notifier| EntryNotifierService::new(entry_notifier, exit.clone()));
 
-    let (bank_forks, starting_snapshot_hashes) = bank_forks_utils::load_bank_forks(
-        genesis_config,
-        &blockstore,
-        config.account_paths.clone(),
-        &config.snapshot_config,
-        &process_options,
-        transaction_history_services
-            .transaction_status_sender
-            .as_ref(),
-        entry_notifier_service
-            .as_ref()
-            .map(|service| service.sender()),
-        accounts_update_notifier,
-        exit,
-    )
-    .map_err(|err| err.to_string())?;
+    let (bank_forks, starting_snapshot_hashes) = bank_from_snapshot_opt
+        .unwrap_or_else(|| {
+            bank_forks_utils::load_bank_forks_from_genesis(
+                genesis_config,
+                &blockstore,
+                config.account_paths.clone(),
+                &process_options,
+                transaction_history_services
+                    .transaction_status_sender
+                    .as_ref(),
+                entry_notifier_service
+                    .as_ref()
+                    .map(|service| service.sender()),
+                accounts_update_notifier,
+                exit.clone(),
+            )
+        })
+        .map_err(|err| err.to_string())?;
 
     let mut leader_schedule_cache =
         LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
@@ -2340,6 +2355,10 @@ fn load_blockstore(
     // is processing the dropped banks from the `pruned_banks_receiver` channel.
     let pruned_banks_receiver =
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
+
+    let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit);
+    let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
+    blockstore.add_new_shred_signal(ledger_signal_sender);
 
     Ok((
         bank_forks,

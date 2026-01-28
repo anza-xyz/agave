@@ -338,18 +338,29 @@ pub fn load_and_process_ledger(
             (transaction_status_sender, None)
         };
 
-    let (bank_forks, starting_snapshot_hashes) = bank_forks_utils::load_bank_forks(
-        genesis_config,
-        blockstore.as_ref(),
-        account_paths,
-        &snapshot_config,
-        &process_options,
-        transaction_status_sender.as_ref(),
-        None, // Maybe support this later, though
-        accounts_update_notifier,
-        exit.clone(),
-    )
-    .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
+    let (bank_forks, starting_snapshot_hashes) =
+        bank_forks_utils::try_load_bank_forks_from_snapshot(
+            genesis_config,
+            &account_paths,
+            &snapshot_config,
+            &process_options,
+            accounts_update_notifier.clone(),
+            exit.clone(),
+        )
+        .transpose()
+        .unwrap_or_else(|| {
+            bank_forks_utils::load_bank_forks_from_genesis(
+                genesis_config,
+                &blockstore,
+                account_paths,
+                &process_options,
+                transaction_status_sender.as_ref(),
+                None, // Maybe support this later, though
+                accounts_update_notifier,
+                exit.clone(),
+            )
+        })
+        .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
     let leader_schedule_cache =
         LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
 

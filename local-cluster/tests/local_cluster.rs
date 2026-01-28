@@ -2350,10 +2350,9 @@ fn create_snapshot_to_hard_fork(
     let ledger_path = blockstore.ledger_path();
     let genesis_config = open_genesis_config(ledger_path, u64::MAX).unwrap();
     let snapshot_config = create_simple_snapshot_config(ledger_path);
-    let (bank_forks, _) = bank_forks_utils::load_bank_forks(
+    let (bank_forks, _) = bank_forks_utils::try_load_bank_forks_from_snapshot(
         &genesis_config,
-        blockstore,
-        vec![
+        &[
             create_accounts_run_and_snapshot_dirs(ledger_path.join("accounts"))
                 .unwrap()
                 .0,
@@ -2361,11 +2360,10 @@ fn create_snapshot_to_hard_fork(
         &snapshot_config,
         &process_options,
         None,
-        None,
-        None,
         Arc::default(),
     )
-    .expect("must load bank forks");
+    .expect("must load bank forks")
+    .expect("load from snapshot must be available");
 
     let leader_schedule_cache =
         LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());

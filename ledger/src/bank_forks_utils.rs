@@ -60,33 +60,17 @@ pub enum BankForksUtilsError {
 
 pub type BankAndHashes = (Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>);
 
-/// Load the banks via genesis or a snapshot
-///
-/// If a snapshot config is given, and a snapshot is found, it will be loaded. Otherwise, load
-/// from genesis.
-#[allow(clippy::too_many_arguments)]
-pub fn load_bank_forks(
+/// Load the banks via genesis
+pub fn load_bank_forks_from_genesis(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<BankAndHashes, BankForksUtilsError> {
-    if let Some(result) = bank_forks_from_snapshot(
-        genesis_config,
-        &account_paths,
-        snapshot_config,
-        process_options,
-        accounts_update_notifier.clone(),
-        exit.clone(),
-    )? {
-        return Ok(result);
-    }
-
     info!("Processing ledger from genesis");
     let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
         genesis_config,
@@ -139,7 +123,8 @@ fn get_snapshots_to_load(
     ))
 }
 
-fn bank_forks_from_snapshot(
+/// Load the banks via snapshot if snapshots are available, otherwise return `Ok(None)`
+pub fn try_load_bank_forks_from_snapshot(
     genesis_config: &GenesisConfig,
     account_paths: &[PathBuf],
     snapshot_config: &SnapshotConfig,

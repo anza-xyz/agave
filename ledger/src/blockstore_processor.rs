@@ -8,7 +8,6 @@ use {
         transaction_balances::compile_collected_balances,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
-    agave_snapshots::snapshot_config::SnapshotConfig,
     agave_votor_messages::migration::MigrationStatus,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::Sender,
@@ -863,11 +862,10 @@ pub fn test_process_blockstore(
     opts: &ProcessOptions,
     exit: Arc<AtomicBool>,
 ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
-    let (bank_forks, _) = crate::bank_forks_utils::load_bank_forks(
+    let (bank_forks, _) = crate::bank_forks_utils::load_bank_forks_from_genesis(
         genesis_config,
         blockstore,
         Vec::new(),
-        &SnapshotConfig::new_disabled(),
         opts,
         None,
         None,
