@@ -1474,7 +1474,7 @@ impl ReplayStage {
             );
         }
 
-        // Purge any partial shreds greater than the genesis slot
+        // Purge any partial slots greater than the genesis slot
         let start_slot = genesis_slot + 1;
         let end_slot = blockstore
             .highest_slot()
