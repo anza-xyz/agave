@@ -5441,6 +5441,7 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
+        invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
 
         let null_pointer_var = std::ptr::null::<Pubkey>() as u64;
 
