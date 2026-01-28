@@ -1397,7 +1397,7 @@ mod tests {
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{
-            instruction_accounts::InstructionAccount, TransactionContext,
+            instruction_accounts::InstructionAccount, transaction::TransactionContext,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
         test_case::{test_case, test_matrix},

@@ -3,7 +3,7 @@ use {
     solana_account::ReadableAccount,
     solana_rent::Rent,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction_context::{IndexOfAccount, TransactionContext},
+    solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
     solana_transaction_error::TransactionResult as Result,
 };
 
@@ -78,7 +78,7 @@ mod test {
         },
         solana_rent::Rent,
         solana_signer::Signer,
-        solana_transaction_context::TransactionContext,
+        solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
         std::collections::HashSet,
     };

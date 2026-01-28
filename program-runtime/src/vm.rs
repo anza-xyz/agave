@@ -22,7 +22,7 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_svm_log_collector::ic_logger_msg,
     solana_svm_measure::measure::Measure,
-    solana_transaction_context::{IndexOfAccount, TransactionContext},
+    solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
     std::{cell::RefCell, mem},
 };
 

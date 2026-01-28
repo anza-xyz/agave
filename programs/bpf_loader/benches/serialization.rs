@@ -5,7 +5,9 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
-    solana_transaction_context::{TransactionContext, instruction_accounts::InstructionAccount},
+    solana_transaction_context::{
+        instruction_accounts::InstructionAccount, transaction::TransactionContext,
+    },
 };
 
 fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext<'static> {

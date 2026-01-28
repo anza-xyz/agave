@@ -171,7 +171,7 @@ use {
         Transaction, TransactionVerificationMode,
     },
     solana_transaction_context::{
-        transaction_accounts::KeyedAccountSharedData, TransactionReturnData,
+        transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
