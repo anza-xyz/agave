@@ -10,10 +10,13 @@ pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     let y = x.rotate_right(1);
     assert_eq!(y, 170_141_183_460_469_231_731_687_303_715_884_105_728);
 
-    assert_eq!(
-        u128::MAX,
-        340_282_366_920_938_463_463_374_607_431_768_211_455
-    );
+    #[allow(clippy::eq_op)]
+    {
+        assert_eq!(
+            u128::MAX,
+            340_282_366_920_938_463_463_374_607_431_768_211_455
+        );
+    }
 
     let mut z = u128::MAX;
     z -= 1;
