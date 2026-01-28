@@ -52,6 +52,7 @@ struct TransactionFrame {
 ///
 /// This context is valid for the entire duration of a transaction being processed.
 #[derive(Debug)]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct TransactionContext<'ix_data> {
     pub(crate) accounts: Rc<TransactionAccounts>,
     instruction_stack_capacity: usize,
@@ -74,9 +75,9 @@ pub struct TransactionContext<'ix_data> {
     instruction_data: Vec<Cow<'ix_data, [u8]>>,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl<'ix_data> TransactionContext<'ix_data> {
     /// Constructs a new TransactionContext
-    #[cfg(not(target_os = "solana"))]
     pub fn new(
         transaction_accounts: Vec<KeyedAccountSharedData>,
         rent: Rent,
@@ -121,7 +122,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Used in mock_process_instruction
-    #[cfg(not(target_os = "solana"))]
     pub fn deconstruct_without_keys(self) -> Result<Vec<AccountSharedData>, InstructionError> {
         if !self.instruction_stack.is_empty() {
             return Err(InstructionError::CallDepth);
@@ -134,7 +134,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(accounts)
     }
 
-    #[cfg(not(target_os = "solana"))]
     pub fn accounts(&self) -> &Rc<TransactionAccounts> {
         &self.accounts
     }
@@ -345,7 +344,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Pushes the next instruction
-    #[cfg(not(target_os = "solana"))]
     pub fn push(&mut self) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_stack_height();
         if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
@@ -382,7 +380,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Pops the current instruction
-    #[cfg(not(target_os = "solana"))]
     pub fn pop(&mut self) -> Result<(), InstructionError> {
         if self.instruction_stack.is_empty() {
             return Err(InstructionError::CallDepth);
@@ -536,6 +533,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
 }
 
 /// Return data at the end of a transaction
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TransactionReturnData {
@@ -544,7 +542,7 @@ pub struct TransactionReturnData {
 }
 
 /// Everything that needs to be recorded from a TransactionContext after execution
-#[cfg(not(target_os = "solana"))]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct ExecutionRecord {
     pub accounts: Vec<KeyedAccountSharedData>,
     pub return_data: TransactionReturnData,
@@ -553,7 +551,7 @@ pub struct ExecutionRecord {
 }
 
 /// Used by the bank in the runtime to write back the processed accounts and recorded instructions
-#[cfg(not(target_os = "solana"))]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl From<TransactionContext<'_>> for ExecutionRecord {
     fn from(context: TransactionContext) -> Self {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
@@ -579,7 +577,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
     use super::*;
 

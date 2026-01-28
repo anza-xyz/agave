@@ -44,6 +44,7 @@ impl Default for InstructionFrame {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl InstructionFrame {
     pub fn configure_vm_slices(
         &mut self,
