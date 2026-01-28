@@ -48,7 +48,6 @@ agave-scheduler-bindings = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
-agave-verified-packet-receiver = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
