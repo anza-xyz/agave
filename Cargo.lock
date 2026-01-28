@@ -2010,9 +2010,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.31"
+version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027bb0d98429ae334a8698531da7077bdf906419543a35a55c2cb1b66437d767"
+checksum = "3e34525d5bbbd55da2bb745d34b36121baac88d07619a9a09cfcf4a6c0832785"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -2020,9 +2020,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.31"
+version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5589e0cba072e0f3d23791efac0fd8627b49c829c196a492e88168e6a669d863"
+checksum = "59a20016a20a3da95bef50ec7238dbd09baeef4311dcdd38ec15aba69812fb61"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2032,9 +2032,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.28"
+version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf4ced95c6f4a675af3da73304b9ac4ed991640c36374e4b46795c49e17cf1ed"
+checksum = "a92793da1a46a5f2a02a6f4c46c6496b28c43638adea8306fcb0caa1634f24e5"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2242,7 +2242,7 @@ dependencies = [
  "anes",
  "cast 0.3.0",
  "ciborium",
- "clap 4.5.31",
+ "clap 4.5.55",
  "criterion-plot",
  "itertools 0.13.0",
  "num-traits",
@@ -10978,7 +10978,7 @@ dependencies = [
  "assert_matches",
  "bytes",
  "chrono",
- "clap 4.5.31",
+ "clap 4.5.55",
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.31",
@@ -11124,7 +11124,7 @@ name = "solana-svm-test-harness"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 4.5.31",
+ "clap 4.5.55",
  "prost",
  "solana-svm-test-harness-fixture",
  "solana-svm-test-harness-instr",
@@ -11897,7 +11897,7 @@ dependencies = [
  "agave-logger",
  "assert_matches",
  "bytes",
- "clap 4.5.31",
+ "clap 4.5.55",
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.31",

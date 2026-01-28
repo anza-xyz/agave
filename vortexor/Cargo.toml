@@ -32,7 +32,7 @@ dev-context-only-utils = []
 agave-banking-stage-ingress-types = { workspace = true }
 agave-logger = { workspace = true }
 bytes = { workspace = true }
-clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
+clap = { version = "4.5.55", features = ["cargo", "derive", "error-context"] }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 futures  = { workspace = true }
