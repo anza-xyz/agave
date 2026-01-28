@@ -27,6 +27,8 @@ enum Commands {
     UpdateCrate(commands::update_crate::CommandArgs),
     #[command(about = "Publish crates")]
     Publish(commands::publish::CommandArgs),
+    #[command(about = "Generate pipeline")]
+    GeneratePipeline(commands::generate_pipeline::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -70,6 +72,9 @@ async fn try_main() -> Result<()> {
         }
         Commands::Publish(args) => {
             commands::publish::run(args)?;
+        }
+        Commands::GeneratePipeline(args) => {
+            commands::generate_pipeline::run(args).await?;
         }
     }
 
