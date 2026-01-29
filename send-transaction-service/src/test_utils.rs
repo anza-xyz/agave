@@ -2,10 +2,7 @@
 //! with the client type.
 
 use {
-    crate::{
-        tpu_info::NullTpuInfo,
-        transaction_client::{TpuClientNextClient, TransactionClient},
-    },
+    crate::{tpu_info::NullTpuInfo, transaction_client::TpuClientNextClient},
     solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
     std::net::{IpAddr, Ipv4Addr, SocketAddr},
     tokio::runtime::Handle,
@@ -32,7 +29,3 @@ pub fn create_client_for_tests(
         CancellationToken::new(),
     )
 }
-
-// Define type alias to simplify definition of test functions.
-pub trait ClientWithCreator: TransactionClient + Send + Clone + 'static {}
-impl<T> ClientWithCreator for T where T: TransactionClient + Send + Clone + 'static {}
