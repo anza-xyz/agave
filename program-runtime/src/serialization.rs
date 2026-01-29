@@ -1413,13 +1413,14 @@ mod tests {
     fn test_access_violation_handler() {
         let program_id = Pubkey::new_unique();
         let shared_account = AccountSharedData::new(0, 4, &program_id);
+        let shared_account_ref = shared_account.clone();
         let mut transaction_context = TransactionContext::new(
             vec![
                 (
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 4, &program_id),
                 ), // readonly
-                (Pubkey::new_unique(), shared_account.clone()), // writable shared
+                (Pubkey::new_unique(), shared_account), // writable shared
                 (
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 0, &program_id),
@@ -1440,7 +1441,7 @@ mod tests {
                     Pubkey::new_unique(),
                     AccountSharedData::new(0, 0x3000, &program_id),
                 ), // writable dummy to burn accounts_resize_delta
-                (program_id, AccountSharedData::default()),     // program
+                (program_id, AccountSharedData::default()), // program
             ],
             Rent::default(),
             /* max_instruction_stack_depth */ 1,
@@ -1526,6 +1527,7 @@ mod tests {
                 .unwrap()
                 .is_shared()
         );
+        drop(shared_account_ref);
         assert_eq!(
             transaction_context
                 .accounts()
