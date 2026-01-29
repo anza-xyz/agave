@@ -121,6 +121,8 @@ pub fn verify_if_precompile(
     Ok(())
 }
 
+/// Test that `verify` produces consistent results regardless of memory alignment.
+/// This catches implementations that unsafely cast byte slices to structured types.
 #[cfg(test)]
 pub(crate) fn test_verify_with_alignment(
     verify: Verify,
@@ -128,19 +130,29 @@ pub(crate) fn test_verify_with_alignment(
     instruction_datas: &[&[u8]],
     feature_set: &FeatureSet,
 ) -> Result<(), PrecompileError> {
-    // Copy instruction data.
-    let mut instruction_data_copy = vec![0u8; instruction_data.len().checked_add(1).unwrap()];
-    instruction_data_copy[0..instruction_data.len()].copy_from_slice(instruction_data);
-    // Verify the instruction data.
-    let result = verify(
-        &instruction_data_copy[..instruction_data.len()],
-        instruction_datas,
-        feature_set,
-    );
+    // First, verify with original alignment.
+    let result = verify(instruction_data, instruction_datas, feature_set);
 
-    // Shift alignment by 1 to test `verify` does not rely on alignment.
-    instruction_data_copy[1..].copy_from_slice(instruction_data);
-    let result_shifted = verify(&instruction_data_copy[1..], instruction_datas, feature_set);
-    assert_eq!(result, result_shifted);
+    // Now test with shifted alignment to ensure verify doesn't depend on alignment.
+    let mut misaligned_buf = vec![0u8; instruction_data.len() + 1];
+    misaligned_buf[1..].copy_from_slice(instruction_data);
+    let misaligned_data = &misaligned_buf[1..];
+
+    // Substitute misaligned data in instruction_datas where it matches instruction_data.
+    // This preserves pointer identity for precompiles that rely on it.
+    let misaligned_instruction_datas: Vec<&[u8]> = instruction_datas
+        .iter()
+        .map(|&ix| {
+            if std::ptr::eq(ix.as_ptr(), instruction_data.as_ptr()) {
+                misaligned_data
+            } else {
+                ix
+            }
+        })
+        .collect();
+
+    let result_misaligned = verify(misaligned_data, &misaligned_instruction_datas, feature_set);
+    assert_eq!(result, result_misaligned, "verify result differs with misaligned data");
+
     result
 }
