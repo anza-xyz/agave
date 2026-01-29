@@ -927,7 +927,7 @@ mod tests {
         let programs_execution_cost = 10;
         let num_txs = 4;
 
-        let dummy_transaction = WritableKeysTransaction(vec![]);
+        let dummy_transaction = WritableKeysTransaction::new(vec![]);
         let tx_cost_results: Vec<_> = (0..num_txs)
             .map(|n| {
                 if n % 2 == 0 {
