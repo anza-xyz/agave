@@ -508,4 +508,30 @@ mod tests {
             "Should generate ping to re-verify expired node"
         );
     }
+
+    #[test]
+    fn test_ping_cache_treats_same_ip_different_port_as_same_node() {
+        let now = Instant::now();
+        let mut rng = rand::rng();
+        let ttl = Duration::from_millis(256);
+        let delay = ttl / 64;
+        let mut cache =
+            PingCache::<32>::new(&mut rng, Instant::now(), ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let socket_a = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(9, 9, 9, 9), 8000));
+        let socket_b = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(9, 9, 9, 9), 8001));
+
+        let (check, ping) = cache.check(&mut rng, &this_node, now, socket_a);
+        assert!(!check);
+        assert!(ping.is_some());
+
+        // Same IP but different port should not create a new ping immediately.
+        let now = now + Duration::from_millis(1);
+        let (check, ping) = cache.check(&mut rng, &this_node, now, socket_b);
+        assert!(!check);
+        assert!(
+            ping.is_none(),
+            "Ping cache keys non-loopback nodes by IP, not port"
+        );
+    }
 }
