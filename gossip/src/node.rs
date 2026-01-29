@@ -57,13 +57,15 @@ pub struct Node {
 impl Node {
     /// Creates socket configurations for different socket usage patterns.
     ///
-    /// Many sockets are primarily read heavy or write heavy
-    /// QUIC sockets need a 4 MiB buffer on the unused side for control traffic
-    /// (handshakes, ACKs, connection management). UDP sockets use 0 buffer on
-    /// the unused side since they don't have bidirectional protocol requirements.
+    /// In Agave, many sockets are primarily read heavy or write heavy.
+    /// QUIC sockets get a 4 MiB buffer on the unused side for control traffic
+    /// (handshakes, ACKs, connection management). For UDP, "read/write" only
+    /// describes buffer tuning: Agave does not send from primarily_read_udp
+    /// sockets nor receive on primarily_write_udp sockets. Setting the unused
+    /// side to 0 avoids increasing it; Linux still enforces a minimum.
     ///
     /// NOTE: In Linux, the minimum send buffer size (SO_SNDBUF) is 2048 bytes
-    /// and the minimum receive buffer size (SO_RCVBUF) is 256 byts
+    /// and the minimum receive buffer size (SO_RCVBUF) is 256 bytes
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html
     fn create_socket_configs() -> SocketConfigs {
         const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
