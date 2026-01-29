@@ -1,0 +1,16 @@
+[package]
+name = "xdp-compatability"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+agave-xdp = { workspace = true }
+crossbeam-channel = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-turbine = { workspace = true, features = ["agave-unstable-api"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = { workspace = true }
