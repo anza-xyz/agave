@@ -7772,6 +7772,7 @@ dependencies = [
  "assert_matches",
  "chrono",
  "clap 3.2.23",
+ "five8 1.0.0",
  "rpassword",
  "solana-clap-v3-utils",
  "solana-clock",
