@@ -43,6 +43,7 @@ lru = { workspace = true }
 num-traits = { workspace = true }
 parking_lot = { workspace = true }
 qualifier_attr = { workspace = true }
+quinn = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
@@ -52,7 +53,6 @@ solana-bloom = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
@@ -76,11 +76,14 @@ solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
+solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -92,7 +95,6 @@ solana-sdk-ids = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
-tokio-util = { workspace = true }
 
 [lints]
 workspace = true

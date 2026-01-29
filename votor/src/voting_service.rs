@@ -6,25 +6,51 @@ use {
     agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     bincode::serialize,
     crossbeam_channel::Receiver,
-    solana_client::connection_cache::ConnectionCache,
-    solana_clock::Slot,
-    solana_connection_cache::client_connection::ClientConnection,
+    quinn::Endpoint,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
-    solana_transaction_error::TransportError,
+    solana_runtime::{bank::MAX_ALPENGLOW_VOTE_ACCOUNTS, bank_forks::BankForks},
+    solana_tpu_client_next::{
+        connection_workers_scheduler::{setup_endpoint, BindTarget, StakeIdentity},
+        transaction_batch::TransactionBatch,
+        workers_cache::{shutdown_worker, WorkersCache},
+        ConnectionWorkersSchedulerError, SendTransactionStats,
+    },
     std::{
         collections::HashMap,
+        io,
         net::SocketAddr,
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    tokio::runtime::Runtime,
+    tokio_util::sync::CancellationToken,
 };
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
 const STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP: usize = 5;
+
+/// Channel size for the tpu-client-next workers.
+/// This essentially buffers messages which are not yet sent on the wire.
+/// Keeping this small ensures that if some network-layer backlog accumulates,
+/// we get errors sooner.
+const WORKER_CHANNEL_SIZE: usize = 8;
+
+/// How many times to attempt to reconnect to a given validator before giving up.
+const MAX_RECONNECT_ATTEMPTS: usize = 3;
+
+/// QUIC connection setup timeout. Needs to be long enough to accommodate
+/// longest RTT link on the internet + possible packet loss.
+const QUIC_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(1000);
+
+/// Reporting interval for stats reported by tpu-client-next
+const QUIC_STATS_REPORTING_INTERVAL: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
+
+/// Number of threads to use for the QUIC runtime sending BLS messages.
+const QUIC_RUNTIME_THREADS: usize = 4;
 
 #[derive(Debug)]
 pub enum BLSOp {
@@ -36,16 +62,6 @@ pub enum BLSOp {
     PushCertificate {
         certificate: Arc<Certificate>,
     },
-}
-
-fn send_message(
-    buf: Vec<u8>,
-    socket: &SocketAddr,
-    connection_cache: &Arc<ConnectionCache>,
-) -> Result<(), TransportError> {
-    let client = connection_cache.get_connection(socket);
-
-    client.send_data_async(Arc::new(buf))
 }
 
 pub struct VotingService {
@@ -118,7 +134,7 @@ impl VotingService {
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
-        connection_cache: Arc<ConnectionCache>,
+        mut quic_sender: VotorQuicSender,
         bank_forks: Arc<RwLock<BankForks>>,
         test_override: Option<VotingServiceOverride>,
     ) -> Self {
@@ -147,7 +163,7 @@ impl VotingService {
                         &cluster_info,
                         vote_history_storage.as_ref(),
                         bls_op,
-                        connection_cache.clone(),
+                        &mut quic_sender,
                         &additional_listeners,
                         &mut staked_validators_cache,
                     );
@@ -162,7 +178,7 @@ impl VotingService {
         slot: Slot,
         cluster_info: &ClusterInfo,
         message: &ConsensusMessage,
-        connection_cache: Arc<ConnectionCache>,
+        quic_sender: &mut VotorQuicSender,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
@@ -176,25 +192,18 @@ impl VotingService {
 
         let (staked_validator_alpenglow_sockets, _) = staked_validators_cache
             .get_staked_validators_by_slot(slot, cluster_info, Instant::now());
-        let sockets = additional_listeners
+        let peers = additional_listeners
             .iter()
-            .chain(staked_validator_alpenglow_sockets.iter());
-
-        // We use send_message in a loop right now because we worry that sending packets too fast
-        // will cause a packet spike and overwhelm the network. If we later find out that this is
-        // not an issue, we can optimize this by using multi_targret_send or similar methods.
-        for socket in sockets {
-            if let Err(e) = send_message(buf.clone(), socket, &connection_cache) {
-                warn!("Failed to send alpenglow message to {socket}: {e:?}");
-            }
-        }
+            .chain(staked_validator_alpenglow_sockets.iter())
+            .copied();
+        quic_sender.send_message_to_peers(buf, peers);
     }
 
     fn handle_bls_op(
         cluster_info: &ClusterInfo,
         vote_history_storage: &dyn VoteHistoryStorage,
         bls_op: BLSOp,
-        connection_cache: Arc<ConnectionCache>,
+        quic_sender: &mut VotorQuicSender,
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
@@ -216,7 +225,7 @@ impl VotingService {
                     slot,
                     cluster_info,
                     &message,
-                    connection_cache,
+                    quic_sender,
                     additional_listeners,
                     staked_validators_cache,
                 );
@@ -228,7 +237,7 @@ impl VotingService {
                     vote_slot,
                     cluster_info,
                     &message,
-                    connection_cache,
+                    quic_sender,
                     additional_listeners,
                     staked_validators_cache,
                 );
@@ -238,6 +247,76 @@ impl VotingService {
 
     pub fn join(self) -> thread::Result<()> {
         self.thread_hdl.join()
+    }
+}
+
+/// QUIC sender for Votor based on tpu-client-next crate
+pub struct VotorQuicSender {
+    workers: WorkersCache,
+    endpoint: Endpoint,
+    stats: Arc<SendTransactionStats>,
+    runtime_handle: tokio::runtime::Handle,
+}
+
+impl VotorQuicSender {
+    /// Spawns a runtime configured for vote sending
+    pub fn spawn_runtime() -> io::Result<Runtime> {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(QUIC_RUNTIME_THREADS)
+            .enable_all()
+            .build()
+    }
+
+    pub fn new(
+        runtime_handle: tokio::runtime::Handle,
+        bind: BindTarget,
+        stake_identity: StakeIdentity,
+        cancel: CancellationToken,
+    ) -> Result<Self, ConnectionWorkersSchedulerError> {
+        let tokio_guard = runtime_handle.enter();
+        let endpoint = setup_endpoint(bind, Some(stake_identity))?;
+        let workers = WorkersCache::new(MAX_ALPENGLOW_VOTE_ACCOUNTS * 2, cancel.clone());
+
+        let stats = Arc::new(SendTransactionStats::default());
+        runtime_handle.spawn(stats.clone().report_to_influxdb(
+            "VotorSender",
+            QUIC_STATS_REPORTING_INTERVAL,
+            cancel,
+        ));
+        drop(tokio_guard);
+        Ok(Self {
+            workers,
+            endpoint,
+            stats,
+            runtime_handle,
+        })
+    }
+
+    /// Broadcasts the provided buffer to the peers
+    pub fn send_message_to_peers(&mut self, buf: Vec<u8>, peers: impl Iterator<Item = SocketAddr>) {
+        // clone on TransactionBatch is cheap (compared to cloning the buf)
+        let txs_batch = TransactionBatch::new(vec![buf]);
+        let tokio_guard = self.runtime_handle.enter();
+        for peer in peers {
+            if let Some(old_worker) = self.workers.ensure_worker(
+                peer,
+                &self.endpoint,
+                WORKER_CHANNEL_SIZE,
+                true,
+                MAX_RECONNECT_ATTEMPTS,
+                QUIC_HANDSHAKE_TIMEOUT,
+                self.stats.clone(),
+            ) {
+                shutdown_worker(old_worker)
+            }
+            if let Err(e) = self
+                .workers
+                .try_send_transactions_to_address(&peer, txs_batch.clone())
+            {
+                warn!("Failed to send alpenglow message to {peer}: {e:?}");
+            }
+        }
+        drop(tokio_guard);
     }
 }
 
@@ -296,19 +375,25 @@ mod tests {
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let cluster_info = ClusterInfo::new(
             contact_info,
-            Arc::new(keypair),
+            Arc::new(keypair.insecure_clone()),
             SocketAddrSpace::Unspecified,
         );
 
+        let runtime = VotorQuicSender::spawn_runtime().unwrap();
+        let cancel = CancellationToken::new();
+        let bind = BindTarget::Socket(bind_to_localhost_unique().unwrap());
         (
             VotingService::new(
                 bls_receiver,
                 Arc::new(cluster_info),
                 Arc::new(NullVoteHistoryStorage::default()),
-                Arc::new(ConnectionCache::new_quic(
-                    "TestAlpenglowConnectionCache",
-                    10,
-                )),
+                VotorQuicSender::new(
+                    runtime.handle().clone(),
+                    bind,
+                    StakeIdentity::new(&keypair),
+                    cancel,
+                )
+                .unwrap(),
                 bank_forks,
                 Some(VotingServiceOverride {
                     additional_listeners: vec![listener],

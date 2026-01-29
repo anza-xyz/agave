@@ -124,7 +124,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::Bank,
+        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         dependency_tracker::DependencyTracker,
@@ -144,6 +144,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client_next::ClientBuilder,
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
@@ -1268,7 +1269,24 @@ impl Validator {
                 .build()
                 .unwrap()
         });
-
+        let bls_quic_client = {
+            let mut builder = ClientBuilder::new(leader_updater)
+                .bind_socket(node.sockets.quic_vote_client)
+                .max_cache_size(MAX_ALPENGLOW_VOTE_ACCOUNTS)
+                .identity(Arc::as_ref(&identity_keypair))
+                .metric_reporter(|stats, cancel| async move {
+                    stats
+                        .report_to_influxdb("VotorQuicClient", Duration::from_millis(400), cancel)
+                        .await;
+                });
+            builder = builder.runtime_handle(runtime_handle.clone());
+            let (sender, client) = builder.build()?;
+            key_notifiers
+                .write()
+                .unwrap()
+                .add(KeyUpdaterType::BlsClient, quic_vote_sender.clone());
+            Some(quic_vote_sender)
+        };
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
         let (
