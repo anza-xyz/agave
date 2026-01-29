@@ -512,7 +512,6 @@ impl Tvu {
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
-            migration_status,
         };
 
         let voting_service = VotingService::new(
