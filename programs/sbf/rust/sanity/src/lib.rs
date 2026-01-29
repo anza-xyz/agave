@@ -43,6 +43,7 @@ fn return_sstruct() -> SStruct {
 }
 
 solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
+#[allow(unused_variables)]
 pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],

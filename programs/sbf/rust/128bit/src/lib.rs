@@ -4,6 +4,7 @@
 
 use solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS};
 
+#[allow(clippy::eq_op)]
 #[no_mangle]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     let x: u128 = 1;
