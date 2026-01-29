@@ -3,7 +3,11 @@ use {
     super::quic::{SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
     crate::{
         nonblocking::{
-            quic::spawn_server,
+            quic::{
+                spawn_server, ClientConnectionTracker, ConnectionPeerType, ConnectionTable,
+                ConnectionTableKey, ConnectionTableType,
+            },
+            stream_throttle::StreamRateLimiter,
             swqos::{SwQos, SwQosConfig},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, QUIC_MAX_TIMEOUT},
@@ -15,6 +19,7 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_keypair::Keypair,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::sockets::{
         bind_to_localhost_unique, localhost_port_range_for_tests, multi_bind_in_range_with_config,
         SocketConfiguration as SocketConfig,
@@ -23,10 +28,10 @@ use {
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-        sync::{Arc, RwLock},
+        sync::{atomic::AtomicU64, Arc, RwLock},
         time::{Duration, Instant},
     },
-    tokio::{task::JoinHandle, time::sleep},
+    tokio::{sync::Mutex, task::JoinHandle, time::sleep},
     tokio_util::sync::CancellationToken,
 };
 
@@ -50,12 +55,7 @@ where
 {
     let stats = Arc::<StreamerStats>::default();
 
-    let swqos = Arc::new(SwQos::new(
-        qos_config,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
+    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
 
     spawn_server(
         name,
@@ -126,6 +126,7 @@ pub fn setup_quic_server(
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
     let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
+
     let cancel = CancellationToken::new();
 
     let SpawnNonBlockingServerResult {
@@ -217,4 +218,37 @@ pub async fn check_multiple_streams(
         }
     }
     assert_eq!(total_packets, num_expected_packets);
+}
+
+/// Generates a fake connection table filled with provided sockets and rate_limiters.
+/// Useful to test stream throttling and nothing else.
+pub fn fill_connection_table(
+    socket_addrs: &[SocketAddr],
+    rate_limiters: &[Arc<StreamRateLimiter>],
+    stats: Arc<StreamerStats>,
+) -> Arc<Mutex<ConnectionTable<StreamRateLimiter>>> {
+    let max_connections_per_peer = 1;
+    let cancel = CancellationToken::new();
+    let mut connection_table: ConnectionTable<StreamRateLimiter> =
+        ConnectionTable::new(ConnectionTableType::Unstaked, cancel.clone());
+
+    for (socket, limiter) in socket_addrs.iter().zip(rate_limiters.iter().cloned()) {
+        let peer_type = match limiter.true_stake_sol {
+            0 => ConnectionPeerType::Unstaked,
+            x => ConnectionPeerType::Staked(x * LAMPORTS_PER_SOL),
+        };
+        connection_table
+            .try_add_connection(
+                ConnectionTableKey::IP(socket.ip()),
+                socket.port(),
+                ClientConnectionTracker::new(stats.clone(), 100000).unwrap(),
+                None,
+                peer_type,
+                Arc::new(AtomicU64::new(10)),
+                max_connections_per_peer,
+                || limiter,
+            )
+            .unwrap();
+    }
+    Arc::new(Mutex::new(connection_table))
 }

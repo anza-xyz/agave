@@ -210,16 +210,13 @@ pub struct StreamerStats {
     // Per IP rate-limiting is triggered each time when there are too many connections
     // opened from a particular IP address.
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
-    pub(crate) throttled_streams: AtomicUsize,
-    pub(crate) stream_load_ema: AtomicUsize,
-    pub(crate) stream_load_ema_overflow: AtomicUsize,
-    pub(crate) stream_load_capacity_overflow: AtomicUsize,
     pub(crate) process_sampled_packets_us_hist: Mutex<histogram::Histogram>,
     pub(crate) perf_track_overhead_us: AtomicU64,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
-    pub(crate) throttled_staked_streams: AtomicUsize,
-    pub(crate) throttled_unstaked_streams: AtomicUsize,
+    pub(crate) throttled_time_ms: AtomicU64,
+    pub(crate) throttled_ms_staked: AtomicU64,
+    pub(crate) throttled_ms_unstaked: AtomicU64,
     // All connections in various states such as Incoming, Connecting, Connection
     pub(crate) open_connections: AtomicUsize,
     pub(crate) open_staked_connections: AtomicUsize,
@@ -460,33 +457,18 @@ impl StreamerStats {
                 i64
             ),
             (
-                "throttled_streams",
-                self.throttled_streams.swap(0, Ordering::Relaxed),
+                "throttled_time_ms",
+                self.throttled_time_ms.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "stream_load_ema",
-                self.stream_load_ema.load(Ordering::Relaxed),
+                "throttled_ms_unstaked",
+                self.throttled_ms_unstaked.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "stream_load_ema_overflow",
-                self.stream_load_ema_overflow.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "stream_load_capacity_overflow",
-                self.stream_load_capacity_overflow.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "throttled_unstaked_streams",
-                self.throttled_unstaked_streams.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "throttled_staked_streams",
-                self.throttled_staked_streams.swap(0, Ordering::Relaxed),
+                "throttled_ms_staked",
+                self.throttled_ms_staked.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -621,7 +603,7 @@ fn spawn_runtime_and_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError>
 where
@@ -674,12 +656,7 @@ pub fn spawn_stake_wighted_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let swqos = Arc::new(SwQos::new(
-        qos_config,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
+    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
     spawn_runtime_and_server(
         thread_name,
         metrics_name,
@@ -706,12 +683,8 @@ pub fn spawn_simple_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let simple_qos = Arc::new(SimpleQos::new(
-        qos_config,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
+
+    let simple_qos = SimpleQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
 
     spawn_runtime_and_server(
         thread_name,
@@ -730,15 +703,18 @@ pub fn spawn_simple_qos_server(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            quic::test::*,
-            testing_utilities::{check_multiple_streams, make_client_endpoint},
+        crate::{
+            nonblocking::{
+                quic::test::*,
+                testing_utilities::{check_multiple_streams, make_client_endpoint},
+            },
+            streamer::StakedNodes,
         },
         crossbeam_channel::{unbounded, Receiver},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        std::{collections::HashMap, net::SocketAddr, time::Instant},
+        std::{collections::HashMap, net::SocketAddr, sync::RwLock, time::Instant},
         tokio::time::sleep,
     };
 
@@ -903,10 +879,10 @@ mod test {
             (client_keypair.pubkey(), 1_000), // very small staked node
             (rich_node_keypair.pubkey(), 1_000_000_000),
         ]);
-        let staked_nodes = StakedNodes::new(
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
-        );
+        )));
 
         let server_params = QuicStreamerConfig::default_for_tests();
         let qos_config = SimpleQosConfig {
@@ -919,7 +895,7 @@ mod test {
             qos_config,
         };
         let (t, receiver, server_address, cancel) =
-            setup_simple_qos_quic_server(server_params, Arc::new(RwLock::new(staked_nodes)));
+            setup_simple_qos_quic_server(server_params, staked_nodes);
 
         let runtime = rt_for_test();
         let num_expected_packets = 20;
