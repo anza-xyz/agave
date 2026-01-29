@@ -6696,16 +6696,24 @@ impl AccountsDb {
 
         self.accounts_index.log_secondary_indexes();
 
-        // Now that the index is generated, get the total capacity of the in-mem maps
+        // Now that the index is generated, get the total length and capacity of the in-mem maps
         // across all the bins and set the initial value for the stat.
         // We do this all at once, at the end, since getting the capacity requires iterating all
         // the bins and grabbing a read lock, which we try to avoid whenever possible.
-        let index_capacity = self
+        let (index_len, index_capacity) = self
             .accounts_index
             .account_maps
             .iter()
-            .map(|bin| bin.capacity_for_startup())
-            .sum();
+            .map(|bin| bin.len_and_cap_for_startup())
+            .fold((0, 0), |mut accum, (len, cap)| {
+                accum.0 += len;
+                accum.1 += cap;
+                accum
+            });
+        self.accounts_index
+            .stats()
+            .count_in_mem
+            .store(index_len, Ordering::Relaxed);
         self.accounts_index
             .stats()
             .capacity_in_mem
