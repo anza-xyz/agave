@@ -463,8 +463,6 @@ impl Tvu {
             poh_recorder.clone(),
             tower_storage,
             vote_connection_cache.clone(),
-            None,
-            bank_forks.clone(),
         );
 
         let bls_voting_service = BLSVotingService::new(
