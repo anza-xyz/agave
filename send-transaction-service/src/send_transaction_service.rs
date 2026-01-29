@@ -556,7 +556,7 @@ mod test {
         let (sender, receiver) = unbounded();
 
         let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             None,
             1,
@@ -598,7 +598,7 @@ mod test {
 
         let exit = Arc::new(AtomicBool::new(false));
         let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             None,
             1,
@@ -714,7 +714,7 @@ mod test {
         );
 
         let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,
@@ -1003,7 +1003,7 @@ mod test {
         );
         let stats = SendTransactionServiceStats::default();
         let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,

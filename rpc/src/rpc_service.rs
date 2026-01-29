@@ -878,7 +878,7 @@ mod tests {
         };
 
         let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
+            runtime.handle().clone(),
             tpu_address,
             send_transaction_service_config.tpu_peers.clone(),
             send_transaction_service_config.leader_forward_count,
