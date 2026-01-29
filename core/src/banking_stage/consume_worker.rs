@@ -343,6 +343,7 @@ pub(crate) mod external {
                     .return_not_included_with_reason(
                         message,
                         not_included_reasons::BANK_NOT_AVAILABLE,
+                        0,
                     )
                     .map(|()| true);
             }
@@ -357,6 +358,7 @@ pub(crate) mod external {
             // If we began execution when a slot was still in process, and could
             // not record at the end because the slot has ended, we will retry
             // on the next slot.
+            let mut last_attempted_slot = 0;
             for _ in 0..2 {
                 let Some(leader_state) =
                     active_leader_state_with_timeout(&self.shared_leader_state)
@@ -365,6 +367,7 @@ pub(crate) mod external {
                         .return_not_included_with_reason(
                             message,
                             not_included_reasons::BANK_NOT_AVAILABLE,
+                            last_attempted_slot,
                         )
                         .map(|()| true);
                 };
@@ -372,6 +375,7 @@ pub(crate) mod external {
                 let bank = leader_state
                     .working_bank()
                     .expect("active_leader_state_with_timeout should only return an active bank");
+                last_attempted_slot = bank.slot();
                 if bank.slot() > message.max_working_slot {
                     return self
                         .return_unprocessed_message(
@@ -401,7 +405,7 @@ pub(crate) mod external {
                 {
                     self.send_execution_response(
                         message,
-                        Self::all_or_nothing_translate_iterator(&translation_results),
+                        Self::all_or_nothing_translate_iterator(&translation_results, bank.slot()),
                     )?;
 
                     return Ok(false);
@@ -444,8 +448,12 @@ pub(crate) mod external {
 
             // If not successfully recorded even after second attempt, then we
             // just return immediately as if a bank is not available.
-            self.return_not_included_with_reason(message, not_included_reasons::BANK_NOT_AVAILABLE)
-                .map(|()| false)
+            self.return_not_included_with_reason(
+                message,
+                not_included_reasons::BANK_NOT_AVAILABLE,
+                last_attempted_slot,
+            )
+            .map(|()| false)
         }
 
         fn check_batch(
@@ -559,15 +567,19 @@ pub(crate) mod external {
 
         fn all_or_nothing_translate_iterator(
             translation_results: &[Result<(), PacketHandlingError>],
+            execution_slot: u64,
         ) -> impl ExactSizeIterator<Item = ExecutionResponse> + '_ {
-            translation_results.iter().map(|res| ExecutionResponse {
-                not_included_reason: match res {
-                    Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
-                    Err(err) => Self::reason_from_packet_handling_error(err),
-                },
-                cost_units: 0,
-                fee_payer_balance: 0,
-            })
+            translation_results
+                .iter()
+                .map(move |res| ExecutionResponse {
+                    execution_slot,
+                    not_included_reason: match res {
+                        Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        Err(err) => Self::reason_from_packet_handling_error(err),
+                    },
+                    cost_units: 0,
+                    fee_payer_balance: 0,
+                })
         }
 
         fn consume_response_iterator<'a>(
@@ -594,6 +606,7 @@ pub(crate) mod external {
                         Self::response_from_commit_details(tx, commit_details, bank)
                     }
                     Err(err) => ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: Self::reason_from_packet_handling_error(err),
                         cost_units: 0,
                         fee_payer_balance: 0,
@@ -607,10 +620,12 @@ pub(crate) mod external {
             &mut self,
             message: &PackToWorkerMessage,
             reason: u8,
+            execution_slot: u64,
         ) -> Result<(), ExternalConsumeWorkerError> {
             let response_region = execution_responses_from_iter(
                 &self.allocator,
                 (0..message.batch.num_transactions).map(|_| ExecutionResponse {
+                    execution_slot,
                     not_included_reason: reason,
                     cost_units: 0,
                     fee_payer_balance: 0,
@@ -1054,6 +1069,7 @@ pub(crate) mod external {
                     fee_payer_post_balance,
                     ..
                 } => ExecutionResponse {
+                    execution_slot: bank.slot(),
                     not_included_reason: not_included_reasons::NONE,
                     cost_units: CostModel::calculate_cost_for_executed_transaction(
                         tx,
@@ -1065,6 +1081,7 @@ pub(crate) mod external {
                     fee_payer_balance: *fee_payer_post_balance,
                 },
                 CommitTransactionDetails::NotCommitted(transaction_error) => ExecutionResponse {
+                    execution_slot: bank.slot(),
                     not_included_reason: transaction_error_to_not_included_reason(
                         transaction_error,
                     ),
@@ -1213,21 +1230,25 @@ pub(crate) mod external {
                 responses,
                 &[
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
                         cost_units: 1337,
                         fee_payer_balance: 1_000_000,
                     },
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
                         cost_units: 1341,
                         fee_payer_balance: 2_000_000,
                     },
                     ExecutionResponse {
+                        execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::INSUFFICIENT_FUNDS_FOR_FEE,
                         cost_units: 0,
                         fee_payer_balance: 0,
@@ -1239,24 +1260,29 @@ pub(crate) mod external {
         #[test]
         fn test_all_or_nothing_translate_iterator() {
             let translation_results = vec![Ok(()), Err(PacketHandlingError::Sanitization), Ok(())];
+            let test_slot = 42;
 
-            let responses = ExternalWorker::all_or_nothing_translate_iterator(&translation_results)
-                .collect::<Vec<_>>();
+            let responses =
+                ExternalWorker::all_or_nothing_translate_iterator(&translation_results, test_slot)
+                    .collect::<Vec<_>>();
 
             assert_eq!(
                 responses,
                 &[
                     ExecutionResponse {
+                        execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
+                        execution_slot: test_slot,
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
                     ExecutionResponse {
+                        execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
                         cost_units: 0,
                         fee_payer_balance: 0,

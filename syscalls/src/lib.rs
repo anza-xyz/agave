@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 pub use self::{
     cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
     logging::{
@@ -5449,6 +5441,7 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
+        invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);
 
         let null_pointer_var = std::ptr::null::<Pubkey>() as u64;
 

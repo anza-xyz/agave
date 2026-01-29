@@ -4978,7 +4978,14 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         info.num_obsolete_accounts_skipped,
         num_accounts_to_mark_obsolete as u64
     );
-    assert_eq!(storage_info.len(), 1);
+    assert_eq!(
+        storage_info.len(),
+        if num_accounts_to_mark_obsolete < account_sizes.len() {
+            1
+        } else {
+            0
+        }
+    );
 
     for entry in storage_info.iter() {
         // Sum up the stored size of all non obsolete accounts

@@ -6169,10 +6169,6 @@ impl AccountsDb {
         store_id: AccountsFileId,
         storage_info: &StorageSizeAndCountMap,
     ) -> SlotIndexGenerationInfo {
-        if storage.accounts.get_account_data_lens(&[0]).is_empty() {
-            return SlotIndexGenerationInfo::default();
-        }
-
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
         let mut zero_lamport_pubkeys = vec![];
@@ -6274,7 +6270,7 @@ impl AccountsDb {
             .accounts_index
             .insert_new_if_missing_into_primary_index(slot, keyed_account_infos));
 
-        {
+        if insert_info.count > 0 {
             // second, collect into the shared DashMap once we've figured out all the info per store_id
             let mut info = storage_info.entry(store_id).or_default();
             info.stored_size += stored_size_alive;

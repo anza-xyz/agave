@@ -40,7 +40,7 @@ pub(crate) fn load_program_from_bytes(
         unsafe {
             ProgramCacheEntry::reload(
                 loader_key,
-                program_runtime_environment.clone(),
+                program_runtime_environment,
                 deployment_slot,
                 deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                 programdata,
@@ -51,7 +51,7 @@ pub(crate) fn load_program_from_bytes(
     } else {
         ProgramCacheEntry::new(
             loader_key,
-            program_runtime_environment.clone(),
+            program_runtime_environment,
             deployment_slot,
             deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             programdata,

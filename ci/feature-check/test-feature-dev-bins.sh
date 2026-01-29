@@ -14,9 +14,5 @@ fi
 # shellcheck source=ci/rust-version.sh
 source "$here"/../rust-version.sh nightly
 
-partition="${1:-1/1}"
-
-cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check \
-	--each-feature \
-	--exclude-all-features \
-	--partition "$partition"
+cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check
+cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-features

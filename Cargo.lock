@@ -527,15 +527,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-verified-packet-receiver"
-version = "4.0.0-alpha.0"
-dependencies = [
- "assert_matches",
- "solana-perf",
- "solana-streamer",
-]
-
-[[package]]
 name = "agave-votor"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -3044,7 +3035,7 @@ dependencies = [
  "getrandom 0.3.4",
  "libm",
  "rand 0.9.2",
- "siphasher 1.0.1",
+ "siphasher 1.0.2",
 ]
 
 [[package]]
@@ -7010,9 +7001,9 @@ checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
 
 [[package]]
 name = "siphasher"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
+checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
 
 [[package]]
 name = "sized-chunks"
@@ -8224,7 +8215,6 @@ dependencies = [
  "agave-scheduling-utils",
  "agave-snapshots",
  "agave-transaction-view",
- "agave-verified-packet-receiver",
  "agave-votor",
  "agave-votor-messages",
  "ahash 0.8.12",
@@ -8937,7 +8927,7 @@ dependencies = [
  "serde-big-array",
  "serde_bytes",
  "serial_test",
- "siphasher 1.0.1",
+ "siphasher 1.0.2",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",
@@ -11143,6 +11133,7 @@ dependencies = [
  "solana-instruction",
  "solana-instruction-error",
  "solana-pubkey 4.0.0",
+ "solana-svm-feature-set",
  "thiserror 2.0.18",
 ]
 
@@ -11172,6 +11163,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm",
  "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-test-harness-fixture",
  "solana-svm-timings",
@@ -11248,7 +11240,6 @@ dependencies = [
 name = "solana-system-program"
 version = "4.0.0-alpha.0"
 dependencies = [
- "agave-feature-set",
  "assert_matches",
  "bincode",
  "criterion",
@@ -11886,58 +11877,6 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-sanitize",
  "solana-serde-varint",
-]
-
-[[package]]
-name = "solana-vortexor"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-banking-stage-ingress-types",
- "agave-logger",
- "assert_matches",
- "bytes",
- "clap 4.5.31",
- "crossbeam-channel",
- "dashmap",
- "futures 0.3.31",
- "futures-util",
- "histogram",
- "indexmap 2.13.0",
- "itertools 0.14.0",
- "libc",
- "log",
- "nix 0.31.1",
- "pem",
- "percentage",
- "quinn",
- "quinn-proto",
- "rustls 0.23.36",
- "signal-hook",
- "smallvec",
- "socket2 0.6.2",
- "solana-clap-utils",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "solana-core",
- "solana-keypair",
- "solana-local-cluster",
- "solana-measure",
- "solana-metrics",
- "solana-native-token",
- "solana-net-utils",
- "solana-perf",
- "solana-pubkey 4.0.0",
- "solana-signer",
- "solana-streamer",
- "solana-tls-utils",
- "solana-transaction-metrics-tracker",
- "solana-version",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util 0.7.18",
- "url 2.5.8",
- "x509-parser",
 ]
 
 [[package]]

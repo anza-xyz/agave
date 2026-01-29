@@ -64,6 +64,7 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
+    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
         xdp::{set_cpu_affinity, XdpConfig},
@@ -237,19 +238,6 @@ pub fn execute(
         ))?;
     }
 
-    let tpu_vortexor_receiver_address =
-        matches
-            .value_of("tpu_vortexor_receiver_address")
-            .map(|tpu_vortexor_receiver_address| {
-                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
-                    |err| {
-                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
-                        std::process::exit(1);
-                    },
-                )
-            });
-
-    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
 
     let node_config = NodeConfig {
@@ -263,7 +251,6 @@ pub fn execute(
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
-        vortexor_receiver_addr: tpu_vortexor_receiver_address,
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
@@ -473,10 +460,6 @@ pub fn execute(
                  address.",
             ),
             (
-                "tpu_vortexor_receiver_address",
-                "--tpu-vortexor-receiver-address can not be used in a multihoming context",
-            ),
-            (
                 "public_tpu_addr",
                 "--public-tpu-address can not be used in a multihoming context",
             ),
@@ -505,7 +488,11 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
-    let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
+    let tpu_connection_pool_size = matches
+        .value_of("tpu_connection_pool_size")
+        .unwrap_or("")
+        .parse()
+        .unwrap_or(DEFAULT_TPU_CONNECTION_POOL_SIZE);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
