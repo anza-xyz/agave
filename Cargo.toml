@@ -45,6 +45,7 @@ members = [
     "io-uring",
     "keygen",
     "lattice-hash",
+    "leader-schedule",
     "ledger",
     "local-cluster",
     "logger",
@@ -472,6 +473,7 @@ solana-keccak-hasher = "3.1.0"
 solana-keypair = "3.1.0"
 solana-last-restart-slot = "3.0.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-leader-schedule = { path = "leader-schedule", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ledger = { path = "ledger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-loader-v2-interface = "3.0.0"
 solana-loader-v3-interface = "6.1.0"

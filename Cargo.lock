@@ -8292,6 +8292,7 @@ dependencies = [
  "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-loader-v3-interface",
  "solana-measure",
@@ -9169,6 +9170,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-leader-schedule"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-random",
+ "bs58",
+ "itertools 0.14.0",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+ "sha2 0.10.9",
+ "solana-clock",
+ "solana-pubkey 4.0.0",
+ "solana-vote",
+ "test-case",
+]
+
+[[package]]
 name = "solana-ledger"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -9227,6 +9244,7 @@ dependencies = [
  "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-message",
@@ -9381,6 +9399,7 @@ dependencies = [
  "solana-hard-forks",
  "solana-hash 3.1.0",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-local-cluster",
  "solana-message",
@@ -9665,6 +9684,7 @@ dependencies = [
  "solana-entry",
  "solana-hash 3.1.0",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -10466,6 +10486,7 @@ dependencies = [
  "solana-instruction-error",
  "solana-keypair",
  "solana-lattice-hash",
+ "solana-leader-schedule",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-measure",

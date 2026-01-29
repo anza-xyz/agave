@@ -2929,7 +2929,7 @@ pub mod rpc_minimal {
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
                     let mut schedule_by_identity =
-                        solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
+                        solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule
                                 .get_slot_leaders()
                                 .iter()

@@ -29,12 +29,12 @@ use {
     solana_gossip::gossip_service::discover_validators,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{Blockstore, PurgeType},
         blockstore_meta::DuplicateSlotProof,
         blockstore_options::{AccessType, BlockstoreOptions},
-        leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
     },
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,

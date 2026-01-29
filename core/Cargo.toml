@@ -119,7 +119,8 @@ solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true }
+solana-leader-schedule = { workspace = true }
+solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
 solana-loader-v3-interface = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }

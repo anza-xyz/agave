@@ -1,8 +1,8 @@
 use {
-    crate::leader_schedule::LeaderSchedule,
+    crate::bank::Bank,
     solana_clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_leader_schedule::LeaderSchedule,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
     std::collections::HashMap,
 };
 
@@ -81,7 +81,7 @@ pub fn remaining_slots_in_window(slot: Slot) -> u64 {
 mod tests {
     use {
         super::*,
-        solana_runtime::genesis_utils::{
+        crate::genesis_utils::{
             bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
         },
     };

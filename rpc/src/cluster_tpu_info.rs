@@ -228,7 +228,7 @@ mod test {
 
         let slot = bank.slot();
         let first_leader =
-            solana_ledger::leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
+            solana_runtime::leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
         assert_eq!(
             leader_info.get_leader_tpus(1),
             vec![recent_peers.get(&first_leader).unwrap()]
@@ -238,7 +238,7 @@ mod test {
             vec![recent_peers.get(&first_leader).unwrap()]
         );
 
-        let second_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
+        let second_leader = solana_runtime::leader_schedule_utils::slot_leader_at(
             slot + NUM_CONSECUTIVE_LEADER_SLOTS,
             &bank,
         )
@@ -254,7 +254,7 @@ mod test {
             expected_leader_sockets
         );
 
-        let third_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
+        let third_leader = solana_runtime::leader_schedule_utils::slot_leader_at(
             slot + (2 * NUM_CONSECUTIVE_LEADER_SLOTS),
             &bank,
         )

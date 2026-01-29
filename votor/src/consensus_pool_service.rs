@@ -20,12 +20,12 @@ use {
     crossbeam_channel::{select, Receiver, Sender, TrySendError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_ledger::{
-        blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache,
+    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_pubkey::Pubkey,
+    solana_runtime::{
+        bank::Bank, bank_forks::SharableBanks,
         leader_schedule_utils::last_of_consecutive_leader_slots,
     },
-    solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     stats::ConsensusPoolServiceStats,
     std::{
         sync::{

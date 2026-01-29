@@ -6759,6 +6759,7 @@ dependencies = [
  "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-loader-v3-interface",
  "solana-measure",
@@ -7433,6 +7434,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-leader-schedule"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-random",
+ "itertools 0.14.0",
+ "rand_chacha 0.9.0",
+ "solana-clock",
+ "solana-pubkey 4.0.0",
+ "solana-vote",
+]
+
+[[package]]
 name = "solana-ledger"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -7485,6 +7498,7 @@ dependencies = [
  "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
+ "solana-leader-schedule",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -7795,6 +7809,7 @@ dependencies = [
  "solana-clock",
  "solana-entry",
  "solana-hash 3.1.0",
+ "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -8448,6 +8463,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-lattice-hash",
+ "solana-leader-schedule",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-measure",

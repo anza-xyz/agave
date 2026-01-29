@@ -5222,7 +5222,6 @@ pub mod tests {
         super::*,
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
             shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
@@ -5234,6 +5233,7 @@ pub mod tests {
         solana_entry::entry::{next_entry, next_entry_mut},
         solana_genesis_utils::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
         solana_hash::Hash,
+        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
         solana_packet::PACKET_DATA_SIZE,
         solana_pubkey::Pubkey,

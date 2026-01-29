@@ -72,6 +72,7 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::FixedSchedule,
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
@@ -83,7 +84,6 @@ use {
         blockstore_processor::{self, TransactionStatusSender},
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
-        leader_schedule::FixedSchedule,
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },

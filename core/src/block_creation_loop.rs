@@ -14,11 +14,7 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
-    solana_ledger::{
-        blockstore::Blockstore,
-        leader_schedule_cache::LeaderScheduleCache,
-        leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
-    },
+    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_measure::measure::Measure,
     solana_poh::{
         poh_recorder::{PohRecorder, PohRecorderError, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
@@ -29,6 +25,7 @@ use {
     solana_runtime::{
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
+        leader_schedule_utils::{last_of_consecutive_leader_slots, leader_slot_index},
     },
     stats::{LoopMetrics, SlotMetrics},
     std::{
