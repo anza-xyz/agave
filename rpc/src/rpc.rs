@@ -449,7 +449,10 @@ impl JsonRpcRequestProcessor {
         bank: Bank,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        use crate::rpc_service::service_runtime;
+        use {
+            crate::rpc_service::service_runtime,
+            solana_send_transaction_service::test_utils::create_client_for_tests,
+        };
 
         let genesis_hash = bank.hash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -476,7 +479,7 @@ impl JsonRpcRequestProcessor {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = Client::create_client(runtime.handle().clone(), my_tpu_address, None, 1);
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
             &bank_forks,
@@ -4574,7 +4577,7 @@ pub mod tests {
         },
         solana_sdk_ids::bpf_loader_upgradeable,
         solana_send_transaction_service::{
-            test_utils::CreateClient, transaction_client::TpuClientNextClient,
+            test_utils::create_client_for_tests, transaction_client::TpuClientNextClient,
         },
         solana_sha256_hasher::hash,
         solana_signer::Signer,
@@ -6908,8 +6911,7 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client =
-            TpuClientNextClient::create_client(runtime.handle().clone(), my_tpu_address, None, 1);
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -7202,8 +7204,7 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client =
-            TpuClientNextClient::create_client(runtime.handle().clone(), my_tpu_address, None, 1);
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,

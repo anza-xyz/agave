@@ -531,10 +531,7 @@ impl SendTransactionService {
 mod test {
     use {
         super::*,
-        crate::{
-            test_utils::{CreateClient, Stoppable},
-            transaction_client::TpuClientNextClient,
-        },
+        crate::test_utils::{create_client_for_tests, Stoppable},
         crossbeam_channel::{bounded, unbounded},
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
@@ -555,12 +552,8 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = unbounded();
 
-        let client = TpuClientNextClient::create_client(
-            Handle::current(),
-            "127.0.0.1:0".parse().unwrap(),
-            None,
-            1,
-        );
+        let client =
+            create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
             &bank_forks,
@@ -597,12 +590,8 @@ mod test {
         };
 
         let exit = Arc::new(AtomicBool::new(false));
-        let client = TpuClientNextClient::create_client(
-            Handle::current(),
-            "127.0.0.1:0".parse().unwrap(),
-            None,
-            1,
-        );
+        let client =
+            create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service = SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -713,7 +702,7 @@ mod test {
             ),
         );
 
-        let client = TpuClientNextClient::create_client(
+        let client = create_client_for_tests(
             Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
@@ -1002,7 +991,7 @@ mod test {
             ),
         );
         let stats = SendTransactionServiceStats::default();
-        let client = TpuClientNextClient::create_client(
+        let client = create_client_for_tests(
             Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),

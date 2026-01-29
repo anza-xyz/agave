@@ -832,7 +832,7 @@ mod tests {
         },
         solana_rpc_client_api::config::RpcContextConfig,
         solana_runtime::bank::Bank,
-        solana_send_transaction_service::test_utils::CreateClient,
+        solana_send_transaction_service::test_utils::create_client_for_tests,
         solana_signer::Signer,
         std::{
             io::Write,
@@ -877,7 +877,7 @@ mod tests {
             ..send_transaction_service::Config::default()
         };
 
-        let client = TpuClientNextClient::create_client(
+        let client = create_client_for_tests(
             runtime.handle().clone(),
             tpu_address,
             send_transaction_service_config.tpu_peers.clone(),
