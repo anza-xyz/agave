@@ -349,16 +349,7 @@ impl<U: Umem> TxLoop<U> {
                             ) {
                                 log::warn!("dropping packet: {err}");
                                 batched_packets -= 1;
-                                chunk_remaining -= 1;
-
-                                // check if it's time to commit the ring and kick the driver
-                                if chunk_remaining == 0 {
-                                    chunk_remaining = BATCH_SIZE.min(batched_packets);
-
-                                    // commit new frames
-                                    ring.commit();
-                                    kick(&ring);
-                                }
+                                umem.release(frame.offset());
                                 continue;
                             }
 

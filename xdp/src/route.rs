@@ -339,7 +339,7 @@ impl Router {
         self.cached_default_route = match self.default_route() {
             Ok(hop) => Some(hop),
             Err(RouteError::NoRouteFound(_)) => None,
-            Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e)),
+            Err(e) => return Err(io::Error::other(e)),
         };
 
         Ok(())
@@ -347,15 +347,12 @@ impl Router {
 
     fn interface_gre_route_info(&self, interface: &InterfaceInfo) -> Option<GreRouteInfo> {
         let tunnel_info = interface.gre_tunnel.as_ref()?;
-        let mac_addr = self
-            .arp_table
-            .lookup(
-                tunnel_info
-                    .remote
-                    .expect("FIXME: I don't think this can be optional"),
-                interface.if_index,
-            )?
-            .clone();
+        let mac_addr = *self.arp_table.lookup(
+            tunnel_info
+                .remote
+                .expect("FIXME: I don't think this can be optional"),
+            interface.if_index,
+        )?;
 
         Some(GreRouteInfo {
             if_index: interface.if_index,
@@ -444,7 +441,7 @@ mod tests {
     use {
         super::*,
         crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
-        libc::{AF_INET, ARPHRD_ETHER, NUD_REACHABLE},
+        libc::{AF_INET, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -569,8 +566,6 @@ mod tests {
         let test_if_index = 99999;
         let interface = InterfaceInfo {
             if_index: test_if_index,
-            if_name: "test_interface".to_string(),
-            dev_type: ARPHRD_ETHER,
             gre_tunnel: None,
         };
 
@@ -587,7 +582,13 @@ mod tests {
 
         // Upsert with changes should return true
         let mut modified_interface = interface.clone();
-        modified_interface.if_name = "test_interface_modified".to_string();
+        modified_interface.gre_tunnel = Some(GreTunnelInfo {
+            local: None,
+            remote: Some(IpAddr::V4(Ipv4Addr::new(10, 255, 255, 1))),
+            ttl: None,
+            tos: None,
+            pmtudisc: None,
+        });
         assert!(router.upsert_interface(modified_interface.clone()));
         assert!(router
             .interface_table
