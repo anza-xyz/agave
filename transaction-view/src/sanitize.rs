@@ -577,6 +577,23 @@ mod tests {
                 Err(TransactionViewError::SanitizeError)
             );
         }
+
+        // SIMD-406: Limit instruction accounts to 255
+        {
+            let mut accounts: Vec<u8> = vec![0; 254];
+            accounts.push(1);
+            let instr = CompiledInstruction::new_from_raw_parts(2, Vec::new(), accounts);
+            let transaction = create_legacy_transaction(
+                num_signatures,
+                header,
+                account_keys.clone(),
+                vec![instr],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            // Exactly 255 accounts must pass sanitization.
+            assert!(sanitize_instructions(&view, false, true).is_ok());
+        }
     }
 
     #[test]

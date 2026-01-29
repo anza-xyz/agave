@@ -9343,10 +9343,7 @@ fn test_verify_transactions_accounts_limit(simd_406_enabled: bool) {
     let pubkey = keypair.pubkey();
     let mut accounts_keys = vec![Pubkey::new_unique(); 10];
     accounts_keys.insert(0, pubkey);
-    let mut accounts: Vec<u8> = (0..10).collect();
-    while accounts.len() < 255 {
-        accounts.extend(0..10);
-    }
+    let accounts: Vec<u8> = (0..10).cycle().take(256).collect();
     let instruction = CompiledInstruction {
         program_id_index: 1,
         data: vec![],

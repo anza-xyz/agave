@@ -2304,7 +2304,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             limit_instruction_accounts::id(),
-            "SIMD-406: Limit the number of accounts a top-level instruction may reference",
+            "SIMD-406: Maximum instruction accounts",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
