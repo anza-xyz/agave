@@ -3311,7 +3311,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         validator_to_slots.into_iter(),
     ));
     for slot in 0..=validator_b_last_leader_slot {
-        assert_eq!(leader_schedule[slot], validator_b_pubkey);
+        assert_eq!(leader_schedule[slot].id, validator_b_pubkey);
     }
 
     default_config.fixed_leader_schedule = Some(FixedSchedule {

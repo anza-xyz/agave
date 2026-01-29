@@ -720,9 +720,12 @@ fn cmp_snapshot_request_kinds_by_priority(
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::genesis_utils::create_genesis_config,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
-        solana_account::AccountSharedData, solana_epoch_schedule::EpochSchedule,
+        super::*,
+        crate::{bank::BankLeader, genesis_utils::create_genesis_config},
+        agave_snapshots::snapshot_config::SnapshotConfig,
+        crossbeam_channel::unbounded,
+        solana_account::AccountSharedData,
+        solana_epoch_schedule::EpochSchedule,
         solana_pubkey::Pubkey,
     };
 
@@ -834,7 +837,7 @@ mod test {
                 let slot = bank.slot() + 1;
                 bank = Arc::new(Bank::new_from_parent(
                     bank.clone(),
-                    &Pubkey::new_unique(),
+                    BankLeader::new_unique(),
                     slot,
                 ));
 
@@ -921,37 +924,37 @@ mod test {
         let fork0_bank0 = Arc::new(bank);
         let fork0_bank1 = Arc::new(Bank::new_from_parent(
             fork0_bank0.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             fork0_bank0.slot() + 1,
         ));
         let fork1_bank1 = Arc::new(Bank::new_from_parent(
             fork0_bank0.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             fork0_bank0.slot() + 1,
         ));
         let fork2_bank1 = Arc::new(Bank::new_from_parent(
             fork0_bank0.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             fork0_bank0.slot() + 1,
         ));
         let fork0_bank2 = Arc::new(Bank::new_from_parent(
             fork0_bank1.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             fork0_bank1.slot() + 1,
         ));
         let fork1_bank2 = Arc::new(Bank::new_from_parent(
             fork1_bank1.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             fork1_bank1.slot() + 1,
         ));
         let fork0_bank3 = Arc::new(Bank::new_from_parent(
             fork0_bank2.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             fork0_bank2.slot() + 1,
         ));
         let fork3_bank3 = Arc::new(Bank::new_from_parent(
             fork0_bank2.clone(),
-            &Pubkey::new_unique(),
+            BankLeader::new_unique(),
             fork0_bank2.slot() + 1,
         ));
         fork0_bank3.squash();

@@ -687,7 +687,7 @@ mod tests {
         },
         solana_measure::measure::Measure,
         solana_perf::test_tx::test_tx,
-        solana_runtime::bank::Bank,
+        solana_runtime::bank::{Bank, BankLeader},
         solana_sha256_hasher::hash,
         solana_transaction::versioned::VersionedTransaction,
         std::{thread::sleep, time::Duration},
@@ -773,7 +773,7 @@ mod tests {
                                 .reset(bank.clone(), next_leader_slot);
                             bank = Arc::new(Bank::new_from_parent(
                                 bank.clone(),
-                                &solana_pubkey::new_rand(),
+                                BankLeader::new_unique(),
                                 bank.slot() + 1,
                             ));
                             poh_recorder

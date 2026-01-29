@@ -16,13 +16,12 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
-    solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
             PrunedBanksRequestHandler, SendDroppedBankCallback, SnapshotRequestHandler,
         },
-        bank::{Bank, BankTestConfig},
+        bank::{Bank, BankLeader, BankTestConfig},
         bank_forks::BankForks,
         genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
@@ -186,7 +185,7 @@ where
     for slot in 1..=last_slot {
         let bank = Bank::new_from_parent(
             bank_forks.read().unwrap().get(slot - 1).unwrap().clone(),
-            &Pubkey::default(),
+            BankLeader::default(),
             slot,
         );
         let bank = bank_forks.write().unwrap().insert(bank);
@@ -291,7 +290,7 @@ fn test_slots_to_snapshot() {
         for _ in 0..num_set_roots {
             for _ in 0..*add_root_interval {
                 let new_slot = current_bank.slot() + 1;
-                let new_bank = Bank::new_from_parent(current_bank, &Pubkey::default(), new_slot);
+                let new_bank = Bank::new_from_parent(current_bank, BankLeader::default(), new_slot);
                 current_bank = bank_forks.write().unwrap().insert(new_bank).clone();
             }
             bank_forks
@@ -416,7 +415,7 @@ fn test_bank_forks_incremental_snapshot() {
         // Make a new bank and perform some transactions
         let bank = {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(parent, &Pubkey::default(), slot);
+            let bank = Bank::new_from_parent(parent, BankLeader::default(), slot);
             let bank_scheduler = bank_forks.write().unwrap().insert(bank);
             let bank = bank_scheduler.clone_without_scheduler();
 
@@ -654,7 +653,7 @@ fn test_snapshots_with_background_services() {
         {
             let bank = Bank::new_from_parent(
                 bank_forks.read().unwrap().get(slot - 1).unwrap(),
-                &Pubkey::default(),
+                BankLeader::default(),
                 slot,
             );
             let bank = bank_forks
@@ -814,7 +813,11 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         let bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
+            .insert(Bank::new_from_parent(
+                parent_bank,
+                BankLeader::default(),
+                slot,
+            ))
             .clone_without_scheduler();
 
         let key = solana_pubkey::new_rand();

@@ -28,8 +28,8 @@ pub(crate) fn upcoming_leader_tpu_vote_sockets(
     upcoming_leaders
         .into_iter()
         .dedup()
-        .filter_map(|leader_pubkey| {
-            cluster_info.lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(protocol))?
+        .filter_map(|leader| {
+            cluster_info.lookup_contact_info(&leader.id, |node| node.tpu_vote(protocol))?
         })
         // dedup again since leaders could potentially share the same tpu vote socket
         .dedup()
@@ -54,8 +54,6 @@ pub(crate) fn next_leaders(
 
     leader_pubkeys
         .iter()
-        .filter_map(|leader_pubkey| {
-            cluster_info.lookup_contact_info(leader_pubkey, &port_selector)?
-        })
+        .filter_map(|leader| cluster_info.lookup_contact_info(&leader.id, &port_selector)?)
         .collect()
 }

@@ -199,7 +199,7 @@ mod tests {
         crossbeam_channel::unbounded,
         solana_genesis_config::GenesisConfig,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        solana_pubkey::Pubkey,
+        solana_runtime::bank::BankLeader,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
     };
@@ -228,7 +228,7 @@ mod tests {
     fn test_recv_slot_entries_1() {
         let (genesis_config, bank0, tx) = setup_test();
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
+        let bank1 = Arc::new(Bank::new_from_parent(bank0, BankLeader::default(), 1));
         let (s, r) = unbounded();
         let mut last_hash = genesis_config.hash();
 
@@ -258,8 +258,12 @@ mod tests {
     fn test_recv_slot_entries_2() {
         let (genesis_config, bank0, tx) = setup_test();
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
-        let bank2 = Arc::new(Bank::new_from_parent(bank1.clone(), &Pubkey::default(), 2));
+        let bank1 = Arc::new(Bank::new_from_parent(bank0, BankLeader::default(), 1));
+        let bank2 = Arc::new(Bank::new_from_parent(
+            bank1.clone(),
+            BankLeader::default(),
+            2,
+        ));
         let (s, r) = unbounded();
 
         let mut last_hash = genesis_config.hash();

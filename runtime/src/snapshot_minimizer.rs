@@ -369,7 +369,7 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank,
+            bank::{Bank, BankLeader},
             genesis_utils::{self, create_genesis_config_with_leader},
             runtime_config::RuntimeConfig,
             snapshot_bank_utils,
@@ -603,7 +603,7 @@ mod tests {
         // write to multiple accounts and keep track of one, for minimization later
         let pubkey_to_keep = Pubkey::new_unique();
         let slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let bank = Bank::new_from_parent(bank, BankLeader::default(), slot);
         let bank = bank_forks
             .write()
             .unwrap()
