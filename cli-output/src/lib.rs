@@ -1,5 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
+pub mod cli_clientid;
 mod cli_output;
 pub mod cli_version;
 pub mod display;
