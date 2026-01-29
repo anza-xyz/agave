@@ -178,6 +178,8 @@ pub fn execute<'a, 'b: 'a>(
             feature = "sbpf-debugger"
         ))] {
             let use_jit = false;
+            #[cfg(feature = "sbpf-debugger")]
+            let debug_port = invoke_context.debug_port;
         } else {
             let use_jit = executable.get_compiled_program().is_some();
         }
@@ -229,6 +231,10 @@ pub fn execute<'a, 'b: 'a>(
         };
         create_vm_time.stop();
 
+        #[cfg(feature = "sbpf-debugger")]
+        {
+            vm.debug_port = debug_port;
+        }
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         vm.registers[1] = ebpf::MM_INPUT_START;
 
