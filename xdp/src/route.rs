@@ -1,11 +1,13 @@
 use {
     crate::netlink::{
-        netlink_get_neighbors, netlink_get_routes, MacAddress, NeighborEntry, RouteEntry,
+        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes, InterfaceInfo,
+        MacAddress, NeighborEntry, RouteEntry,
     },
     libc::{AF_INET, AF_INET6},
     std::{
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        sync::Arc,
     },
     thiserror::Error,
 };
@@ -20,6 +22,9 @@ pub enum RouteError {
 
     #[error("could not resolve MAC address")]
     MacResolutionError,
+
+    #[error("unknown interface index {0}")]
+    UnknownInterfaceIndex(u32),
 }
 
 #[derive(Debug)]
@@ -27,6 +32,7 @@ pub struct NextHop {
     pub mac_addr: Option<MacAddress>,
     pub ip_addr: IpAddr,
     pub if_index: u32,
+    pub preferred_src_ip: Option<Ipv4Addr>,
 }
 
 fn lookup_route<'a, I>(routes: I, dest: IpAddr) -> Option<&'a RouteEntry>
@@ -151,10 +157,59 @@ impl RouteTable {
     }
 }
 
+#[derive(Clone, Debug)]
+struct InterfaceTable {
+    interfaces: Vec<Arc<InterfaceInfo>>,
+}
+
+impl InterfaceTable {
+    pub fn new() -> Result<Self, io::Error> {
+        let interfaces = netlink_get_interfaces(AF_INET as u8)?
+            .into_iter()
+            .map(Arc::new)
+            .collect();
+        Ok(Self { interfaces })
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &Arc<InterfaceInfo>> {
+        self.interfaces.iter()
+    }
+
+    pub fn upsert(&mut self, new_interface: InterfaceInfo) -> bool {
+        if let Some(existing) = self
+            .interfaces
+            .iter_mut()
+            .find(|old| old.if_index == new_interface.if_index)
+        {
+            if existing.as_ref() != &new_interface {
+                *existing = Arc::new(new_interface);
+                return true;
+            }
+            return false;
+        }
+        self.interfaces.push(Arc::new(new_interface));
+        true
+    }
+
+    pub fn remove(&mut self, if_index: u32) -> bool {
+        if let Some(i) = self
+            .interfaces
+            .iter()
+            .position(|old| old.if_index == if_index)
+        {
+            self.interfaces.swap_remove(i);
+            return true;
+        }
+        false
+    }
+}
+
 #[derive(Clone)]
 pub struct Router {
     arp_table: ArpTable,
     route_table: RouteTable,
+    interface_table: InterfaceTable,
+    route_version: u64,
 }
 
 impl Router {
@@ -162,6 +217,8 @@ impl Router {
         Ok(Self {
             arp_table: ArpTable::new()?,
             route_table: RouteTable::new()?,
+            interface_table: InterfaceTable::new()?,
+            route_version: 0,
         })
     }
 
@@ -182,11 +239,16 @@ impl Router {
         };
 
         let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
+        let preferred_src_ip = match default_route.pref_src {
+            Some(IpAddr::V4(v4)) => Some(v4),
+            _ => None,
+        };
 
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
             if_index,
+            preferred_src_ip,
         })
     }
 
@@ -204,28 +266,82 @@ impl Router {
         };
 
         let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
+        let preferred_src_ip = match route.pref_src {
+            Some(IpAddr::V4(v4)) => Some(v4),
+            _ => None,
+        };
 
-        Ok(NextHop {
+        let next_hop = NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
             if_index,
-        })
+            preferred_src_ip,
+        };
+        Ok(next_hop)
+    }
+
+    pub fn route_version(&self) -> u64 {
+        self.route_version
+    }
+
+    fn bump_route_version(&mut self) {
+        self.route_version = self.route_version.wrapping_add(1);
+    }
+
+    pub fn interface_info(&self, if_index: u32) -> Result<&InterfaceInfo, RouteError> {
+        self.interface_table
+            .iter()
+            .find(|i| i.if_index == if_index)
+            .map(|i| i.as_ref())
+            .ok_or(RouteError::UnknownInterfaceIndex(if_index))
     }
 
     pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
-        self.route_table.upsert(new_route)
+        let updated = self.route_table.upsert(new_route);
+        if updated {
+            self.bump_route_version();
+        }
+        updated
     }
 
     pub fn remove_route(&mut self, new_route: RouteEntry) -> bool {
-        self.route_table.remove(new_route)
+        let updated = self.route_table.remove(new_route);
+        if updated {
+            self.bump_route_version();
+        }
+        updated
     }
 
     pub fn upsert_neighbor(&mut self, new_neighbor: NeighborEntry) -> bool {
-        self.arp_table.upsert(new_neighbor)
+        let updated = self.arp_table.upsert(new_neighbor);
+        if updated {
+            self.bump_route_version();
+        }
+        updated
     }
 
     pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
-        self.arp_table.remove(ip, if_index)
+        let updated = self.arp_table.remove(ip, if_index);
+        if updated {
+            self.bump_route_version();
+        }
+        updated
+    }
+
+    pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) -> bool {
+        let updated = self.interface_table.upsert(new_interface);
+        if updated {
+            self.bump_route_version();
+        }
+        updated
+    }
+
+    pub fn remove_interface(&mut self, if_index: u32) -> bool {
+        let updated = self.interface_table.remove(if_index);
+        if updated {
+            self.bump_route_version();
+        }
+        updated
     }
 }
 
@@ -284,7 +400,7 @@ mod tests {
     use {
         super::*,
         crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
-        libc::{AF_INET, NUD_REACHABLE},
+        libc::{AF_INET, ARPHRD_ETHER, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -398,5 +514,52 @@ mod tests {
         assert!(router.remove_neighbor(neigh_ip, 1));
         assert!(router.arp_table.neighbors.iter().all(|n| n != &entry));
         assert_eq!(router.arp_table.neighbors.len(), before_neigh_len);
+    }
+
+    #[test]
+    fn test_interface_table() {
+        let mut router = Router::new().unwrap();
+        let before_interface_len = router.interface_table.iter().len();
+
+        // Create a unique, private interface with a dummy ifindex
+        let test_if_index = 99999;
+        let interface = InterfaceInfo {
+            if_index: test_if_index,
+            if_name: "test_interface".to_string(),
+            dev_type: ARPHRD_ETHER,
+            gre_tunnel: None,
+        };
+
+        // Upsert new interface and check that it was inserted
+        assert!(router.upsert_interface(interface.clone()));
+        assert!(router
+            .interface_table
+            .iter()
+            .any(|i| i.as_ref() == &interface));
+        assert!(router.interface_table.iter().len() >= before_interface_len);
+
+        // Upsert same interface with no changes should return false
+        assert!(!router.upsert_interface(interface.clone()));
+
+        // Upsert with changes should return true
+        let mut modified_interface = interface.clone();
+        modified_interface.if_name = "test_interface_modified".to_string();
+        assert!(router.upsert_interface(modified_interface.clone()));
+        assert!(router
+            .interface_table
+            .iter()
+            .any(|i| i.as_ref() == &modified_interface));
+        assert!(router
+            .interface_table
+            .iter()
+            .all(|i| i.as_ref() != &interface));
+
+        // Delete interface and check that it was deleted
+        assert!(router.remove_interface(test_if_index));
+        assert!(router
+            .interface_table
+            .iter()
+            .all(|i| i.if_index != test_if_index));
+        assert_eq!(router.interface_table.iter().len(), before_interface_len);
     }
 }
