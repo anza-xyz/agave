@@ -292,6 +292,8 @@ impl ConnectionWorkersScheduler {
                 last_error = Some(error);
                 break;
             }
+
+            leader_updater.update()
         }
 
         workers.shutdown().await;
