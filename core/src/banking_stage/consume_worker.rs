@@ -348,11 +348,6 @@ pub(crate) mod external {
                     .map(|()| true);
             }
 
-            let BankPair {
-                root_bank,
-                working_bank: _,
-            } = self.sharable_banks.load();
-
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
@@ -394,7 +389,7 @@ pub(crate) mod external {
                     )
                 };
                 let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank, &root_bank);
+                    Self::translate_transaction_batch(&batch, bank);
 
                 // Enforce all or nothing on translation_results.
                 let execution_flags = ExecutionFlags {
@@ -510,7 +505,7 @@ pub(crate) mod external {
 
             // Do resolving next since we (currently) need resolved transactions for status checks.
             let (parsing_and_resolve_results, txs, max_ages) =
-                Self::translate_transaction_batch(&batch, &working_bank, &root_bank);
+                Self::translate_transaction_batch(&batch, &root_bank);
 
             if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
                 self.check_resolve_pubkeys(
@@ -959,13 +954,12 @@ pub(crate) mod external {
         /// Translate batch of transactions into usable
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
-            working_bank: &Bank,
-            root_bank: &Bank,
+            bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_static_instruction_limit = root_bank
+            let enable_static_instruction_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
-            let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -973,8 +967,7 @@ pub(crate) mod external {
             for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
-                    working_bank,
-                    root_bank,
+                    bank,
                     enable_static_instruction_limit,
                     transaction_account_lock_limit,
                 ) {
@@ -992,15 +985,13 @@ pub(crate) mod external {
 
         fn translate_transaction(
             transaction_ptr: TransactionPtr,
-            working_bank: &Bank,
-            root_bank: &Bank,
+            bank: &Bank,
             enable_static_instruction_limit: bool,
             transaction_account_lock_limit: usize,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
-                working_bank,
-                root_bank,
+                bank,
                 enable_static_instruction_limit,
                 transaction_account_lock_limit,
             )
@@ -1008,7 +999,7 @@ pub(crate) mod external {
                 (
                     view,
                     MaxAge {
-                        sanitized_epoch: root_bank.epoch(),
+                        sanitized_epoch: bank.epoch(),
                         alt_invalidation_slot: deactivation_slot,
                     },
                 )
@@ -1183,7 +1174,6 @@ pub(crate) mod external {
                 .map(|_| {
                     translate_to_runtime_view(
                         &simple_tx[..],
-                        &bank,
                         &bank,
                         true,
                         bank.get_transaction_account_lock_limit(),
