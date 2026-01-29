@@ -369,12 +369,9 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank,
-            genesis_utils::{self, create_genesis_config_with_leader},
-            runtime_config::RuntimeConfig,
-            snapshot_bank_utils,
-            snapshot_minimizer::SnapshotMinimizer,
-            snapshot_utils,
+            bank::Bank, genesis_utils::create_genesis_config_with_leader,
+            runtime_config::RuntimeConfig, snapshot_bank_utils,
+            snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
@@ -382,6 +379,7 @@ mod tests {
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_genesis_config::create_genesis_config,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_sdk_ids::bpf_loader_upgradeable,
         solana_signer::Signer,
@@ -596,14 +594,21 @@ mod tests {
     #[test_case(false)]
     #[test_case(true)]
     fn test_minimize_and_recalculate_accounts_lt_hash(should_recalculate_accounts_lt_hash: bool) {
-        let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
+        let bootstrap_validator_pubkey = solana_pubkey::new_rand();
+        let bootstrap_validator_stake_lamports = LAMPORTS_PER_SOL;
+        let genesis_config_info = create_genesis_config_with_leader(
+            123_456_789_000_000_000,
+            &bootstrap_validator_pubkey,
+            bootstrap_validator_stake_lamports,
+        );
+
         let (bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
 
         // write to multiple accounts and keep track of one, for minimization later
         let pubkey_to_keep = Pubkey::new_unique();
         let slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let bank = Bank::new_from_parent(bank.clone(), bank.leader_id(), slot);
         let bank = bank_forks
             .write()
             .unwrap()
@@ -661,6 +666,7 @@ mod tests {
             &genesis_config_info.genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,

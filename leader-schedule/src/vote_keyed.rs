@@ -95,6 +95,10 @@ impl LeaderSchedule {
         self.slot_leaders.len()
     }
 
+    pub fn get_slot_leader_at_index(&self, index: usize) -> SlotLeader {
+        self.slot_leaders[index % self.num_slots()]
+    }
+
     #[cfg(test)]
     pub fn get_vote_key_at_slot_index(&self, index: usize) -> &Pubkey {
         &self.slot_leaders[index % self.num_slots()].vote_address
