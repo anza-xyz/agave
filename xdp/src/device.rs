@@ -2,11 +2,11 @@ use {
     crate::{
         netlink::MacAddress,
         route::Router,
-        umem::{Frame, FrameOffset},
+        umem::{Frame, FrameOffset, SliceUmem, Umem},
     },
     libc::{
-        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE,
-        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM,
+        ifreq, mmap, munmap, sendto, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET,
+        IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, XDP_RING_NEED_WAKEUP,
     },
     std::{
         ffi::{c_char, CStr, CString},
@@ -289,6 +289,14 @@ impl RingConsumer {
         Some(index)
     }
 
+    pub fn consume_till(&mut self, offset: u32) {
+        self.cached_consumer = self.cached_consumer.wrapping_add(offset);
+    }
+
+    pub fn get_index(&self) -> u32 {
+        self.cached_consumer
+    }
+
     pub fn commit(&mut self) {
         unsafe { (*self.consumer).store(self.cached_consumer, Ordering::Release) };
     }
@@ -351,11 +359,141 @@ impl RingProducer {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
-pub(crate) struct XdpDesc {
-    pub(crate) addr: u64,
-    pub(crate) len: u32,
-    pub(crate) options: u32,
+#[derive(Debug, Clone, Copy)]
+pub struct XdpDesc {
+    pub addr: u64,
+    pub len: u32,
+    pub options: u32,
+}
+
+pub struct TxRing<F: Frame> {
+    mmap: RingMmap<XdpDesc>,
+    producer: RingProducer,
+    size: u32,
+    fd: RawFd,
+    _frame: PhantomData<F>,
+}
+
+#[derive(Debug)]
+pub struct RingFull<F: Frame>(pub F);
+
+impl<F: Frame> TxRing<F> {
+    pub(crate) fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
+        debug_assert!(size.is_power_of_two());
+        Self {
+            producer: RingProducer::new(mmap.producer, mmap.consumer, size),
+            mmap,
+            size,
+            fd,
+            _frame: PhantomData,
+        }
+    }
+
+    pub fn write(&mut self, frame: F, options: u32) -> Result<(), RingFull<F>> {
+        let Some(index) = self.producer.produce() else {
+            return Err(RingFull(frame));
+        };
+        let index = index & self.size.saturating_sub(1);
+        unsafe {
+            let desc = self.mmap.desc.add(index as usize);
+            desc.write(XdpDesc {
+                addr: frame.offset().0 as u64,
+                len: frame.len() as u32,
+                options,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn needs_wakeup(&self) -> bool {
+        unsafe { (*self.mmap.flags).load(Ordering::Relaxed) & XDP_RING_NEED_WAKEUP != 0 }
+    }
+
+    pub fn wake(&self) -> Result<u64, io::Error> {
+        let result = unsafe { sendto(self.fd, ptr::null(), 0, libc::MSG_DONTWAIT, ptr::null(), 0) };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(result as u64)
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.size as usize
+    }
+
+    pub fn available(&self) -> usize {
+        self.producer.available() as usize
+    }
+
+    pub fn commit(&mut self) {
+        self.producer.commit();
+    }
+
+    pub fn sync(&mut self, commit: bool) {
+        self.producer.sync(commit);
+    }
+}
+
+pub struct RxRing {
+    #[allow(dead_code)]
+    mmap: RingMmap<XdpDesc>,
+    consumer: RingConsumer,
+    size: u32,
+    #[allow(dead_code)]
+    fd: RawFd,
+}
+
+impl RxRing {
+    pub(crate) fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
+        debug_assert!(size.is_power_of_two());
+        Self {
+            consumer: RingConsumer::new(mmap.producer, mmap.consumer),
+            mmap,
+            size,
+            fd,
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.size as usize
+    }
+
+    pub fn available(&self) -> usize {
+        self.consumer.available() as usize
+    }
+
+    pub fn commit(&mut self) {
+        self.consumer.commit();
+    }
+
+    pub fn sync(&mut self, commit: bool) {
+        self.consumer.sync(commit);
+    }
+
+    pub fn read(&mut self) -> Option<XdpDesc> {
+        let index = self.consumer.consume()? & self.size.saturating_sub(1);
+        let desc = unsafe { ptr::read(self.mmap.desc.add(index as usize)) };
+        Some(desc)
+    }
+
+    pub fn read_batch<const N: usize>(&mut self, out: &mut [XdpDesc; N]) -> Option<usize> {
+        self.consumer.sync(true);
+
+        let avail = self.consumer.available() as usize;
+
+        let to_read = core::cmp::min(N, avail);
+        let idx = self.consumer.get_index() as usize;
+
+        for (i, slot) in out.iter_mut().enumerate().take(to_read) {
+            let ring_index = idx.wrapping_add(i) & (self.size.saturating_sub(1) as usize);
+            *slot = unsafe { *self.mmap.desc.add(ring_index) };
+        }
+
+        self.consumer.consume_till(to_read as u32);
+        self.consumer.sync(true);
+
+        Some(to_read)
+    }
 }
 
 pub struct TxCompletionRing {
@@ -393,7 +531,7 @@ pub struct RxFillRing<F: Frame> {
     mmap: RingMmap<u64>,
     producer: RingProducer,
     size: u32,
-    _fd: RawFd,
+    fd: RawFd,
     _frame: PhantomData<F>,
 }
 
@@ -404,7 +542,7 @@ impl<F: Frame> RxFillRing<F> {
             producer: RingProducer::new(mmap.producer, mmap.consumer, size),
             mmap,
             size,
-            _fd: fd,
+            fd,
             _frame: PhantomData,
         }
     }
@@ -429,6 +567,48 @@ impl<F: Frame> RxFillRing<F> {
 
     pub fn sync(&mut self, commit: bool) {
         self.producer.sync(commit);
+    }
+
+    pub fn available(&self) -> usize {
+        self.producer.available() as usize
+    }
+
+    pub fn needs_wakeup(&self) -> bool {
+        unsafe { (*self.mmap.flags).load(Ordering::Relaxed) & XDP_RING_NEED_WAKEUP != 0 }
+    }
+
+    pub fn wake(&self) -> Result<u64, io::Error> {
+        let result = unsafe { sendto(self.fd, ptr::null(), 0, libc::MSG_DONTWAIT, ptr::null(), 0) };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(result as u64)
+    }
+
+    pub fn write_batch<'a>(
+        &mut self,
+        umem: &mut SliceUmem<'a>,
+        frames: &[FrameOffset],
+    ) -> Result<usize, io::Error> {
+        let n = frames.len() as u32;
+        let mask = self.size.saturating_sub(1);
+        let start_idx = self.producer.cached_producer;
+
+        for i in 0..frames.len() {
+            let Some(frame) = umem.reserve() else {
+                return Err(io::Error::other("Failed to reserve frame for RX fill ring"));
+            };
+            let ring_idx = (start_idx.wrapping_add(i as u32) & mask) as usize;
+            unsafe {
+                *self.mmap.desc.add(ring_idx) = frame.offset().0 as u64;
+            }
+        }
+
+        self.producer.cached_producer = start_idx.wrapping_add(n);
+        self.producer.cached_consumer = unsafe { (*self.mmap.consumer).load(Ordering::Acquire) };
+        self.producer.commit();
+
+        Ok(n as usize)
     }
 }
 
