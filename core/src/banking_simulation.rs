@@ -816,6 +816,7 @@ impl BankingSimulator {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let (completed_block_sender, _completed_block_receiver) = unbounded();
         let shred_version = compute_shred_version(
             &genesis_config.hash(),
             Some(&bank_forks.read().unwrap().root_bank().hard_forks()),
@@ -848,6 +849,7 @@ impl BankingSimulator {
             bank_forks.clone(),
             shred_version,
             None,
+            completed_block_sender,
         );
 
         info!("Start banking stage!...");

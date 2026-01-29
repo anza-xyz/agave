@@ -21,6 +21,7 @@ agave-unstable-api = []
 agave-geyser-plugin-interface = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-votor = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 clap = { workspace = true }
 console = { workspace = true }

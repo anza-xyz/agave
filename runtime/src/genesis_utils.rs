@@ -3,19 +3,24 @@ use solana_stake_interface::config::Config as StakeConfig;
 use {
     crate::stake_utils,
     agave_feature_set::{vote_state_v4, FeatureSet, FEATURE_NAMES},
-    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+    agave_votor_messages::{
+        self,
+        consensus_message::{Certificate, CertificateType, BLS_KEYPAIR_DERIVE_SEED},
+        migration::GENESIS_CERTIFICATE_ACCOUNT,
+    },
     bincode::serialize,
     log::*,
     solana_account::{state_traits::StateMut, Account, AccountSharedData, ReadableAccount},
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-        Pubkey as BLSPubkey,
+        Pubkey as BLSPubkey, Signature as BLSSignature,
     },
     solana_cluster_type::ClusterType,
     solana_config_interface::state::ConfigKeys,
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
@@ -159,7 +164,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     } else {
         None
     };
-    let genesis_config = create_genesis_config_with_leader_ex(
+    let mut genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         &validator_pubkey,
@@ -174,6 +179,10 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         feature_set,
         vec![],
     );
+
+    if is_alpenglow {
+        activate_all_features_alpenglow(&mut genesis_config);
+    }
 
     let mut genesis_config_info = GenesisConfigInfo {
         genesis_config,
@@ -301,6 +310,21 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
 
 pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<true>(genesis_config);
+
+    // This is a dev cluster with alpenglow enabled at genesis. We don't want to test the migration pathway
+    // so we add a fake genesis certificate.
+    let cert = Certificate {
+        cert_type: CertificateType::Genesis(0, Hash::default()),
+        signature: BLSSignature::default(),
+        bitmap: Vec::default(),
+    };
+    let cert_size = bincode::serialized_size(&cert).unwrap();
+    let lamports = Rent::default().minimum_balance(cert_size as usize);
+    let certificate_account = Account::new_data(lamports, &cert, &system_program::ID).unwrap();
+
+    genesis_config
+        .accounts
+        .insert(*GENESIS_CERTIFICATE_ACCOUNT, certificate_account);
 }
 
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {

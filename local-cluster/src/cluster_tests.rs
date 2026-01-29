@@ -5,6 +5,7 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
+    agave_votor_messages::consensus_message::ConsensusMessage,
     rand::{rng, Rng},
     rayon::{prelude::*, ThreadPool},
     solana_client::connection_cache::ConnectionCache,
@@ -29,6 +30,11 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
+    solana_streamer::{
+        nonblocking::simple_qos::SimpleQosConfig,
+        quic::{spawn_simple_qos_server, QuicStreamerConfig},
+        streamer::StakedNodes,
+    },
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
@@ -39,7 +45,7 @@ use {
     solana_vote_program::vote_state::TowerSync,
     std::{
         collections::{HashMap, HashSet, VecDeque},
-        net::{SocketAddr, TcpListener},
+        net::{SocketAddr, TcpListener, UdpSocket},
         path::Path,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -48,6 +54,7 @@ use {
         thread::{sleep, JoinHandle},
         time::{Duration, Instant},
     },
+    tokio_util::sync::CancellationToken,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -378,41 +385,209 @@ pub fn check_min_slot_is_rooted(
     }
 }
 
-pub fn check_for_new_roots(
-    num_new_roots: usize,
+fn check_for_new_slots_with_commitment(
+    num_new_slots: usize,
     contact_infos: &[ContactInfo],
     connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
+    commitment: CommitmentConfig,
 ) {
-    let mut roots = vec![HashSet::new(); contact_infos.len()];
+    let mut slots = vec![HashSet::new(); contact_infos.len()];
     let mut done = false;
     let mut last_print = Instant::now();
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
-    let mut num_roots_map = HashMap::new();
+    let mut num_slots_map = HashMap::new();
     while !done {
         assert!(loop_start.elapsed() < loop_timeout);
 
         for (i, ingress_node) in contact_infos.iter().enumerate() {
             let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            let root_slot = client
+            let slot = client
                 .rpc_client()
-                .get_slot_with_commitment(CommitmentConfig::finalized())
+                .get_slot_with_commitment(commitment)
                 .unwrap_or(0);
-            roots[i].insert(root_slot);
-            num_roots_map.insert(*ingress_node.pubkey(), roots[i].len());
-            let num_roots = roots.iter().map(|r| r.len()).min().unwrap();
-            done = num_roots >= num_new_roots;
+            slots[i].insert(slot);
+            num_slots_map.insert(*ingress_node.pubkey(), slots[i].len());
+            let num_slots = slots.iter().map(|r| r.len()).min().unwrap();
+            done = num_slots >= num_new_slots;
             if done || last_print.elapsed().as_secs() > 3 {
                 info!(
-                    "{test_name} waiting for {num_new_roots} new roots.. observed: \
-                     {num_roots_map:?}"
+                    "{test_name} waiting for {num_new_slots} new {} slots .. observed: \
+                     {num_slots_map:?}",
+                    commitment.commitment,
                 );
                 last_print = Instant::now();
             }
         }
         sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
     }
+}
+
+pub fn check_for_new_roots(
+    num_new_roots: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+) {
+    check_for_new_slots_with_commitment(
+        num_new_roots,
+        contact_infos,
+        connection_cache,
+        test_name,
+        CommitmentConfig::finalized(),
+    );
+}
+
+pub fn check_for_new_processed(
+    num_new_processed: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+) {
+    check_for_new_slots_with_commitment(
+        num_new_processed,
+        contact_infos,
+        connection_cache,
+        test_name,
+        CommitmentConfig::processed(),
+    );
+}
+
+/// Start a QUIC streamer to listen for votes and certificates.
+/// Returns a cancellation token, the server thread handle, and a receiver for packet batches.
+pub fn start_quic_streamer_to_listen_for_votes_and_certs(
+    vote_listener_socket: UdpSocket,
+    validator_keys: &[Arc<Keypair>],
+    node_stakes: &[u64],
+) -> (
+    CancellationToken,
+    JoinHandle<()>,
+    crossbeam_channel::Receiver<solana_streamer::packet::PacketBatch>,
+) {
+    let (sender, receiver) = crossbeam_channel::unbounded();
+    let cancel = CancellationToken::new();
+    let stakes = validator_keys
+        .iter()
+        .zip(node_stakes)
+        .map(|(keypair, stake)| (keypair.pubkey(), *stake))
+        .collect();
+    let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
+        Arc::new(stakes),
+        HashMap::<Pubkey, u64>::default(), // overrides
+    )));
+    let result = spawn_simple_qos_server(
+        "solAlpenglowTest",
+        "alpenglow_local_cluster_test",
+        [vote_listener_socket],
+        &Keypair::new(),
+        sender,
+        staked_nodes,
+        QuicStreamerConfig::default(),
+        SimpleQosConfig::default(),
+        cancel.clone(),
+    )
+    .unwrap();
+    (cancel, result.thread, receiver)
+}
+
+/// Check that all nodes in the cluster are producing notarized votes.
+pub fn check_for_new_notarized_votes(
+    num_new_votes: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+    vote_listener_socket: UdpSocket,
+    validator_keys: &[Arc<Keypair>],
+    node_stakes: &[u64],
+) {
+    let loop_start = Instant::now();
+    let loop_timeout = Duration::from_secs(180);
+    // First get the current max processed slot.
+    let Some(current_slot) = contact_infos
+        .iter()
+        .map(|ingress_node| {
+            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+            let slot = client
+                .rpc_client()
+                .get_slot_with_commitment(CommitmentConfig::processed())
+                .unwrap_or(0);
+            slot
+        })
+        .max()
+    else {
+        panic!("No nodes found to get current slot");
+    };
+
+    // Clone data for thread
+    let contact_infos_owned: Vec<ContactInfo> = contact_infos.to_vec();
+    let test_name_owned = test_name.to_string();
+
+    let (cancel, quic_server_thread, receiver) = start_quic_streamer_to_listen_for_votes_and_certs(
+        vote_listener_socket,
+        validator_keys,
+        node_stakes,
+    );
+
+    // Now start vote listener and wait for new notarized votes.
+    let vote_listener = std::thread::spawn({
+        let mut num_new_notarized_votes = contact_infos_owned.iter().map(|_| 0).collect::<Vec<_>>();
+        let mut last_notarized = contact_infos_owned
+            .iter()
+            .map(|_| current_slot)
+            .collect::<Vec<_>>();
+        let mut last_print = Instant::now();
+        let mut done = false;
+
+        move || {
+            while !done {
+                assert!(loop_start.elapsed() < loop_timeout);
+                let Ok(packet_batch) = receiver.recv_timeout(Duration::from_millis(100)) else {
+                    continue;
+                };
+                for packet in packet_batch.iter() {
+                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
+                    else {
+                        continue;
+                    };
+                    let vote = vote_message.vote;
+                    if !vote.is_notarization() {
+                        continue;
+                    }
+                    let rank = vote_message.rank;
+                    if rank >= contact_infos_owned.len() as u16 {
+                        warn!(
+                            "Received vote with rank {} which is greater than number of nodes {}",
+                            rank,
+                            contact_infos_owned.len()
+                        );
+                        continue;
+                    }
+                    let slot = vote.slot();
+                    if slot <= last_notarized[rank as usize] {
+                        continue;
+                    }
+                    last_notarized[rank as usize] = slot;
+                    num_new_notarized_votes[rank as usize] += 1;
+                    done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
+                    if done || last_print.elapsed().as_secs() > 3 {
+                        info!(
+                            "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
+                             observed: {num_new_notarized_votes:?}"
+                        );
+                        last_print = Instant::now();
+                    }
+                }
+                if done {
+                    cancel.cancel();
+                }
+            }
+        }
+    });
+    vote_listener.join().expect("Vote listener thread panicked");
+    quic_server_thread
+        .join()
+        .expect("QUIC server thread panicked");
 }
 
 pub fn check_no_new_roots(
