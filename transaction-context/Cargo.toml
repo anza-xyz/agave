@@ -27,13 +27,13 @@ solana-instructions-sysvar = { workspace = true }
 solana-pubkey = { workspace = true }
 
 [target.'cfg(not(any(target_arch = "sbf", target_arch = "bpf")))'.dependencies]
+bincode = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-bincode = { workspace = true, optional = true }
 solana-rent = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, optional = true }
-solana-sbpf = { workspace = true }
 
 [dev-dependencies]
 solana-account-info = { workspace = true }
