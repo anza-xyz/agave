@@ -29,6 +29,8 @@ pub enum KeyUpdaterType {
     Forward,
     /// For the RPC service
     RpcService,
+    /// For QUIC voting
+    VoteClient,
 }
 
 /// Responsible for managing the updaters for identity key change

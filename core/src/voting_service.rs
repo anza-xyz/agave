@@ -8,20 +8,45 @@ use {
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
-    solana_connection_cache::client_connection::ClientConnection,
+    solana_connection_cache::{client_connection::ClientConnection, connection_cache::Protocol},
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
+    solana_tls_utils::NotifyKeyUpdate,
+    solana_tpu_client_next::{Client, TransactionSender},
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
+        error::Error,
         net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
     },
     thiserror::Error,
 };
+
+pub(crate) const QUIC_UPCOMING_LEADER_FANOUT_LEADERS: usize = 2;
+
+// Attempt to send our vote transaction to the leaders for the next few
+// slots. From the current slot to the forwarding slot offset
+// (inclusive).
+const UDP_UPCOMING_LEADER_FANOUT_SLOTS: u64 =
+    FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET.saturating_add(1);
+#[cfg(test)]
+static_assertions::const_assert_eq!(UDP_UPCOMING_LEADER_FANOUT_SLOTS, 3);
+
+pub struct QuicVoteSender {
+    pub sender: TransactionSender,
+    pub client: Client,
+}
+
+impl NotifyKeyUpdate for QuicVoteSender {
+    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn Error>> {
+        self.client.update_identity(key).map_err(|e| e.into())
+    }
+}
 
 pub enum VoteOp {
     PushVote {
@@ -86,7 +111,8 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
-        connection_cache: Arc<ConnectionCache>,
+        udp_connection_cache: Arc<ConnectionCache>,
+        quic_sender: Option<Arc<QuicVoteSender>>,
         alpenglow_socket: Option<UdpSocket>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
@@ -117,7 +143,8 @@ impl VotingService {
                             &poh_recorder,
                             tower_storage.as_ref(),
                             vote_op,
-                            connection_cache.clone(),
+                            &udp_connection_cache,
+                            &quic_sender,
                         );
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = vote_slot {
@@ -141,7 +168,8 @@ impl VotingService {
         poh_recorder: &RwLock<PohRecorder>,
         tower_storage: &dyn TowerStorage,
         vote_op: VoteOp,
-        connection_cache: Arc<ConnectionCache>,
+        udp_connection_cache: &Arc<ConnectionCache>,
+        quic_sender: &Option<Arc<QuicVoteSender>>,
     ) {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
@@ -153,32 +181,38 @@ impl VotingService {
             trace!("{measure}");
         }
 
-        // Attempt to send our vote transaction to the leaders for the next few
-        // slots. From the current slot to the forwarding slot offset
-        // (inclusive).
-        const UPCOMING_LEADER_FANOUT_SLOTS: u64 =
-            FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET.saturating_add(1);
-        #[cfg(test)]
-        static_assertions::const_assert_eq!(UPCOMING_LEADER_FANOUT_SLOTS, 3);
-        let upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
+        let udp_upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
             cluster_info,
             poh_recorder,
-            UPCOMING_LEADER_FANOUT_SLOTS,
-            connection_cache.protocol(),
+            UDP_UPCOMING_LEADER_FANOUT_SLOTS,
+            Protocol::UDP,
         );
 
-        if !upcoming_leader_sockets.is_empty() {
-            for tpu_vote_socket in upcoming_leader_sockets {
+        if !udp_upcoming_leader_sockets.is_empty() {
+            for tpu_vote_socket in udp_upcoming_leader_sockets {
                 let _ = send_vote_transaction(
                     cluster_info,
                     vote_op.tx(),
                     Some(tpu_vote_socket),
-                    &connection_cache,
+                    udp_connection_cache,
                 );
             }
         } else {
             // Send to our own tpu vote socket if we cannot find a leader to send to
-            let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, &connection_cache);
+            let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, udp_connection_cache);
+        }
+
+        if let Some(quic_sender) = quic_sender {
+            if let Ok(serialized) = serialize(vote_op.tx()) {
+                if let Err(e) = quic_sender
+                    .sender
+                    .try_send_transactions_in_batch(vec![serialized])
+                {
+                    warn!("Error sending vote transaction with QUIC: {e}");
+                }
+            } else {
+                warn!("Failed to serialize vote");
+            }
         }
 
         match vote_op {
