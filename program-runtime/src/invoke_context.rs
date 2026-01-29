@@ -203,6 +203,9 @@ pub struct InvokeContext<'a, 'ix_data> {
     pub syscall_context: Vec<Option<SyscallContext>>,
     /// Pairs of index in TX instruction trace and VM register trace
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
+    /// Debug port to use for this executing transaction.
+    #[cfg(feature = "sbpf-debugger")]
+    pub debug_port: Option<u16>,
 }
 
 impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
@@ -227,6 +230,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             register_traces: Vec::new(),
+            #[cfg(feature = "sbpf-debugger")]
+            debug_port: None,
         }
     }
 
