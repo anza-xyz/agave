@@ -15,7 +15,7 @@ use {
     solana_streamer::{recvmmsg::recv_mmsg, sendmmsg::batch_send},
     std::{
         collections::HashMap,
-        iter::once,
+        iter::repeat_n,
         net::{SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -38,6 +38,9 @@ use {
 
 /// number of voting rounds
 const NUM_VOTE_ROUNDS: Slot = 4;
+
+// margin of time for vote collection. We have observed some votes coming very late, thus large margin
+const MARGIN_SLOTS: Slot = 4;
 
 /// rough upper bound of number of testnet validators to avoid allocations
 const NUM_TESTNET_VALIDATORS: usize = 1024 * 3;
@@ -541,7 +544,7 @@ impl MockAlpenglowConsensus {
             return false; // no config is available => test can not run
         };
         let interval = config.test_interval_slots as u64;
-        if interval <= NUM_VOTE_ROUNDS + 1 {
+        if interval <= NUM_VOTE_ROUNDS + MARGIN_SLOTS * 2 + 1 {
             trace!("Alpenglow voting is disabled",);
             return false;
         }
@@ -594,13 +597,16 @@ impl MockAlpenglowConsensus {
         state: Arc<StateArray>,
     ) {
         for start_slot in slot_receiver.iter() {
+            // wait several slots to ensure slow nodes are ready to participate too
+            std::thread::sleep(ONE_SLOT * MARGIN_SLOTS as u32);
+
             let slot_range = start_slot..(start_slot + NUM_VOTE_ROUNDS);
-            let vote_slots = slot_range.clone().map(Some).chain(once(None));
-            let report_slots = once(None).chain(slot_range.map(Some));
+            let vote_slots = slot_range
+                .clone()
+                .map(Some)
+                .chain(repeat_n(None, MARGIN_SLOTS as usize));
+            let report_slots = repeat_n(None, MARGIN_SLOTS as usize).chain(slot_range.map(Some));
             for (vote_slot, report_slot) in vote_slots.zip(report_slots) {
-                // we get activated 1 slot in advance to capture votes coming
-                // earlier than we have finished replay
-                std::thread::sleep(ONE_SLOT);
                 if let Some(slot) = vote_slot {
                     trace!("Starting voting in slot {slot}");
                     let _ = command_sender.send(SendCommand::Notarize(slot));
@@ -621,6 +627,7 @@ impl MockAlpenglowConsensus {
                     };
                     report_collected_votes(peers, total_staked, slot);
                 }
+                std::thread::sleep(ONE_SLOT);
             }
         }
     }
