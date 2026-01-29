@@ -2911,24 +2911,42 @@ pub mod rpc_minimal {
             options: Option<RpcLeaderScheduleConfigWrapper>,
             config: Option<RpcLeaderScheduleConfig>,
         ) -> Result<Option<RpcLeaderSchedule>> {
-            let (slot, maybe_config) = options.map(|options| options.unzip()).unwrap_or_default();
+            let (slot, maybe_config) = options.map(|o| o.unzip()).unwrap_or_default();
             let config = maybe_config.or(config).unwrap_or_default();
 
-            if let Some(ref identity) = config.identity {
-                let _ = verify_pubkey(identity)?;
+            if config.identity.is_some() && config.vote_accounts.is_some() {
+                return Err(Error::invalid_params(
+                    "Cannot specify both 'identity' and 'voteAccounts'".to_string(),
+                ));
             }
+
+            if let Some(ref identity) = config.identity {
+                verify_pubkey(identity)?;
+            }
+
+            let allowed_vote_accounts: Option<HashSet<Pubkey>> =
+                if let Some(ref vote_accounts) = config.vote_accounts {
+                    let mut set = HashSet::new();
+                    for vote_str in vote_accounts {
+                        let vote_pubkey = verify_pubkey(vote_str)?;
+                        set.insert(vote_pubkey);
+                    }
+                    Some(set)
+                } else {
+                    None
+                };
 
             let bank = meta.bank(config.commitment);
             let slot = slot.unwrap_or_else(|| bank.slot());
             let epoch = bank.epoch_schedule().get_epoch(slot);
 
-            debug!("get_leader_schedule rpc request received: {slot:?}");
+            debug!("get_leader_schedule rpc request received: slot={slot}, epoch={epoch}");
 
             Ok(meta
                 .leader_schedule_cache
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
-                    let mut schedule_by_identity =
+                    let mut schedule =
                         solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule
                                 .get_slot_leaders()
@@ -2936,10 +2954,29 @@ pub mod rpc_minimal {
                                 .map(|slot_leader| &slot_leader.id)
                                 .enumerate(),
                         );
+
+                    // Filter by identity or by vote accounts
                     if let Some(identity) = config.identity {
-                        schedule_by_identity.retain(|k, _| *k == identity);
+                        schedule.retain(|k, _| *k == identity);
+                    } else if let Some(ref vote_accounts_filter) = allowed_vote_accounts {
+                        // Build vote account -> identity mapping from cached schedule
+                        let vote_to_identity =
+                            solana_ledger::leader_schedule_utils::vote_account_to_identity_map(
+                                leader_schedule.as_ref(),
+                            );
+
+                        // Convert vote accounts to identities using cached mapping
+                        let allowed_identities: HashSet<String> = vote_accounts_filter
+                            .iter()
+                            .filter_map(|vote_pubkey| {
+                                vote_to_identity.get(vote_pubkey).map(|id| id.to_string())
+                            })
+                            .collect();
+
+                        schedule.retain(|k, _| allowed_identities.contains(k));
                     }
-                    schedule_by_identity
+
+                    schedule
                 }))
         }
     }
@@ -5504,6 +5541,67 @@ pub mod tests {
             parse_success_result(rpc.handle_request_sync(request));
         let expected = Some(HashMap::default());
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_leader_schedule_by_vote_accounts() {
+        let rpc = RpcHandler::start();
+
+        let leader_vote_pubkey = rpc.leader_vote_keypair.pubkey();
+        let leader_identity = rpc.leader_pubkey();
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "voteAccounts": [leader_vote_pubkey.to_string()]
+            }])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(result.is_some());
+        let schedule = result.unwrap();
+        assert!(schedule.contains_key(&leader_identity.to_string()));
+        assert_eq!(schedule.len(), 1);
+        assert_eq!(
+            schedule[&leader_identity.to_string()],
+            Vec::from_iter(0..=128)
+        );
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "identity": leader_identity.to_string(),
+                "voteAccounts": [leader_vote_pubkey.to_string()]
+            }])),
+        );
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            ErrorCode::InvalidParams.code(),
+            String::from("Cannot specify both 'identity' and 'voteAccounts'"),
+        );
+        assert_eq!(response, expected);
+
+        let fake_vote_keypair = Keypair::new();
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "voteAccounts": [fake_vote_keypair.pubkey().to_string()]
+            }])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(result.is_some());
+        let schedule = result.unwrap();
+        assert!(schedule.is_empty());
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([{
+                "voteAccounts": ["invalid_pubkey"]
+            }])),
+        );
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(response.0, ErrorCode::InvalidParams.code());
     }
 
     #[test]
