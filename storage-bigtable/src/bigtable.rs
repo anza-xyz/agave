@@ -973,7 +973,7 @@ mod tests {
         solana_storage_proto::convert::generated,
         solana_system_transaction as system_transaction,
         solana_transaction::versioned::VersionedTransaction,
-        solana_transaction_context::TransactionReturnData,
+        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_status::{
             ConfirmedBlock, TransactionStatusMeta, TransactionWithStatusMeta,
             VersionedTransactionWithStatusMeta,

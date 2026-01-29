@@ -680,7 +680,7 @@ mod tests {
         solana_system_transaction::transfer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::{
-            TransactionContext, transaction_accounts::KeyedAccountSharedData,
+            transaction::TransactionContext, transaction_accounts::KeyedAccountSharedData,
         },
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{

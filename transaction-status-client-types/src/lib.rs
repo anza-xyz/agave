@@ -21,7 +21,7 @@ use {
     solana_reward_info::RewardType,
     solana_signature::Signature,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
-    solana_transaction_context::TransactionReturnData,
+    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult},
     thiserror::Error,
 };

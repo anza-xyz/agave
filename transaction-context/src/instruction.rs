@@ -1,7 +1,8 @@
 use {
     crate::{
-        IndexOfAccount, InstructionAccount, TransactionContext,
-        instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount,
+        instruction_accounts::{BorrowedInstructionAccount, InstructionAccount},
+        transaction::TransactionContext,
         vm_addresses::{
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
             GUEST_REGION_SIZE,
@@ -43,6 +44,7 @@ impl Default for InstructionFrame {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl InstructionFrame {
     pub fn configure_vm_slices(
         &mut self,
