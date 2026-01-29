@@ -531,7 +531,7 @@ impl SendTransactionService {
 mod test {
     use {
         super::*,
-        crate::test_utils::{create_client_for_tests, Stoppable},
+        crate::test_utils::create_client_for_tests,
         crossbeam_channel::{bounded, unbounded},
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
@@ -568,7 +568,7 @@ mod test {
 
         drop(sender);
         send_transaction_service.join().unwrap();
-        client.stop();
+        client.cancel();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -607,7 +607,7 @@ mod test {
 
         thread::spawn(move || {
             exit.store(true, Ordering::Relaxed);
-            client.stop();
+            client.cancel();
         });
 
         let mut option = Ok(());
@@ -896,7 +896,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.stop();
+        client.cancel();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1228,6 +1228,6 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.stop();
+        client.cancel();
     }
 }

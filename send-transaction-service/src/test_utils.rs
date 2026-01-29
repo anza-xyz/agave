@@ -33,16 +33,6 @@ pub fn create_client_for_tests(
     )
 }
 
-pub trait Stoppable {
-    fn stop(&self);
-}
-
-impl Stoppable for TpuClientNextClient {
-    fn stop(&self) {
-        self.cancel();
-    }
-}
-
 // Define type alias to simplify definition of test functions.
-pub trait ClientWithCreator: TransactionClient + Stoppable + Send + Clone + 'static {}
-impl<T> ClientWithCreator for T where T: TransactionClient + Stoppable + Send + Clone + 'static {}
+pub trait ClientWithCreator: TransactionClient + Send + Clone + 'static {}
+impl<T> ClientWithCreator for T where T: TransactionClient + Send + Clone + 'static {}
