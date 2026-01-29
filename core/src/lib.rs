@@ -45,6 +45,7 @@ pub mod tpu;
 mod tpu_entry_notifier;
 pub mod tvu;
 pub mod unfrozen_gossip_verified_vote_hashes;
+mod upcoming_leaders_cache;
 pub mod validator;
 pub mod vote_simulator;
 pub mod voting_service;
