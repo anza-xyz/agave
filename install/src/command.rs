@@ -458,16 +458,32 @@ fn add_to_path(new_path: &str) -> bool {
     let shell_export_string = format!("\nexport PATH=\"{new_path}:$PATH\"");
     let mut modified_rcfiles = false;
 
-    // Look for sh, bash, and zsh rc files
-    let mut rcfiles = vec![dirs_next::home_dir().map(|p| p.join(".profile"))];
-    if let Ok(shell) = std::env::var("SHELL") {
+    // Detect current shell
+    let current_shell = std::env::var("SHELL").ok();
+    let is_fish = current_shell
+        .as_ref()
+        .map(|s| s.contains("fish"))
+        .unwrap_or(false);
+
+    // Look for sh, bash, zsh, and fish rc files
+    let mut rcfiles: Vec<Option<(PathBuf, String)>> = vec![];
+
+    // Add standard POSIX shell config
+    rcfiles.push(dirs_next::home_dir().map(|p| (p.join(".profile"), shell_export_string.clone())));
+
+    if let Some(shell) = current_shell {
         if shell.contains("zsh") {
             let zdotdir = std::env::var("ZDOTDIR")
                 .ok()
                 .map(PathBuf::from)
                 .or_else(dirs_next::home_dir);
-            let zprofile = zdotdir.map(|p| p.join(".zprofile"));
+            let zprofile = zdotdir.map(|p| (p.join(".zprofile"), shell_export_string.clone()));
             rcfiles.push(zprofile);
+        } else if is_fish {
+            let fish_export_string = format!("\nset -gxp PATH {}", new_path);
+            let fish_config = dirs_next::home_dir()
+                .map(|p| (p.join(".config/fish/config.fish"), fish_export_string));
+            rcfiles.push(fish_config);
         }
     }
 
@@ -475,18 +491,33 @@ fn add_to_path(new_path: &str) -> bool {
         // Only update .bash_profile if it exists because creating .bash_profile
         // will cause .profile to not be read
         if bash_profile.exists() {
-            rcfiles.push(Some(bash_profile));
+            rcfiles.push(Some((bash_profile, shell_export_string.clone())));
         }
     }
-    let rcfiles = rcfiles.into_iter().filter_map(|f| f.filter(|f| f.exists()));
+
+    let rcfiles = rcfiles.into_iter().filter_map(|f| {
+        f.map(|(p, s)| (p, s))
+            .filter(|(p, _)| p.exists() || is_fish)
+    });
 
     // For each rc file, append a PATH entry if not already present
-    for rcfile in rcfiles {
-        if !rcfile.exists() {
-            continue;
+    for (rcfile, export_string) in rcfiles {
+        // For fish shell, ensure the directory exists
+        if is_fish {
+            if let Some(parent) = rcfile.parent() {
+                if !parent.exists() {
+                    if let Err(err) = fs::create_dir_all(parent) {
+                        println!("Unable to create directory {parent:?}: {err}");
+                        continue;
+                    }
+                }
+            }
         }
 
         fn read_file(path: &Path) -> io::Result<String> {
+            if !path.exists() {
+                return Ok(String::new());
+            }
             let mut file = fs::OpenOptions::new().read(true).open(path)?;
             let mut contents = String::new();
             io::Read::read_to_string(&mut file, &mut contents)?;
@@ -498,10 +529,10 @@ fn add_to_path(new_path: &str) -> bool {
                 println!("Unable to read {rcfile:?}: {err}");
             }
             Ok(contents) => {
-                if !contents.contains(&shell_export_string) {
+                if !contents.contains(&export_string) {
                     println!(
                         "Adding {} to {}",
-                        style(&shell_export_string).italic(),
+                        style(&export_string).italic(),
                         style(rcfile.to_str().unwrap()).bold()
                     );
 
@@ -518,7 +549,7 @@ fn add_to_path(new_path: &str) -> bool {
 
                         Ok(())
                     }
-                    append_file(&rcfile, &shell_export_string).unwrap_or_else(|err| {
+                    append_file(&rcfile, &export_string).unwrap_or_else(|err| {
                         println!("Unable to append to {rcfile:?}: {err}");
                     });
                     modified_rcfiles = true;
@@ -536,7 +567,11 @@ fn add_to_path(new_path: &str) -> bool {
             )
             .bold()
             .blue(),
-            shell_export_string
+            if is_fish {
+                format!("set -gxp PATH {}", new_path)
+            } else {
+                format!("export PATH=\"{}:$PATH\"", new_path)
+            }
         );
     }
 
