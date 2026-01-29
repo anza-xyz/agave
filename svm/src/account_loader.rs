@@ -658,7 +658,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 mod tests {
     use {
         super::*,
-        crate::transaction_account_state_info::{new_post_exec, new_pre_exec},
+        crate::transaction_account_state_info::TransactionAccountStateInfo,
         rand0_7::prelude::*,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_hash::Hash,
@@ -1915,15 +1915,21 @@ mod tests {
             1,
         );
 
-        let pre_account_state_info = new_pre_exec(&transaction_context, sanitized_tx.message());
+        let pre_account_state_info = TransactionAccountStateInfo::new_pre_exec(
+            &transaction_context,
+            sanitized_tx.message(),
+            &rent,
+            true,
+        );
         assert_eq!(pre_account_state_info.len(), num_accounts,);
 
         assert_eq!(
-            new_post_exec(
+            TransactionAccountStateInfo::new_post_exec(
                 &transaction_context,
-                &pre_account_state_info,
                 sanitized_tx.message(),
+                &pre_account_state_info,
                 &rent,
+                true,
             )
             .len(),
             num_accounts,
