@@ -424,11 +424,6 @@ impl<O: BucketOccupied> BucketStorage<O> {
             data.write_all(&[0]).unwrap();
             data.rewind().unwrap();
             measure_new_file.stop();
-            let measure_flush = Measure::start("measure_flush");
-            data.flush().unwrap(); // can we skip this?
-            stats
-                .flush_file_us
-                .fetch_add(measure_flush.end_as_us(), Ordering::Relaxed);
         }
         let mut measure_mmap = Measure::start("measure_mmap");
         let mmap = unsafe { MmapMut::map_mut(&data) }.unwrap_or_else(|err| {
