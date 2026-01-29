@@ -36,9 +36,8 @@ impl ProgramTiming {
         self.accumulated_us += other.accumulated_us;
         self.accumulated_units += other.accumulated_units;
         self.count += other.count;
-        // Clones the entire vector, maybe not great...
         self.errored_txs_compute_consumed
-            .extend(other.errored_txs_compute_consumed.clone());
+            .extend(other.errored_txs_compute_consumed.iter().copied());
         self.total_errored_units += other.total_errored_units;
     }
 }
