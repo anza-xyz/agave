@@ -1,7 +1,6 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-pub use crate::forwarding_stage::ForwardingClientOption;
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
@@ -16,7 +15,8 @@ use {
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
-            spawn_forwarding_stage, ForwardAddressGetter, SpawnForwardingStageResult,
+            spawn_forwarding_stage, ForwardAddressGetter, ForwardingClientConfig,
+            SpawnForwardingStageResult,
         },
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
@@ -129,7 +129,7 @@ impl Tpu {
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        client: ForwardingClientOption,
+        tpu_forwaring_client_config: ForwardingClientConfig,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
@@ -309,7 +309,7 @@ impl Tpu {
             client_updater,
         } = spawn_forwarding_stage(
             forward_stage_receiver,
-            client,
+            tpu_forwaring_client_config,
             vote_forwarding_client_socket,
             bank_forks.read().unwrap().sharable_banks(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),

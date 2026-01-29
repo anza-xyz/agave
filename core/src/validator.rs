@@ -17,6 +17,7 @@ use {
             tower_storage::{NullTowerStorage, TowerStorage},
             ExternalRootSource, Tower,
         },
+        forwarding_stage::ForwardingClientConfig,
         repair::{
             self,
             quic_endpoint::{RepairQuicAsyncSenders, RepairQuicSenders, RepairQuicSockets},
@@ -30,7 +31,7 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{ForwardingClientOption, Tpu, TpuSockets},
+        tpu::{Tpu, TpuSockets},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
@@ -1736,18 +1737,18 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
-        let forwarding_tpu_client = {
+        let tpu_forwaring_client_config = {
             let runtime_handle = tpu_client_next_runtime
                 .as_ref()
                 .map(TokioRuntime::handle)
                 .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-            ForwardingClientOption::TpuClientNext((
-                Arc::as_ref(&identity_keypair),
-                tpu_transactions_forwards_client_sockets.take().unwrap(),
-                runtime_handle.clone(),
-                cancel.clone(),
-                node_multihoming.clone(),
-            ))
+            ForwardingClientConfig {
+                stake_identity: Arc::as_ref(&identity_keypair),
+                tpu_client_sockets: tpu_transactions_forwards_client_sockets.take().unwrap(),
+                runtime_handle: runtime_handle.clone(),
+                cancel: cancel.clone(),
+                node_multihoming: node_multihoming.clone(),
+            }
         };
         let (banking_control_sender, banking_control_reciever) = mpsc::channel(1);
         let tpu = Tpu::new_with_client(
@@ -1780,7 +1781,7 @@ impl Validator {
             replay_vote_sender,
             bank_notification_sender,
             duplicate_confirmed_slot_sender,
-            forwarding_tpu_client,
+            tpu_forwaring_client_config,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,
