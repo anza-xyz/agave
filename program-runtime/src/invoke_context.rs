@@ -1247,7 +1247,7 @@ mod tests {
             .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction =
-            Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
+            Instruction::new_with_bincode(callee_program_id, &instruction, metas);
         let result = invoke_context
             .native_invoke(inner_instruction, &[])
             .and(invoke_context.pop());
@@ -1308,7 +1308,7 @@ mod tests {
                 compute_units_to_consume,
                 desired_result: expected_result.clone(),
             },
-            metas.clone(),
+            metas,
         );
         invoke_context
             .prepare_next_instruction(inner_instruction, &[])

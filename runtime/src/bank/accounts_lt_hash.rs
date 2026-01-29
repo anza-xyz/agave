@@ -546,7 +546,7 @@ mod tests {
             .collect();
 
         let mut expected_delta_lt_hash = LtHash::identity();
-        let mut expected_accounts_lt_hash = prev_accounts_lt_hash.clone();
+        let mut expected_accounts_lt_hash = prev_accounts_lt_hash;
         let mut updater =
             |address: &Pubkey, prev: Option<AccountSharedData>, post: Option<AccountSharedData>| {
                 // if there was an alive account, mix out

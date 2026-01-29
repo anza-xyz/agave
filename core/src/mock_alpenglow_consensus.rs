@@ -208,7 +208,7 @@ impl MockAlpenglowConsensus {
 
         let (slot_sender, slot_receiver) = bounded(1);
         let runner_thread = {
-            let slot_receiver = slot_receiver.clone();
+            let slot_receiver = slot_receiver;
             let command_sender = command_sender.clone();
             let state = shared_state.clone();
             thread::spawn(move || {

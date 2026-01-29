@@ -168,7 +168,7 @@ impl Votor {
             consensus_metrics_receiver,
         } = config;
 
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
 
         // Get the sharable root bank
@@ -176,7 +176,7 @@ impl Votor {
 
         let shared_context = SharedContext {
             blockstore: blockstore.clone(),
-            bank_forks: bank_forks.clone(),
+            bank_forks,
             cluster_info: cluster_info.clone(),
             rpc_subscriptions,
             highest_parent_ready,
@@ -187,7 +187,7 @@ impl Votor {
         let voting_context = VotingContext {
             vote_history,
             vote_account_pubkey: vote_account,
-            identity_keypair: identity_keypair.clone(),
+            identity_keypair,
             authorized_voter_keypairs,
             derived_bls_keypairs: HashMap::new(),
             has_new_vote_been_rooted,
@@ -196,7 +196,7 @@ impl Votor {
             commitment_sender: commitment_sender.clone(),
             wait_to_vote_slot,
             sharable_banks: sharable_banks.clone(),
-            consensus_metrics_sender: consensus_metrics_sender.clone(),
+            consensus_metrics_sender,
         };
 
         let root_context = RootContext {
@@ -227,7 +227,7 @@ impl Votor {
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
             migration_status,
-            cluster_info: cluster_info.clone(),
+            cluster_info,
             my_vote_pubkey: vote_account,
             blockstore,
             sharable_banks,
@@ -238,11 +238,8 @@ impl Votor {
             commitment_sender,
         };
 
-        let metrics = ConsensusMetrics::start_metrics_loop(
-            root_epoch,
-            consensus_metrics_receiver,
-            exit.clone(),
-        );
+        let metrics =
+            ConsensusMetrics::start_metrics_loop(root_epoch, consensus_metrics_receiver, exit);
         let event_handler = EventHandler::new(event_handler_context);
         let consensus_pool_service = ConsensusPoolService::new(consensus_pool_context);
 
