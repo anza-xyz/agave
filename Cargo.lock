@@ -89,37 +89,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-cargo-registry"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "clap 2.33.3",
- "flate2",
- "hex",
- "hyper 0.14.32",
- "log",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "solana-clap-utils",
- "solana-cli",
- "solana-cli-config",
- "solana-cli-output",
- "solana-commitment-config",
- "solana-keypair",
- "solana-pubkey 4.0.0",
- "solana-remote-wallet",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-signer",
- "solana-version",
- "tar",
- "tempfile",
- "tokio",
- "toml 0.9.11+spec-1.1.0",
-]
-
-[[package]]
 name = "agave-feature-set"
 version = "4.0.0-alpha.0"
 dependencies = [

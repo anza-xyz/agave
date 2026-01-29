@@ -16,7 +16,6 @@ members = [
     "bucket_map",
     "builtins",
     "builtins-default-costs",
-    "cargo-registry",
     "clap-utils",
     "clap-v3-utils",
     "cli",
@@ -196,7 +195,6 @@ used_underscore_binding = "deny"
 Inflector = "0.11.4"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-bls12-381 = { path = "bls12-381", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-cargo-registry = { path = "cargo-registry", version = "=4.0.0-alpha.0" }
 agave-feature-set = { path = "feature-set", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.0.0-alpha.0" }
