@@ -84,7 +84,7 @@ use {
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
         bank::{bank_hash_details, Bank, NewBankOptions},
-        bank_forks::{BankForks, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
+        bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
@@ -2449,10 +2449,7 @@ impl ReplayStage {
             datapoint_info!("replay_stage-my_leader_slot", ("slot", poh_slot, i64),);
             info!("new fork:{poh_slot} parent:{parent_slot} (leader) root:{root_slot}");
 
-            let root_distance = poh_slot - root_slot;
-            let vote_only_bank = if root_distance > MAX_ROOT_DISTANCE_FOR_VOTE_ONLY
-                || migration_status.should_bank_be_vote_only(poh_slot)
-            {
+            let vote_only_bank = if migration_status.should_bank_be_vote_only(poh_slot) {
                 info!("{my_pubkey}: Creating block in slot {poh_slot} in VoM");
                 datapoint_info!("vote-only-bank", ("slot", poh_slot, i64));
                 true
