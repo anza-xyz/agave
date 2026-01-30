@@ -533,6 +533,7 @@ dependencies = [
  "solana-signer-store",
  "solana-streamer",
  "solana-time-utils",
+ "solana-tls-utils",
  "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
