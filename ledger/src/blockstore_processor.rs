@@ -10,6 +10,7 @@ use {
     },
     agave_snapshots::snapshot_config::SnapshotConfig,
     agave_votor_messages::migration::MigrationStatus,
+    bincode::deserialize,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::Sender,
     itertools::Itertools,
@@ -59,6 +60,7 @@ use {
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
+    solana_vote_program::vote_instruction::VoteInstruction,
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
@@ -101,6 +103,31 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Check if a transaction is a valid vote-only transaction.
+/// A valid vote-only transaction must:
+/// 1. Have exactly one instruction
+/// 2. That instruction must be to the vote program
+/// 3. That instruction must be a single vote state update (UpdateVoteState, TowerSync, etc.)
+fn is_valid_vote_only_transaction(tx: &impl SVMTransaction) -> bool {
+    let mut instructions = tx.program_instructions_iter();
+
+    let Some((program_id, instruction)) = instructions.next() else {
+        return false;
+    };
+
+    if instructions.next().is_some() {
+        return false;
+    }
+
+    if program_id != &solana_vote_program::id() {
+        return false;
+    }
+
+    deserialize::<VoteInstruction>(instruction.data)
+        .map(|ix| ix.is_single_vote_state_update())
+        .unwrap_or(false)
 }
 
 // Includes transaction signature for unit-testing
@@ -1640,12 +1667,18 @@ fn confirm_slot_entries(
         .into_iter()
         .zip(entry_tx_starting_indexes)
         .map(|(entry, tx_starting_index)| {
+            if !is_vote_only_bank {
+                return Ok(ReplayEntry {
+                    entry,
+                    starting_index: tx_starting_index,
+                });
+            }
+
             // If bank is in vote-only mode, validate that entries contain only vote transactions
             if let EntryType::Transactions(ref transactions) = entry {
-                if is_vote_only_bank
-                    && transactions
-                        .iter()
-                        .any(|tx| !tx.is_simple_vote_transaction())
+                if transactions
+                    .iter()
+                    .any(|tx| !is_valid_vote_only_transaction(tx))
                 {
                     return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
                         bank.slot(),
@@ -5371,5 +5404,96 @@ pub mod tests {
         );
         // Adding another None will noop (even though the block is already full)
         assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
+    }
+
+    #[test]
+    fn test_is_valid_vote_only_transaction() {
+        let node_keypair = Keypair::new();
+        let vote_keypair = Keypair::new();
+        let blockhash = Hash::default();
+
+        // Valid TowerSync transaction should pass
+        let tower_sync = TowerSync::new_from_slot(1, Hash::default());
+        let vote_tx = vote_transaction::new_tower_sync_transaction(
+            tower_sync,
+            blockhash,
+            &node_keypair,
+            &vote_keypair,
+            &vote_keypair,
+            None,
+        );
+        let sanitized = SanitizedTransaction::from_transaction_for_tests(vote_tx);
+        assert!(
+            is_valid_vote_only_transaction(&sanitized),
+            "TowerSync transaction should be valid"
+        );
+
+        // Valid TowerSyncSwitch transaction should pass
+        let tower_sync = TowerSync::new_from_slot(1, Hash::default());
+        let vote_tx = vote_transaction::new_tower_sync_transaction(
+            tower_sync,
+            blockhash,
+            &node_keypair,
+            &vote_keypair,
+            &vote_keypair,
+            Some(Hash::new_unique()), // switch proof hash
+        );
+        let sanitized = SanitizedTransaction::from_transaction_for_tests(vote_tx);
+        assert!(
+            is_valid_vote_only_transaction(&sanitized),
+            "TowerSyncSwitch transaction should be valid"
+        );
+
+        // Non-vote transaction (system transfer) should fail
+        let from_keypair = Keypair::new();
+        let to_pubkey = Pubkey::new_unique();
+        let transfer_tx = system_transaction::transfer(&from_keypair, &to_pubkey, 1, blockhash);
+        let sanitized = SanitizedTransaction::from_transaction_for_tests(transfer_tx);
+        assert!(
+            !is_valid_vote_only_transaction(&sanitized),
+            "System transfer should not be valid vote-only transaction"
+        );
+
+        // Transaction with multiple instructions should fail
+        let ix1 = solana_vote_program::vote_instruction::tower_sync(
+            &vote_keypair.pubkey(),
+            &vote_keypair.pubkey(),
+            TowerSync::new_from_slot(1, Hash::default()),
+        );
+        let ix2 = solana_vote_program::vote_instruction::tower_sync(
+            &vote_keypair.pubkey(),
+            &vote_keypair.pubkey(),
+            TowerSync::new_from_slot(2, Hash::default()),
+        );
+        let multi_ix_tx = Transaction::new_signed_with_payer(
+            &[ix1, ix2],
+            Some(&vote_keypair.pubkey()),
+            &[&vote_keypair],
+            blockhash,
+        );
+        let sanitized = SanitizedTransaction::from_transaction_for_tests(multi_ix_tx);
+        assert!(
+            !is_valid_vote_only_transaction(&sanitized),
+            "Transaction with multiple instructions should not be valid"
+        );
+
+        // Vote program accounting instructions should fail
+        let authorize_ix = solana_vote_program::vote_instruction::authorize(
+            &vote_keypair.pubkey(),
+            &vote_keypair.pubkey(),
+            &Pubkey::new_unique(),
+            solana_vote_program::vote_state::VoteAuthorize::Voter,
+        );
+        let authorize_tx = Transaction::new_signed_with_payer(
+            &[authorize_ix],
+            Some(&vote_keypair.pubkey()),
+            &[&vote_keypair],
+            blockhash,
+        );
+        let sanitized = SanitizedTransaction::from_transaction_for_tests(authorize_tx);
+        assert!(
+            !is_valid_vote_only_transaction(&sanitized),
+            "Vote Authorize instruction should not be valid vote-only transaction"
+        );
     }
 }
