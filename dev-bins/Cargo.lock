@@ -7106,48 +7106,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-dos"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "bincode",
- "clap 3.2.25",
- "crossbeam-channel",
- "itertools 0.14.0",
- "log",
- "rand 0.9.2",
- "serde",
- "solana-bench-tps",
- "solana-client",
- "solana-connection-cache",
- "solana-core",
- "solana-faucet",
- "solana-gossip",
- "solana-hash 4.1.0",
- "solana-instruction",
- "solana-keypair",
- "solana-local-cluster",
- "solana-measure",
- "solana-message",
- "solana-net-utils",
- "solana-perf",
- "solana-pubkey 4.0.0",
- "solana-quic-client",
- "solana-rpc",
- "solana-rpc-client",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-stake-interface",
- "solana-system-interface 3.0.0",
- "solana-time-utils",
- "solana-tps-client",
- "solana-tpu-client",
- "solana-transaction",
- "solana-version",
-]
-
-[[package]]
 name = "solana-download-utils"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -9007,7 +8965,6 @@ checksum = "f4028aeedd443d80f1dccbf64872593a80e6a9676ee9007f6eccb63b65983ebd"
 dependencies = [
  "ed25519-dalek 2.2.0",
  "five8",
- "rand 0.9.2",
  "serde",
  "serde-big-array",
  "serde_derive",

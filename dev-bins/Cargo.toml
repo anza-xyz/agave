@@ -3,7 +3,6 @@ members = [
     "../accounts-db/store-tool",
     "../banking-bench",
     "../bench-tps",
-    "../dos",
     "../ledger-tool",
 ]
 
