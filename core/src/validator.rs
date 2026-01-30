@@ -32,7 +32,7 @@ use {
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
         tpu::{Tpu, TpuSockets},
-        tvu::{Tvu, TvuConfig, TvuSockets, VotorInitializationState},
+        tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
         snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
@@ -1704,7 +1704,7 @@ impl Validator {
             wen_restart_repair_slots.clone(),
             slot_status_notifier,
             vote_connection_cache,
-            VotorInitializationState {
+            AlpenglowInitializationState {
                 leader_window_info_sender,
                 replay_highest_frozen: replay_highest_frozen.clone(),
                 highest_parent_ready: highest_parent_ready.clone(),

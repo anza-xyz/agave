@@ -149,8 +149,8 @@ impl Default for TvuConfig {
     }
 }
 
-/// Shared state from validator necessary to insantiate votor
-pub struct VotorInitializationState {
+/// Shared state from validator necessary to instantiate votor and related services
+pub struct AlpenglowInitializationState {
     // Shared with block creation loop
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
@@ -167,8 +167,6 @@ pub struct VotorInitializationState {
 
     // For BLS voting service
     pub bls_connection_cache: Arc<ConnectionCache>,
-
-    // For testing spies
     pub voting_service_test_override: Option<VotingServiceOverride>,
 }
 
@@ -227,7 +225,7 @@ impl Tvu {
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
-        votor_init: VotorInitializationState,
+        votor_init: AlpenglowInitializationState,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
         let migration_status = bank_forks.read().unwrap().migration_status();
@@ -240,7 +238,7 @@ impl Tvu {
             alpenglow: bls_socket,
         } = sockets;
 
-        let VotorInitializationState {
+        let AlpenglowInitializationState {
             leader_window_info_sender,
             replay_highest_frozen,
             highest_parent_ready,
@@ -828,7 +826,7 @@ pub mod tests {
             wen_restart_repair_slots,
             None, // slot_status_notifier
             Arc::new(connection_cache),
-            VotorInitializationState {
+            AlpenglowInitializationState {
                 leader_window_info_sender,
                 replay_highest_frozen,
                 highest_parent_ready,
