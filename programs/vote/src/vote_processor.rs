@@ -37,15 +37,18 @@ where
     let mut expected_authority_keys: HashSet<Pubkey> = HashSet::default();
     if instruction_context.is_instruction_account_signer(2)? {
         let base_pubkey = instruction_context.get_key_of_instruction_account(2)?;
-        // The conversion from `PubkeyError` to `InstructionError` through
-        // num-traits is incorrect, but it's the existing behavior.
         expected_authority_keys.insert(
             Pubkey::create_with_seed(
                 base_pubkey,
                 current_authority_derived_key_seed,
                 current_authority_derived_key_owner,
             )
-            .map_err(|e| e as u64)?,
+            .map_err(|e| match e {
+                solana_pubkey::PubkeyError::MaxSeedLengthExceeded => {
+                    InstructionError::MaxSeedLengthExceeded
+                }
+                _ => InstructionError::InvalidSeeds,
+            })?,
         );
     };
     vote_state::authorize(
