@@ -142,7 +142,6 @@ impl FetchStage {
                     tpu_vote_stats.clone(),
                     coalesce,
                     true,
-                    None,
                     true, // only staked connections should be voting
                 )
             })
