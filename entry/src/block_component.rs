@@ -139,55 +139,14 @@ use {
     solana_hash::Hash,
     std::mem::MaybeUninit,
     wincode::{
+        config::{Config, DefaultConfig},
         containers::{Pod, Vec as WincodeVec},
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
-        len::{BincodeLen, SeqLen},
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
+        len::{BincodeLen, FixIntLen},
+        ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
     },
 };
-
-/// 1-byte length prefix (max 255 elements).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct U8Len;
-
-impl SeqLen for U8Len {
-    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
-        u8::get(reader).map(|len| len as usize)
-    }
-
-    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
-        let Ok(len) = len.try_into() else {
-            return Err(write_length_encoding_overflow("u8::MAX"));
-        };
-        Ok(writer.write(&[len])?)
-    }
-
-    fn write_bytes_needed(_len: usize) -> WriteResult<usize> {
-        Ok(1)
-    }
-}
-
-/// 2-byte length prefix (max 65535 elements).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct U16Len;
-
-impl SeqLen for U16Len {
-    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
-        u16::get(reader).map(|len| len as usize)
-    }
-
-    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
-        let Ok(len): Result<u16, _> = len.try_into() else {
-            return Err(write_length_encoding_overflow("u16::MAX"));
-        };
-        Ok(writer.write(&len.to_le_bytes())?)
-    }
-
-    fn write_bytes_needed(_len: usize) -> WriteResult<usize> {
-        Ok(2)
-    }
-}
 
 /// Placeholder for skip reward certificate.
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
@@ -204,13 +163,81 @@ pub struct NotarRewardCertificate {
 /// Wraps a value with a u16 length prefix for TLV-style serialization.
 ///
 /// The length prefix represents the serialized byte size of the inner value.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
-pub struct LengthPrefixed<T: SchemaWrite<Src = T> + for<'a> SchemaRead<'a, Dst = T>> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LengthPrefixed<T> {
     len: u16,
     inner: T,
 }
 
-impl<T: SchemaWrite<Src = T> + for<'a> SchemaRead<'a, Dst = T>> LengthPrefixed<T> {
+unsafe impl<C, T> SchemaWrite<C> for LengthPrefixed<T>
+where
+    C: Config,
+    T: SchemaWrite<C, Src = T>,
+{
+    type Src = Self;
+
+    const TYPE_META: TypeMeta = match T::TYPE_META {
+        TypeMeta::Static { size, .. } => TypeMeta::Static {
+            size: size_of::<u16>() + size,
+            zero_copy: false,
+        },
+        _ => TypeMeta::Dynamic,
+    };
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(size_of::<u16>() + <T as SchemaWrite<C>>::size_of(&src.inner)?)
+    }
+
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                // SAFETY: `size` is the serialized size of the `LengthPrefixed` struct,
+                // which is the sum of the serialized size of the `u16` and the inner type.
+                //
+                // Writing the `u16` length and `T` will fully consume the trusted window.
+                let mut writer = unsafe { writer.as_trusted_for(size)? };
+                writer.write(&src.len.to_le_bytes())?;
+                <T as SchemaWrite<C>>::write(&mut writer, &src.inner)?;
+                writer.finish()?;
+                Ok(())
+            }
+            _ => {
+                writer.write(&src.len.to_le_bytes())?;
+                <T as SchemaWrite<C>>::write(writer, &src.inner)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, C, T> SchemaRead<'de, C> for LengthPrefixed<T>
+where
+    C: Config,
+    T: SchemaRead<'de, C, Dst = T>,
+{
+    type Dst = Self;
+
+    const TYPE_META: TypeMeta = match T::TYPE_META {
+        TypeMeta::Static { size, .. } => TypeMeta::Static {
+            size: size_of::<u16>() + size,
+            zero_copy: false,
+        },
+        _ => TypeMeta::Dynamic,
+    };
+
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let dst_ptr = dst.as_mut_ptr();
+        let len = unsafe { &mut *(&raw mut (*dst_ptr).len).cast::<MaybeUninit<u16>>() };
+        <u16 as SchemaRead<C>>::read(reader, len)?;
+        let inner = unsafe { &mut *(&raw mut (*dst_ptr).inner).cast::<MaybeUninit<T>>() };
+        <T as SchemaRead<C>>::read(reader, inner)?;
+        Ok(())
+    }
+}
+
+impl<T> LengthPrefixed<T>
+where
+    T: SchemaWrite<DefaultConfig, Src = T>,
+{
     pub fn new(inner: T) -> Self {
         let inner_size = T::size_of(&inner).unwrap();
         let len = inner_size
@@ -219,7 +246,9 @@ impl<T: SchemaWrite<Src = T> + for<'a> SchemaRead<'a, Dst = T>> LengthPrefixed<T
             .unwrap();
         Self { len, inner }
     }
+}
 
+impl<T> LengthPrefixed<T> {
     pub fn inner(&self) -> &T {
         &self.inner
     }
@@ -243,7 +272,7 @@ pub struct BlockFooterV1 {
     #[wincode(with = "Pod<Hash>")]
     pub bank_hash: Hash,
     pub block_producer_time_nanos: u64,
-    #[wincode(with = "WincodeVec<u8, U8Len>")]
+    #[wincode(with = "WincodeVec<u8, FixIntLen<u8>>")]
     pub block_user_agent: Vec<u8>,
     pub final_cert: Option<FinalCertificate>,
     pub skip_reward_cert: Option<SkipRewardCertificate>,
@@ -342,7 +371,7 @@ impl FinalCertificate {
 pub struct VotesAggregate {
     #[wincode(with = "Pod<BLSSignatureCompressed>")]
     signature: BLSSignatureCompressed,
-    #[wincode(with = "WincodeVec<u8, U16Len>")]
+    #[wincode(with = "WincodeVec<u8, FixIntLen<u16>>")]
     bitmap: Vec<u8>,
 }
 
@@ -509,14 +538,14 @@ impl BlockComponent {
     }
 }
 
-impl SchemaWrite for BlockComponent {
+unsafe impl<C: Config> SchemaWrite<C> for BlockComponent {
     type Src = Self;
 
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
-            Self::EntryBatch(entries) => <Vec<Entry>>::size_of(entries),
+            Self::EntryBatch(entries) => <Vec<Entry> as SchemaWrite<C>>::size_of(entries),
             Self::BlockMarker(marker) => {
-                let marker_size = VersionedBlockMarker::size_of(marker)?;
+                let marker_size = <VersionedBlockMarker as SchemaWrite<C>>::size_of(marker)?;
                 Ok(Self::ENTRY_COUNT_SIZE + marker_size)
             }
         }
@@ -524,16 +553,16 @@ impl SchemaWrite for BlockComponent {
 
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
-            Self::EntryBatch(entries) => <Vec<Entry>>::write(writer, entries),
+            Self::EntryBatch(entries) => <Vec<Entry> as SchemaWrite<C>>::write(writer, entries),
             Self::BlockMarker(marker) => {
                 writer.write(&0u64.to_le_bytes())?;
-                VersionedBlockMarker::write(writer, marker)
+                <VersionedBlockMarker as SchemaWrite<C>>::write(writer, marker)
             }
         }
     }
 }
 
-impl<'de> SchemaRead<'de> for BlockComponent {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
     type Dst = Self;
 
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -545,9 +574,11 @@ impl<'de> SchemaRead<'de> for BlockComponent {
             // This is a BlockMarker - consume the count bytes and read the marker
             // SAFETY: fill_array::<8>() above guarantees at least 8 bytes are available
             unsafe { reader.consume_unchecked(8) };
-            dst.write(Self::BlockMarker(VersionedBlockMarker::get(reader)?));
+            dst.write(Self::BlockMarker(<VersionedBlockMarker as SchemaRead<
+                C,
+            >>::get(reader)?));
         } else {
-            let entries: Vec<Entry> = <Vec<Entry>>::get(reader)?;
+            let entries: Vec<Entry> = <Vec<Entry> as SchemaRead<C>>::get(reader)?;
 
             if entries.len() >= Self::MAX_ENTRIES {
                 return Err(wincode::ReadError::Custom("Too many entries"));
