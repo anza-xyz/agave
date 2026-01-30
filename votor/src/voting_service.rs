@@ -298,6 +298,7 @@ impl VotorQuicSender {
         let txs_batch = TransactionBatch::new(vec![buf]);
         let tokio_guard = self.runtime_handle.enter();
         for peer in peers {
+            debug!("Sending message to peer: {peer}");
             if let Some(old_worker) = self.workers.ensure_worker(
                 peer,
                 &self.endpoint,
@@ -309,6 +310,7 @@ impl VotorQuicSender {
             ) {
                 shutdown_worker(old_worker)
             }
+            std::thread::sleep(Duration::from_millis(100));
             if let Err(e) = self
                 .workers
                 .try_send_transactions_to_address(&peer, txs_batch.clone())
@@ -344,8 +346,8 @@ mod tests {
         },
         solana_signer::Signer,
         solana_streamer::{
-            nonblocking::swqos::SwQosConfig,
-            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
+            nonblocking::simple_qos::SimpleQosConfig,
+            quic::{spawn_simple_qos_server, QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
         std::{
@@ -359,6 +361,7 @@ mod tests {
     fn create_voting_service(
         bls_receiver: Receiver<BLSOp>,
         listener: SocketAddr,
+        runtime_handle: tokio::runtime::Handle,
     ) -> (VotingService, Vec<ValidatorVoteKeypairs>) {
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
@@ -379,7 +382,6 @@ mod tests {
             SocketAddrSpace::Unspecified,
         );
 
-        let runtime = VotorQuicSender::spawn_runtime().unwrap();
         let cancel = CancellationToken::new();
         let bind = BindTarget::Socket(bind_to_localhost_unique().unwrap());
         (
@@ -387,13 +389,8 @@ mod tests {
                 bls_receiver,
                 Arc::new(cluster_info),
                 Arc::new(NullVoteHistoryStorage::default()),
-                VotorQuicSender::new(
-                    runtime.handle().clone(),
-                    bind,
-                    StakeIdentity::new(&keypair),
-                    cancel,
-                )
-                .unwrap(),
+                VotorQuicSender::new(runtime_handle, bind, StakeIdentity::new(&keypair), cancel)
+                    .unwrap(),
                 bank_forks,
                 Some(VotingServiceOverride {
                     additional_listeners: vec![listener],
@@ -429,6 +426,8 @@ mod tests {
         bitmap: Vec::new(),
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
+        let runtime = VotorQuicSender::spawn_runtime().unwrap();
+
         agave_logger::setup();
         let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
@@ -438,12 +437,10 @@ mod tests {
         let listener_addr = socket.local_addr().unwrap();
 
         // Create VotingService with the listener address
-        let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
+        let (_, validator_keypairs) =
+            create_voting_service(bls_receiver, listener_addr, runtime.handle().clone());
 
-        // Send a BLS message via the VotingService
-        assert!(bls_sender.send(bls_op).is_ok());
-
-        // Start a quick streamer to handle quick control packets
+        // Start a quic streamer to terminate connections
         let (sender, receiver) = crossbeam_channel::unbounded();
         let stakes = validator_keypairs
             .iter()
@@ -458,7 +455,7 @@ mod tests {
             endpoints: _,
             thread: quic_server_thread,
             key_updater: _,
-        } = spawn_stake_wighted_qos_server(
+        } = spawn_simple_qos_server(
             "AlpenglowLocalClusterTest",
             "voting_service_test",
             [socket],
@@ -466,10 +463,15 @@ mod tests {
             sender,
             staked_nodes,
             QuicStreamerConfig::default_for_tests(),
-            SwQosConfig::default(),
+            SimpleQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();
+        // make sure the server is up and running before sending packets
+        thread::sleep(Duration::from_secs(2));
+
+        // Send a BLS message via the VotingService
+        assert!(bls_sender.send(bls_op).is_ok());
 
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
