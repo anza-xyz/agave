@@ -312,7 +312,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 // With some drivers, or always when we work in SKB mode, we need to explicitly kick the driver once
 // we want the NIC to do something.
 #[inline(always)]
-fn kick(ring: &TxRing<SliceUmemFrame<'_>>) {
+pub fn kick(ring: &TxRing<SliceUmemFrame<'_>>) {
     if !ring.needs_wakeup() {
         return;
     }
@@ -323,7 +323,7 @@ fn kick(ring: &TxRing<SliceUmemFrame<'_>>) {
 }
 
 #[inline(never)]
-fn kick_error(e: std::io::Error) {
+pub fn kick_error(e: std::io::Error) {
     match e.raw_os_error() {
         // these are non-fatal errors
         Some(libc::EBUSY | libc::ENOBUFS | libc::EAGAIN) => {}

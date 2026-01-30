@@ -6,7 +6,7 @@ use {
     },
     libc::{
         ifreq, mmap, munmap, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE,
-        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM,
+        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, XDP_RING_NEED_WAKEUP,
     },
     std::{
         ffi::{c_char, CStr, CString},
@@ -330,9 +330,31 @@ impl RingProducer {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct XdpDesc {
-    pub addr: u64,
-    pub len: u32,
-    pub options: u32,
+    addr: u64,
+    len: u32,
+    options: u32,
+}
+
+impl XdpDesc {
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn addr(&self) -> u64 {
+        self.addr
+    }
+
+    pub fn options(&self) -> u32 {
+        self.options
+    }
+
+    pub fn build(addr: u64, len: u32, options: u32) -> Self {
+        Self { addr, len, options }
+    }
 }
 
 pub struct TxCompletionRing {
@@ -370,7 +392,7 @@ pub struct RxFillRing<F: Frame> {
     mmap: RingMmap<u64>,
     producer: RingProducer,
     size: u32,
-    _fd: RawFd,
+    fd: RawFd,
     _frame: PhantomData<F>,
 }
 
@@ -381,14 +403,15 @@ impl<F: Frame> RxFillRing<F> {
             producer: RingProducer::new(mmap.producer, mmap.consumer, size),
             mmap,
             size,
-            _fd: fd,
+            fd,
             _frame: PhantomData,
         }
     }
 
-    pub fn write(&mut self, frame: F) -> Result<(), io::Error> {
+    /// Writes a frame into the fill ring.
+    pub fn write(&mut self, frame: F) -> Result<(), (F, io::Error)> {
         let Some(index) = self.producer.produce() else {
-            return Err(ErrorKind::StorageFull.into());
+            return Err((frame, ErrorKind::StorageFull.into()));
         };
         let index = index & self.size.saturating_sub(1);
         let desc = unsafe { self.mmap.desc.add(index as usize) };
@@ -400,12 +423,41 @@ impl<F: Frame> RxFillRing<F> {
         Ok(())
     }
 
+    /// Returns the number of available slots in the ring.
+    pub fn available(&self) -> u32 {
+        self.producer.available()
+    }
+
+    /// Commits the produced entries to the ring.
     pub fn commit(&mut self) {
         self.producer.commit();
     }
 
+    /// Sync entries with the kernel driver.
+    /// If commit is true, commits the produced entries before syncing.
     pub fn sync(&mut self, commit: bool) {
         self.producer.sync(commit);
+    }
+
+    /// Checks if rings needs to be wake up
+    pub fn needs_wakeup(&self) -> bool {
+        unsafe { (*self.mmap.flags).load(Ordering::Relaxed) & XDP_RING_NEED_WAKEUP != 0 }
+    }
+
+    /// Wakes up the kernel driver to keep processing packets in the ring
+    pub fn wake(&mut self) -> Result<u64, io::Error> {
+        let mut poll = libc::pollfd {
+            fd: self.fd,
+            events: 0,
+            revents: 0,
+        };
+
+        let res = unsafe { libc::poll(&mut poll as *mut _, 1, 0) };
+        if res < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(res as u64)
     }
 }
 

@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    crate::device::XdpDesc,
     libc::{munmap, sysconf, _SC_PAGESIZE},
     std::{
         ffi::c_void,
@@ -41,15 +42,30 @@ pub trait Umem {
     }
 }
 
+#[derive(Debug)]
 pub struct SliceUmemFrame<'a> {
-    offset: usize,
-    len: usize,
+    pub offset: usize,
+    pub len: usize,
     _buf: PhantomData<&'a mut [u8]>,
+}
+
+impl From<XdpDesc> for SliceUmemFrame<'_> {
+    fn from(desc: XdpDesc) -> Self {
+        Self {
+            offset: desc.addr() as usize,
+            len: desc.len(),
+            _buf: PhantomData,
+        }
+    }
 }
 
 impl SliceUmemFrame<'_> {
     pub fn set_len(&mut self, len: usize) {
         self.len = len;
+    }
+
+    pub fn as_xdp(self) -> XdpDesc {
+        XdpDesc::build(self.offset as u64, self.len as u32, 0)
     }
 }
 
