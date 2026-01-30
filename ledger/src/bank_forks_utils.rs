@@ -122,7 +122,7 @@ pub fn load_bank_forks(
         );
         std::fs::create_dir_all(&snapshot_config.bank_snapshots_dir)
             .expect("create bank snapshots dir");
-        let (bank_forks, starting_snapshot_hashes) = bank_forks_from_snapshot(
+        bank_forks_from_snapshot(
             full_snapshot_archive_info,
             incremental_snapshot_archive_info,
             genesis_config,
@@ -131,8 +131,7 @@ pub fn load_bank_forks(
             process_options,
             accounts_update_notifier,
             exit,
-        )?;
-        Ok((bank_forks, Some(starting_snapshot_hashes)))
+        )
     } else {
         info!("Processing ledger from genesis");
         let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
@@ -162,7 +161,7 @@ fn bank_forks_from_snapshot(
     process_options: &ProcessOptions,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Arc<RwLock<BankForks>>, StartingSnapshotHashes), BankForksUtilsError> {
+) -> LoadResult {
     // Fail hard here if snapshot fails to load, don't silently continue
     if account_paths.is_empty() {
         return Err(BankForksUtilsError::AccountPathsNotPresent);
@@ -294,5 +293,5 @@ fn bank_forks_from_snapshot(
     };
     bank.register_hard_forks(process_options.new_hard_forks.as_ref());
 
-    Ok((BankForks::new_rw_arc(bank), starting_snapshot_hashes))
+    Ok((BankForks::new_rw_arc(bank), Some(starting_snapshot_hashes)))
 }
