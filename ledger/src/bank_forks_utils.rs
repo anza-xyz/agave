@@ -113,51 +113,43 @@ pub fn load_bank_forks(
         ))
     }
 
-    let (bank_forks, starting_snapshot_hashes) =
-        if let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
-            get_snapshots_to_load(snapshot_config)
-        {
-            info!(
-                "Initializing bank snapshots dir: {}",
-                snapshot_config.bank_snapshots_dir.display()
-            );
-            std::fs::create_dir_all(&snapshot_config.bank_snapshots_dir)
-                .expect("create bank snapshots dir");
-            let (bank_forks, starting_snapshot_hashes) = bank_forks_from_snapshot(
-                full_snapshot_archive_info,
-                incremental_snapshot_archive_info,
-                genesis_config,
-                account_paths,
-                snapshot_config,
-                process_options,
-                accounts_update_notifier,
-                exit,
-            )?;
-            (bank_forks, Some(starting_snapshot_hashes))
-        } else {
-            info!("Processing ledger from genesis");
-            let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
-                genesis_config,
-                blockstore,
-                account_paths,
-                process_options,
-                transaction_status_sender,
-                entry_notification_sender,
-                accounts_update_notifier,
-                exit,
-            )
-            .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
-            (bank_forks, None)
-        };
-
-    if let Some(ref new_hard_forks) = process_options.new_hard_forks {
+    if let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
+        get_snapshots_to_load(snapshot_config)
+    {
+        info!(
+            "Initializing bank snapshots dir: {}",
+            snapshot_config.bank_snapshots_dir.display()
+        );
+        std::fs::create_dir_all(&snapshot_config.bank_snapshots_dir)
+            .expect("create bank snapshots dir");
+        let (bank_forks, starting_snapshot_hashes) = bank_forks_from_snapshot(
+            full_snapshot_archive_info,
+            incremental_snapshot_archive_info,
+            genesis_config,
+            account_paths,
+            snapshot_config,
+            process_options,
+            accounts_update_notifier,
+            exit,
+        )?;
+        Ok((bank_forks, Some(starting_snapshot_hashes)))
+    } else {
+        info!("Processing ledger from genesis");
+        let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
+            genesis_config,
+            blockstore,
+            account_paths,
+            process_options,
+            transaction_status_sender,
+            entry_notification_sender,
+            accounts_update_notifier,
+            exit,
+        )
+        .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
         let root_bank = bank_forks.read().unwrap().root_bank();
-        new_hard_forks
-            .iter()
-            .for_each(|hard_fork_slot| root_bank.register_hard_fork(*hard_fork_slot));
+        root_bank.register_hard_forks(process_options.new_hard_forks.as_ref());
+        Ok((bank_forks, None))
     }
-
-    Ok((bank_forks, starting_snapshot_hashes))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -300,6 +292,7 @@ fn bank_forks_from_snapshot(
         full: full_snapshot_hash,
         incremental: incremental_snapshot_hash,
     };
+    bank.register_hard_forks(process_options.new_hard_forks.as_ref());
 
     Ok((BankForks::new_rw_arc(bank), starting_snapshot_hashes))
 }

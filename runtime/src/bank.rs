@@ -4333,6 +4333,14 @@ impl Bank {
         }
     }
 
+    pub fn register_hard_forks(&self, new_hard_fork_slots: Option<&Vec<Slot>>) {
+        if let Some(slots) = new_hard_fork_slots {
+            slots
+                .iter()
+                .for_each(|hard_fork_slot| self.register_hard_fork(*hard_fork_slot));
+        }
+    }
+
     pub fn get_account_with_fixed_root_no_cache(
         &self,
         pubkey: &Pubkey,
