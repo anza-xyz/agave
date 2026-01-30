@@ -178,6 +178,8 @@ pub fn execute<'a, 'b: 'a>(
             feature = "sbpf-debugger"
         ))] {
             let use_jit = false;
+            #[cfg(feature = "sbpf-debugger")]
+            let debug_port = invoke_context.debug_port;
         } else {
             let use_jit = executable.get_compiled_program().is_some();
         }
@@ -186,9 +188,6 @@ pub fn execute<'a, 'b: 'a>(
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let mask_out_rent_epoch_in_vm_serialization = invoke_context
-        .get_feature_set()
-        .mask_out_rent_epoch_in_vm_serialization;
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
         .get_feature_set()
         .provide_instruction_data_offset_in_vm_r2;
@@ -199,7 +198,6 @@ pub fn execute<'a, 'b: 'a>(
             &instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
-            mask_out_rent_epoch_in_vm_serialization,
         )?;
     serialize_time.stop();
 
@@ -233,6 +231,10 @@ pub fn execute<'a, 'b: 'a>(
         };
         create_vm_time.stop();
 
+        #[cfg(feature = "sbpf-debugger")]
+        {
+            vm.debug_port = debug_port;
+        }
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         vm.registers[1] = ebpf::MM_INPUT_START;
 

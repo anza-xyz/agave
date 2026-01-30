@@ -8,13 +8,17 @@ use {
         compute_budget::{
             simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
+        feature::get_feature_is_active,
         memo::WithMemo,
         nonce::check_nonce_account,
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
         stake::check_current_authority,
     },
+    agave_feature_set::bls_pubkey_management_in_vote_account,
+    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -42,7 +46,10 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{VoteAuthorize, VoteInit, VoteStateV4, VOTE_CREDITS_MAXIMUM_PER_SLOT},
+        vote_state::{
+            create_bls_proof_of_possession, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        },
     },
     std::rc::Rc,
 };
@@ -88,14 +95,83 @@ impl VoteSubCommands for App<'_, '_> {
                         .long("commission")
                         .value_name("PERCENTAGE")
                         .takes_value(true)
-                        .default_value("100")
-                        .help("The commission taken on reward redemption (0-100)"),
+                        .help(
+                            "The commission taken on reward redemption (0-100). Only valid for \
+                             VoteInit (v1). Cannot be used with --use-v2-instruction. [default: \
+                             100]",
+                        ),
                 )
                 .arg(pubkey!(
                     Arg::with_name("authorized_voter")
                         .long("authorized-voter")
                         .value_name("VOTER_PUBKEY"),
                     "Authorized voter [default: validator identity pubkey]."
+                ))
+                // SIMD-0387 VoteInitV2 arguments.
+                .arg(
+                    Arg::with_name("use_v2_instruction")
+                        .long("use-v2-instruction")
+                        .takes_value(false)
+                        .help(
+                            "Force use of VoteInitV2 (SIMD-0387). Required in sign-only mode \
+                             after feature activation. In normal mode, instruction version is \
+                             auto-detected based on feature status.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("bls_keypair")
+                        .long("bls-keypair")
+                        .value_name("BLS_KEYPAIR_FILE")
+                        .takes_value(true)
+                        .validator(is_bls_keypair)
+                        .help(
+                            "Path to a BLS keypair file for proof of possession. If not provided, \
+                             a BLS keypair will be derived from the vote keypair. Only valid with \
+                             VoteInitV2 (--use-v2-instruction or when SIMD-0387 feature is \
+                             active).",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("inflation_rewards_commission_bps")
+                        .long("inflation-rewards-commission-bps")
+                        .value_name("BASIS_POINTS")
+                        .takes_value(true)
+                        .validator(is_valid_basis_points)
+                        .help(
+                            "Commission rate in basis points (0-10000) for inflation rewards. 100 \
+                             basis points = 1%. Only valid with VoteInitV2 (--use-v2-instruction \
+                             or when SIMD-0387 feature is active). [default: 10000 (100%)]",
+                        ),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("inflation_rewards_collector")
+                        .long("inflation-rewards-collector")
+                        .value_name("COLLECTOR_PUBKEY")
+                        .takes_value(true),
+                    "Account to collect inflation rewards commission. Only valid with VoteInitV2 \
+                     (--use-v2-instruction or when SIMD-0387 feature is active). [default: vote \
+                     account address]"
+                ))
+                .arg(
+                    Arg::with_name("block_revenue_commission_bps")
+                        .long("block-revenue-commission-bps")
+                        .value_name("BASIS_POINTS")
+                        .takes_value(true)
+                        .validator(is_valid_basis_points)
+                        .help(
+                            "Commission rate in basis points (0-10000) for block revenue. 100 \
+                             basis points = 1%. Only valid with VoteInitV2 (--use-v2-instruction \
+                             or when SIMD-0387 feature is active). [default: 10000 (100%)]",
+                        ),
+                )
+                .arg(pubkey!(
+                    Arg::with_name("block_revenue_collector")
+                        .long("block-revenue-collector")
+                        .value_name("COLLECTOR_PUBKEY")
+                        .takes_value(true),
+                    "Account to collect block revenue commission. Only valid with VoteInitV2 \
+                     (--use-v2-instruction or when SIMD-0387 feature is active). [default: \
+                     identity account address]"
                 ))
                 .arg(
                     Arg::with_name("allow_unsafe_authorized_withdrawer")
@@ -458,7 +534,6 @@ pub fn parse_create_vote_account(
     let seed = matches.value_of("seed").map(|s| s.to_string());
     let (identity_account, identity_pubkey) =
         signer_of(matches, "identity_account", wallet_manager)?;
-    let commission = value_t_or_exit!(matches, "commission", u8);
     let authorized_voter = pubkey_of_signer(matches, "authorized_voter", wallet_manager)?;
     let authorized_withdrawer =
         pubkey_of_signer(matches, "authorized_withdrawer", wallet_manager)?.unwrap();
@@ -472,6 +547,41 @@ pub fn parse_create_vote_account(
         signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
     let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
     let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+
+    // VoteInit (v1) args.
+    let commission: Option<u8> = value_of(matches, "commission");
+
+    // VoteInitV2 args (SIMD-0387).
+    let use_v2_instruction = matches.is_present("use_v2_instruction");
+    let bls_keypair = bls_keypair_of(matches, "bls_keypair");
+    let inflation_rewards_commission_bps: Option<u16> =
+        value_of(matches, "inflation_rewards_commission_bps");
+    let inflation_rewards_collector =
+        pubkey_of_signer(matches, "inflation_rewards_collector", wallet_manager)?;
+    let block_revenue_commission_bps: Option<u16> =
+        value_of(matches, "block_revenue_commission_bps");
+    let block_revenue_collector =
+        pubkey_of_signer(matches, "block_revenue_collector", wallet_manager)?;
+
+    // Check for argument conflicts.
+    // --commission is only allowed with VoteInitV2 when no VoteInitV2-specific
+    // arguments have been provided, including --use-v2-instruction.
+    let has_v2_args = use_v2_instruction
+        || bls_keypair.is_some()
+        || inflation_rewards_commission_bps.is_some()
+        || inflation_rewards_collector.is_some()
+        || block_revenue_commission_bps.is_some()
+        || block_revenue_collector.is_some();
+
+    if commission.is_some() && has_v2_args {
+        return Err(CliError::BadParameter(
+            "--commission cannot be used with --use-v2-instruction or VoteInitV2 arguments \
+             (--bls-keypair, --inflation-rewards-commission-bps, --inflation-rewards-collector, \
+             --block-revenue-commission-bps, --block-revenue-collector). For VoteInitV2, use \
+             --inflation-rewards-commission-bps instead."
+                .to_owned(),
+        ));
+    }
 
     if !allow_unsafe {
         if authorized_withdrawer == vote_account_pubkey.unwrap() {
@@ -505,6 +615,12 @@ pub fn parse_create_vote_account(
             authorized_voter,
             authorized_withdrawer,
             commission,
+            use_v2_instruction,
+            bls_keypair,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
             sign_only,
             dump_transaction_message,
             blockhash_query,
@@ -797,7 +913,16 @@ pub async fn process_create_vote_account(
     identity_account: SignerIndex,
     authorized_voter: &Option<Pubkey>,
     authorized_withdrawer: Pubkey,
-    commission: u8,
+    // VoteInit (v1) args.
+    commission: Option<u8>,
+    // VoteInitV2 args (SIMD-0387).
+    use_v2_instruction: bool,
+    bls_keypair: Option<&BLSKeypair>,
+    inflation_rewards_commission_bps: Option<u16>,
+    inflation_rewards_collector: Option<&Pubkey>,
+    block_revenue_commission_bps: Option<u16>,
+    block_revenue_collector: Option<&Pubkey>,
+    // Common args.
     sign_only: bool,
     dump_transaction_message: bool,
     blockhash_query: &BlockhashQuery,
@@ -826,6 +951,43 @@ pub async fn process_create_vote_account(
         (&identity_pubkey, "identity_pubkey".to_string()),
     )?;
 
+    // Determine whether to use VoteInit (v1) or VoteInitV2.
+    // --use-v2-instruction trumps everything else; always uses VoteInitV2.
+    // If the flag is not provided:
+    // * If sign-only, default to VoteInit (v1).
+    // * If !sign-only, check the feature status.
+    let use_v2 = if use_v2_instruction {
+        // --use-v2-instruction provided; use VoteInitV2.
+        true
+    } else if sign_only {
+        // Sign-only without explicit flag, default to VoteInit (v1).
+        false
+    } else {
+        // Check SIMD-0387 feature gate status.
+        get_feature_is_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
+            .await
+            .unwrap_or(false)
+    };
+
+    // Validate that VoteInitV2-only args aren't provided when using
+    // VoteInit (v1).
+    let has_v2_args = bls_keypair.is_some()
+        || inflation_rewards_commission_bps.is_some()
+        || inflation_rewards_collector.is_some()
+        || block_revenue_commission_bps.is_some()
+        || block_revenue_collector.is_some();
+
+    if !use_v2 && has_v2_args {
+        return Err(CliError::BadParameter(
+            "VoteInitV2 arguments (--bls-keypair, --inflation-rewards-commission-bps, \
+             --inflation-rewards-collector, --block-revenue-commission-bps, \
+             --block-revenue-collector) require --use-v2-instruction flag or SIMD-0387 feature to \
+             be active."
+                .to_owned(),
+        )
+        .into());
+    }
+
     let required_balance = rpc_client
         .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())
         .await?
@@ -840,13 +1002,24 @@ pub async fn process_create_vote_account(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let build_message = |lamports| {
-        let vote_init = VoteInit {
-            node_pubkey: identity_pubkey,
-            authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
-            authorized_withdrawer,
-            commission,
+
+    // Generate BLS keypair and proof of possession for VoteInitV2.
+    let bls_data = if use_v2 {
+        let (bls_pubkey, bls_proof_of_possession) = if let Some(bls_keypair) = bls_keypair {
+            create_bls_proof_of_possession(&vote_account_address, bls_keypair)
+        } else {
+            let derived_bls_keypair =
+                BLSKeypair::derive_from_signer(vote_account, BLS_KEYPAIR_DERIVE_SEED).map_err(
+                    |e| CliError::BadParameter(format!("Failed to derive BLS keypair: {e}")),
+                )?;
+            create_bls_proof_of_possession(&vote_account_address, &derived_bls_keypair)
         };
+        Some((bls_pubkey, bls_proof_of_possession))
+    } else {
+        None
+    };
+
+    let build_message = |lamports| {
         let mut create_vote_account_config = CreateVoteAccountConfig {
             space,
             ..CreateVoteAccountConfig::default()
@@ -858,18 +1031,54 @@ pub async fn process_create_vote_account(
             &vote_account_pubkey
         };
 
-        let ixs = vote_instruction::create_account_with_config(
-            &config.signers[0].pubkey(),
-            to,
-            &vote_init,
-            lamports,
-            create_vote_account_config,
-        )
-        .with_memo(memo)
-        .with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit,
-        });
+        let ixs = if use_v2 {
+            let (bls_pubkey, bls_proof_of_possession) = bls_data.unwrap();
+            let vote_init = VoteInitV2 {
+                node_pubkey: identity_pubkey,
+                authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
+                authorized_voter_bls_pubkey: bls_pubkey,
+                authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+                authorized_withdrawer,
+                inflation_rewards_commission_bps: inflation_rewards_commission_bps
+                    .or_else(|| commission.map(|c| (c as u16).saturating_mul(100))) // u16::MAX > u8::MAX * 100
+                    .unwrap_or(10000),
+                inflation_rewards_collector: inflation_rewards_collector
+                    .copied()
+                    .unwrap_or(vote_account_address),
+                block_revenue_commission_bps: block_revenue_commission_bps.unwrap_or(10000),
+                block_revenue_collector: block_revenue_collector
+                    .copied()
+                    .unwrap_or(identity_pubkey),
+            };
+            vote_instruction::create_account_with_config_v2(
+                &config.signers[0].pubkey(),
+                to,
+                &vote_init,
+                lamports,
+                create_vote_account_config,
+            )
+        } else {
+            let vote_init = VoteInit {
+                node_pubkey: identity_pubkey,
+                authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
+                authorized_withdrawer,
+                commission: commission.unwrap_or(100),
+            };
+            vote_instruction::create_account_with_config(
+                &config.signers[0].pubkey(),
+                to,
+                &vote_init,
+                lamports,
+                create_vote_account_config,
+            )
+        };
+
+        let ixs = ixs
+            .with_memo(memo)
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit,
+            });
 
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
@@ -1916,7 +2125,13 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: None,
                     authorized_withdrawer,
-                    commission: 10,
+                    commission: Some(10),
+                    use_v2_instruction: false,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: None,
+                    inflation_rewards_collector: None,
+                    block_revenue_commission_bps: None,
+                    block_revenue_collector: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -1950,7 +2165,13 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: None,
                     authorized_withdrawer,
-                    commission: 100,
+                    commission: None, // No --commission; uses default at runtime.
+                    use_v2_instruction: false,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: None,
+                    inflation_rewards_collector: None,
+                    block_revenue_commission_bps: None,
+                    block_revenue_collector: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -1991,7 +2212,13 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: None,
                     authorized_withdrawer,
-                    commission: 10,
+                    commission: Some(10), // Explicitly set.
+                    use_v2_instruction: false,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: None,
+                    inflation_rewards_collector: None,
+                    block_revenue_commission_bps: None,
+                    block_revenue_collector: None,
                     sign_only: true,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Static(blockhash),
@@ -2041,7 +2268,13 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: None,
                     authorized_withdrawer,
-                    commission: 10,
+                    commission: Some(10),
+                    use_v2_instruction: false,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: None,
+                    inflation_rewards_collector: None,
+                    block_revenue_commission_bps: None,
+                    block_revenue_collector: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Validated(
@@ -2087,7 +2320,13 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: Some(authed),
                     authorized_withdrawer,
-                    commission: 100,
+                    commission: None, // No --commission specified.
+                    use_v2_instruction: false,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: None,
+                    inflation_rewards_collector: None,
+                    block_revenue_commission_bps: None,
+                    block_revenue_collector: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2126,7 +2365,13 @@ mod tests {
                     identity_account: 2,
                     authorized_voter: None,
                     authorized_withdrawer: identity_keypair.pubkey(),
-                    commission: 100,
+                    commission: None, // No --commission specified.
+                    use_v2_instruction: false,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: None,
+                    inflation_rewards_collector: None,
+                    block_revenue_commission_bps: None,
+                    block_revenue_collector: None,
                     sign_only: false,
                     dump_transaction_message: false,
                     blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2143,6 +2388,171 @@ mod tests {
                 ],
             }
         );
+
+        // Test create-vote-account with --use-v2-instruction flag (VoteInitV2).
+        let (keypair_file, mut tmp_file) = make_tmp_file();
+        let keypair = Keypair::new();
+        write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();
+        let inflation_rewards_collector = Keypair::new().pubkey();
+        let block_revenue_collector = Keypair::new().pubkey();
+
+        // Test with VoteInitV2 and all optional arguments specified.
+        let (bls_keypair_file, _tmp_file) = make_tmp_file();
+        let bls_keypair = BLSKeypair::new();
+        bls_keypair.write_json_file(&bls_keypair_file).unwrap();
+
+        let test_create_vote_account_v2 = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--use-v2-instruction",
+            "--authorized-voter",
+            &authed.to_string(),
+            "--bls-keypair",
+            &bls_keypair_file,
+            "--inflation-rewards-commission-bps",
+            "500",
+            "--inflation-rewards-collector",
+            &inflation_rewards_collector.to_string(),
+            "--block-revenue-commission-bps",
+            "1000",
+            "--block-revenue-collector",
+            &block_revenue_collector.to_string(),
+        ]);
+        assert_eq!(
+            parse_command(&test_create_vote_account_v2, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: Some(authed),
+                    authorized_withdrawer,
+                    commission: None,
+                    use_v2_instruction: true,
+                    bls_keypair: Some(bls_keypair),
+                    inflation_rewards_commission_bps: Some(500),
+                    inflation_rewards_collector: Some(inflation_rewards_collector),
+                    block_revenue_commission_bps: Some(1000),
+                    block_revenue_collector: Some(block_revenue_collector),
+                    sign_only: false,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&identity_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // Test with VoteInitV2 in sign-only mode.
+        let (keypair_file, mut tmp_file) = make_tmp_file();
+        let sign_only_vote_keypair = Keypair::new();
+        write_keypair(&sign_only_vote_keypair, tmp_file.as_file_mut()).unwrap();
+
+        let test_create_vote_account_v2_sign_only = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--use-v2-instruction",
+            "--blockhash",
+            &blockhash_string,
+            "--sign-only",
+        ]);
+        assert_eq!(
+            parse_command(
+                &test_create_vote_account_v2_sign_only,
+                &default_signer,
+                &mut None
+            )
+            .unwrap(),
+            CliCommandInfo {
+                command: CliCommand::CreateVoteAccount {
+                    vote_account: 1,
+                    seed: None,
+                    identity_account: 2,
+                    authorized_voter: None,
+                    authorized_withdrawer,
+                    commission: None,
+                    use_v2_instruction: true,
+                    bls_keypair: None,
+                    inflation_rewards_commission_bps: None,
+                    inflation_rewards_collector: None,
+                    block_revenue_commission_bps: None,
+                    block_revenue_collector: None,
+                    sign_only: true,
+                    dump_transaction_message: false,
+                    blockhash_query: BlockhashQuery::Static(blockhash),
+                    nonce_account: None,
+                    nonce_authority: 0,
+                    memo: None,
+                    fee_payer: 0,
+                    compute_unit_price: None,
+                },
+                signers: vec![
+                    Box::new(read_keypair_file(&default_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&identity_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        // Test that --commission conflicts with any VoteInitV2 args.
+        let (keypair_file, mut tmp_file) = make_tmp_file();
+        let conflict_vote_keypair = Keypair::new();
+        write_keypair(&conflict_vote_keypair, tmp_file.as_file_mut()).unwrap();
+
+        // --commission with --use-v2-instruction should error.
+        let test_conflict = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--commission",
+            "10",
+            "--use-v2-instruction",
+        ]);
+        assert!(parse_command(&test_conflict, &default_signer, &mut None).is_err());
+
+        // --commission with --inflation-rewards-commission-bps should error.
+        let test_conflict = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--commission",
+            "10",
+            "--inflation-rewards-commission-bps",
+            "1000",
+        ]);
+        assert!(parse_command(&test_conflict, &default_signer, &mut None).is_err());
+
+        // --commission with --block-revenue-commission-bps should error.
+        let test_conflict = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-vote-account",
+            &keypair_file,
+            &identity_keypair_file,
+            &authorized_withdrawer.to_string(),
+            "--commission",
+            "10",
+            "--block-revenue-commission-bps",
+            "500",
+        ]);
+        assert!(parse_command(&test_conflict, &default_signer, &mut None).is_err());
 
         let test_update_validator = test_commands.clone().get_matches_from(vec![
             "test",

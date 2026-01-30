@@ -124,7 +124,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             if last_tick_height == bank.max_tick_height()
                 && bank.slot() > MINIMUM_DUPLICATE_SLOT
                 && self.num_slots_broadcasted.is_multiple_of(DUPLICATE_RATE)
-                && self.recent_blockhash.is_some()
+                && let Some(recent_blockhash) = self.recent_blockhash
             {
                 let entry_batch_len = receive_results.entries.len();
                 let prev_entry_hash =
@@ -146,7 +146,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                         keypair,
                         &Pubkey::new_unique(),
                         1,
-                        self.recent_blockhash.unwrap(),
+                        recent_blockhash,
                     );
                     let new_extra_entry = Entry::new(&prev_entry_hash, 1, vec![extra_tx]);
 

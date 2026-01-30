@@ -1,0 +1,39 @@
+[package]
+name = "solana-leader-schedule"
+description = "Solana leader schedule"
+documentation = "https://docs.rs/solana-leader-schedule"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_leader_schedule"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+agave-random = { workspace = true }
+itertools = { workspace = true }
+rand_chacha = { workspace = true }
+solana-clock = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-vote = { workspace = true }
+
+[dev-dependencies]
+bs58 = { workspace = true, features = ["alloc"] }
+rand = { workspace = true }
+sha2 = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
+test-case = { workspace = true }
+
+[lints]
+workspace = true

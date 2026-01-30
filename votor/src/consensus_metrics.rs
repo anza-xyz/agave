@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use {
     agave_votor_messages::vote::Vote,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
@@ -17,6 +15,17 @@ use {
         time::{Duration, Instant},
     },
 };
+
+/// Even at 10 events per slot, this supports 1000 slots in flight
+/// With 2000 active validators, we can't have more than:
+/// - 1 Notarize vote
+/// - 3 Notarize-fallback votes
+/// - 1 Skip-fallback vote
+/// - 1 Finalize vote
+///
+/// Per validator, resulting in 12k vote events.
+/// We overprovision this channel at 15k total events.
+pub const MAX_IN_FLIGHT_CONSENSUS_EVENTS: usize = 15_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsensusMetricsEvent {
@@ -97,20 +106,6 @@ impl NodeVoteMetrics {
             }
         }
     }
-}
-
-/// Errors returned from [`AgMetrics::record_vote`].
-#[derive(Debug)]
-pub enum RecordVoteError {
-    /// Could not find start of slot entry.
-    SlotNotFound,
-}
-
-/// Errors returned from [`AgMetrics::record_block_hash_seen`].
-#[derive(Debug)]
-pub enum RecordBlockHashError {
-    /// Could not find start of slot entry.
-    SlotNotFound,
 }
 
 /// Tracks various Consensus related metrics.

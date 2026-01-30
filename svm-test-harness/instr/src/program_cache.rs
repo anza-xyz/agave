@@ -1,7 +1,4 @@
 use {
-    agave_feature_set::{
-        enable_loader_v4, zk_elgamal_proof_program_enabled, zk_token_sdk_enabled, FeatureSet,
-    },
     agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{Account, AccountSharedData},
     solana_builtins::BUILTINS,
@@ -12,33 +9,17 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     std::{collections::HashSet, sync::Arc},
 };
 
 /// Create a new `ProgramCacheForTxBatch` instance with all builtins from `solana-builtins`.
-pub fn new_with_builtins(feature_set: &FeatureSet, slot: u64) -> ProgramCacheForTxBatch {
+pub fn new_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     let mut cache = ProgramCacheForTxBatch::default();
     cache.set_slot_for_tests(slot);
 
     for builtin in BUILTINS {
-        // Only activate feature-gated builtins if the feature is active.
-        if builtin.program_id == solana_sdk_ids::loader_v4::id()
-            && !feature_set.is_active(&enable_loader_v4::id())
-        {
-            continue;
-        }
-        if builtin.program_id == solana_sdk_ids::zk_elgamal_proof_program::id()
-            && !feature_set.is_active(&zk_elgamal_proof_program_enabled::id())
-        {
-            continue;
-        }
-        if builtin.program_id == solana_sdk_ids::zk_token_proof_program::id()
-            && !feature_set.is_active(&zk_token_sdk_enabled::id())
-        {
-            continue;
-        }
-
         cache.replenish(
             builtin.program_id,
             Arc::new(ProgramCacheEntry::new_builtin(
@@ -58,12 +39,12 @@ pub fn add_program(
     program_id: &Pubkey,
     loader_key: &Pubkey,
     elf: &[u8],
-    feature_set: &FeatureSet,
+    feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) {
     let program_runtime_environment = Arc::new(
         create_program_runtime_environment_v1(
-            &feature_set.runtime_features(),
+            feature_set,
             &compute_budget.to_budget(),
             false, /* reject_deployment_of_broken_elfs */
             false, /* debugging_features */

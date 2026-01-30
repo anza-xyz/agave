@@ -8,8 +8,6 @@ use {
     async_trait::async_trait,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
-    solana_client::connection_cache::ConnectionCache,
-    solana_connection_cache::client_connection::ClientConnection,
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
@@ -52,22 +50,13 @@ use {
 
 mod packet_container;
 
-/// [`ForwardingClientOption`] enum represents the available client types for
-/// TPU communication:
-/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
-///   connections.
-/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate.
-pub enum ForwardingClientOption<'a> {
-    ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext(
-        (
-            &'a Keypair,
-            Box<[UdpSocket]>,
-            RuntimeHandle,
-            CancellationToken,
-            Arc<NodeMultihoming>,
-        ),
-    ),
+/// [`ForwardingClientConfig`] is the config for `tpu-client-next` instance.
+pub struct ForwardingClientConfig<'a> {
+    pub stake_identity: &'a Keypair,
+    pub tpu_client_sockets: Box<[UdpSocket]>,
+    pub runtime_handle: RuntimeHandle,
+    pub cancel: CancellationToken,
+    pub node_multihoming: Arc<NodeMultihoming>,
 }
 
 /// Value chosen because it was used historically, at some point
@@ -132,72 +121,52 @@ pub(crate) struct SpawnForwardingStageResult {
 
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
-    client: ForwardingClientOption<'_>,
+    tpu_forwaring_client_config: ForwardingClientConfig<'_>,
     vote_client_udp_socket: UdpSocket,
     sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
     data_budget: DataBudget,
 ) -> SpawnForwardingStageResult {
     let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
-    match client {
-        ForwardingClientOption::ConnectionCache(connection_cache) => {
-            let non_vote_client =
-                ConnectionCacheClient::new(connection_cache.clone(), forward_address_getter);
-            let forwarding_stage = ForwardingStage::new(
-                receiver,
-                vote_client,
-                Box::new([non_vote_client]),
-                sharable_banks,
-                data_budget,
-                None,
-            );
-            SpawnForwardingStageResult {
-                join_handle: Builder::new()
-                    .name("solFwdStage".to_string())
-                    .spawn(move || forwarding_stage.run())
-                    .unwrap(),
-                client_updater: connection_cache as Arc<dyn NotifyKeyUpdate + Send + Sync>,
-            }
-        }
-        ForwardingClientOption::TpuClientNext((
-            stake_identity,
-            tpu_client_sockets,
-            runtime_handle,
-            cancel,
-            node_multihoming,
-        )) => {
-            // Create TPU clients for each socket provided.
-            // Number of clients is same as number of bind IP addresses.
-            let non_vote_clients: Box<[TpuClientNextClient]> = tpu_client_sockets
-                .into_vec()
-                .into_iter()
-                .map(|socket| {
-                    TpuClientNextClient::new(
-                        runtime_handle.clone(),
-                        forward_address_getter.clone(),
-                        Some(stake_identity),
-                        socket,
-                        cancel.clone(),
-                    )
-                })
-                .collect();
-            let forwarding_stage = ForwardingStage::new(
-                receiver,
-                vote_client,
-                non_vote_clients.clone(),
-                sharable_banks,
-                data_budget,
-                Some(node_multihoming.bind_ip_addrs.clone()),
-            );
-            SpawnForwardingStageResult {
-                join_handle: Builder::new()
-                    .name("solFwdStage".to_string())
-                    .spawn(move || forwarding_stage.run())
-                    .unwrap(),
-                client_updater: Arc::new(UpdateHandles(non_vote_clients))
-                    as Arc<dyn NotifyKeyUpdate + Send + Sync>,
-            }
-        }
+
+    let ForwardingClientConfig {
+        stake_identity,
+        tpu_client_sockets,
+        runtime_handle,
+        cancel,
+        node_multihoming,
+    } = tpu_forwaring_client_config;
+
+    // Create TPU clients for each socket provided.
+    // Number of clients is same as number of bind IP addresses.
+    let non_vote_clients: Box<[TpuClientNextClient]> = tpu_client_sockets
+        .into_vec()
+        .into_iter()
+        .map(|socket| {
+            TpuClientNextClient::new(
+                runtime_handle.clone(),
+                forward_address_getter.clone(),
+                Some(stake_identity),
+                socket,
+                cancel.clone(),
+            )
+        })
+        .collect();
+    let forwarding_stage = ForwardingStage::new(
+        receiver,
+        vote_client,
+        non_vote_clients.clone(),
+        sharable_banks,
+        data_budget,
+        Some(node_multihoming.bind_ip_addrs.clone()),
+    );
+    SpawnForwardingStageResult {
+        join_handle: Builder::new()
+            .name("solFwdStage".to_string())
+            .spawn(move || forwarding_stage.run())
+            .unwrap(),
+        client_updater: Arc::new(UpdateHandles(non_vote_clients))
+            as Arc<dyn NotifyKeyUpdate + Send + Sync>,
     }
 }
 
@@ -517,47 +486,6 @@ impl ForwardingClient for VoteClient {
             .iter()
             .map(|bytes| (bytes, current_address));
         batch_send(&self.bind_socket, batch_with_addresses)?;
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct ConnectionCacheClient {
-    connection_cache: Arc<ConnectionCache>,
-    forward_address_getter: ForwardAddressGetter,
-}
-
-impl ConnectionCacheClient {
-    fn new(
-        connection_cache: Arc<ConnectionCache>,
-        forward_address_getter: ForwardAddressGetter,
-    ) -> Self {
-        Self {
-            connection_cache,
-            forward_address_getter,
-        }
-    }
-    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
-        let node_addresses = self
-            .forward_address_getter
-            .get_non_vote_forwarding_addresses(
-                NUM_LOOKAHEAD_LEADERS,
-                self.connection_cache.protocol(),
-            );
-        node_addresses.first().copied()
-    }
-}
-
-impl ForwardingClient for ConnectionCacheClient {
-    fn send_transactions_in_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), ForwardingClientError> {
-        let Some(current_address) = self.get_next_valid_leader() else {
-            return Err(ForwardingClientError::LeaderContactMissing);
-        };
-        let conn = self.connection_cache.get_connection(&current_address);
-        conn.send_data_batch_async(wire_transactions)?;
         Ok(())
     }
 }

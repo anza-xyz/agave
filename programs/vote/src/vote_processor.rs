@@ -17,7 +17,8 @@ use {
     std::collections::HashSet,
 };
 
-fn process_authorize_with_seed_instruction(
+#[allow(clippy::too_many_arguments)]
+fn process_authorize_with_seed_instruction<F>(
     invoke_context: &InvokeContext,
     instruction_context: &InstructionContext,
     vote_account: &mut BorrowedInstructionAccount,
@@ -27,7 +28,11 @@ fn process_authorize_with_seed_instruction(
     current_authority_derived_key_owner: &Pubkey,
     current_authority_derived_key_seed: &str,
     is_bls_pubkey_feature_enabled: bool,
-) -> Result<(), InstructionError> {
+    consume_pop_compute_units: F,
+) -> Result<(), InstructionError>
+where
+    F: FnOnce() -> Result<(), InstructionError>,
+{
     let clock = get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
     let mut expected_authority_keys: HashSet<Pubkey> = HashSet::default();
     if instruction_context.is_instruction_account_signer(2)? {
@@ -51,6 +56,7 @@ fn process_authorize_with_seed_instruction(
         &expected_authority_keys,
         &clock,
         is_bls_pubkey_feature_enabled,
+        consume_pop_compute_units,
     )
 }
 
@@ -64,6 +70,9 @@ fn is_bls_pubkey_feature_enabled(invoke_context: &InvokeContext) -> bool {
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
 // units; can consume based on instructions in the future like `bpf_loader` does.
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_100;
+
+/// Cost in compute units for BLS proof-of-possession verification (SIMD-0387).
+pub const BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS: u64 = 34_500;
 
 declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context| {
     let transaction_context = &invoke_context.transaction_context;
@@ -86,6 +95,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
     let signers = instruction_context.get_signers()?;
     let is_bls_pubkey_feature_enabled = is_bls_pubkey_feature_enabled(invoke_context);
+    let consume_pop_compute_units = || {
+        invoke_context
+            .consume_checked(BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS)
+            .map_err(|_| InstructionError::ComputationalBudgetExceeded)
+    };
     match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {
         VoteInstruction::InitializeAccount(vote_init) => {
             // If the BLS pubkey feature is active, reject the instruction
@@ -112,6 +126,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 &clock,
                 is_bls_pubkey_feature_enabled,
+                consume_pop_compute_units,
             )
         }
         VoteInstruction::AuthorizeWithSeed(args) => {
@@ -126,6 +141,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
                 is_bls_pubkey_feature_enabled,
+                consume_pop_compute_units,
             )
         }
         VoteInstruction::AuthorizeCheckedWithSeed(args) => {
@@ -144,6 +160,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
                 is_bls_pubkey_feature_enabled,
+                consume_pop_compute_units,
             )
         }
         VoteInstruction::UpdateValidatorIdentity => {
@@ -279,6 +296,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 &clock,
                 is_bls_pubkey_feature_enabled,
+                consume_pop_compute_units,
             )
         }
         VoteInstruction::InitializeAccountV2(vote_init_v2) => {
@@ -296,6 +314,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &vote_init_v2,
                 &signers,
                 &clock,
+                consume_pop_compute_units,
             )
         }
         VoteInstruction::UpdateCommissionBps {
@@ -385,7 +404,10 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
-        solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set,
+        solana_program_runtime::{
+            invoke_context::mock_process_instruction_with_feature_set,
+            solana_sbpf::vm::ContextObject,
+        },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::sysvar,
@@ -398,7 +420,7 @@ mod tests {
                 BLS_PUBLIC_KEY_COMPRESSED_SIZE,
             },
         },
-        std::{collections::HashSet, str::FromStr},
+        std::{cell::RefCell, collections::HashSet, str::FromStr},
         test_case::{test_case, test_matrix},
     };
 
@@ -453,13 +475,32 @@ mod tests {
         instruction_accounts: Vec<AccountMeta>,
         expected_result: Result<(), InstructionError>,
     ) -> Vec<AccountSharedData> {
+        process_instruction_with_cu_check(
+            features,
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+            expected_result,
+            DEFAULT_COMPUTE_UNITS,
+        )
+    }
+
+    fn process_instruction_with_cu_check(
+        features: VoteProgramFeatures,
+        instruction_data: &[u8],
+        transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+        instruction_accounts: Vec<AccountMeta>,
+        expected_result: Result<(), InstructionError>,
+        expected_cus: u64,
+    ) -> Vec<AccountSharedData> {
         let VoteProgramFeatures {
             vote_state_v4,
             bls_pubkey_management_in_vote_account,
             commission_rate_in_basis_points,
             custom_commission_collector,
         } = features;
-        mock_process_instruction_with_feature_set(
+        let cu_consumed = RefCell::new(0u64);
+        let accounts = mock_process_instruction_with_feature_set(
             &id(),
             None,
             instruction_data,
@@ -467,8 +508,12 @@ mod tests {
             instruction_accounts,
             expected_result,
             Entrypoint::vm,
-            |_invoke_context| {},
-            |_invoke_context| {},
+            |invoke_context| {
+                *cu_consumed.borrow_mut() = invoke_context.get_remaining();
+            },
+            |invoke_context| {
+                *cu_consumed.borrow_mut() -= invoke_context.get_remaining();
+            },
             &SVMFeatureSet {
                 vote_state_v4,
                 bls_pubkey_management_in_vote_account,
@@ -476,13 +521,35 @@ mod tests {
                 custom_commission_collector,
                 ..SVMFeatureSet::all_enabled()
             },
-        )
+        );
+        assert_eq!(
+            *cu_consumed.borrow(),
+            expected_cus,
+            "Expected {} CU consumed, got {}",
+            expected_cus,
+            *cu_consumed.borrow()
+        );
+        accounts
     }
 
     fn process_instruction_as_one_arg(
         features: VoteProgramFeatures,
         instruction: &Instruction,
         expected_result: Result<(), InstructionError>,
+    ) -> Vec<AccountSharedData> {
+        process_instruction_as_one_arg_with_cu_check(
+            features,
+            instruction,
+            expected_result,
+            DEFAULT_COMPUTE_UNITS,
+        )
+    }
+
+    fn process_instruction_as_one_arg_with_cu_check(
+        features: VoteProgramFeatures,
+        instruction: &Instruction,
+        expected_result: Result<(), InstructionError>,
+        expected_cus: u64,
     ) -> Vec<AccountSharedData> {
         let mut pubkeys: HashSet<Pubkey> = instruction
             .accounts
@@ -522,12 +589,13 @@ mod tests {
                 )
             })
             .collect();
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &instruction.data,
             transaction_accounts,
             instruction.accounts.clone(),
             expected_result,
+            expected_cus,
         )
     }
 
@@ -1001,7 +1069,7 @@ mod tests {
             return;
         }
 
-        let accounts = process_instruction(
+        let accounts = process_instruction_with_cu_check(
             features,
             &instruction_data,
             vec![
@@ -1012,6 +1080,7 @@ mod tests {
             ],
             instruction_accounts.clone(),
             Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
 
         // reinit should fail
@@ -1100,7 +1169,7 @@ mod tests {
                 is_writable: false,
             },
         ];
-        process_instruction(
+        process_instruction_with_cu_check(
             VoteProgramFeatures {
                 vote_state_v4: true,
                 bls_pubkey_management_in_vote_account: true,
@@ -1115,6 +1184,7 @@ mod tests {
             ],
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
     }
 
@@ -2280,32 +2350,35 @@ mod tests {
 
         // should fail, unsigned
         instruction_accounts[0].is_signer = false;
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
         instruction_accounts[0].is_signer = true;
 
         // should pass
-        let accounts = process_instruction(
+        let accounts = process_instruction_with_cu_check(
             features,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
 
         // should fail, already set an authorized voter earlier for leader_schedule_epoch == 2
         transaction_accounts[0] = (vote_pubkey, accounts[0].clone());
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(VoteError::TooSoonToReauthorize.into()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
 
         // should pass, verify authorized_voter_pubkey can authorize authorized_voter_pubkey ;)
@@ -2324,12 +2397,13 @@ mod tests {
         };
         let clock_account = account::create_account_shared_data_for_test(&clock);
         transaction_accounts[1] = (sysvar::clock::id(), clock_account);
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
         instruction_accounts[0].is_signer = true;
         instruction_accounts.pop();
@@ -2419,7 +2493,7 @@ mod tests {
             }),
         ))
         .unwrap();
-        process_instruction(
+        process_instruction_with_cu_check(
             VoteProgramFeatures {
                 vote_state_v4: true,
                 bls_pubkey_management_in_vote_account: true,
@@ -2429,6 +2503,7 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::InvalidArgument),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
     }
 
@@ -2754,10 +2829,15 @@ mod tests {
             bls_pubkey_management_in_vote_account,
             ..Default::default()
         };
+        let expected_cus = if matches!(authorization_type, VoteAuthorize::VoterWithBLS(_)) {
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS
+        } else {
+            DEFAULT_COMPUTE_UNITS
+        };
 
         // Can't change authority unless base key signs.
         instruction_accounts[2].is_signer = false;
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
@@ -2771,11 +2851,12 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
+            expected_cus,
         );
         instruction_accounts[2].is_signer = true;
 
         // Can't change authority if seed doesn't match.
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
@@ -2789,10 +2870,11 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
+            expected_cus,
         );
 
         // Can't change authority if owner doesn't match.
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
@@ -2806,10 +2888,11 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
+            expected_cus,
         );
 
         // Can change authority when base key signs for related derived key.
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
@@ -2823,6 +2906,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Ok(()),
+            expected_cus,
         );
     }
 
@@ -2877,10 +2961,15 @@ mod tests {
             bls_pubkey_management_in_vote_account,
             ..Default::default()
         };
+        let expected_cus = if matches!(authorization_type, VoteAuthorize::VoterWithBLS(_)) {
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS
+        } else {
+            DEFAULT_COMPUTE_UNITS
+        };
 
         // Can't change authority unless base key signs.
         instruction_accounts[2].is_signer = false;
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
@@ -2893,10 +2982,12 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
+            expected_cus,
         );
         instruction_accounts[2].is_signer = true;
 
         // Can't change authority unless new authority signs.
+        // This check happens before authorize(), so no BLS CUs are consumed.
         instruction_accounts[3].is_signer = false;
         process_instruction(
             features,
@@ -2915,7 +3006,7 @@ mod tests {
         instruction_accounts[3].is_signer = true;
 
         // Can't change authority if seed doesn't match.
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
@@ -2928,10 +3019,11 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
+            expected_cus,
         );
 
         // Can't change authority if owner doesn't match.
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
@@ -2944,10 +3036,11 @@ mod tests {
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
+            expected_cus,
         );
 
         // Can change authority when base key signs for related derived key and new authority signs.
-        process_instruction(
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
@@ -2960,6 +3053,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Ok(()),
+            expected_cus,
         );
     }
 
@@ -3693,20 +3787,25 @@ mod tests {
                 is_writable: false,
             },
         ];
-        let authorize_type = if vote_state_v4 && bls_pubkey_management_in_vote_account {
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            })
-        } else {
-            VoteAuthorize::Voter
-        };
-        process_instruction(
+        let (authorize_type, expected_cus) =
+            if vote_state_v4 && bls_pubkey_management_in_vote_account {
+                (
+                    VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                        bls_pubkey,
+                        bls_proof_of_possession,
+                    }),
+                    DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+                )
+            } else {
+                (VoteAuthorize::Voter, DEFAULT_COMPUTE_UNITS)
+            };
+        process_instruction_with_cu_check(
             features,
             &serialize(&VoteInstruction::AuthorizeChecked(authorize_type)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
+            expected_cus,
         );
         process_instruction(
             features,

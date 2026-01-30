@@ -207,7 +207,6 @@ impl Bank {
             stake_rewards,
             validator_rate,
             foundation_rate,
-            prev_epoch_duration_in_years,
             capitalization,
             point_value,
             ..
@@ -252,11 +251,6 @@ impl Bank {
             ("epoch", prev_epoch, i64),
             ("validator_rate", *validator_rate, f64),
             ("foundation_rate", *foundation_rate, f64),
-            (
-                "epoch_duration_in_years",
-                *prev_epoch_duration_in_years,
-                f64
-            ),
             ("validator_rewards", total_vote_rewards, i64),
             ("active_stake", active_stake, i64),
             ("pre_capitalization", *capitalization, i64),
@@ -298,7 +292,6 @@ impl Bank {
         let capitalization = self.capitalization();
         let EpochInflationRewards {
             validator_rewards_lamports,
-            epoch_duration_in_years,
             validator_rate,
             foundation_rate,
         } = self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
@@ -330,7 +323,6 @@ impl Bank {
             stake_rewards,
             validator_rate,
             foundation_rate,
-            prev_epoch_duration_in_years: epoch_duration_in_years,
             capitalization,
             point_value,
         }

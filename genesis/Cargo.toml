@@ -18,6 +18,7 @@ name = "solana_genesis"
 [[bin]]
 name = "solana-genesis"
 path = "src/main.rs"
+required-features = ["agave-unstable-api"]
 
 [features]
 default = ["agave-unstable-api"]

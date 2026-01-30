@@ -1351,32 +1351,39 @@ impl Blockstore {
         self.completed_slots_senders.lock().unwrap().clear();
     }
 
-    /// Clear `slot` from the Blockstore, see ``Blockstore::purge_slot_cleanup_chaining`
-    /// for more details.
+    /// Clear `slot` from the Blockstore
     ///
     /// This function currently requires `insert_shreds_lock`, as both
     /// `clear_unconfirmed_slot()` and `insert_shreds_handle_duplicate()`
     /// try to perform read-modify-write operation on [`cf::SlotMeta`] column
     /// family.
     pub fn clear_unconfirmed_slot(&self, slot: Slot) {
+        self.clear_unconfirmed_slots(slot, slot);
+    }
+
+    /// Atomically clear a range of `slot` inclusive, similar to `Blockstore::clear_unconfirmed_slot`
+    /// Holds the shred lock during the entire purge.
+    pub fn clear_unconfirmed_slots(&self, start: Slot, end: Slot) {
         let _lock = self.insert_shreds_lock.lock().unwrap();
-        // Purge the slot and insert an empty `SlotMeta` with only the `next_slots` field preserved.
-        // Shreds inherently know their parent slot, and a parent's SlotMeta `next_slots` list
-        // will be updated when the child is inserted (see `Blockstore::handle_chaining()`).
-        // However, we are only purging and repairing the parent slot here. Since the child will not be
-        // reinserted the chaining will be lost. In order for bank forks discovery to ingest the child,
-        // we must retain the chain by preserving `next_slots`.
-        match self.purge_slot_cleanup_chaining(slot) {
-            Ok(_) => {}
-            Err(BlockstoreError::SlotUnavailable) => {
-                error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
+        for slot in start..=end {
+            // Purge the slot and insert an empty `SlotMeta` with only the `next_slots` field preserved.
+            // Shreds inherently know their parent slot, and a parent's SlotMeta `next_slots` list
+            // will be updated when the child is inserted (see `Blockstore::handle_chaining()`).
+            // However, we are only purging and repairing the parent slot here. Since the child will not be
+            // reinserted the chaining will be lost. In order for bank forks discovery to ingest the child,
+            // we must retain the chain by preserving `next_slots`.
+            match self.purge_slot_cleanup_chaining(slot) {
+                Ok(_) => {}
+                Err(BlockstoreError::SlotUnavailable) => {
+                    error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
+                }
+                Err(e) => panic!("Purge database operations failed {e}"),
             }
-            Err(e) => panic!("Purge database operations failed {e}"),
         }
     }
 
-    // Bypasses erasure recovery because it is called from broadcast stage
-    // when inserting own shreds during leader slots.
+    // Bypasses erasure recovery becuase it is called from broadcast stage
+    // when inserting own shreds during leader slots. Stores all shreds in the original column.
     pub fn insert_cow_shreds<'a>(
         &self,
         shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
@@ -5222,7 +5229,6 @@ pub mod tests {
         super::*,
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
             shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
@@ -5234,6 +5240,7 @@ pub mod tests {
         solana_entry::entry::{next_entry, next_entry_mut},
         solana_genesis_utils::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
         solana_hash::Hash,
+        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
         solana_packet::PACKET_DATA_SIZE,
         solana_pubkey::Pubkey,
@@ -7895,7 +7902,9 @@ pub mod tests {
         assert_eq!(blockstore.lowest_slot_with_genesis(), 0);
         assert_eq!(blockstore.lowest_slot(), 1);
 
-        blockstore.purge_slots(0, 1, PurgeType::CompactionFilter);
+        blockstore
+            .purge_slots(0, 1, PurgeType::CompactionFilter)
+            .unwrap();
         assert_eq!(blockstore.get_first_available_block().unwrap(), 3);
         assert_eq!(blockstore.lowest_slot_with_genesis(), 2);
         assert_eq!(blockstore.lowest_slot(), 2);
@@ -8768,7 +8777,9 @@ pub mod tests {
 
         if simulate_blockstore_cleanup_service {
             *blockstore.lowest_cleanup_slot.write().unwrap() = lowest_cleanup_slot;
-            blockstore.purge_slots(0, lowest_cleanup_slot, PurgeType::CompactionFilter);
+            blockstore
+                .purge_slots(0, lowest_cleanup_slot, PurgeType::CompactionFilter)
+                .unwrap();
         }
 
         let are_missing = check_for_missing();
@@ -9950,14 +9961,14 @@ pub mod tests {
             .insert_shreds(all_shreds, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
 
         // Test inserting just the codes, enough for recovery
         blockstore
             .insert_shreds(coding_shreds.clone(), Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
 
         // Test inserting some codes, but not enough for recovery
         blockstore
@@ -9968,7 +9979,7 @@ pub mod tests {
             )
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
 
         // Test inserting just the codes, and some data, enough for recovery
         let shreds: Vec<_> = data_shreds[..data_shreds.len() - 1]
@@ -9980,7 +9991,7 @@ pub mod tests {
             .insert_shreds(shreds, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
 
         // Test inserting some codes, and some data, but enough for recovery
         let shreds: Vec<_> = data_shreds[..data_shreds.len() / 2 - 1]
@@ -9992,7 +10003,7 @@ pub mod tests {
             .insert_shreds(shreds, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
 
         // Test inserting all shreds in 2 rounds, make sure nothing is lost
         let shreds1: Vec<_> = data_shreds[..data_shreds.len() / 2 - 1]
@@ -10012,7 +10023,7 @@ pub mod tests {
             .insert_shreds(shreds2, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
 
         // Test not all, but enough data and coding shreds in 2 rounds to trigger recovery,
         // make sure nothing is lost
@@ -10037,7 +10048,7 @@ pub mod tests {
             .insert_shreds(shreds2, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
 
         // Test insert shreds in 2 rounds, but not enough to trigger
         // recovery, make sure nothing is lost
@@ -10062,7 +10073,7 @@ pub mod tests {
             .insert_shreds(shreds2, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_and_compact_slots(0, slot).unwrap();
     }
 
     fn setup_erasure_shreds(

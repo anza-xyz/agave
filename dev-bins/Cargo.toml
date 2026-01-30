@@ -134,7 +134,7 @@ solana-rpc-client-api = { path = "../rpc-client-api", version = "=4.0.0-alpha.0"
 solana-rpc-client-nonce-utils = { path = "../rpc-client-nonce-utils", version = "=4.0.0-alpha.0" }
 solana-runtime = { path = "../runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-sbpf = { version = "=0.14.1", default-features = false }
+solana-sbpf = { version = "=0.14.2", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.0"
 solana-signature = { version = "3.1.0", default-features = false }

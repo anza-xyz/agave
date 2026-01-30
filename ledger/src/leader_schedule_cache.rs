@@ -1,15 +1,12 @@
 use {
-    crate::{
-        blockstore::Blockstore,
-        leader_schedule::{FixedSchedule, LeaderSchedule},
-        leader_schedule_utils,
-    },
+    crate::blockstore::Blockstore,
     itertools::Itertools,
     log::*,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
+    solana_leader_schedule::{FixedSchedule, LeaderSchedule},
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, leader_schedule_utils},
     std::{
         collections::{hash_map::Entry, HashMap, VecDeque},
         sync::{
@@ -250,7 +247,6 @@ mod tests {
                 bootstrap_validator_stake_lamports, create_genesis_config,
                 create_genesis_config_with_leader, GenesisConfigInfo,
             },
-            leader_schedule::LeaderSchedule,
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
@@ -259,6 +255,7 @@ mod tests {
             EpochSchedule, DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
+        solana_leader_schedule::LeaderSchedule,
         solana_runtime::stake_utils,
         solana_signer::Signer,
         std::{sync::Arc, thread::Builder},

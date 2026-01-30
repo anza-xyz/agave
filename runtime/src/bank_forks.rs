@@ -473,6 +473,13 @@ impl BankForks {
                  {root}"
             );
             root_bank.clear_epoch_rewards_cache();
+
+            // If we have rooted a block in the new epoch since Alpenglow has been activated, advance MigrationStatus
+            if self.migration_status.is_alpenglow_enabled()
+                && !self.migration_status.is_full_alpenglow_epoch()
+            {
+                self.migration_status.alpenglow_rooted_new_epoch(new_epoch);
+            }
         }
         let root_tx_count = root_bank
             .parents()

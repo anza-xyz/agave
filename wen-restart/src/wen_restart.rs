@@ -20,6 +20,7 @@ use {
         },
         snapshot_archive_info::SnapshotArchiveInfoGetter,
     },
+    agave_votor_messages::migration::MigrationStatus,
     anyhow::Result,
     log::*,
     prost::Message,
@@ -648,6 +649,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 None,
                 None,
                 &mut timing,
+                &MigrationStatus::default(),
             ) {
                 return Err(
                     WenRestartError::BlockNotFrozenAfterReplay(slot, Some(e.to_string())).into(),
@@ -2034,6 +2036,7 @@ mod tests {
             None,
             None,
             &mut timing,
+            &MigrationStatus::default(),
         ) {
             panic!("process_single_slot failed: {e:?}");
         }

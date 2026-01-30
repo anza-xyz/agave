@@ -126,7 +126,7 @@ use {
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
         send_transaction_service::Config as SendTransactionServiceConfig,
-        send_transaction_service::SendTransactionService, test_utils::ClientWithCreator,
+        send_transaction_service::SendTransactionService,
     },
 };
 
@@ -445,11 +445,11 @@ impl JsonRpcRequestProcessor {
     }
 
     #[cfg(test)]
-    pub fn new_from_bank<Client: ClientWithCreator>(
-        bank: Bank,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        use crate::rpc_service::service_runtime;
+    pub fn new_from_bank(bank: Bank, socket_addr_space: SocketAddrSpace) -> Self {
+        use {
+            crate::rpc_service::service_runtime,
+            solana_send_transaction_service::test_utils::create_client_for_tests,
+        };
 
         let genesis_hash = bank.hash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -476,7 +476,7 @@ impl JsonRpcRequestProcessor {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
             &bank_forks,
@@ -2929,7 +2929,7 @@ pub mod rpc_minimal {
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
                     let mut schedule_by_identity =
-                        solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
+                        solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule
                                 .get_slot_leaders()
                                 .iter()
@@ -4573,9 +4573,7 @@ pub mod tests {
             non_circulating_supply::non_circulating_accounts,
         },
         solana_sdk_ids::bpf_loader_upgradeable,
-        solana_send_transaction_service::{
-            test_utils::CreateClient, transaction_client::TpuClientNextClient,
-        },
+        solana_send_transaction_service::test_utils::create_client_for_tests,
         solana_sha256_hasher::hash,
         solana_signer::Signer,
         solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
@@ -5092,10 +5090,7 @@ pub mod tests {
         let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let bank = meta.bank_forks.read().unwrap().root_bank();
         bank.transfer(20, &genesis.mint_keypair, &bob_pubkey)
@@ -5113,10 +5108,7 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5143,10 +5135,7 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5269,10 +5258,7 @@ pub mod tests {
         let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -6837,10 +6823,7 @@ pub mod tests {
     fn test_rpc_send_bad_tx() {
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
@@ -6908,12 +6891,7 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
-            my_tpu_address,
-            None,
-            1,
-        );
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -7206,12 +7184,7 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
-            my_tpu_address,
-            None,
-            1,
-        );
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,

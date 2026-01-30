@@ -182,8 +182,16 @@ impl BlockCommitmentCache {
         }
     }
 
+    pub fn set_slot(&mut self, slot: Slot) {
+        self.commitment_slots.slot = slot;
+    }
+
     pub fn set_highest_confirmed_slot(&mut self, slot: Slot) {
         self.commitment_slots.highest_confirmed_slot = slot;
+    }
+
+    pub fn set_root(&mut self, slot: Slot) {
+        self.commitment_slots.root = slot;
     }
 
     pub fn set_highest_super_majority_root(&mut self, root: Slot) {

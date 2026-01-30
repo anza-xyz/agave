@@ -1926,13 +1926,18 @@ pub async fn process_show_stakes(
             let mut pubkeys: HashSet<String> =
                 pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
 
-            let vote_account_pubkeys: HashSet<String> = vote_accounts
+            let vote_account_pubkeys: HashSet<Pubkey> = vote_accounts
                 .current
                 .into_iter()
                 .chain(vote_accounts.delinquent)
                 .filter_map(|vote_acc| {
-                    (pubkeys.remove(&vote_acc.node_pubkey) || pubkeys.remove(&vote_acc.vote_pubkey))
-                        .then_some(vote_acc.vote_pubkey)
+                    if pubkeys.remove(&vote_acc.node_pubkey)
+                        || pubkeys.remove(&vote_acc.vote_pubkey)
+                    {
+                        Pubkey::from_str(&vote_acc.vote_pubkey).ok()
+                    } else {
+                        None
+                    }
                 })
                 .collect();
 
@@ -1945,7 +1950,7 @@ pub async fn process_show_stakes(
             vote_account_progress_bar.finish_and_clear();
             vote_account_pubkeys
         }
-        None => HashSet::new(),
+        None => HashSet::<Pubkey>::new(),
     };
 
     let mut program_accounts_config = RpcProgramAccountsConfig {
@@ -1961,16 +1966,12 @@ pub async fn process_show_stakes(
 
     // Use server-side filtering if only one vote account is provided
     if vote_account_pubkeys.len() == 1 {
+        let filter_pubkey = vote_account_pubkeys.iter().next().unwrap();
         program_accounts_config.filters = Some(vec![
             // Filter by `StakeStateV2::Stake(_, _)`
             RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
             // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
-            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
-                124,
-                Pubkey::from_str(vote_account_pubkeys.iter().next().unwrap())
-                    .unwrap()
-                    .as_ref(),
-            )),
+            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(124, filter_pubkey.as_ref())),
         ]);
     }
 
@@ -2028,7 +2029,7 @@ pub async fn process_show_stakes(
                 }
                 StakeStateV2::Stake(_, stake, _) => {
                     if vote_account_pubkeys.is_empty()
-                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey.to_string())
+                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey)
                     {
                         stake_accounts.push(CliKeyedStakeState {
                             stake_pubkey: stake_pubkey.to_string(),

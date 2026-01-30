@@ -939,8 +939,6 @@ impl TestValidator {
 
         // Only activate features which are not explicitly deactivated.
         let mut feature_set = FeatureSet::all_enabled();
-        // TODO: remove after cli change for bls_pubkey_management_in_vote_account is checked in
-        feature_set.deactivate(&agave_feature_set::bls_pubkey_management_in_vote_account::id());
         for feature in &config.deactivate_feature_set {
             if FEATURE_NAMES.contains_key(feature) {
                 feature_set.deactivate(feature);
@@ -1132,7 +1130,6 @@ impl TestValidator {
                 num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
                 num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                     .expect("Number of QUIC endpoints can not be zero"),
-                vortexor_receiver_addr: None,
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
@@ -1248,6 +1245,7 @@ impl TestValidator {
             socket_addr_space,
             ValidatorTpuConfig::new_for_tests(),
             config.admin_rpc_service_post_init.clone(),
+            None,
         )?);
 
         let test_validator = TestValidator {

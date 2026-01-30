@@ -716,7 +716,7 @@ pub fn process_slot_vote_unchecked<T: VoteStateHandle>(vote_state: &mut T, slot:
 /// Authorize the given pubkey to withdraw or sign votes. This may be called multiple times,
 /// but will implicitly withdraw authorization from the previously authorized
 /// key
-pub fn authorize<S: std::hash::BuildHasher>(
+pub fn authorize<S: std::hash::BuildHasher, F>(
     vote_account: &mut BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
     authorized: &Pubkey,
@@ -724,7 +724,11 @@ pub fn authorize<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
     is_bls_pubkey_feature_enabled: bool,
-) -> Result<(), InstructionError> {
+    consume_pop_compute_units: F,
+) -> Result<(), InstructionError>
+where
+    F: FnOnce() -> Result<(), InstructionError>,
+{
     let mut vote_state = get_vote_state_handler_checked(
         vote_account,
         PreserveBehaviorInHandlerHelper::new(target_version, false),
@@ -772,6 +776,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
                 vote_account.get_key(),
                 &args.bls_pubkey,
                 &args.bls_proof_of_possession,
+                consume_pop_compute_units,
             )?;
 
             vote_state.set_new_authorized_voter(
@@ -1017,11 +1022,18 @@ pub(crate) fn generate_pop_message(
     message
 }
 
-pub fn verify_bls_proof_of_possession(
+pub fn verify_bls_proof_of_possession<F>(
     vote_account_pubkey: &Pubkey,
     bls_pubkey_compressed_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
     bls_proof_of_possession_compressed_bytes: &[u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
-) -> Result<(), InstructionError> {
+    consume_pop_compute_units: F,
+) -> Result<(), InstructionError>
+where
+    F: FnOnce() -> Result<(), InstructionError>,
+{
+    // Consume CUs for BLS verification (SIMD-0387).
+    consume_pop_compute_units()?;
+
     let message = generate_pop_message(vote_account_pubkey, bls_pubkey_compressed_bytes);
     bls_proof_of_possession_compressed_bytes
         .verify(bls_pubkey_compressed_bytes, Some(&message))
@@ -1090,13 +1102,17 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 /// Assumes that the account is being init as part of a account creation or balance transfer and
 /// that the transaction must be signed by the staker's keys
 /// It also verifies the BLS proof of possession for the authorized voter BLS pubkey
-pub fn initialize_account_v2<S: std::hash::BuildHasher>(
+pub fn initialize_account_v2<S: std::hash::BuildHasher, F>(
     vote_account: &mut BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
     vote_init: &VoteInitV2,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
-) -> Result<(), InstructionError> {
+    consume_pop_compute_units: F,
+) -> Result<(), InstructionError>
+where
+    F: FnOnce() -> Result<(), InstructionError>,
+{
     VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersions>()?;
 
@@ -1112,6 +1128,7 @@ pub fn initialize_account_v2<S: std::hash::BuildHasher>(
         vote_account.get_key(),
         &vote_init.authorized_voter_bls_pubkey,
         &vote_init.authorized_voter_bls_proof_of_possession,
+        consume_pop_compute_units,
     )?;
 
     VoteStateHandler::init_vote_account_state_v2(vote_account, vote_init, clock, target_version)
@@ -4282,6 +4299,7 @@ mod tests {
             &signers,
             &clock,
             true,
+            || Ok(()),
         )
         .is_ok());
         let vote_state =
@@ -4312,6 +4330,7 @@ mod tests {
                 &signers,
                 &clock,
                 true,
+                || Ok(()),
             ),
             Err(InstructionError::InvalidArgument),
         );
@@ -4339,6 +4358,7 @@ mod tests {
                 &signers,
                 &clock,
                 true,
+                || Ok(()),
             ),
             Ok(())
         );

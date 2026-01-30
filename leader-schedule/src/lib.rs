@@ -1,3 +1,8 @@
+//! Solana leader schedule.
+
+#![cfg(feature = "agave-unstable-api")]
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
     agave_random::weighted::WeightedU64Index,
     rand_chacha::{rand_core::SeedableRng, ChaChaRng},

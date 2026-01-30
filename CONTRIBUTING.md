@@ -57,10 +57,8 @@ Before pushing the code do not forget to run:
 ```bash
 $ ./ci/test-sanity.sh
 $ ./ci/test-checks.sh
-$ ./ci/test-dev-context-only-utils.sh
+$ ./ci/feature-check/test-feature.sh
 ```
-before pushing the code. This will save everyone the time in review. For
-simple patches it may be reasonable to skip the `test-dev-context-only-utils.sh`.
 
 Any changes that break consensus must be behind a feature gate and must have
 a merged SIMD.

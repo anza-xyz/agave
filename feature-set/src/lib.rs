@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 use {
@@ -151,8 +143,6 @@ impl FeatureSet {
             stake_raise_minimum_delegation_to_1_sol: self
                 .is_active(&stake_raise_minimum_delegation_to_1_sol::id()),
             deprecate_legacy_vote_ixs: self.is_active(&deprecate_legacy_vote_ixs::id()),
-            mask_out_rent_epoch_in_vm_serialization: self
-                .is_active(&mask_out_rent_epoch_in_vm_serialization::id()),
             simplify_alt_bn128_syscall_error_codes: self
                 .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
             fix_alt_bn128_multiplication_input_length: self
@@ -1041,7 +1031,7 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 }
 
 pub mod enable_sbpf_v3_deployment_and_execution {
-    solana_pubkey::declare_id!("NbjPwZcHVKGc3gxtXwjYbr9x2SqMZ694XAhYmqdqvcV");
+    solana_pubkey::declare_id!("5cC3foj77CWun58pC51ebHFUWavHWKarWyR5UUik7dnC");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -1129,7 +1119,25 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
+    #[cfg(feature = "dev-context-only-utils")]
+    use {
+        solana_keypair::{Keypair, Signer},
+        std::sync::LazyLock,
+    };
+
+    // Used to activate alpenglow in local-cluster tests without exposing the actual feature's private key
+    #[cfg(feature = "dev-context-only-utils")]
+    pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
+        let keypair = Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR");
+        assert_eq!(keypair.pubkey(), super::alpenglow::id());
+        keypair
+    });
+
+    #[cfg(not(feature = "dev-context-only-utils"))]
     solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+
+    #[cfg(feature = "dev-context-only-utils")]
+    solana_pubkey::declare_id!("8KpruRFrT59jQ9NfFX9DU6j8a1hW7y6xchvZNQ5rxD4P");
 }
 
 pub mod disable_zk_elgamal_proof_program {
@@ -1242,6 +1250,41 @@ pub mod custom_commission_collector {
 
 pub mod enable_bls12_381_syscall {
     solana_pubkey::declare_id!("b1sraWPVFdcUizB2LV5wQTeMuK8M313bi5bHjco5eVU");
+}
+
+// SIMD-0437 feature gates
+pub mod set_lamports_per_byte_to_6333 {
+    solana_pubkey::declare_id!("4a6f7o7iTcA8hRDCrPLkSatnt5Ykxiu36wo5p1Tt12wC");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 6333;
+}
+
+pub mod set_lamports_per_byte_to_5080 {
+    solana_pubkey::declare_id!("61BtM7BkDEE8Yq5fskEVAQT9mYA8qCejJWoLe5apqg81");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 5080;
+}
+
+pub mod set_lamports_per_byte_to_2575 {
+    solana_pubkey::declare_id!("Ftxb3ZKq7aNqgxDBbP7EonvR2RszZk9ctjdsTX38kQaz");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 2575;
+}
+
+pub mod set_lamports_per_byte_to_1322 {
+    solana_pubkey::declare_id!("GsUBNYNDPdMLHPD37TToHzrzcNcjpC9w5n1EcJk5iTaM");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 1322;
+}
+
+pub mod set_lamports_per_byte_to_696 {
+    solana_pubkey::declare_id!("mZdnRh9T2EbDNvqKjkCR3bvo5c816tJaojtE9Xs7iuY");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 696;
+}
+
+pub mod stop_use_static_simple_vote_tx_cost {
+    solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2230,6 +2273,30 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enable_bls12_381_syscall::id(),
             "SIMD-0388: BLS12-381 syscalls",
+        ),
+        (
+            set_lamports_per_byte_to_6333::id(),
+            "SIMD-0437-1: Set lamports per byte to 6333",
+        ),
+        (
+            set_lamports_per_byte_to_5080::id(),
+            "SIMD-0437-2: Set lamports per byte to 5080",
+        ),
+        (
+            set_lamports_per_byte_to_2575::id(),
+            "SIMD-0437-3: Set lamports per byte to 2575",
+        ),
+        (
+            set_lamports_per_byte_to_1322::id(),
+            "SIMD-0437-4: Set lamports per byte to 1322",
+        ),
+        (
+            set_lamports_per_byte_to_696::id(),
+            "SIMD-0437-5: Set lamports per byte to 696",
+        ),
+        (
+            stop_use_static_simple_vote_tx_cost::id(),
+            "stop use static SimpleVote transaction cost, issue #10227",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
