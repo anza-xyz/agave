@@ -2307,23 +2307,26 @@ fn load_blockstore(
     let entry_notifier_service = entry_notifier
         .map(|entry_notifier| EntryNotifierService::new(entry_notifier, exit.clone()));
 
-    let (bank_forks, mut leader_schedule_cache, starting_snapshot_hashes) =
-        bank_forks_utils::load_bank_forks(
-            genesis_config,
-            &blockstore,
-            config.account_paths.clone(),
-            &config.snapshot_config,
-            &process_options,
-            transaction_history_services
-                .transaction_status_sender
-                .as_ref(),
-            entry_notifier_service
-                .as_ref()
-                .map(|service| service.sender()),
-            accounts_update_notifier,
-            exit,
-        )
-        .map_err(|err| err.to_string())?;
+    let (bank_forks, starting_snapshot_hashes) = bank_forks_utils::load_bank_forks(
+        genesis_config,
+        &blockstore,
+        config.account_paths.clone(),
+        &config.snapshot_config,
+        &process_options,
+        transaction_history_services
+            .transaction_status_sender
+            .as_ref(),
+        entry_notifier_service
+            .as_ref()
+            .map(|service| service.sender()),
+        accounts_update_notifier,
+        exit,
+    )
+    .map_err(|err| err.to_string())?;
+
+    let mut leader_schedule_cache =
+        LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
+    leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
 
     // Before replay starts, set the callbacks in each of the banks in BankForks so that
     // all dropped banks come through the `pruned_banks_receiver` channel. This way all bank
@@ -2332,8 +2335,6 @@ fn load_blockstore(
     // is processing the dropped banks from the `pruned_banks_receiver` channel.
     let pruned_banks_receiver =
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
-
-    leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
 
     Ok((
         bank_forks,

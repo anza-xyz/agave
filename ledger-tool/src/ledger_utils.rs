@@ -27,6 +27,7 @@ use {
         blockstore_processor::{
             self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
+        leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure_time,
@@ -337,19 +338,21 @@ pub fn load_and_process_ledger(
             (transaction_status_sender, None)
         };
 
-    let (bank_forks, leader_schedule_cache, starting_snapshot_hashes, ..) =
-        bank_forks_utils::load_bank_forks(
-            genesis_config,
-            blockstore.as_ref(),
-            account_paths,
-            &snapshot_config,
-            &process_options,
-            transaction_status_sender.as_ref(),
-            None, // Maybe support this later, though
-            accounts_update_notifier,
-            exit.clone(),
-        )
-        .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
+    let (bank_forks, starting_snapshot_hashes) = bank_forks_utils::load_bank_forks(
+        genesis_config,
+        blockstore.as_ref(),
+        account_paths,
+        &snapshot_config,
+        &process_options,
+        transaction_status_sender.as_ref(),
+        None, // Maybe support this later, though
+        accounts_update_notifier,
+        exit.clone(),
+    )
+    .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
+    let leader_schedule_cache =
+        LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
+
     let block_verification_method = value_t_or_exit!(
         arg_matches,
         "block_verification_method",

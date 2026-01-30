@@ -5,7 +5,6 @@ use {
             self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
         entry_notifier_service::EntryNotifierSender,
-        leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     agave_snapshots::{
@@ -60,14 +59,8 @@ pub enum BankForksUtilsError {
     ProcessBlockstoreFromGenesis(#[source] BlockstoreProcessorError),
 }
 
-pub type LoadResult = result::Result<
-    (
-        Arc<RwLock<BankForks>>,
-        LeaderScheduleCache,
-        Option<StartingSnapshotHashes>,
-    ),
-    BankForksUtilsError,
->;
+pub type LoadResult =
+    result::Result<(Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>), BankForksUtilsError>;
 
 /// Load the banks via genesis or a snapshot
 ///
@@ -157,9 +150,6 @@ pub fn load_bank_forks(
             (bank_forks, None)
         };
 
-    let leader_schedule_cache =
-        LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
-
     if let Some(ref new_hard_forks) = process_options.new_hard_forks {
         let root_bank = bank_forks.read().unwrap().root_bank();
         new_hard_forks
@@ -167,7 +157,7 @@ pub fn load_bank_forks(
             .for_each(|hard_fork_slot| root_bank.register_hard_fork(*hard_fork_slot));
     }
 
-    Ok((bank_forks, leader_schedule_cache, starting_snapshot_hashes))
+    Ok((bank_forks, starting_snapshot_hashes))
 }
 
 #[allow(clippy::too_many_arguments)]
