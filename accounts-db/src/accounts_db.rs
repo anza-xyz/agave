@@ -6398,7 +6398,7 @@ impl AccountsDb {
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::new();
                             let mut reader = append_vec::new_scan_accounts_reader();
-                            while let Some(next_item) = storages_orderer.next() {
+                            for next_item in storages_orderer.iter() {
                                 self.maybe_throttle_index_generation();
                                 let storage = next_item.storage;
                                 let store_id = storage.id();
