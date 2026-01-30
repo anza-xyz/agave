@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        netlink::GreTunnelInfo,
+        netlink::{GreTunnelInfo, MacAddress},
         packet::{
             write_eth_header, write_ip_header, write_ip_header_for_udp, write_udp_header,
             ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
@@ -17,7 +17,6 @@ pub const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
 /// Minimal GRE header size in bytes without optional fields
 pub const GRE_HEADER_BASE_SIZE: usize = 4;
 const GRE_HEADER_FLAGS_VERSION_BASIC: u16 = 0x0000;
-type MacAddrBytes = [u8; 6];
 
 /// Calculate total packet size for GRE encapsulation.
 pub const fn gre_packet_size(payload_len: usize) -> usize {
@@ -71,13 +70,13 @@ impl GreHeader {
 /// not move or preserve any existing data in `packet`.
 fn write_gre_outer_headers(
     packet: &mut [u8],
-    gre_src_mac: &MacAddrBytes,
-    gre_dst_mac: &MacAddrBytes,
+    gre_src_mac: &MacAddress,
+    gre_dst_mac: &MacAddress,
     inner_packet_len: usize,
     gre_header: &GreHeader,
     config: &GreTunnelInfo,
 ) -> Result<(), PacketError> {
-    write_eth_header(packet, gre_src_mac, gre_dst_mac);
+    write_eth_header(packet, &gre_src_mac.0, &gre_dst_mac.0);
 
     let dont_fragment = config.pmtudisc.map(|v| v != 0).unwrap_or(true);
 
@@ -110,7 +109,8 @@ fn write_gre_outer_headers(
 /// This function takes a UDP payload and constructs a complete L3 GRE packet
 /// with the structure: [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
 ///
-/// Returns the total length of the constructed GRE packet, or an error if the buffer is too small
+/// On success, writes the constructed GRE packet into `packet` and returns `Ok(())`;
+/// returns an error if the buffer is too small or the tunnel configuration is invalid.
 #[allow(clippy::too_many_arguments)]
 pub fn construct_gre_packet(
     packet: &mut [u8],
@@ -119,8 +119,8 @@ pub fn construct_gre_packet(
     src_port: u16,
     dst_port: u16,
     payload: &[u8],
-    src_mac: &MacAddrBytes,
-    dst_mac: &MacAddrBytes,
+    src_mac: &MacAddress,
+    dst_mac: &MacAddress,
     config: &GreTunnelInfo,
 ) -> Result<(), PacketError> {
     let payload_len = payload.len();

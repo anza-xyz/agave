@@ -302,7 +302,13 @@ impl Router {
 
         if let Some(default_route) = &self.cached_default_route {
             if default_route.ip_addr == next_hop_ip && default_route.if_index == if_index {
-                return Ok(default_route.clone());
+                return Ok(NextHop {
+                    ip_addr: next_hop_ip,
+                    if_index,
+                    mac_addr: default_route.mac_addr,
+                    preferred_src_ip,
+                    gre: default_route.gre.clone(),
+                });
             }
         }
 
@@ -336,8 +342,13 @@ impl Router {
         self.cached_gre_info = self
             .interface_table
             .iter()
-            .find(|i| i.gre_tunnel.is_some())
-            .and_then(|interface| self.interface_gre_route_info(interface));
+            .filter(|i| i.gre_tunnel.is_some())
+            .find_map(|interface| self.interface_gre_route_info(interface));
+        if self.cached_gre_info.is_none()
+            && self.interface_table.iter().any(|i| i.gre_tunnel.is_some())
+        {
+            log::warn!("GRE cache: GRE interface(s) present but none with valid remote resolved");
+        }
         self.cached_default_route = match self.default_route() {
             Ok(hop) => Some(hop),
             Err(RouteError::NoRouteFound(_)) => None,
@@ -350,7 +361,18 @@ impl Router {
     fn interface_gre_route_info(&self, interface: &InterfaceInfo) -> Option<GreRouteInfo> {
         let tunnel_info = interface.gre_tunnel.as_ref()?;
         let remote = tunnel_info.remote?;
-        let mac_addr = *self.arp_table.lookup(remote, interface.if_index)?;
+        let local = tunnel_info.local?;
+        // Skip unconfigured tunnels (remote/local 0.0.0.0)
+        if remote == IpAddr::V4(Ipv4Addr::UNSPECIFIED) || local == IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+        {
+            return None;
+        }
+        // ARP for the GRE remote is on the egress interface. Do a direct route+ARP lookup
+        // so we never use cached_gre_info (which we're building) and avoid stale/wrong MAC.
+        let route = lookup_route(self.route_table.iter(), remote)?;
+        let egress_if_index = route.out_if_index? as u32;
+        let next_hop_ip = route.gateway.unwrap_or(remote);
+        let mac_addr = *self.arp_table.lookup(next_hop_ip, egress_if_index)?;
 
         Some(GreRouteInfo {
             if_index: interface.if_index,

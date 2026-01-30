@@ -343,8 +343,8 @@ impl<U: Umem> TxLoop<U> {
                                 src_port,
                                 addr.port(),
                                 payload.as_ref(),
-                                &src_mac.0,
-                                &gre.mac_addr.0,
+                                &src_mac,
+                                &gre.mac_addr,
                                 &gre.tunnel_info,
                             ) {
                                 log::warn!("dropping packet: {err}");
