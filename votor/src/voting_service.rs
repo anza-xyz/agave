@@ -26,7 +26,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::runtime::Runtime,
+    tokio::{runtime::Runtime, sync::watch},
     tokio_util::sync::CancellationToken,
 };
 
@@ -254,6 +254,7 @@ impl VotingService {
 pub struct VotorQuicSender {
     workers: WorkersCache,
     endpoint: Endpoint,
+    update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     stats: Arc<SendTransactionStats>,
     runtime_handle: tokio::runtime::Handle,
 }
@@ -271,6 +272,7 @@ impl VotorQuicSender {
         runtime_handle: tokio::runtime::Handle,
         bind: BindTarget,
         stake_identity: StakeIdentity,
+        update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
         cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
         let tokio_guard = runtime_handle.enter();
@@ -288,12 +290,14 @@ impl VotorQuicSender {
             workers,
             endpoint,
             stats,
+            update_identity_receiver,
             runtime_handle,
         })
     }
 
     /// Broadcasts the provided buffer to the peers
     pub fn send_message_to_peers(&mut self, buf: Vec<u8>, peers: impl Iterator<Item = SocketAddr>) {
+        self.check_for_identity_update();
         // clone on TransactionBatch is cheap (compared to cloning the buf)
         let txs_batch = TransactionBatch::new(vec![buf]);
         let tokio_guard = self.runtime_handle.enter();
@@ -319,6 +323,20 @@ impl VotorQuicSender {
             }
         }
         drop(tokio_guard);
+    }
+
+    fn check_for_identity_update(&mut self) {
+        if !self.update_identity_receiver.changed() {
+            return;
+        }
+
+        let client_config = build_client_config(self.update_identity_receiver.borrow_and_update());
+        self.endpoint.set_default_client_config(client_config);
+        // Flush workers since they are handling connections created
+        // with outdated certificate.
+        self.workers.flush();
+
+        debug!("Updated certificate.");
     }
 }
 
@@ -374,7 +392,7 @@ mod tests {
         );
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
-        let keypair = Keypair::new();
+        let keypair = validator_keypairs[0].node_keypair.insecure_clone();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let cluster_info = ClusterInfo::new(
             contact_info,
@@ -383,6 +401,7 @@ mod tests {
         );
 
         let cancel = CancellationToken::new();
+        let update_identity = watch::channel(init)
         let bind = BindTarget::Socket(bind_to_localhost_unique().unwrap());
         (
             VotingService::new(
