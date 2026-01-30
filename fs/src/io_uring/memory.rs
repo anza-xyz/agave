@@ -240,6 +240,23 @@ impl IoBufferChunk {
         self.registered_io_buf_index
     }
 
+    /// Fill the buffer starting at offset 0 from the `src` reader. Return number of bytes read.
+    pub fn fill_from_read(&mut self, mut src: impl io::Read) -> io::Result<IoSize> {
+        // Safety: caller owns the &mut buffer indicating that it is not used by io-uring op
+        let mut mut_slice =
+            unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len() as usize) };
+        loop {
+            let len = src.read(mut_slice)?;
+            if len == 0 {
+                return Ok(self.len().wrapping_sub(mut_slice.len() as IoSize));
+            }
+            if len == mut_slice.len() {
+                return Ok(self.len());
+            }
+            mut_slice = &mut mut_slice[len..];
+        }
+    }
+
     /// Register provided buffer as fixed buffer in `io_uring`.
     pub unsafe fn register<S, E: RingOp<S>>(
         buffer: &mut [u8],
