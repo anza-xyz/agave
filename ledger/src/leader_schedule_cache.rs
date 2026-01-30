@@ -64,6 +64,14 @@ impl LeaderScheduleCache {
         cache
     }
 
+    /// Updates `set_max_schedules` to `usize::MAX` if `full_capacity` is true.
+    pub fn with_full_capacity(mut self, full_capacity: bool) -> Self {
+        if full_capacity {
+            self.set_max_schedules(usize::MAX);
+        }
+        self
+    }
+
     pub fn set_max_schedules(&mut self, max_schedules: usize) {
         if max_schedules > 0 {
             self.max_schedules = CacheCapacity(max_schedules);
