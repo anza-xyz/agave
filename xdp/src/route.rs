@@ -226,13 +226,15 @@ pub struct Router {
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
-        Ok(Self {
+        let mut router = Self {
             arp_table: ArpTable::new()?,
             route_table: RouteTable::new()?,
             interface_table: InterfaceTable::new()?,
             cached_default_route: None,
             cached_gre_info: None,
-        })
+        };
+        router.build_caches()?;
+        Ok(router)
     }
 
     fn default_route(&self) -> Result<NextHop, RouteError> {
@@ -347,12 +349,8 @@ impl Router {
 
     fn interface_gre_route_info(&self, interface: &InterfaceInfo) -> Option<GreRouteInfo> {
         let tunnel_info = interface.gre_tunnel.as_ref()?;
-        let mac_addr = *self.arp_table.lookup(
-            tunnel_info
-                .remote
-                .expect("FIXME: I don't think this can be optional"),
-            interface.if_index,
-        )?;
+        let remote = tunnel_info.remote?;
+        let mac_addr = *self.arp_table.lookup(remote, interface.if_index)?;
 
         Some(GreRouteInfo {
             if_index: interface.if_index,

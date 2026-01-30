@@ -1,6 +1,7 @@
 //! L3 GRE tunnel support for XDP egress
 //!
 //! This module provides L3 GRE encapsulation, which wraps IPv4 packets only (not Ethernet frames).
+//! Only a single GRE interface is supported; routing and caches assume one GRE tunnel.
 //!
 //! The GRE tunnel structure: [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
 //!

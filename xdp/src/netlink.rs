@@ -11,6 +11,7 @@ use {
     },
     std::{
         collections::HashMap,
+        ffi::CStr,
         io, mem,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
@@ -429,10 +430,7 @@ pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo>
 
 // Parse GRE tunnel information from netlink
 fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<GreTunnelInfo> {
-    let (kind, gre) = parse_linkinfo_kind_and_data(attrs)?;
-    if kind != "gre" {
-        return None;
-    }
+    let gre = parse_linkinfo_data_for_kind(attrs, b"gre")?;
 
     let u8_from_bytes = |data: &[u8]| -> Option<u8> { data.first().copied() };
 
@@ -462,26 +460,28 @@ fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<G
     Some(tunnel_info)
 }
 
-fn parse_linkinfo_kind_and_data<'a>(
+fn parse_linkinfo_data_for_kind<'a>(
     attrs: &HashMap<u16, NlAttr<'a>>,
-) -> Option<(String, HashMap<u16, NlAttr<'a>>)> {
+    expected_kind: &[u8],
+) -> Option<HashMap<u16, NlAttr<'a>>> {
     let li = attrs.get(&IFLA_LINKINFO)?;
     // IFLA_LINKINFO contains nested attributes
     let info = parse_attrs(li.data).ok()?;
     let kind_attr = info.get(&IFLA_INFO_KIND)?;
-    let mut kind = String::new();
-    if !kind_attr.data.is_empty() {
-        if let Ok(s) = String::from_utf8(kind_attr.data.to_vec()) {
-            kind = s.trim_end_matches('\0').to_string();
-        }
+    if kind_attr.data.is_empty() {
+        return None;
+    }
+    let kind = CStr::from_bytes_until_nul(kind_attr.data).ok()?;
+    if kind.to_bytes() != expected_kind {
+        return None;
     }
     // Nested data (GRE attributes) is optional.
     if let Some(data_attr) = info.get(&IFLA_INFO_DATA) {
         let nested = parse_attrs(data_attr.data).unwrap_or_default();
-        return Some((kind, nested));
+        return Some(nested);
     }
 
-    Some((kind, HashMap::new()))
+    Some(HashMap::new())
 }
 
 /// Represents an entry in the neighbor table (ARP/NDP cache)
