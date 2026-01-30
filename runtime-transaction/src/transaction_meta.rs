@@ -8,7 +8,7 @@
 //! Hence they are not Option<T> type. Their visibility at different states
 //! are defined in traits.
 //!
-//! The StaticMeta and DynamicMeta traits are accessor traits on the
+//! The StaticMeta trait is accessor traits on the
 //! RuntimeTransaction types, not the TransactionMeta itself.
 //!
 use {
@@ -25,13 +25,6 @@ pub trait StaticMeta {
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails;
     fn instruction_data_len(&self) -> u16;
 }
-
-/// Statically loaded meta is a supertrait of Dynamically loaded meta, when
-/// transaction transited successfully into dynamically loaded, it should
-/// have both meta data populated and available.
-/// Dynamic metadata available after accounts addresses are loaded from
-/// on-chain ALT, examples are: transaction usage costs, nonce account.
-pub trait DynamicMeta: StaticMeta {}
 
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Debug)]
