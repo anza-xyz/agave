@@ -170,7 +170,6 @@ impl ThreadManager {
     }
 
     pub fn new(config: ThreadManagerConfig) -> anyhow::Result<Self> {
-        let mut core_allocations = HashMap::<String, Vec<usize>>::new();
         Self::set_process_affinity(&config)?;
         let mut manager = ThreadManagerInner::default();
         manager.populate_mappings(&config);
@@ -186,7 +185,6 @@ impl ThreadManager {
         for (name, cfg) in config.tokio_configs.iter() {
             let tokiort = TokioRuntime::new(name.clone(), cfg.clone())?;
 
-            core_allocations.insert(name.clone(), cfg.core_allocation.as_core_mask_vector());
             manager.tokio_runtimes.insert(name.clone(), tokiort);
         }
         Ok(Self {
