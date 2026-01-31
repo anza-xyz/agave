@@ -87,12 +87,12 @@ use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer
 
 mod common;
 pub mod merkle;
-mod merkle_tree;
+pub mod merkle_tree;
 mod payload;
 mod shred_code;
 pub(crate) mod shred_data;
 mod stats;
-mod traits;
+pub mod traits;
 pub mod wire;
 
 // Alias for shred::wire::* for the old code.
