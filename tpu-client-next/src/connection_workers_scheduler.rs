@@ -315,7 +315,7 @@ pub fn setup_endpoint(
     Ok(endpoint)
 }
 
-fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
+pub fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
     let client_certificate = match stake_identity {
         Some(identity) => identity.as_certificate(),
         None => &QuicClientCertificate::new(None),
