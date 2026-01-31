@@ -80,7 +80,11 @@ const TRANSACTIONS_PER_THREAD: u64 = 1_000_000; // Number of transactions per th
 fn main() -> Result<()> {
     let matches = App::new(crate_name!())
         .about(crate_description!())
-        .version(solana_version::version!())
+        .version(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .as_str(),
+        )
         .arg(
             Arg::with_name("identity")
                 .short("i")

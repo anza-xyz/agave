@@ -1139,7 +1139,11 @@ fn main() {
     agave_logger::setup_with_default("solana=info");
     let matches = App::new(crate_name!())
         .about(crate_description!())
-        .version(solana_version::version!())
+        .version(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .as_str(),
+        )
         .arg({
             let arg = Arg::with_name("config_file")
                 .short("C")

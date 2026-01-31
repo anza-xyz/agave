@@ -23,7 +23,11 @@ const CMD_SEARCH: &str = "search";
 fn main() {
     let matches = App::new(crate_name!())
         .about(crate_description!())
-        .version(solana_version::version!())
+        .version(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .as_str(),
+        )
         .global_setting(AppSettings::ArgRequiredElseHelp)
         .global_setting(AppSettings::ColoredHelp)
         .global_setting(AppSettings::InferSubcommands)

@@ -49,7 +49,7 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
 
     assert_eq!(
         rpc_client.get_version().unwrap().solana_core,
-        solana_version::semver!()
+        solana_version::Version::this_build().as_semver_string(),
     );
 
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();
@@ -106,7 +106,7 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
 
     assert_eq!(
         rpc_client.get_version().unwrap().solana_core,
-        solana_version::semver!()
+        solana_version::Version::this_build().as_semver_string(),
     );
 
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();

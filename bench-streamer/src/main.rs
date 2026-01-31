@@ -77,7 +77,11 @@ fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: PacketBatchReceiver) ->
 fn main() -> Result<()> {
     let matches = Command::new(crate_name!())
         .about(crate_description!())
-        .version(solana_version::version!())
+        .version(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .as_str(),
+        )
         .arg(
             Arg::new("num-recv-sockets")
                 .long("num-recv-sockets")

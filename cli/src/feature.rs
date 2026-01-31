@@ -790,13 +790,18 @@ async fn feature_activation_allowed(
     let cluster_info_stats = cluster_info_stats(rpc_client).await?;
     let feature_set_stats = cluster_info_stats.aggregate_by_feature_set();
 
-    let tool_version = solana_version::Version::default();
-    let tool_feature_set = tool_version.feature_set;
-    let tool_software_version = CliVersion::from(semver::Version::new(
-        tool_version.major as u64,
-        tool_version.minor as u64,
-        tool_version.patch as u64,
-    ));
+    let tool_version = solana_version::Version::this_build();
+    let tool_feature_set = tool_version.feature_set();
+    let tool_prerelease = tool_version.prerelease();
+    let semver_prerelease = semver::Prerelease::new(&tool_prerelease.to_string())
+        .expect("solana_version::Prerelease is semver::Prerelease-compatible");
+    let tool_software_version = CliVersion::from(semver::Version {
+        major: tool_version.major() as u64,
+        minor: tool_version.minor() as u64,
+        patch: tool_version.patch() as u64,
+        pre: semver_prerelease,
+        build: semver::BuildMetadata::EMPTY,
+    });
     let (stake_allowed, rpc_allowed) = feature_set_stats
         .get(&tool_feature_set)
         .map(

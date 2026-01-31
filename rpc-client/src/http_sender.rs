@@ -91,7 +91,7 @@ impl HttpSender {
         default_headers.append(
             header::HeaderName::from_static("solana-client"),
             header::HeaderValue::from_str(
-                format!("rust/{}", solana_version::Version::default()).as_str(),
+                format!("rust/{}", solana_version::Version::this_build()).as_str(),
             )
             .unwrap(),
         );

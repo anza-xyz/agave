@@ -1814,7 +1814,11 @@ impl Validator {
         datapoint_info!(
             "validator-new",
             ("id", id.to_string(), String),
-            ("version", solana_version::version!(), String),
+            (
+                "version",
+                solana_version::Version::this_build().as_detailed_string(),
+                String
+            ),
             ("cluster_type", genesis_config.cluster_type as u32, i64),
             ("elapsed_ms", start_time.elapsed().as_millis() as i64, i64),
             ("waited_for_supermajority", waited_for_supermajority, bool),

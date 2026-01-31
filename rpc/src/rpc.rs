@@ -2885,10 +2885,10 @@ pub mod rpc_minimal {
 
         fn get_version(&self, _: Self::Metadata) -> Result<RpcVersionInfo> {
             debug!("get_version rpc request received");
-            let version = solana_version::Version::default();
+            let version = solana_version::Version::this_build();
             Ok(RpcVersionInfo {
                 solana_core: version.to_string(),
-                feature_set: Some(version.feature_set),
+                feature_set: Some(version.feature_set()),
             })
         }
 
@@ -3657,7 +3657,7 @@ pub mod rpc_full {
                         let (version, feature_set) = if let Some(version) =
                             cluster_info.get_node_version(contact_info.pubkey())
                         {
-                            (Some(version.to_string()), Some(version.feature_set))
+                            (Some(version.to_string()), Some(version.feature_set()))
                         } else {
                             (None, None)
                         };
@@ -5162,7 +5162,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_cluster_nodes() {
         let rpc = RpcHandler::start();
-        let version = solana_version::Version::default();
+        let version = solana_version::Version::this_build();
         let request = create_test_request("getClusterNodes", None);
         let result: Value = parse_success_result(rpc.handle_request_sync(request));
         let expected = json!([{
@@ -5179,7 +5179,7 @@ pub mod tests {
             "rpc": format!("127.0.0.1:8899"),
             "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
-            "featureSet": version.feature_set,
+            "featureSet": version.feature_set(),
         }, {
             "pubkey": rpc.leader_pubkey().to_string(),
             "gossip": "127.0.0.1:1235",
@@ -5194,7 +5194,7 @@ pub mod tests {
             "rpc": format!("127.0.0.1:8899"),
             "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
-            "featureSet": version.feature_set,
+            "featureSet": version.feature_set(),
         }]);
         assert_eq!(result, expected);
     }
@@ -7140,10 +7140,10 @@ pub mod tests {
         let request = create_test_request("getVersion", None);
         let result: Value = parse_success_result(rpc.handle_request_sync(request));
         let expected = {
-            let version = solana_version::Version::default();
+            let version = solana_version::Version::this_build();
             json!({
                 "solana-core": version.to_string(),
-                "feature-set": version.feature_set,
+                "feature-set": version.feature_set(),
             })
         };
         assert_eq!(result, expected);

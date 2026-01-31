@@ -602,10 +602,10 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
     }
 
     fn get_version(&self) -> Result<RpcVersionInfo> {
-        let version = solana_version::Version::default();
+        let version = solana_version::Version::this_build();
         Ok(RpcVersionInfo {
             solana_core: version.to_string(),
-            feature_set: Some(version.feature_set),
+            feature_set: Some(version.feature_set()),
         })
     }
 }
@@ -1395,8 +1395,8 @@ mod tests {
         ));
         let (rpc, _receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
         let version = rpc.get_version().unwrap();
-        let expected_version = solana_version::Version::default();
+        let expected_version = solana_version::Version::this_build();
         assert_eq!(version.to_string(), expected_version.to_string());
-        assert_eq!(version.feature_set.unwrap(), expected_version.feature_set);
+        assert_eq!(version.feature_set.unwrap(), expected_version.feature_set());
     }
 }

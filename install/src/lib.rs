@@ -84,7 +84,11 @@ pub fn main() -> Result<(), String> {
 
     let matches = App::new(crate_name!())
         .about(crate_description!())
-        .version(solana_version::version!())
+        .version(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .as_str(),
+        )
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .arg({
             let arg = Arg::with_name("config_file")
@@ -280,7 +284,11 @@ pub fn main_init() -> Result<(), String> {
 
     let matches = App::new("agave-install-init")
         .about("Initializes a new installation")
-        .version(solana_version::version!())
+        .version(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .as_str(),
+        )
         .arg({
             let arg = Arg::with_name("config_file")
                 .short("c")
