@@ -3077,13 +3077,12 @@ impl fmt::Display for CliGossipNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{:15} | {:44} | {:6} | {:5} | {:8} | {:21} | {:8}| {}",
+            "{:15} | {:44} | {:6} | {:8} | {:21} | {:8}| {}",
             unwrap_to_string_or_none(self.ip_address.as_ref()),
             self.identity_label
                 .as_ref()
                 .unwrap_or(&self.identity_pubkey),
             unwrap_to_string_or_none(self.gossip_port.as_ref()),
-            unwrap_to_string_or_none(self.tpu_port.as_ref()),
             unwrap_to_string_or_none(self.tpu_quic_port.as_ref()),
             unwrap_to_string_or_none(self.rpc_host.as_ref()),
             unwrap_to_string_or_default(self.version.as_ref(), "unknown"),
@@ -3103,9 +3102,9 @@ impl fmt::Display for CliGossipNodes {
         writeln!(
             f,
             "IP Address      | Identity                                     \
-             | Gossip | TPU   | TPU-QUIC | RPC Address           | Version | Feature Set\n\
+             | Gossip | TPU-QUIC | RPC Address           | Version | Feature Set\n\
              ----------------+----------------------------------------------+\
-             --------+-------+----------+-----------------------+---------+----------------",
+             --------+----------+-----------------------+---------+----------------",
         )?;
         for node in self.0.iter() {
             writeln!(f, "{node}")?;
