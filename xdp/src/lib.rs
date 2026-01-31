@@ -20,6 +20,8 @@ pub mod route;
 #[cfg(target_os = "linux")]
 pub mod route_monitor;
 #[cfg(target_os = "linux")]
+pub mod rx_loop;
+#[cfg(target_os = "linux")]
 pub mod socket;
 #[cfg(target_os = "linux")]
 pub mod tx_loop;
