@@ -1287,6 +1287,12 @@ pub mod stop_use_static_simple_vote_tx_cost {
     solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
 }
 
+pub mod set_lamports_per_byte_to_6960 {
+    solana_pubkey::declare_id!("5AqsUgSb6cgLizSaNiFn3o9XB7VUtKDtDZfcKEjEDmni");
+
+    pub const LAMPORTS_PER_BYTE: u64 = 6960;
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2297,6 +2303,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             stop_use_static_simple_vote_tx_cost::id(),
             "stop use static SimpleVote transaction cost, issue #10227",
+        ),
+        (
+            set_lamports_per_byte_to_6960::id(),
+            "SIMD-0438: Reset lamports per byte to legacy value of 6960",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
