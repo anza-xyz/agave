@@ -112,6 +112,6 @@ fn decompressed_tar_reader(
     buf_size: usize,
     io_setup: &IoSetupState,
 ) -> io::Result<ArchiveFormatDecompressor<impl BufRead + use<>>> {
-    let buf_reader = buffered_reader::large_file_buf_reader(archive_path, buf_size, io_setup)?;
+    let buf_reader = buffered_reader::buf_reader_from_path(archive_path, buf_size, io_setup)?;
     ArchiveFormatDecompressor::new(archive_format, buf_reader)
 }
