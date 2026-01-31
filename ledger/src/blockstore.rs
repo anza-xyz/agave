@@ -5252,7 +5252,7 @@ pub mod tests {
     };
 
     // used for tests only
-    pub(crate) fn make_slot_entries_with_transactions(num_entries: u64) -> Vec<Entry> {
+    pub fn make_slot_entries_with_transactions(num_entries: u64) -> Vec<Entry> {
         let mut entries: Vec<Entry> = Vec::new();
         for x in 0..num_entries {
             let transaction = Transaction::new_with_compiled_instructions(
