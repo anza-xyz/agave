@@ -5809,9 +5809,17 @@ impl AccountsDb {
                     let account_shared_data = account.take_account();
                     let pubkey = account.pubkey();
                     if account.is_zero_lamport()
-                        && self
-                            .accounts_index
-                            .get_and_then(pubkey, |account| (true, account.is_none()))
+                        && self.accounts_index.get_and_then(pubkey, |account| {
+                            if let Some(account) = account {
+                                let slot_list = account.slot_list_read_lock();
+                                (
+                                    true,
+                                    slot_list.iter().all(|(_, info)| info.is_zero_lamport()),
+                                )
+                            } else {
+                                (true, true)
+                            }
+                        })
                     {
                         accounts_skipped += 1;
                         return false;
@@ -7168,10 +7176,19 @@ impl AccountsDb {
         for i in 0..accounts.len() {
             if accounts.is_zero_lamport(i) {
                 let key = *accounts.pubkey(i);
-                if self
-                    .accounts_index
-                    .get_and_then(&key, |account| (true, account.is_none()))
-                {
+                if self.accounts_index.get_and_then(&key, |account| {
+                    let add_zero_lamport_account = match account {
+                        Some(account) => {
+                            // Account is in the index
+                            let slot_list = account.slot_list_read_lock();
+                            slot_list
+                                .iter()
+                                .all(|(_slot, account_info)| account_info.is_zero_lamport())
+                        }
+                        None => true,
+                    };
+                    (true, add_zero_lamport_account)
+                }) {
                     // Account is not in the index, need to pre-populate with placeholder
                     pre_populate_zero_lamport.push((key, placeholder.clone()));
                 }
@@ -7250,8 +7267,8 @@ impl AccountsDb {
         };
 
         assert_eq!(
-            expected_ref_count,
-            self.accounts_index.ref_count_from_storage(pubkey)
+            self.accounts_index.ref_count_from_storage(pubkey),
+            expected_ref_count
         );
     }
 

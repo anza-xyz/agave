@@ -6707,3 +6707,105 @@ fn test_new_zero_lamport_accounts_skipped() {
     let account_info = slot_list.iter().find(|(s, _)| *s == slot).unwrap();
     assert!(account_info.1.is_zero_lamport());
 }
+
+#[test]
+fn test_zero_lamport_skip_all_zero_lamport_slots() {
+    // Test that zero lamport accounts are skipped when all existing slots are zero lamports
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let non_zero_account = AccountSharedData::new(100, 0, &Pubkey::default());
+    accounts_db.set_latest_full_snapshot_slot(0);
+
+    // Store non-zero account first to create index entry
+    accounts_db.store_accounts_unfrozen(
+        (0, [(&pubkey, &non_zero_account)].as_slice()),
+        None,
+        UpdateIndexThreadSelection::PoolWithThreshold,
+    );
+    accounts_db.add_root_and_flush_write_cache(0);
+
+    // Update to zero lamport in slot 1
+    accounts_db.store_accounts_unfrozen(
+        (1, [(&pubkey, &zero_account)].as_slice()),
+        None,
+        UpdateIndexThreadSelection::PoolWithThreshold,
+    );
+    accounts_db.add_root_and_flush_write_cache(1);
+
+    // At this point, slot list has [0: non-zero, 1: zero]
+    // Verify pubkey is in index
+    assert!(accounts_db.accounts_index.contains(&pubkey));
+
+    // Clean to remove slot 0 entry, leaving only slot 1 (zero lamport)
+    accounts_db.clean_accounts_for_tests();
+
+    // Verify only slot 1 remains
+    let slot_list = accounts_db.accounts_index.get_and_then(&pubkey, |entry| {
+        (false, entry.unwrap().slot_list_read_lock().clone_list())
+    });
+
+    // Should only have slot 1, not slot 2
+    assert_eq!(slot_list.len(), 1);
+    assert_eq!(slot_list[0].0, 1);
+
+    // Now all slots are zero lamport. Try to add another zero lamport in slot 2
+    accounts_db.store_accounts_unfrozen(
+        (2, [(&pubkey, &zero_account)].as_slice()),
+        None,
+        UpdateIndexThreadSelection::PoolWithThreshold,
+    );
+
+    // The new zero lamport entry should be skipped since all existing slots are zero
+    let slot_list = accounts_db.accounts_index.get_and_then(&pubkey, |entry| {
+        (false, entry.unwrap().slot_list_read_lock().clone_list())
+    });
+
+    // Should only have slot 1, not slot 2
+    assert_eq!(slot_list.len(), 1);
+    assert_eq!(slot_list[0].0, 1);
+}
+
+#[test]
+fn test_zero_lamport_resurrection_after_all_zero() {
+    // Test that non-zero account can be added after all slots become zero
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let non_zero_account = AccountSharedData::new(100, 0, &Pubkey::default());
+
+    // Create initial non-zero entry
+    accounts_db.store_accounts_unfrozen(
+        (0, [(&pubkey, &non_zero_account)].as_slice()),
+        None,
+        UpdateIndexThreadSelection::PoolWithThreshold,
+    );
+    accounts_db.add_root_and_flush_write_cache(0);
+
+    // Update to zero
+    accounts_db.store_accounts_unfrozen(
+        (1, [(&pubkey, &zero_account)].as_slice()),
+        None,
+        UpdateIndexThreadSelection::PoolWithThreshold,
+    );
+    accounts_db.add_root_and_flush_write_cache(1);
+
+    // Clean to remove non-zero slot
+    accounts_db.clean_accounts_for_tests();
+
+    // Now add non-zero again - should be added
+    accounts_db.store_accounts_unfrozen(
+        (2, [(&pubkey, &non_zero_account)].as_slice()),
+        None,
+        UpdateIndexThreadSelection::PoolWithThreshold,
+    );
+
+    // Verify slot 2 was added
+    let slot_list = accounts_db.accounts_index.get_and_then(&pubkey, |entry| {
+        (false, entry.unwrap().slot_list_read_lock().clone_list())
+    });
+
+    assert!(slot_list
+        .iter()
+        .any(|(s, info)| *s == 2 && !info.is_zero_lamport()));
+}
