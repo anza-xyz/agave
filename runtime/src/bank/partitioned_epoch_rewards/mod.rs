@@ -414,7 +414,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::create_genesis_config,
+            bank::{tests::create_genesis_config, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
@@ -591,7 +591,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(Pubkey::new_unique()),
+            Some(SlotLeader::new_unique()),
             Arc::default(),
             None,
             None,
@@ -611,7 +611,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             advance_num_slots,
         );
 
@@ -706,7 +706,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(Pubkey::new_unique()),
+            Some(SlotLeader::new_unique()),
             Arc::default(),
             None,
             None,
@@ -820,7 +820,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot,
             );
             let post_cap = curr_bank.capitalization();
@@ -913,7 +913,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot,
             );
             let post_cap = curr_bank.capitalization();
@@ -1053,7 +1053,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot,
             );
 
@@ -1110,7 +1110,7 @@ mod tests {
 
         let epoch_boundary_bank = Arc::new(Bank::new_from_parent(
             bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             SLOTS_PER_EPOCH,
         ));
         // Slot at the epoch boundary contains voting rewards only, as well as partition data
@@ -1131,7 +1131,7 @@ mod tests {
 
         let partition0_bank = Arc::new(Bank::new_from_parent(
             epoch_boundary_bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             SLOTS_PER_EPOCH + 1,
         ));
         // Slot after the epoch boundary contains first partition of staking
@@ -1148,7 +1148,7 @@ mod tests {
 
         let partition1_bank = Arc::new(Bank::new_from_parent(
             partition0_bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             SLOTS_PER_EPOCH + 2,
         ));
         // Slot 2 after the epoch boundary contains second partition of staking
@@ -1166,7 +1166,8 @@ mod tests {
         // All rewards are recorded
         assert_eq!(total_staking_rewards, num_rewards);
 
-        let bank = Bank::new_from_parent(partition1_bank, &Pubkey::default(), SLOTS_PER_EPOCH + 3);
+        let bank =
+            Bank::new_from_parent(partition1_bank, SlotLeader::default(), SLOTS_PER_EPOCH + 3);
         // Next slot contains empty rewards (since fees are off), and no
         // partitions because not at the epoch boundary
         assert_eq!(

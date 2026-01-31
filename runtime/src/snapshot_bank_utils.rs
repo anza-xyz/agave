@@ -838,7 +838,7 @@ mod tests {
         let mut bank = Arc::new(Bank::new_for_tests(genesis_config));
         for _i in 0..num_total {
             let slot = bank.slot() + 1;
-            bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::new_unique(), slot));
+            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::new_unique(), slot));
             bank.fill_bank_with_ticks_for_tests();
 
             create_bank_snapshot_from_bank(
@@ -924,10 +924,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            Some(SlotLeader {
-                id: *original_bank.leader_id(),
-                ..SlotLeader::new_unique()
-            }), // genesis doesn't have a staked node
+            Some(*original_bank.leader()), // genesis doesn't have a staked node
             None,
             false,
             false,
@@ -944,7 +941,6 @@ mod tests {
     /// marked in the accounts database. This test injects them directly
     #[test]
     fn test_roundtrip_bank_to_and_from_full_snapshot_with_obsolete_account() {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -956,7 +952,7 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
 
@@ -970,6 +966,7 @@ mod tests {
         let bank = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
 
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank);
+        let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -987,8 +984,7 @@ mod tests {
 
         // Create a new slot, and invalidate the account for key1 in slot0
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1
             .transfer(LAMPORTS_PER_SOL, &key3, &key1.pubkey())
             .unwrap();
@@ -1036,7 +1032,6 @@ mod tests {
     /// multiple transfers.  So this full snapshot should contain more data.
     #[test]
     fn test_roundtrip_bank_to_and_from_snapshot_complex() {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1049,10 +1044,11 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1065,8 +1061,7 @@ mod tests {
         bank0.fill_bank_with_ticks_for_tests();
 
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1079,24 +1074,21 @@ mod tests {
         bank1.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank2 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank3 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+        let bank3 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, leader, slot);
         bank3
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank4 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+        let bank4 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, leader, slot);
         bank4
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1150,7 +1142,6 @@ mod tests {
     /// of the accounts are not modified often, and are captured by the full snapshot.
     #[test]
     fn test_roundtrip_bank_to_and_from_incremental_snapshot() {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1163,10 +1154,11 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1179,8 +1171,7 @@ mod tests {
         bank0.fill_bank_with_ticks_for_tests();
 
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1210,24 +1201,21 @@ mod tests {
         .unwrap();
 
         let slot = slot + 1;
-        let bank2 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank3 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+        let bank3 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, leader, slot);
         bank3
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank4 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+        let bank4 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, leader, slot);
         bank4
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1268,7 +1256,6 @@ mod tests {
     /// Test rebuilding bank from the latest snapshot archives
     #[test]
     fn test_bank_from_latest_snapshot_archives() {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1279,10 +1266,11 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let leader = *bank0.leader();
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1295,8 +1283,7 @@ mod tests {
         bank0.fill_bank_with_ticks_for_tests();
 
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1326,24 +1313,21 @@ mod tests {
         .unwrap();
 
         let slot = slot + 1;
-        let bank2 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank3 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+        let bank3 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, leader, slot);
         bank3
             .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank4 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+        let bank4 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, leader, slot);
         bank4
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1404,7 +1388,6 @@ mod tests {
     /// no longer correct!
     #[test]
     fn test_incremental_snapshots_handle_zero_lamport_accounts() {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -1420,7 +1403,7 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
         // test expects 0 transaction fee
@@ -1434,14 +1417,14 @@ mod tests {
             vec![accounts_dir.clone()],
         )
         .wrap_with_bank_forks_for_tests();
+        let leader = *bank0.leader();
         bank0
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
@@ -1459,8 +1442,7 @@ mod tests {
         .unwrap();
 
         let slot = slot + 1;
-        let bank2 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         let blockhash = bank2.last_blockhash();
         let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
             &key1,
@@ -1519,8 +1501,7 @@ mod tests {
         );
 
         let slot = slot + 1;
-        let bank3 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+        let bank3 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, leader, slot);
         // Update Account2 so that it no longer holds a reference to slot2
         bank3
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1528,8 +1509,7 @@ mod tests {
         bank3.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank4 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+        let bank4 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, leader, slot);
         bank4.fill_bank_with_ticks_for_tests();
 
         // Ensure account1 has been cleaned/purged from everywhere
@@ -1586,7 +1566,6 @@ mod tests {
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_bank_fields_from_snapshot(storage_access: StorageAccess) {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
 
         let GenesisConfigInfo {
@@ -1595,15 +1574,15 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let leader = *bank0.leader();
         bank0.fill_bank_with_ticks_for_tests();
 
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1.fill_bank_with_ticks_for_tests();
 
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1621,8 +1600,7 @@ mod tests {
         .unwrap();
 
         let slot = slot + 1;
-        let bank2 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1889,7 +1867,6 @@ mod tests {
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_snapshots_handle_zero_lamport_accounts(storage_access: StorageAccess) {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
@@ -1904,7 +1881,7 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
 
@@ -1919,6 +1896,7 @@ mod tests {
         let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
 
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
+        let leader = *bank0.leader();
 
         bank0
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1927,8 +1905,7 @@ mod tests {
         bank0.fill_bank_with_ticks_for_tests();
 
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
@@ -1943,8 +1920,7 @@ mod tests {
         bank1.force_flush_accounts_cache();
 
         let slot = slot + 1;
-        let bank2 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         let blockhash = bank2.last_blockhash();
         let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
             &key1,
@@ -1966,8 +1942,7 @@ mod tests {
         bank2.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
-        let bank3 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+        let bank3 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, leader, slot);
         // Update Account2 so that it no longer holds a reference to slot2
         bank3
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -2039,7 +2014,6 @@ mod tests {
     #[test_case(MarkObsoleteAccounts::Disabled)]
     #[test_case(MarkObsoleteAccounts::Enabled)]
     fn test_fastboot_handle_zero_lamport_accounts(mark_obsolete_accounts: MarkObsoleteAccounts) {
-        let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -2050,7 +2024,7 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
+            &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
 
@@ -2067,6 +2041,7 @@ mod tests {
 
         let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
+        let leader = *bank0.leader();
         bank0.transfer(lamports, &mint, &key2.pubkey()).unwrap();
         bank0.transfer(lamports, &mint, &key1.pubkey()).unwrap();
         bank0.fill_bank_with_ticks_for_tests();
@@ -2077,16 +2052,14 @@ mod tests {
 
         // In slot 1 transfer from key1 to key2, such that key1 becomes zero lamport
         let slot = 1;
-        let bank1 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1.transfer(lamports, &key1, &key2.pubkey()).unwrap();
         assert_eq!(bank1.get_balance(&key1.pubkey()), 0,);
         bank1.fill_bank_with_ticks_for_tests();
 
         // In slot 2 transfer into key2 to mint such that key2 becomes zero lamport
         let slot = slot + 1;
-        let bank2 =
-            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         bank2.transfer(lamports * 2, &key2, &mint.pubkey()).unwrap();
         bank2.fill_bank_with_ticks_for_tests();
         assert_eq!(bank2.get_balance(&key2.pubkey()), 0);
@@ -2165,7 +2138,11 @@ mod tests {
     #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_bank_from_snapshot_dir(storage_access: StorageAccess) {
-        let genesis_config = GenesisConfig::default();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            1_000_000 * LAMPORTS_PER_SOL,
+        );
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
@@ -2190,10 +2167,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            Some(SlotLeader {
-                id: *bank.leader_id(),
-                ..SlotLeader::new_unique()
-            }), // genesis doesn't have a staked node
+            None, // leader_for_tests
             None,
             false,
             AccountsDbConfig {
