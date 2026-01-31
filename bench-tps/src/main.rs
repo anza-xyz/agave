@@ -165,7 +165,8 @@ fn main() {
     agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("bench-tps", /*version:*/ None);
 
-    let matches = cli::build_args(solana_version::version!()).get_matches();
+    let version = solana_version::Version::this_build().as_detailed_string();
+    let matches = cli::build_args(&version).get_matches();
     let cli_config = match cli::parse_args(&matches) {
         Ok(config) => config,
         Err(error) => {

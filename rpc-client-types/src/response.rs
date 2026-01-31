@@ -86,7 +86,16 @@ impl std::ops::Deref for RpcApiVersion {
 
 impl Default for RpcApiVersion {
     fn default() -> Self {
-        Self(solana_version::Version::default().as_semver_version())
+        let this_build = solana_version::Version::this_build();
+        let pre = semver::Prerelease::new(&this_build.prerelease().to_string())
+            .expect("solana_version::Prerelease is semver::Prerelease-compatible");
+        Self(semver::Version {
+            major: this_build.major() as u64,
+            minor: this_build.minor() as u64,
+            patch: this_build.patch() as u64,
+            pre,
+            build: semver::BuildMetadata::EMPTY,
+        })
     }
 }
 

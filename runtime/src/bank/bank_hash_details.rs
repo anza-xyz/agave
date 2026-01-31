@@ -34,7 +34,7 @@ pub struct BankHashDetails {
 impl BankHashDetails {
     pub fn new(bank_hash_details: Vec<SlotDetails>) -> Self {
         Self {
-            version: solana_version::version!().to_string(),
+            version: solana_version::Version::this_build().as_semver_string(),
             account_data_encoding: "base64".to_string(),
             bank_hash_details,
         }

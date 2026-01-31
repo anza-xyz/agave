@@ -505,9 +505,14 @@ fn write_bls_pubkey_file(
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     let default_num_threads = num_cpus::get().to_string();
-    let matches = app(&default_num_threads, solana_version::version!())
-        .try_get_matches()
-        .unwrap_or_else(|e| e.exit());
+    let matches = app(
+        &default_num_threads,
+        solana_version::Version::this_build()
+            .as_detailed_string()
+            .as_str(),
+    )
+    .try_get_matches()
+    .unwrap_or_else(|e| e.exit());
     do_main(&matches).map_err(|err| DisplayError::new_as_boxed(err).into())
 }
 
@@ -900,8 +905,8 @@ mod tests {
 
     fn process_test_command(args: &[&str]) -> Result<(), Box<dyn error::Error>> {
         let default_num_threads = num_cpus::get().to_string();
-        let solana_version = solana_version::version!();
-        let app_matches = app(&default_num_threads, solana_version).get_matches_from(args);
+        let solana_version = solana_version::Version::this_build().as_detailed_string();
+        let app_matches = app(&default_num_threads, &solana_version).get_matches_from(args);
         do_main(&app_matches)
     }
 
@@ -937,10 +942,10 @@ mod tests {
     #[test]
     fn test_arguments() {
         let default_num_threads = num_cpus::get().to_string();
-        let solana_version = solana_version::version!();
+        let solana_version = solana_version::Version::this_build().as_detailed_string();
 
         // run clap internal assert statements
-        app(&default_num_threads, solana_version).debug_assert();
+        app(&default_num_threads, &solana_version).debug_assert();
     }
 
     #[test]
@@ -1319,8 +1324,8 @@ mod tests {
         // but we can test the underlying functionality via keypair_from_source
         // Here we test that the command parses correctly
         let default_num_threads = num_cpus::get().to_string();
-        let solana_version = solana_version::version!();
-        let app_matches = app(&default_num_threads, solana_version).get_matches_from(vec![
+        let solana_version = solana_version::Version::this_build().as_detailed_string();
+        let app_matches = app(&default_num_threads, &solana_version).get_matches_from(vec![
             "solana-keygen",
             "recover",
             &keypair_base58,

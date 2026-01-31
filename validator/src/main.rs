@@ -16,8 +16,8 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 pub fn main() {
     let default_args = DefaultArgs::new();
-    let solana_version = solana_version::version!();
-    let cli_app = app(solana_version, &default_args);
+    let solana_version = solana_version::Version::this_build().as_detailed_string();
+    let cli_app = app(&solana_version, &default_args);
     let matches = cli_app.get_matches();
     warn_for_deprecated_arguments(&matches);
 
@@ -49,14 +49,14 @@ pub fn main() {
     match (subcommand, maybe_subcommand_matches) {
         ("init", _) => commands::run::execute(
             &matches,
-            solana_version,
+            &solana_version,
             commands::run::execute::Operation::Initialize,
         )
         .inspect_err(|err| error!("Failed to initialize validator: {err}"))
         .map_err(commands::Error::Dynamic),
         ("", _) | ("run", _) => commands::run::execute(
             &matches,
-            solana_version,
+            &solana_version,
             commands::run::execute::Operation::Run,
         )
         .inspect_err(|err| error!("Failed to start validator: {err}"))

@@ -949,7 +949,11 @@ fn main() {
 
     let matches = App::new(crate_name!())
         .about(crate_description!())
-        .version(solana_version::version!())
+        .version(
+            solana_version::Version::this_build()
+                .as_detailed_string()
+                .as_str(),
+        )
         .global_setting(AppSettings::ColoredHelp)
         .global_setting(AppSettings::InferSubcommands)
         .global_setting(AppSettings::UnifiedHelpMessage)
@@ -1701,7 +1705,11 @@ fn main() {
     let logfile = value_t!(matches, "logfile", PathBuf).ok();
     agave_logger::initialize_logging(logfile);
 
-    info!("{} {}", crate_name!(), solana_version::version!());
+    info!(
+        "{} {}",
+        crate_name!(),
+        solana_version::Version::this_build().as_detailed_string()
+    );
 
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
     let verbose_level = matches.occurrences_of("verbose");

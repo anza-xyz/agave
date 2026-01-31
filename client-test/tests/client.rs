@@ -69,7 +69,7 @@ fn test_rpc_client() {
 
     assert_eq!(
         client.get_version().unwrap().solana_core,
-        solana_version::semver!()
+        solana_version::Version::this_build().as_semver_string(),
     );
 
     assert!(client.get_account(&bob_pubkey).is_err());

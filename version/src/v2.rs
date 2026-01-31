@@ -5,21 +5,9 @@ use {
     std::{convert::TryInto, fmt},
 };
 
-// Older version structure used earlier 1.3.x releases
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct LegacyVersion1 {
-    major: u16,
-    minor: u16,
-    patch: u16,
-    commit: Option<u32>, // first 4 bytes of the sha1 commit hash
-}
-
-impl Sanitize for LegacyVersion1 {}
-
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct LegacyVersion2 {
+pub struct Version {
     pub major: u16,
     pub minor: u16,
     pub patch: u16,
@@ -27,7 +15,7 @@ pub struct LegacyVersion2 {
     pub feature_set: u32,    // first 4 bytes of the FeatureSet identifier
 }
 
-impl Default for LegacyVersion2 {
+impl Default for Version {
     fn default() -> Self {
         let feature_set =
             u32::from_le_bytes(agave_feature_set::ID.as_ref()[..4].try_into().unwrap());
@@ -41,7 +29,7 @@ impl Default for LegacyVersion2 {
     }
 }
 
-impl fmt::Debug for LegacyVersion2 {
+impl fmt::Debug for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -58,4 +46,4 @@ impl fmt::Debug for LegacyVersion2 {
     }
 }
 
-impl Sanitize for LegacyVersion2 {}
+impl Sanitize for Version {}

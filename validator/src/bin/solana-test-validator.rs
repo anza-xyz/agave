@@ -62,8 +62,8 @@ fn main() {
     }
 
     let default_args = cli::DefaultTestArgs::new();
-    let version = solana_version::version!();
-    let matches = cli::test_app(version, &default_args).get_matches();
+    let version = solana_version::Version::this_build().as_detailed_string();
+    let matches = cli::test_app(&version, &default_args).get_matches();
 
     let output = if matches.is_present("quiet") {
         Output::None
@@ -133,7 +133,11 @@ fn main() {
     };
     agave_logger::initialize_logging(logfile);
 
-    info!("{} {}", crate_name!(), solana_version::version!());
+    info!(
+        "{} {}",
+        crate_name!(),
+        solana_version::Version::this_build().as_detailed_string()
+    );
     info!("Starting validator with: {:#?}", std::env::args_os());
     solana_core::validator::report_target_features();
 
