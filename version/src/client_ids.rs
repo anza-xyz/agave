@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientId {
     SolanaLabs,
     JitoLabs,
@@ -62,6 +62,13 @@ impl TryFrom<ClientId> for u16 {
             ClientId::Unknown(client @ 0u16..=7u16) => Err(format!("Invalid client: {client}")),
             ClientId::Unknown(client) => Ok(client),
         }
+    }
+}
+
+impl ClientId {
+    pub const fn this_client() -> Self {
+        // Other client implementations need to modify this line.
+        Self::Agave
     }
 }
 
