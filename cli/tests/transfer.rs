@@ -27,9 +27,9 @@ use {
     test_case::test_case,
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Skip Preflight")]
 #[test_case(false; "Don`t skip Preflight")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_transfer(skip_preflight: bool) {
     agave_logger::setup();
     let fee_one_sig = FeeStructure::default().get_max_fee(1, 0);
@@ -485,9 +485,9 @@ async fn test_transfer_multisession_signing() {
     check_balance!(42 * LAMPORTS_PER_SOL, &rpc_client, &to_pubkey);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "default")]
 #[test_case(Some(100_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_transfer_all(compute_unit_price: Option<u64>) {
     agave_logger::setup();
     let lamports_per_signature = FeeStructure::default().get_max_fee(1, 0);
