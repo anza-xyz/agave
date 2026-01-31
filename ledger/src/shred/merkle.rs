@@ -135,7 +135,6 @@ impl Shred {
     }
 }
 
-#[cfg(test)]
 impl Shred {
     dispatch!(fn erasure_shard(&self) -> Result<&[u8], Error>);
     dispatch!(fn proof_size(&self) -> Result<u8, Error>);
@@ -161,7 +160,7 @@ impl ShredData {
 
     // Given shred payload, ShredVariant{..} and DataShredHeader.size, returns
     // the slice storing ledger entries in the shred.
-    pub(super) fn get_data(
+    pub fn get_data(
         shred: &[u8],
         proof_size: u8,
         resigned: bool,
