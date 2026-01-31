@@ -387,7 +387,7 @@ macro_rules! dispatch {
     }
 }
 
-use dispatch;
+use {dispatch, wincode::config::ConfigCore};
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
@@ -655,7 +655,7 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-impl SchemaWrite for ShredVariant {
+unsafe impl<C: ConfigCore> SchemaWrite<C> for ShredVariant {
     type Src = Self;
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 1,
@@ -668,11 +668,11 @@ impl SchemaWrite for ShredVariant {
 
     fn write(writer: &mut impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         let repr: u8 = (*src).into();
-        u8::write(writer, &repr)
+        <u8 as SchemaWrite<C>>::write(writer, &repr)
     }
 }
 
-impl<'a> SchemaRead<'a> for ShredVariant {
+unsafe impl<'a, C: ConfigCore> SchemaRead<'a, C> for ShredVariant {
     type Dst = Self;
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 1,
@@ -683,7 +683,7 @@ impl<'a> SchemaRead<'a> for ShredVariant {
         reader: &mut impl Reader<'a>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let repr = u8::get(reader)?;
+        let repr = <u8 as SchemaRead<C>>::get(reader)?;
         let value = Self::try_from(repr)
             .map_err(|_| wincode::ReadError::InvalidTagEncoding(repr as usize))?;
         dst.write(value);
