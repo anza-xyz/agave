@@ -64,12 +64,6 @@ impl LeaderScheduleCache {
         cache
     }
 
-    pub fn set_max_schedules(&mut self, max_schedules: usize) {
-        if max_schedules > 0 {
-            self.max_schedules = CacheCapacity(max_schedules);
-        }
-    }
-
     pub fn max_schedules(&self) -> usize {
         self.max_schedules.0
     }
@@ -603,19 +597,5 @@ mod tests {
         assert!(cache.slot_leader_at(223, Some(&bank2)).is_some());
         assert_eq!(bank2.get_epoch_and_slot_index(224).0, 3);
         assert!(cache.slot_leader_at(224, Some(&bank2)).is_none());
-    }
-
-    #[test]
-    fn test_set_max_schedules() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let mut cache = LeaderScheduleCache::new_from_bank(&bank);
-
-        // Max schedules must be greater than 0
-        cache.set_max_schedules(0);
-        assert_eq!(cache.max_schedules(), MAX_SCHEDULES);
-
-        cache.set_max_schedules(usize::MAX);
-        assert_eq!(cache.max_schedules(), usize::MAX);
     }
 }
