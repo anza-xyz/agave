@@ -17,11 +17,11 @@ use {
     test_case::test_case,
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(false, None; "rpc_base")]
 #[test_case(false, Some(1_000_000); "rpc_with_compute_unit_price")]
 #[test_case(true, None; "tpu_base")]
 #[test_case(true, Some(1_000_000); "tpu_with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_ping(use_tpu_client: bool, compute_unit_price: Option<u64>) {
     agave_logger::setup();
     let fee = FeeStructure::default().get_max_fee(1, 0);

@@ -204,9 +204,9 @@ async fn test_stake_delegation_force() {
     process_command(&config).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_seed_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -648,9 +648,9 @@ async fn test_stake_delegation_and_withdraw_all() {
     check_balance!(55 * LAMPORTS_PER_SOL, &rpc_client, &recipient_pubkey);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -745,9 +745,9 @@ async fn test_stake_delegation_and_deactivation(compute_unit_price: Option<u64>)
     process_command(&config_validator).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_offline_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -911,9 +911,9 @@ async fn test_offline_stake_delegation_and_deactivation(compute_unit_price: Opti
     process_command(&config_payer).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_nonced_stake_delegation_and_deactivation(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
@@ -1048,9 +1048,9 @@ async fn test_nonced_stake_delegation_and_deactivation(compute_unit_price: Optio
     process_command(&config).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_stake_authorize(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 

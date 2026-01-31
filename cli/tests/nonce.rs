@@ -22,11 +22,11 @@ use {
     test_case::test_case,
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None, false, None; "base")]
 #[test_case(Some(String::from("seed")), false, None; "with_seed")]
 #[test_case(None, true, None; "with_authority")]
 #[test_case(None, false, Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_nonce(
     seed: Option<String>,
     use_nonce_authority: bool,
