@@ -6,7 +6,7 @@ use {
     solana_signature::Signature,
 };
 
-pub(super) trait Shred<'a>: Sized {
+pub trait Shred<'a>: Sized {
     // Total size of payload including headers, merkle
     // branches (if any), zero paddings, etc.
     const SIZE_OF_PAYLOAD: usize;
@@ -35,7 +35,7 @@ pub(super) trait Shred<'a>: Sized {
     fn signed_data(&'a self) -> Result<Self::SignedData, Error>;
 }
 
-pub(super) trait ShredData: for<'a> Shred<'a> {
+pub trait ShredData: for<'a> Shred<'a> {
     fn data_header(&self) -> &DataShredHeader;
 
     fn parent(&self) -> Result<Slot, Error> {
@@ -57,7 +57,7 @@ pub(super) trait ShredData: for<'a> Shred<'a> {
     fn data(&self) -> Result<&[u8], Error>;
 }
 
-pub(super) trait ShredCode: for<'a> Shred<'a> {
+pub trait ShredCode: for<'a> Shred<'a> {
     fn coding_header(&self) -> &CodingShredHeader;
 
     fn first_coding_index(&self) -> Option<u32> {

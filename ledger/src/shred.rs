@@ -241,7 +241,7 @@ pub enum ShredType {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(into = "u8", try_from = "u8")]
-enum ShredVariant {
+pub enum ShredVariant {
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
     // the shred variant:
