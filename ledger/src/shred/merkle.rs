@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::shred::ShredType;
 use {
     crate::{
         shred::{
@@ -13,9 +11,9 @@ use {
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
             },
             CodingShredHeader, DataShredHeader, Error, ProcessShredsStats, ShredCommonHeader,
-            ShredFlags, ShredVariant, CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
-            SHREDS_PER_FEC_BLOCK, SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS,
-            SIZE_OF_NONCE, SIZE_OF_SIGNATURE,
+            ShredFlags, ShredType, ShredVariant, CODING_SHREDS_PER_FEC_BLOCK,
+            DATA_SHREDS_PER_FEC_BLOCK, SHREDS_PER_FEC_BLOCK, SIZE_OF_CODING_SHRED_HEADERS,
+            SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_NONCE, SIZE_OF_SIGNATURE,
         },
         shredder::ReedSolomonCache,
     },
