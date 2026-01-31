@@ -53,7 +53,7 @@ const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 pub struct ShredData {
     pub common_header: ShredCommonHeader,
     pub data_header: DataShredHeader,
-    payload: Payload,
+    pub payload: Payload,
 }
 
 // Layout: {common, coding} headers | erasure coded shard
@@ -66,11 +66,11 @@ pub struct ShredData {
 pub struct ShredCode {
     pub common_header: ShredCommonHeader,
     pub coding_header: CodingShredHeader,
-    payload: Payload,
+    pub payload: Payload,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Shred {
+pub enum Shred {
     ShredCode(ShredCode),
     ShredData(ShredData),
 }
@@ -83,9 +83,9 @@ impl Shred {
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
-    dispatch!(pub(super) fn payload(&self) -> &Payload);
-    dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
+    dispatch!(pub fn common_header(&self) -> &ShredCommonHeader);
+    dispatch!(pub fn payload(&self) -> &Payload);
+    dispatch!(pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     #[inline]
     fn fec_set_index(&self) -> u32 {
@@ -124,7 +124,7 @@ impl Shred {
         &self.common_header().signature
     }
 
-    pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
+    pub fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
     where
         Payload: From<T>,
     {
@@ -567,8 +567,8 @@ impl<'a> ShredTrait<'a> for ShredCode {
     type SignedData = Hash;
 
     impl_shred_common!();
-    const SIZE_OF_PAYLOAD: usize = solana_packet::PACKET_DATA_SIZE - SIZE_OF_NONCE;
-    const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
+    pub const SIZE_OF_PAYLOAD: usize = solana_packet::PACKET_DATA_SIZE - SIZE_OF_NONCE;
+    pub const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
 
     fn from_payload<T>(payload: T) -> Result<Self, Error>
     where
