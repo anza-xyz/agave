@@ -48,6 +48,7 @@ use {
         },
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
+        leader_schedule_utils::leader_schedule_from_vote_accounts,
         rent_collector::RentCollector,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
@@ -119,6 +120,7 @@ use {
     solana_inflation::Inflation,
     solana_keypair::Keypair,
     solana_lattice_hash::lt_hash::LtHash,
+    solana_leader_schedule::SlotLeader,
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
     solana_packet::PACKET_DATA_SIZE,
@@ -1824,6 +1826,7 @@ impl Bank {
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
         fields: BankFieldsToDeserialize,
+        leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
@@ -1862,6 +1865,32 @@ impl Bank {
             !epoch_stakes.is_empty(),
             "should be populated (from fields.versioned_epoch_stakes)"
         );
+
+        // Compute and validate the slot leader from epoch stakes
+        let slot_leader: SlotLeader;
+        #[cfg(not(feature = "dev-context-only-utils"))]
+        {
+            slot_leader = Self::slot_leader_from_epoch_stakes(
+                fields.slot,
+                &fields.epoch_schedule,
+                &epoch_stakes,
+            );
+        }
+        #[cfg(feature = "dev-context-only-utils")]
+        {
+            slot_leader = leader_for_tests.unwrap_or_else(|| {
+                Self::slot_leader_from_epoch_stakes(
+                    fields.slot,
+                    &fields.epoch_schedule,
+                    &epoch_stakes,
+                )
+            });
+        }
+        assert_eq!(
+            fields.leader_id, slot_leader.id,
+            "snapshot leader_id does not match computed slot leader"
+        );
+
         let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
             rc: bank_rc,
@@ -1986,6 +2015,24 @@ impl Bank {
             ),
         );
         bank
+    }
+
+    /// Compute the slot leader from epoch stakes during snapshot restoration.
+    fn slot_leader_from_epoch_stakes(
+        slot: Slot,
+        epoch_schedule: &EpochSchedule,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
+    ) -> SlotLeader {
+        let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
+        let epoch_vote_accounts = epoch_stakes
+            .get(&epoch)
+            .expect("epoch stakes should contain current epoch")
+            .stakes()
+            .vote_accounts();
+        let leader_schedule =
+            leader_schedule_from_vote_accounts(epoch, epoch_schedule, epoch_vote_accounts.as_ref())
+                .expect("leader schedule should be computable from epoch stakes");
+        leader_schedule.get_slot_leader_at_index(slot_index as usize)
     }
 
     /// Return subset of bank fields representing serializable state

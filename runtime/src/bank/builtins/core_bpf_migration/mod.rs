@@ -504,6 +504,7 @@ pub(crate) mod tests {
                 tests::{create_genesis_config, create_simple_test_bank},
                 Bank,
             },
+            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
             runtime_config::RuntimeConfig,
             snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
             snapshot_utils::create_tmp_accounts_dir_for_tests,
@@ -2059,7 +2060,9 @@ pub(crate) mod tests {
     // activated and the migration was successful.
     #[test]
     fn test_startup_from_snapshot_after_replace_spl_token_with_p_token() {
-        let (genesis_config, _mint_keypair) = create_genesis_config(0);
+        let leader_id = Pubkey::new_unique();
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_leader(0, &leader_id, LAMPORTS_PER_SOL);
         let mut bank = Bank::new_for_tests(&genesis_config);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
@@ -2142,6 +2145,7 @@ pub(crate) mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,
