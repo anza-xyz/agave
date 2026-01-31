@@ -377,7 +377,7 @@ impl ConsensusPoolService {
         *highest_parent_ready = new_highest_parent_ready;
 
         let root_bank = ctx.sharable_banks.root();
-        let Some(leader_pubkey) = ctx
+        let Some(slot_leader) = ctx
             .leader_schedule_cache
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
@@ -389,7 +389,7 @@ impl ConsensusPoolService {
             return;
         };
 
-        if &leader_pubkey != my_pubkey {
+        if &slot_leader.id != my_pubkey {
             return;
         }
 
