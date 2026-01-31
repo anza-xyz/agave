@@ -1787,7 +1787,8 @@ fn process_next_slots(
                 bank.clone(),
                 &leader_schedule_cache
                     .slot_leader_at(*next_slot, Some(bank))
-                    .unwrap(),
+                    .unwrap()
+                    .id,
                 *next_slot,
             );
             set_alpenglow_ticks(&next_bank, migration_status);

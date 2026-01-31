@@ -43,7 +43,7 @@ pub fn leader_schedule_by_identity<'a>(
 pub fn slot_leader_at(slot: Slot, bank: &Bank) -> Option<Pubkey> {
     let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
 
-    leader_schedule(epoch, bank).map(|leader_schedule| leader_schedule[slot_index])
+    leader_schedule(epoch, bank).map(|leader_schedule| leader_schedule[slot_index].id)
 }
 
 // Returns the number of ticks remaining from the specified tick_height to the end of the
@@ -96,9 +96,9 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let leader_schedule = leader_schedule(0, &bank).unwrap();
 
-        assert_eq!(leader_schedule[0], pubkey);
-        assert_eq!(leader_schedule[1], pubkey);
-        assert_eq!(leader_schedule[2], pubkey);
+        assert_eq!(leader_schedule[0].id, pubkey);
+        assert_eq!(leader_schedule[1].id, pubkey);
+        assert_eq!(leader_schedule[2].id, pubkey);
     }
 
     #[test]

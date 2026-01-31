@@ -630,7 +630,8 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 parent_bank.clone(),
                 &leader_schedule_cache
                     .slot_leader_at(slot, Some(&parent_bank))
-                    .unwrap(),
+                    .unwrap()
+                    .id,
                 slot,
             );
             bank_forks.write().unwrap().insert_from_ledger(new_bank)
