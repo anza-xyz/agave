@@ -9328,6 +9328,50 @@ fn test_verify_transactions_instruction_limit(simd_0160_enabled: bool) {
     }
 }
 
+#[test_case(false; "pre_simd406_limit_instruction_accounts")]
+#[test_case(true; "simd406_limit_instruction_accounts")]
+fn test_verify_transactions_accounts_limit(simd_406_enabled: bool) {
+    let GenesisConfigInfo { genesis_config, .. } =
+        create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !simd_406_enabled {
+        bank.deactivate_feature(&feature_set::limit_instruction_accounts::id());
+    }
+
+    let recent_blockhash = Hash::new_unique();
+    let keypair = Keypair::new();
+    let pubkey = keypair.pubkey();
+    let mut accounts_keys = vec![Pubkey::new_unique(); 10];
+    accounts_keys.insert(0, pubkey);
+    let accounts: Vec<u8> = (0..10).cycle().take(256).collect();
+    let instruction = CompiledInstruction {
+        program_id_index: 1,
+        data: vec![],
+        accounts,
+    };
+
+    let message = Message::new_with_compiled_instructions(
+        1,
+        0,
+        1,
+        accounts_keys,
+        recent_blockhash,
+        vec![instruction],
+    );
+    let tx = Transaction::new(&[&keypair], message, recent_blockhash);
+
+    if simd_406_enabled {
+        assert_matches!(
+            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+            Err(TransactionError::SanitizeFailure)
+        );
+    } else {
+        assert!(bank
+            .verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
+            .is_ok());
+    }
+}
+
 #[test]
 fn test_check_reserved_keys() {
     let (genesis_config, _mint_keypair) = create_genesis_config(1);

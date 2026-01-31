@@ -240,7 +240,8 @@ mod tests {
 
         let hash = Hash::new_unique();
         let transaction =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true, true)
+                .unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -273,7 +274,7 @@ mod tests {
         ) {
             let bytes = bincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -340,7 +341,7 @@ mod tests {
             let bytes =
                 bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,

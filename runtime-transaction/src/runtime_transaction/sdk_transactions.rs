@@ -81,6 +81,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
         enable_static_instruction_limit: bool,
+        enable_instruction_accounts_limit: bool,
     ) -> Result<Self> {
         if enable_static_instruction_limit
             && tx.message.instructions().len()
@@ -88,6 +89,15 @@ impl RuntimeTransaction<SanitizedTransaction> {
         {
             return Err(solana_transaction_error::TransactionError::SanitizeFailure);
         }
+
+        if enable_instruction_accounts_limit {
+            for instr in tx.message.instructions() {
+                if instr.accounts.len() > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION {
+                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+                }
+            }
+        }
+
         let statically_loaded_runtime_tx =
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 SanitizedVersionedTransaction::try_from(tx)?,
@@ -150,6 +160,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
     pub fn from_transaction_for_tests(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
         let enable_static_instruction_limit = true;
+        let enable_instruction_accounts_limit = true;
         Self::try_create(
             versioned_transaction,
             MessageHash::Compute,
@@ -157,6 +168,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
             enable_static_instruction_limit,
+            enable_instruction_accounts_limit,
         )
         .expect("failed to create RuntimeTransaction from Transaction")
     }
@@ -172,7 +184,11 @@ mod tests {
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
-        solana_message::{Message, SimpleAddressLoader},
+        solana_message::{
+            Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
+            compiled_instruction::CompiledInstruction,
+        },
+        solana_signature::Signature,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
@@ -351,5 +367,64 @@ mod tests {
                 compute_budget_limits.loaded_accounts_bytes.get()
             );
         }
+    }
+
+    #[test]
+    fn test_simd_406_instruction_accounts_limit() {
+        let account_keys = vec![Pubkey::new_unique(); 3];
+        let header = MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 1,
+        };
+        let mut accounts: Vec<u8> = vec![0; 254];
+        // Exactly 255 accounts must pass sanitization
+        accounts.push(1);
+        let instr = CompiledInstruction::new_from_raw_parts(2, Vec::new(), accounts.clone());
+        let transaction = VersionedTransaction {
+            signatures: vec![Signature::default(); 1],
+            message: VersionedMessage::Legacy(solana_message::Message {
+                header,
+                account_keys: account_keys.clone(),
+                recent_blockhash: Hash::default(),
+                instructions: vec![instr],
+            }),
+        };
+        let result = RuntimeTransaction::<SanitizedTransaction>::try_create(
+            transaction,
+            MessageHash::Compute,
+            None,
+            solana_message::SimpleAddressLoader::Disabled,
+            &HashSet::new(),
+            true,
+            true,
+        );
+        assert!(result.is_ok());
+
+        // 256 accounts must fail
+        accounts.push(2);
+        let instr = CompiledInstruction::new_from_raw_parts(2, Vec::new(), accounts.clone());
+        let transaction = VersionedTransaction {
+            signatures: vec![Signature::default(); 1],
+            message: VersionedMessage::Legacy(solana_message::Message {
+                header,
+                account_keys,
+                recent_blockhash: Hash::default(),
+                instructions: vec![instr],
+            }),
+        };
+        let result = RuntimeTransaction::<SanitizedTransaction>::try_create(
+            transaction,
+            MessageHash::Compute,
+            None,
+            solana_message::SimpleAddressLoader::Disabled,
+            &HashSet::new(),
+            true,
+            true,
+        );
+        assert_eq!(
+            result.err(),
+            Some(solana_transaction_error::TransactionError::SanitizeFailure)
+        );
     }
 }

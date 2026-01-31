@@ -263,6 +263,9 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         let enable_static_instruction_limit = bank
             .feature_set
             .is_active(&agave_feature_set::static_instruction_limit::id());
+        let enable_instruction_accounts_limit = bank
+            .feature_set
+            .is_active(&agave_feature_set::limit_instruction_accounts::id());
         for batch in packet_batches.iter() {
             for packet in batch
                 .iter()
@@ -286,6 +289,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 let Some(priority) = SanitizedTransactionView::try_new_sanitized(
                     packet_data,
                     enable_static_instruction_limit,
+                    enable_instruction_accounts_limit,
                 )
                 .map_err(|_| ())
                 .and_then(|transaction| {

@@ -1287,6 +1287,10 @@ pub mod stop_use_static_simple_vote_tx_cost {
     solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
 }
 
+pub mod limit_instruction_accounts {
+    solana_pubkey::declare_id!("DqbnFPASg7tHmZ6qfpdrt2M6MWoSeiicWPXxPhxqFCQ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2297,6 +2301,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             stop_use_static_simple_vote_tx_cost::id(),
             "stop use static SimpleVote transaction cost, issue #10227",
+        ),
+        (
+            limit_instruction_accounts::id(),
+            "SIMD-406: Maximum instruction accounts",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

@@ -3837,6 +3837,9 @@ pub mod rpc_full {
                 preflight_bank
                     .feature_set
                     .is_active(&agave_feature_set::static_instruction_limit::id()),
+                preflight_bank
+                    .feature_set
+                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
             )?;
             let blockhash = *transaction.message().recent_blockhash();
             let message_hash = *transaction.message_hash();
@@ -3999,6 +4002,8 @@ pub mod rpc_full {
                 bank.get_reserved_account_keys(),
                 bank.feature_set
                     .is_active(&agave_feature_set::static_instruction_limit::id()),
+                bank.feature_set
+                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
             )?;
 
             let verification_error = if sig_verify {
@@ -4411,6 +4416,7 @@ fn sanitize_transaction(
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
     enable_static_instruction_limit: bool,
+    enable_instruction_accounts_limit: bool,
 ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
@@ -4419,6 +4425,7 @@ fn sanitize_transaction(
         address_loader,
         reserved_account_keys,
         enable_static_instruction_limit,
+        enable_instruction_accounts_limit,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
@@ -9184,6 +9191,7 @@ pub mod tests {
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
                 true,
+                true,
             )
             .unwrap_err(),
             expect58
@@ -9209,6 +9217,7 @@ pub mod tests {
                 versioned_tx,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
+                true,
                 true,
             )
             .unwrap_err(),
