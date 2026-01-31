@@ -43,6 +43,7 @@ use {
         bank_forks_utils,
         blockstore::{entries_to_test_shreds, Blockstore},
         blockstore_processor::{self, ProcessOptions},
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
@@ -2348,7 +2349,7 @@ fn create_snapshot_to_hard_fork(
     let ledger_path = blockstore.ledger_path();
     let genesis_config = open_genesis_config(ledger_path, u64::MAX).unwrap();
     let snapshot_config = create_simple_snapshot_config(ledger_path);
-    let (bank_forks, leader_schedule_cache, _) = bank_forks_utils::load_bank_forks(
+    let (bank_forks, _) = bank_forks_utils::load_bank_forks(
         &genesis_config,
         blockstore,
         vec![
@@ -2364,6 +2365,10 @@ fn create_snapshot_to_hard_fork(
         Arc::default(),
     )
     .expect("must load bank forks");
+
+    let leader_schedule_cache =
+        LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
+
     blockstore_processor::process_blockstore_from_root(
         blockstore,
         &bank_forks,
