@@ -190,7 +190,6 @@ pub struct StreamerStats {
     pub(crate) connection_added_from_staked_peer: AtomicUsize,
     pub(crate) connection_added_from_unstaked_peer: AtomicUsize,
     pub(crate) connection_add_failed: AtomicUsize,
-    pub(crate) connection_add_failed_invalid_stream_count: AtomicUsize,
     pub(crate) connection_add_failed_staked_node: AtomicUsize,
     pub(crate) connection_add_failed_unstaked_node: AtomicUsize,
     pub(crate) connection_add_failed_on_pruning: AtomicUsize,
@@ -288,12 +287,6 @@ impl StreamerStats {
             (
                 "connection_add_failed",
                 self.connection_add_failed.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "connection_add_failed_invalid_stream_count",
-                self.connection_add_failed_invalid_stream_count
-                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
