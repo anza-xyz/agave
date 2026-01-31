@@ -88,7 +88,7 @@ impl Shred {
     dispatch!(pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     #[inline]
-    fn fec_set_index(&self) -> u32 {
+    pub fn fec_set_index(&self) -> u32 {
         self.common_header().fec_set_index
     }
 
@@ -144,11 +144,11 @@ impl Shred {
     dispatch!(pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error>);
     dispatch!(pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
 
-    fn index(&self) -> u32 {
+    pub fn index(&self) -> u32 {
         self.common_header().index
     }
 
-    fn shred_type(&self) -> ShredType {
+    pub fn shred_type(&self) -> ShredType {
         ShredType::from(self.common_header().shred_variant)
     }
 }
