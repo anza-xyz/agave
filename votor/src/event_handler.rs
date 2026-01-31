@@ -818,7 +818,7 @@ mod tests {
         },
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{
                 create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
@@ -1134,7 +1134,7 @@ mod tests {
         }
 
         fn create_block_only(&mut self, slot: Slot, parent_bank: Arc<Bank>) -> Arc<Bank> {
-            let bank = Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), slot);
+            let bank = Bank::new_from_parent(parent_bank, SlotLeader::new_unique(), slot);
             bank.set_block_id(Some(Hash::new_unique()));
             bank.freeze();
             let mut bank_forks_w = self.bank_forks.write().unwrap();

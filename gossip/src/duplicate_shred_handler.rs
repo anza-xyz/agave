@@ -143,7 +143,7 @@ impl DuplicateShredHandler {
                 .slot_leader_at(slot, /*bank:*/ None)
                 .ok_or(Error::UnknownSlotLeader(slot))?;
             let (shred1, shred2) =
-                duplicate_shred::into_shreds(&slot_leader, chunks, self.shred_version)?;
+                duplicate_shred::into_shreds(&slot_leader.id, chunks, self.shred_version)?;
             if !self.blockstore.has_duplicate_shreds_in_slot(slot) {
                 self.blockstore.store_duplicate_slot(
                     slot,
@@ -242,7 +242,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             shred::Shredder,
         },
-        solana_runtime::bank::Bank,
+        solana_runtime::bank::{Bank, SlotLeader},
         solana_signer::Signer,
         solana_time_utils::timestamp,
     };
@@ -303,7 +303,11 @@ mod tests {
         {
             let mut bank_forks = bank_forks_arc.write().unwrap();
             let bank0 = bank_forks.get(0).unwrap();
-            bank_forks.insert(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 9));
+            bank_forks.insert(Bank::new_from_parent(
+                bank0.clone(),
+                SlotLeader::default(),
+                9,
+            ));
             bank_forks.set_root(9, None, None);
         }
         assert!(blockstore.set_roots([0, 9].iter()).is_ok());
@@ -395,7 +399,11 @@ mod tests {
         {
             let mut bank_forks = bank_forks_arc.write().unwrap();
             let bank0 = bank_forks.get(0).unwrap();
-            bank_forks.insert(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 9));
+            bank_forks.insert(Bank::new_from_parent(
+                bank0.clone(),
+                SlotLeader::default(),
+                9,
+            ));
             bank_forks.set_root(9, None, None);
         }
         blockstore.set_roots([0, 9].iter()).unwrap();

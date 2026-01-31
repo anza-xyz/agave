@@ -482,8 +482,8 @@ impl SimulatorLoop {
                     .leader_schedule_cache
                     .slot_leader_at(new_slot, None)
                     .unwrap();
-                if new_leader != self.simulated_leader {
-                    logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader);
+                if new_leader.id != self.simulated_leader {
+                    logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader.id);
                     break;
                 } else if sender_thread.is_finished() {
                     warn!("sender thread existed maybe due to completion of sending traced events");
@@ -491,11 +491,8 @@ impl SimulatorLoop {
                 } else {
                     info!("new leader bank slot: {new_slot}");
                 }
-                let new_bank = Bank::new_from_parent(
-                    bank.clone_without_scheduler(),
-                    &self.simulated_leader,
-                    new_slot,
-                );
+                let new_bank =
+                    Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot);
                 // make sure parent is frozen for finalized hashes via the above
                 // new()-ing of its child bank
                 self.retracer
@@ -717,7 +714,8 @@ impl BankingSimulator {
 
         let simulated_leader = leader_schedule_cache
             .slot_leader_at(self.first_simulated_slot, None)
-            .unwrap();
+            .unwrap()
+            .id;
         info!(
             "Simulated leader and slot: {}, {}",
             simulated_leader, self.first_simulated_slot,

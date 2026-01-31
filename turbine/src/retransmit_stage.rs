@@ -379,7 +379,7 @@ fn retransmit(
             };
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader, cluster_nodes)))
+            Some((slot, (slot_leader.id, cluster_nodes)))
         })
         .collect();
     let socket_addr_space = cluster_info.socket_addr_space();
@@ -581,7 +581,7 @@ fn cache_retransmit_addrs(
             let slot_leader = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))?;
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader, cluster_nodes)))
+            Some((slot, (slot_leader.id, cluster_nodes)))
         })
         .collect();
     if cache.is_empty() {

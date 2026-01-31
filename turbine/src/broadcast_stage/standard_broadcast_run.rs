@@ -504,7 +504,7 @@ mod test {
             shred::{DATA_SHREDS_PER_FEC_BLOCK, max_ticks_per_n_shreds},
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_runtime::bank::Bank,
+        solana_runtime::bank::{Bank, SlotLeader},
         solana_signer::Signer,
         std::{ops::Deref, sync::Arc, time::Duration},
     };
@@ -658,7 +658,14 @@ mod test {
 
         // Step 2: Make a transmission for another bank that interrupts the transmission for
         // slot 0
-        let bank2 = Arc::new(Bank::new_from_parent(bank0, &leader_keypair.pubkey(), 2));
+        let bank2 = Arc::new(Bank::new_from_parent(
+            bank0,
+            SlotLeader {
+                id: leader_keypair.pubkey(),
+                ..SlotLeader::default()
+            },
+            2,
+        ));
         let interrupted_slot = standard_broadcast_run.slot;
         // Interrupting the slot should cause the unfinished_slot and stats to reset
         let num_shreds = 1;

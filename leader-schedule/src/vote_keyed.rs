@@ -95,6 +95,10 @@ impl LeaderSchedule {
         self.slot_leaders.len()
     }
 
+    pub fn get_slot_leader_at_index(&self, index: usize) -> SlotLeader {
+        self.slot_leaders[index % self.num_slots()]
+    }
+
     #[cfg(test)]
     pub fn get_vote_key_at_slot_index(&self, index: usize) -> &Pubkey {
         &self.slot_leaders[index % self.num_slots()].vote_address
@@ -102,9 +106,9 @@ impl LeaderSchedule {
 }
 
 impl Index<u64> for LeaderSchedule {
-    type Output = Pubkey;
-    fn index(&self, index: u64) -> &Pubkey {
-        &self.slot_leaders[index as usize % self.num_slots()].id
+    type Output = SlotLeader;
+    fn index(&self, index: u64) -> &SlotLeader {
+        &self.slot_leaders[index as usize % self.num_slots()]
     }
 }
 
@@ -116,9 +120,9 @@ mod tests {
     fn test_index() {
         let slot_leaders = vec![SlotLeader::new_unique(), SlotLeader::new_unique()];
         let leader_schedule = LeaderSchedule::new_from_schedule(slot_leaders.clone());
-        assert_eq!(leader_schedule[0], slot_leaders[0].id);
-        assert_eq!(leader_schedule[1], slot_leaders[1].id);
-        assert_eq!(leader_schedule[2], slot_leaders[0].id);
+        assert_eq!(leader_schedule[0], slot_leaders[0]);
+        assert_eq!(leader_schedule[1], slot_leaders[1]);
+        assert_eq!(leader_schedule[2], slot_leaders[0]);
     }
 
     #[test]

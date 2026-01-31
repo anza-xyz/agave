@@ -540,6 +540,25 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         ctx.my_pubkey
     );
 
+    let Some(leader) = ctx
+        .leader_schedule_cache
+        .slot_leader_at(slot, Some(&parent_bank))
+    else {
+        panic!(
+            "{}: No leader found for slot {slot} with parent {parent_slot}. Something has gone \
+             wrong with the block creation loop. exiting",
+            ctx.my_pubkey,
+        );
+    };
+
+    if ctx.my_pubkey != leader.id {
+        panic!(
+            "{}: Attempting to produce a block for {slot}, however the leader is {}. Something \
+             has gone wrong with the block creation loop. exiting",
+            ctx.my_pubkey, leader.id,
+        );
+    }
+
     if let Some(bank) = ctx.poh_recorder.read().unwrap().bank() {
         panic!(
             "{}: Attempting to produce a block for {slot}, however we still are in production of \
@@ -559,7 +578,7 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
         parent_bank.clone(),
         slot,
         root_slot,
-        &ctx.my_pubkey,
+        leader,
         ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
         NewBankOptions::default(),

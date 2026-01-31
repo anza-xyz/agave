@@ -7,6 +7,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_genesis_config::create_genesis_config,
     solana_instruction::error::LamportsError,
+    solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
     solana_runtime::bank::*,
     std::{path::PathBuf, sync::Arc},
@@ -54,7 +55,7 @@ fn bench_accounts_squash(bencher: &mut Bencher) {
     bencher.iter(|| {
         let next_bank = Arc::new(Bank::new_from_parent(
             prev_bank.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             slot,
         ));
         test_utils::deposit(&next_bank, &pubkeys[0], 1).unwrap();

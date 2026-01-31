@@ -53,6 +53,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::SlotLeader,
     solana_ledger::{
         block_error::BlockError,
         blockstore::Blockstore,
@@ -1070,7 +1071,7 @@ impl ReplayStage {
                                 &my_pubkey,
                                 vote_bank.slot(),
                                 &mut current_leader,
-                                &votable_leader,
+                                &votable_leader.id,
                             );
                         }
 
@@ -1770,7 +1771,9 @@ impl ReplayStage {
 
                     // Should not dump slots for which we were the leader
                     if Some(*my_pubkey)
-                        == leader_schedule_cache.slot_leader_at(*duplicate_slot, None)
+                        == leader_schedule_cache
+                            .slot_leader_at(*duplicate_slot, None)
+                            .map(|leader| leader.id)
                     {
                         if let Some(bank) = bank_forks.read().unwrap().get(*duplicate_slot) {
                             bank_hash_details::write_bank_hash_details_file(&bank)
@@ -2339,17 +2342,18 @@ impl ReplayStage {
                 return None;
             }
 
-            trace!("{my_pubkey} leader {next_leader} at poh slot: {poh_slot}");
+            let next_leader_id = &next_leader.id;
+            trace!("{my_pubkey} leader {next_leader_id} at poh slot: {poh_slot}");
 
             // I guess I missed my slot
-            if next_leader != *my_pubkey {
+            if next_leader_id != my_pubkey {
                 return None;
             }
 
             datapoint_info!(
                 "replay_stage-new_leader",
                 ("slot", poh_slot, i64),
-                ("leader", next_leader.to_string(), String),
+                ("leader", next_leader_id.to_string(), String),
             );
 
             if !Self::check_propagation_for_start_leader(poh_slot, parent_slot, progress_map) {
@@ -2400,7 +2404,7 @@ impl ReplayStage {
                 parent.clone(),
                 poh_slot,
                 root_slot,
-                my_pubkey,
+                next_leader,
                 rpc_subscriptions,
                 slot_status_notifier,
                 NewBankOptions { vote_only_bank },
@@ -4470,7 +4474,7 @@ impl ReplayStage {
                     parent_bank.clone(),
                     child_slot,
                     forks.root(),
-                    &leader,
+                    leader,
                     rpc_subscriptions,
                     slot_status_notifier,
                     options,
@@ -4480,7 +4484,7 @@ impl ReplayStage {
                 Self::update_fork_propagated_threshold_from_votes(
                     progress,
                     empty,
-                    vec![leader],
+                    vec![leader.id],
                     parent_bank.slot(),
                     &forks,
                 );
@@ -4519,7 +4523,7 @@ impl ReplayStage {
         parent: Arc<Bank>,
         slot: u64,
         root_slot: u64,
-        leader: &Pubkey,
+        leader: SlotLeader,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         new_bank_options: NewBankOptions,
@@ -4804,7 +4808,7 @@ pub(crate) mod tests {
         // bank
         let bank1 = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            &leader_schedule_cache.slot_leader_at(1, None).unwrap(),
+            leader_schedule_cache.slot_leader_at(1, None).unwrap(),
             1,
         );
         progress.insert(
@@ -4894,7 +4898,7 @@ pub(crate) mod tests {
         ];
         for slot in expected_leader_slots {
             let leader = leader_schedule_cache.slot_leader_at(slot, None).unwrap();
-            let vote_key = validator_node_to_vote_keys.get(&leader).unwrap();
+            let vote_key = validator_node_to_vote_keys.get(&leader.id).unwrap();
             assert!(progress
                 .get_propagated_stats(1)
                 .unwrap()
@@ -4912,7 +4916,7 @@ pub(crate) mod tests {
         let root = 3;
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             root,
         );
         root_bank.freeze();
@@ -5008,20 +5012,20 @@ pub(crate) mod tests {
         let fork = 2;
         let bank1 = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             confirmed_root,
         );
         bank_forks.write().unwrap().insert(bank1);
         let bank2 = Bank::new_from_parent(
             bank_forks.read().unwrap().get(confirmed_root).unwrap(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             fork,
         );
         bank_forks.write().unwrap().insert(bank2);
         let root = 3;
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().get(confirmed_root).unwrap(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             root,
         );
         root_bank.freeze();
@@ -5341,7 +5345,7 @@ pub(crate) mod tests {
             let bank0 = bank_forks.read().unwrap().get(0).unwrap();
             assert!(bank0.is_frozen());
             assert_eq!(bank0.tick_height(), bank0.max_tick_height());
-            let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+            let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
             bank_forks.write().unwrap().insert(bank1);
             let bank1 = bank_forks.read().unwrap().get_with_scheduler(1).unwrap();
             let bank1_progress = progress
@@ -5482,7 +5486,7 @@ pub(crate) mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 prev_bank,
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot,
             );
             let _res = bank.transfer(
@@ -5583,7 +5587,7 @@ pub(crate) mod tests {
             let bank1 = bank_forks
                 .write()
                 .unwrap()
-                .insert(Bank::new_from_parent(bank0, &Pubkey::default(), 1))
+                .insert(Bank::new_from_parent(bank0, SlotLeader::default(), 1))
                 .clone_without_scheduler();
             let slot = bank1.slot();
 
@@ -5691,7 +5695,10 @@ pub(crate) mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
-            &my_node_pubkey,
+            SlotLeader {
+                id: my_node_pubkey,
+                vote_address: my_vote_pubkey,
+            },
             1,
         );
         bank1.process_transaction(&vote_tx).unwrap();
@@ -6111,9 +6118,13 @@ pub(crate) mod tests {
         let mut bank_forks = bank_forks_arc.write().unwrap();
 
         let bank0 = bank_forks.get(0).unwrap();
-        bank_forks.insert(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 9));
+        bank_forks.insert(Bank::new_from_parent(
+            bank0.clone(),
+            SlotLeader::default(),
+            9,
+        ));
         let bank9 = bank_forks.get(9).unwrap();
-        bank_forks.insert(Bank::new_from_parent(bank9, &Pubkey::default(), 10));
+        bank_forks.insert(Bank::new_from_parent(bank9, SlotLeader::default(), 10));
         bank_forks.set_root(9, None, None);
         let total_epoch_stake = bank0.total_epoch_stake();
 
@@ -6216,7 +6227,7 @@ pub(crate) mod tests {
         for i in 1..=10 {
             let parent_bank = bank_forks.get(i - 1).unwrap().clone();
             let prev_leader_slot = ((i - 1) / 2) * 2;
-            bank_forks.insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), i));
+            bank_forks.insert(Bank::new_from_parent(parent_bank, SlotLeader::default(), i));
             progress_map.insert(
                 i,
                 ForkProgress::new(
@@ -6300,7 +6311,7 @@ pub(crate) mod tests {
         for i in 1..=10 {
             let parent_bank = bank_forks.get(i - 1).unwrap().clone();
             let prev_leader_slot = i - 1;
-            bank_forks.insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), i));
+            bank_forks.insert(Bank::new_from_parent(parent_bank, SlotLeader::default(), i));
             let mut fork_progress = ForkProgress::new(
                 Hash::default(),
                 Some(prev_leader_slot),
@@ -6443,11 +6454,14 @@ pub(crate) mod tests {
         // which implies confirmation
         let bank0 = Bank::new_for_tests(&genesis_config::create_genesis_config(10000).0);
         let parent_slot_bank =
-            Bank::new_from_parent(Arc::new(bank0), &Pubkey::default(), parent_slot);
+            Bank::new_from_parent(Arc::new(bank0), SlotLeader::default(), parent_slot);
         let bank_forks = BankForks::new_rw_arc(parent_slot_bank);
         let mut bank_forks = bank_forks.write().unwrap();
-        let bank5 =
-            Bank::new_from_parent(bank_forks.get(parent_slot).unwrap(), &Pubkey::default(), 5);
+        let bank5 = Bank::new_from_parent(
+            bank_forks.get(parent_slot).unwrap(),
+            SlotLeader::default(),
+            5,
+        );
         bank_forks.insert(bank5);
 
         // Should purge only `previous_leader_slot` from the progress map
@@ -6559,7 +6573,7 @@ pub(crate) mod tests {
         let root_bank = bank_forks.read().unwrap().root_bank();
         let bank7 = Bank::new_from_parent(
             bank_forks.read().unwrap().get(6).unwrap(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             7,
         );
         bank_forks.write().unwrap().insert(bank7);
@@ -6722,7 +6736,7 @@ pub(crate) mod tests {
         let root_bank = bank_forks.read().unwrap().root_bank();
         let bank7 = Bank::new_from_parent(
             bank_forks.read().unwrap().get(6).unwrap(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             7,
         );
         bank_forks.write().unwrap().insert(bank7);
@@ -6986,7 +7000,7 @@ pub(crate) mod tests {
         // Update propagation status
         let mut tower = Tower::new_for_tests(0, 0.67);
         ReplayStage::compute_bank_stats(
-            &validator_node_to_vote_keys[&my_pubkey],
+            &validator_node_to_vote_keys[&my_pubkey.id],
             &ancestors,
             &mut frozen_banks,
             &mut tower,
@@ -7931,7 +7945,7 @@ pub(crate) mod tests {
         let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         );
         bank1.fill_bank_with_ticks_for_tests();
@@ -7995,7 +8009,7 @@ pub(crate) mod tests {
         let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank1.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             2,
         );
         bank2.fill_bank_with_ticks_for_tests();
@@ -8130,7 +8144,7 @@ pub(crate) mod tests {
                 parent_bank = Bank::new_from_parent_with_bank_forks(
                     bank_forks.as_ref(),
                     parent_bank,
-                    &Pubkey::default(),
+                    SlotLeader::default(),
                     slot,
                 );
                 parent_bank.fill_bank_with_ticks_for_tests();
@@ -8222,7 +8236,7 @@ pub(crate) mod tests {
         let expired_bank_child = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             expired_bank.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             expired_bank_child_slot,
         );
         expired_bank_child.process_transaction(vote_tx).unwrap();
@@ -8251,7 +8265,7 @@ pub(crate) mod tests {
                 parent_bank = Bank::new_from_parent_with_bank_forks(
                     bank_forks.as_ref(),
                     parent_bank,
-                    &Pubkey::default(),
+                    SlotLeader::default(),
                     slot,
                 );
                 parent_bank.fill_bank_with_ticks_for_tests();
@@ -8360,7 +8374,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks,
             parent_bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             my_slot,
         );
         bank.fill_bank_with_ticks_for_tests();
@@ -8420,7 +8434,7 @@ pub(crate) mod tests {
         let other_fork_bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             other_fork_slot,
         );
         other_fork_bank.fill_bank_with_ticks_for_tests();
@@ -8483,7 +8497,7 @@ pub(crate) mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 new_bank,
-                &Pubkey::default(),
+                SlotLeader::default(),
                 new_slot,
             );
             bank.fill_bank_with_ticks_for_tests();
@@ -8607,7 +8621,7 @@ pub(crate) mod tests {
 
         let bank1 = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            &leader_schedule_cache.slot_leader_at(1, None).unwrap(),
+            leader_schedule_cache.slot_leader_at(1, None).unwrap(),
             1,
         );
         progress.insert(
@@ -8786,7 +8800,7 @@ pub(crate) mod tests {
         for i in (1..10).chain(11..15) {
             let bank = Bank::new_from_parent(
                 bank_forks.read().unwrap().get(prev_index).unwrap(),
-                &leader_schedule_cache.slot_leader_at(i, None).unwrap(),
+                leader_schedule_cache.slot_leader_at(i, None).unwrap(),
                 i,
             );
             progress.insert(
@@ -8867,11 +8881,13 @@ pub(crate) mod tests {
 
         // Use a bank slot when I was not leader to avoid panic for dumping my own slot
         let slot_to_dump = (1..100)
-            .find(|i| leader_schedule_cache.slot_leader_at(*i, None) != Some(*my_pubkey))
+            .find(|i| {
+                leader_schedule_cache.slot_leader_at(*i, None).map(|l| l.id) != Some(*my_pubkey)
+            })
             .unwrap();
         let bank_to_dump = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            &leader_schedule_cache
+            leader_schedule_cache
                 .slot_leader_at(slot_to_dump, None)
                 .unwrap(),
             slot_to_dump,
@@ -9484,7 +9500,7 @@ pub(crate) mod tests {
 
         let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
             bank0.clone_without_scheduler(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         ));
         confirm_full_slot(
