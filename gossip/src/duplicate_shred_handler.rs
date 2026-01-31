@@ -143,7 +143,7 @@ impl DuplicateShredHandler {
                 .slot_leader_at(slot, /*bank:*/ None)
                 .ok_or(Error::UnknownSlotLeader(slot))?;
             let (shred1, shred2) =
-                duplicate_shred::into_shreds(&slot_leader, chunks, self.shred_version)?;
+                duplicate_shred::into_shreds(&slot_leader.id, chunks, self.shred_version)?;
             if !self.blockstore.has_duplicate_shreds_in_slot(slot) {
                 self.blockstore.store_duplicate_slot(
                     slot,

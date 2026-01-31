@@ -481,7 +481,8 @@ impl SimulatorLoop {
                 let new_leader = self
                     .leader_schedule_cache
                     .slot_leader_at(new_slot, None)
-                    .unwrap();
+                    .unwrap()
+                    .id;
                 if new_leader != self.simulated_leader {
                     logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader);
                     break;
@@ -717,7 +718,8 @@ impl BankingSimulator {
 
         let simulated_leader = leader_schedule_cache
             .slot_leader_at(self.first_simulated_slot, None)
-            .unwrap();
+            .unwrap()
+            .id;
         info!(
             "Simulated leader and slot: {}, {}",
             simulated_leader, self.first_simulated_slot,
