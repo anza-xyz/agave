@@ -359,22 +359,18 @@ mod tests {
         let delay = ttl / 64;
         let mut cache = PingCache::new(&mut rng, Instant::now(), ttl, delay, /*cap=*/ 1000);
         let this_node = Keypair::new();
-        let keypairs: Vec<_> = repeat_with(Keypair::new).take(8).collect();
-        let sockets: Vec<_> = repeat_with(|| {
-            SocketAddr::V4(SocketAddrV4::new(
-                Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
-                rng.random(),
-            ))
-        })
-        .take(8)
-        .collect();
-        let remote_nodes: Vec<(&Keypair, SocketAddr)> = repeat_with(|| {
-            let keypair = &keypairs[rng.random_range(0..keypairs.len())];
-            let socket = sockets[rng.random_range(0..sockets.len())];
-            (keypair, socket)
-        })
-        .take(128)
-        .collect();
+        let sockets: Vec<_> = (1u8..=3)
+            .map(|i| {
+                SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::new(i, i, i, i),
+                    8000 + i as u16,
+                ))
+            })
+            .collect();
+        let keypairs: Vec<_> = repeat_with(Keypair::new).take(sockets.len()).collect();
+        let remote_nodes: Vec<(&Keypair, SocketAddr)> = (0..sockets.len() * 2)
+            .map(|i| (&keypairs[i % sockets.len()], sockets[i % sockets.len()]))
+            .collect();
 
         // Initially all checks should fail. The first observation of each node
         // should create a ping packet.
@@ -391,11 +387,13 @@ mod tests {
             .collect();
 
         let now = now + Duration::from_millis(1);
+        let mut rate_limited_duplicates_checked = 0;
         for ((keypair, socket), ping) in remote_nodes.iter().zip(&pings) {
             match ping {
                 None => {
-                    // Already have a recent ping packets for nodes, so no new
-                    // ping packet will be generated.
+                    // Rate-limited: same node observed twice in quick succession,
+                    // no new ping was generated. Node has pong from first observation.
+                    rate_limited_duplicates_checked += 1;
                     let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
                     assert!(check);
                     assert!(ping.is_none());
@@ -406,6 +404,10 @@ mod tests {
                 }
             }
         }
+        assert!(
+            rate_limited_duplicates_checked > 0,
+            "Test must exercise rate-limited duplicate path (need duplicates in remote_nodes)"
+        );
 
         let now = now + Duration::from_millis(1);
         // All nodes now have a recent pong packet.
@@ -438,8 +440,9 @@ mod tests {
         let now = now + ttl;
         // Pong packets have expired. The first observation of each node will
         // remove the expired pong packet from cache and create a new ping packet.
-        // check should be false because the pong is expired
+        // Duplicates are rate-limited (no new ping).
         seen_nodes.clear();
+        let mut expired_duplicates_checked = 0;
         for (_keypair, socket) in &remote_nodes {
             let node = PingCacheKey::from(*socket);
             let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
@@ -450,10 +453,15 @@ mod tests {
                     "Should generate ping to re-verify expired node"
                 );
             } else {
+                expired_duplicates_checked += 1;
                 assert!(!check);
                 assert!(ping.is_none());
             }
         }
+        assert!(
+            expired_duplicates_checked > 0,
+            "Test must exercise expired-duplicate path (need duplicates in remote_nodes)"
+        );
 
         let now = now + Duration::from_millis(1);
         // No valid pong packet in the cache. A recent ping packet already
@@ -480,10 +488,7 @@ mod tests {
     fn test_expired_pong_returns_check_false() {
         let mut rng = rand::rng();
         let this_node = Keypair::new();
-        let remote_socket = SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(rng.random(), rng.random(), rng.random(), rng.random()),
-            rng.random(),
-        ));
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 10, 10, 10), 8000));
         let ttl = Duration::from_secs(20 * 60); // 20 minutes
         let delay = ttl / 64;
         let mut now = Instant::now();
