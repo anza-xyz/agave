@@ -87,6 +87,7 @@ ed25519-dalek = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
+rand = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
