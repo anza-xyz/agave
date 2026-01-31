@@ -608,7 +608,7 @@ mod tests {
         // write to multiple accounts and keep track of one, for minimization later
         let pubkey_to_keep = Pubkey::new_unique();
         let slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent(bank.clone(), bank.leader_id(), slot);
+        let bank = Bank::new_from_parent(bank.clone(), *bank.leader(), slot);
         let bank = bank_forks
             .write()
             .unwrap()

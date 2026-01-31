@@ -165,8 +165,8 @@ mod tests {
     use {
         super::*, crate::accounts_background_service::SnapshotRequestKind,
         agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
-        solana_genesis_config::create_genesis_config, solana_pubkey::Pubkey, std::sync::Arc,
-        test_case::test_case,
+        solana_genesis_config::create_genesis_config, solana_leader_schedule::SlotLeader,
+        std::sync::Arc, test_case::test_case,
     };
 
     fn create_banks(num_banks: u64) -> Vec<Arc<Bank>> {
@@ -178,7 +178,7 @@ mod tests {
         for _ in 1..=num_banks {
             let new_bank = Arc::new(Bank::new_from_parent(
                 parent_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 parent_bank.slot() + 1,
             ));
             parent_bank = new_bank;

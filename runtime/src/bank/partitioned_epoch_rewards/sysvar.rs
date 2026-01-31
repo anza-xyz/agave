@@ -105,9 +105,12 @@ impl Bank {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::bank::tests::create_genesis_config, solana_account::ReadableAccount,
-        solana_epoch_schedule::EpochSchedule, solana_native_token::LAMPORTS_PER_SOL,
-        solana_pubkey::Pubkey, std::sync::Arc,
+        super::*,
+        crate::bank::{tests::create_genesis_config, SlotLeader},
+        solana_account::ReadableAccount,
+        solana_epoch_schedule::EpochSchedule,
+        solana_native_token::LAMPORTS_PER_SOL,
+        std::sync::Arc,
     };
 
     /// Test `EpochRewards` sysvar creation, distribution, and burning.
@@ -156,7 +159,7 @@ mod tests {
         // Create a child bank to test parent_blockhash
         let parent_blockhash = bank.last_blockhash();
         let parent_slot = bank.slot();
-        let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), parent_slot + 1);
+        let bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), parent_slot + 1);
         // Also note that running `create_epoch_rewards_sysvar()` against a bank
         // with an existing EpochRewards sysvar clobbers the previous values
         bank.create_epoch_rewards_sysvar(10, 42, num_partitions, &point_value);

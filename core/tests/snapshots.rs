@@ -16,7 +16,6 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
-    solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
@@ -186,7 +185,7 @@ where
     };
     for slot in 1..=last_slot {
         let parent = bank_forks.read().unwrap().get(slot - 1).unwrap().clone();
-        let bank = Bank::new_from_parent(parent.clone(), parent.leader_id(), slot);
+        let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
         let bank = bank_forks.write().unwrap().insert(bank);
         f(bank.clone_without_scheduler().as_ref(), mint_keypair);
         // Set root to make sure we don't end up with too many account storage entries
@@ -289,7 +288,8 @@ fn test_slots_to_snapshot() {
         for _ in 0..num_set_roots {
             for _ in 0..*add_root_interval {
                 let new_slot = current_bank.slot() + 1;
-                let new_bank = Bank::new_from_parent(current_bank, &Pubkey::default(), new_slot);
+                let leader = *current_bank.leader();
+                let new_bank = Bank::new_from_parent(current_bank, leader, new_slot);
                 current_bank = bank_forks.write().unwrap().insert(new_bank).clone();
             }
             bank_forks
@@ -414,7 +414,7 @@ fn test_bank_forks_incremental_snapshot() {
         // Make a new bank and perform some transactions
         let bank = {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(parent.clone(), parent.leader_id(), slot);
+            let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
             let bank_scheduler = bank_forks.write().unwrap().insert(bank);
             let bank = bank_scheduler.clone_without_scheduler();
 
@@ -651,7 +651,7 @@ fn test_snapshots_with_background_services() {
         // Make a new bank and process some transactions
         {
             let parent = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(parent.clone(), parent.leader_id(), slot);
+            let bank = Bank::new_from_parent(parent.clone(), *parent.leader(), slot);
             let bank = bank_forks
                 .write()
                 .unwrap()
@@ -811,7 +811,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
             .unwrap()
             .insert(Bank::new_from_parent(
                 parent_bank.clone(),
-                parent_bank.leader_id(),
+                *parent_bank.leader(),
                 slot,
             ))
             .clone_without_scheduler();

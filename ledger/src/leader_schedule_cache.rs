@@ -537,7 +537,11 @@ mod tests {
         let bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(bank, &Pubkey::default(), target_slot))
+            .insert(Bank::new_from_parent(
+                bank,
+                SlotLeader::default(),
+                target_slot,
+            ))
             .clone_without_scheduler();
         let mut expected_slot = 0;
         let epoch = bank.get_leader_schedule_epoch(target_slot);
@@ -598,7 +602,7 @@ mod tests {
         assert_eq!(bank.get_epoch_and_slot_index(96).0, 2);
         assert!(cache.slot_leader_at(96, Some(&bank)).is_none());
 
-        let bank2 = Bank::new_from_parent(bank, &solana_pubkey::new_rand(), 95);
+        let bank2 = Bank::new_from_parent(bank, SlotLeader::new_unique(), 95);
         assert!(bank2.epoch_vote_accounts(2).is_some());
 
         // Set root for a slot in epoch 1, so that epoch 2 is now confirmed

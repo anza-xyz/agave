@@ -548,6 +548,7 @@ mod tests {
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore_processor::{TransactionStatusMessage, TransactionStatusSender},
             genesis_utils::{
@@ -1408,7 +1409,7 @@ mod tests {
         let address_table_state = generate_new_address_lookup_table(None, 2);
         store_address_lookup_table(&bank, address_table_key, address_table_state);
 
-        let new_bank = Bank::new_from_parent(bank, &Pubkey::new_unique(), 2);
+        let new_bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), 2);
         let bank = bank_forks
             .write()
             .unwrap()

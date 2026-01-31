@@ -628,10 +628,9 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
         let bank_with_scheduler = saved_bank.unwrap_or_else(|| {
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
-                &leader_schedule_cache
+                leader_schedule_cache
                     .slot_leader_at(slot, Some(&parent_bank))
-                    .unwrap()
-                    .id,
+                    .unwrap(),
                 slot,
             );
             bank_forks.write().unwrap().insert_from_ledger(new_bank)
@@ -1438,6 +1437,7 @@ mod tests {
         solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
         solana_runtime::{
+            bank::SlotLeader,
             epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
@@ -1967,7 +1967,7 @@ mod tests {
         let my_heaviest_fork_slot = last_vote_slot + 1;
         let mut new_root_bank = Bank::new_from_parent(
             old_root_bank.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             my_heaviest_fork_slot,
         );
         assert_eq!(new_root_bank.epoch(), 1);
@@ -3787,7 +3787,7 @@ mod tests {
         );
         let new_bank = Bank::new_from_parent(
             test_state.bank_forks.read().unwrap().get(new_slot).unwrap(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             slot_full_but_not_replayed,
         );
         let _ = test_state
