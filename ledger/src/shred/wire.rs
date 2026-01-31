@@ -156,7 +156,7 @@ fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
 }
 
 #[inline]
-pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
+pub fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
     match get_shred_variant(shred)? {
         ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
         ShredVariant::MerkleData {
