@@ -12,7 +12,7 @@ use {
     },
 };
 
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Payload {
     pub bytes: Bytes,
 }
