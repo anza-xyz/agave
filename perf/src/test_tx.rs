@@ -41,7 +41,7 @@ pub fn test_multisig_tx() -> Transaction {
     let program_ids = vec![system_program::id(), stake::id()];
 
     let instructions = vec![CompiledInstruction::new(
-        0,
+        2,
         &transfer_instruction,
         vec![0, 1],
     )];
