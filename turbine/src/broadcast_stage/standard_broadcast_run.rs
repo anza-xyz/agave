@@ -105,7 +105,7 @@ impl StandardBroadcastRun {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn entries_to_shreds(
+    pub fn entries_to_shreds(
         &mut self,
         keypair: &Keypair,
         entries: &[Entry],
