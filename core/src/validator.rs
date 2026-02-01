@@ -39,9 +39,10 @@ use {
         snapshot_hash::StartingSnapshotHashes, SnapshotInterval,
     },
     agave_votor::{
+        quic_client::VotorQuicClient,
         vote_history::VoteHistory,
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
-        voting_service::{VotingServiceOverride, VotorQuicClient},
+        voting_service::VotingServiceOverride,
     },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},

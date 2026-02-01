@@ -27,11 +27,10 @@ use {
     agave_votor::{
         consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
         event::{LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+        quic_client::VotorQuicClient,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
-        voting_service::{
-            VotingService as BLSVotingService, VotingServiceOverride, VotorQuicClient,
-        },
+        voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
     bytes::Bytes,
