@@ -8,6 +8,7 @@ use {
         sigverify,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_feature_set::ed25519_verify_zebra,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Select, Sender},
     log::*,
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -279,14 +280,16 @@ impl ClusterInfoVoteListener {
         sharable_banks: &SharableBanks,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
+        let root_bank = sharable_banks.root();
+        let use_zebra = root_bank.feature_set.is_active(&ed25519_verify_zebra::id());
 
         // Votes should already be filtered by this point.
         sigverify::ed25519_verify(
             &mut packet_batches,
             /*reject_non_vote=*/ false,
             votes.len(),
+            use_zebra,
         );
-        let root_bank = sharable_banks.root();
         let epoch_schedule = root_bank.epoch_schedule();
         votes
             .into_iter()

@@ -1004,6 +1004,10 @@ pub mod ed25519_precompile_verify_strict {
     solana_pubkey::declare_id!("ed9tNscbWLYBooxWA7FE2B5KHWs8A6sxfY8EzezEcoo");
 }
 
+pub mod ed25519_verify_zebra {
+    solana_pubkey::declare_id!("5QNgSrr2CtajX3ykBpaZzzUycvVRUZBYv8RbUf7pNbtx");
+}
+
 pub mod vote_only_retransmitter_signed_fec_sets {
     solana_pubkey::declare_id!("RfEcA95xnhuwooVAhUUksEJLZBF7xKCLuqrJoqk4Zph");
 }
@@ -1994,6 +1998,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             ed25519_precompile_verify_strict::id(),
             "SIMD-0152: Use strict verification in ed25519 precompile",
+        ),
+        (
+            ed25519_verify_zebra::id(),
+            "SIMD-0376: ed25519-verify-zebra",
         ),
         (
             vote_only_retransmitter_signed_fec_sets::id(),

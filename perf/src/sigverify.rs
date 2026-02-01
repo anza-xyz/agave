@@ -96,7 +96,7 @@ impl std::convert::From<std::num::TryFromIntError> for PacketError {
 /// Returns true if the signature on the packet verifies.
 /// Caller must do packet.set_discard(true) if this returns false.
 #[must_use]
-fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
+fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool, use_zebra: bool) -> bool {
     // If this packet was already marked as discard, drop it
     if packet.meta().discard() {
         return false;
@@ -129,7 +129,15 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool) -> bool {
         let Some(message) = packet.data(msg_start..) else {
             return false;
         };
-        if !signature.verify(pubkey, message) {
+        let is_valid = if use_zebra {
+            signature.verify(pubkey, message)
+        } else {
+            #[allow(deprecated)]
+            {
+                signature.verify_strict(pubkey, message)
+            }
+        };
+        if !is_valid {
             return false;
         }
         pubkey_start = pubkey_end;
@@ -517,11 +525,16 @@ pub fn shrink_batches(batches: Vec<PacketBatch>) -> Vec<PacketBatch> {
         .collect()
 }
 
-pub fn ed25519_verify(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
+pub fn ed25519_verify(
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+    use_zebra: bool,
+) {
     debug!("CPU ECDSA for {packet_count}");
     PAR_THREAD_POOL.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote, use_zebra) {
                 packet.meta_mut().set_discard(true);
             }
         });
@@ -748,7 +761,7 @@ mod tests {
         let res = sigverify::do_get_packet_offsets(packet.as_ref(), 0);
         assert_eq!(res, Err(PacketError::InvalidPubkeyLen));
 
-        assert!(!verify_packet(&mut packet.as_mut(), false));
+        assert!(!verify_packet(&mut packet.as_mut(), false, false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
@@ -782,7 +795,7 @@ mod tests {
         let res = sigverify::do_get_packet_offsets(packet.as_ref(), 0);
         assert_eq!(res, Err(PacketError::InvalidPubkeyLen));
 
-        assert!(!verify_packet(&mut packet.as_mut(), false));
+        assert!(!verify_packet(&mut packet.as_mut(), false, false));
 
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
@@ -1023,7 +1036,7 @@ mod tests {
 
     fn ed25519_verify(batches: &mut [PacketBatch]) {
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(batches, false, packet_count);
+        sigverify::ed25519_verify(batches, false, packet_count, false);
     }
 
     #[test]
@@ -1564,6 +1577,49 @@ mod tests {
             );
         } else {
             assert!(do_get_packet_offsets(packet.as_ref(), 0).is_ok());
+        }
+    }
+
+    /// Test that the zebra verification path (use_zebra = true) works correctly.
+    /// This exercises the `signature.verify()` path instead of `signature.verify_strict()`.
+    #[test]
+    fn test_verify_zebra_mode() {
+        // Test valid signatures pass with zebra verification
+        {
+            let tx = test_tx();
+            let packet = BytesPacket::from_data(None, tx).unwrap();
+            let mut batches = generate_packet_batches(&packet, 4, 2);
+            let packet_count = sigverify::count_packets_in_batches(&batches);
+
+            // Verify with use_zebra = true
+            sigverify::ed25519_verify(&mut batches, false, packet_count, true);
+
+            // All packets should pass verification
+            assert!(batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .all(|p| !p.meta().discard()));
+        }
+
+        // Test tampered signatures fail with zebra verification
+        {
+            let tx = test_tx();
+            let mut data = bincode::serialize(&tx).unwrap();
+            // Tamper with the message data (after signature)
+            data[100] = data[100].wrapping_add(1);
+
+            let packet = BytesPacket::from_bytes(None, Bytes::from(data));
+            let mut batches = generate_packet_batches(&packet, 4, 2);
+            let packet_count = sigverify::count_packets_in_batches(&batches);
+
+            // Verify with use_zebra = true
+            sigverify::ed25519_verify(&mut batches, false, packet_count, true);
+
+            // All packets should fail verification (be discarded)
+            assert!(batches
+                .iter()
+                .flat_map(|batch| batch.iter())
+                .all(|p| p.meta().discard()));
         }
     }
 }

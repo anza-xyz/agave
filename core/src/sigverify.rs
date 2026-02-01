@@ -11,22 +11,27 @@ use {
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_feature_set::ed25519_verify_zebra,
     crossbeam_channel::{Sender, TrySendError},
     solana_perf::{packet::PacketBatch, sigverify},
+    solana_runtime::bank_forks::BankForks,
+    std::sync::{Arc, RwLock},
 };
 
 pub struct TransactionSigVerifier {
     banking_stage_sender: BankingPacketSender,
     forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
     reject_non_vote: bool,
+    bank_forks: Option<Arc<RwLock<BankForks>>>,
 }
 
 impl TransactionSigVerifier {
     pub fn new_reject_non_vote(
         packet_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        bank_forks: Option<Arc<RwLock<BankForks>>>,
     ) -> Self {
-        let mut new_self = Self::new(packet_sender, forward_stage_sender);
+        let mut new_self = Self::new(packet_sender, forward_stage_sender, bank_forks);
         new_self.reject_non_vote = true;
         new_self
     }
@@ -34,11 +39,13 @@ impl TransactionSigVerifier {
     pub fn new(
         banking_stage_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        bank_forks: Option<Arc<RwLock<BankForks>>>,
     ) -> Self {
         Self {
             banking_stage_sender,
             forward_stage_sender,
             reject_non_vote: false,
+            bank_forks,
         }
     }
 }
@@ -71,7 +78,19 @@ impl SigVerifier for TransactionSigVerifier {
         mut batches: Vec<PacketBatch>,
         valid_packets: usize,
     ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify(&mut batches, self.reject_non_vote, valid_packets);
+        let use_zebra = self
+            .bank_forks
+            .as_ref()
+            .map(|bank_forks| {
+                bank_forks
+                    .read()
+                    .unwrap()
+                    .root_bank()
+                    .feature_set
+                    .is_active(&ed25519_verify_zebra::id())
+            })
+            .unwrap_or(false);
+        sigverify::ed25519_verify(&mut batches, self.reject_non_vote, valid_packets, use_zebra);
         batches
     }
 }

@@ -31,7 +31,7 @@ fn bench_sigverify_simple(b: &mut Bencher) {
 
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
@@ -55,7 +55,7 @@ fn bench_sigverify_low_packets_small_batch(b: &mut Bencher) {
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE - 1;
     let mut batches = gen_batches(false, 1, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
@@ -63,7 +63,7 @@ fn bench_sigverify_low_packets_large_batch(b: &mut Bencher) {
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE - 1;
     let mut batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
@@ -71,7 +71,7 @@ fn bench_sigverify_medium_packets_small_batch(b: &mut Bencher) {
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE * 8;
     let mut batches = gen_batches(false, 1, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
@@ -79,7 +79,7 @@ fn bench_sigverify_medium_packets_large_batch(b: &mut Bencher) {
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE * 8;
     let mut batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
@@ -87,7 +87,7 @@ fn bench_sigverify_high_packets_small_batch(b: &mut Bencher) {
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE * 32;
     let mut batches = gen_batches(false, 1, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
@@ -96,7 +96,7 @@ fn bench_sigverify_high_packets_large_batch(b: &mut Bencher) {
     let mut batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, num_packets);
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
@@ -139,7 +139,7 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
 
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_packets, false);
     })
 }
 
