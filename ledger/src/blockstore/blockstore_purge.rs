@@ -81,11 +81,6 @@ impl Blockstore {
         }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn purge_and_compact_slots(&self, from_slot: Slot, to_slot: Slot) -> Result<()> {
-        self.purge_slots(from_slot, to_slot, PurgeType::Exact)
-    }
-
     /// Ensures that the SlotMeta::next_slots vector for all slots contain no references in the
     /// \[from_slot,to_slot\] range
     ///
@@ -465,11 +460,11 @@ pub mod tests {
         let (shreds, _) = make_many_slot_entries(0, 50, 5);
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
-        blockstore.purge_and_compact_slots(0, 5).unwrap();
+        blockstore.purge_slots(0, 5, PurgeType::Exact).unwrap();
 
         test_all_empty_or_min(&blockstore, 6);
 
-        blockstore.purge_and_compact_slots(0, 50).unwrap();
+        blockstore.purge_slots(0, 50, PurgeType::Exact).unwrap();
 
         // min slot shouldn't matter, blockstore should be empty
         test_all_empty_or_min(&blockstore, 100);
