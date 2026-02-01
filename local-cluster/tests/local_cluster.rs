@@ -62,7 +62,7 @@ use {
         local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
         validator_configs::*,
     },
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -6145,7 +6145,7 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
     };
 
     // Create our UDP socket to listen to votes
-    let vote_listener_addr = solana_net_utils::bind_to_localhost().unwrap();
+    let vote_listener_addr = bind_to_localhost_unique().unwrap();
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(leader_schedule);
@@ -6223,7 +6223,7 @@ fn test_alpenglow_migration(num_nodes: usize) {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
     let test_name = &format!("test_alpenglow_migration_{num_nodes}");
 
-    let vote_listener_socket = solana_net_utils::bind_to_localhost().unwrap();
+    let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.voting_service_test_override = Some(VotingServiceOverride {

@@ -241,11 +241,6 @@ pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpS
     sockets::bind_in_range_with_config(ip_addr, range, config)
 }
 
-pub fn bind_to_localhost() -> io::Result<UdpSocket> {
-    let config = sockets::SocketConfiguration::default();
-    sockets::bind_to_with_config(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, config)
-}
-
 pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
     let config = sockets::SocketConfiguration::default();
     sockets::bind_to_with_config(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, config)
