@@ -11869,6 +11869,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-svm-transaction",
+ "solana-system-transaction",
  "solana-transaction",
  "solana-vote",
  "solana-vote-interface",

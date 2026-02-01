@@ -21,17 +21,17 @@ dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "d
 serde = ["serde/derive", "solana-pubkey/serde"]
 
 [dependencies]
-qualifier_attr = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-sbpf = { workspace = true }
 
-[target.'cfg(not(target_os = "solana"))'.dependencies]
+[target.'cfg(not(any(target_arch = "sbf", target_arch = "bpf")))'.dependencies]
 bincode = { workspace = true, optional = true }
+qualifier_attr = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 solana-rent = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, optional = true }
 

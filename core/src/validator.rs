@@ -32,7 +32,7 @@ use {
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
         tpu::{Tpu, TpuSockets},
-        tvu::{Tvu, TvuConfig, TvuSockets},
+        tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
         snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
@@ -1704,16 +1704,18 @@ impl Validator {
             wen_restart_repair_slots.clone(),
             slot_status_notifier,
             vote_connection_cache,
-            bls_connection_cache,
-            replay_highest_frozen.clone(),
-            leader_window_info_sender,
-            highest_parent_ready.clone(),
-            config.voting_service_test_override.clone(),
-            votor_event_sender.clone(),
-            votor_event_receiver,
-            staked_nodes.clone(),
-            cancel.clone(),
-            key_notifiers.clone(),
+            AlpenglowInitializationState {
+                leader_window_info_sender,
+                replay_highest_frozen: replay_highest_frozen.clone(),
+                highest_parent_ready: highest_parent_ready.clone(),
+                votor_event_sender: votor_event_sender.clone(),
+                votor_event_receiver,
+                cancel: cancel.clone(),
+                staked_nodes: staked_nodes.clone(),
+                key_notifiers: key_notifiers.clone(),
+                bls_connection_cache,
+                voting_service_test_override: config.voting_service_test_override.clone(),
+            },
         )
         .map_err(ValidatorError::Other)?;
 

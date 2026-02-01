@@ -1075,7 +1075,7 @@ mod tests {
         solana_rent::Rent,
         solana_sdk_ids::native_loader,
         solana_transaction_context::{
-            instruction_accounts::InstructionAccount, TransactionContext,
+            instruction_accounts::InstructionAccount, transaction::TransactionContext,
         },
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,

@@ -667,8 +667,8 @@ mod tests {
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
-            MAX_ACCOUNTS_PER_TRANSACTION, TransactionContext,
-            instruction_accounts::InstructionAccount,
+            MAX_ACCOUNTS_PER_TRANSACTION, instruction_accounts::InstructionAccount,
+            transaction::TransactionContext,
         },
         std::{
             borrow::Cow,

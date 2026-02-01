@@ -28,7 +28,7 @@ use {
             atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -165,7 +165,6 @@ fn recv_loop<P: SocketProvider>(
     stats: &StreamerReceiveStats,
     coalesce: Option<Duration>,
     use_pinned_memory: bool,
-    in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
     fn setup_socket(socket: &UdpSocket) -> Result<()> {
@@ -198,13 +197,6 @@ fn recv_loop<P: SocketProvider>(
             // (for instance the leader transaction socket)
             if exit.load(Ordering::Relaxed) {
                 return Ok(());
-            }
-
-            if let Some(ref in_vote_only_mode) = in_vote_only_mode {
-                if in_vote_only_mode.load(Ordering::Relaxed) {
-                    sleep(Duration::from_millis(1));
-                    continue;
-                }
             }
 
             #[cfg(unix)]
@@ -267,7 +259,6 @@ pub fn receiver(
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
     use_pinned_memory: bool,
-    in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
     Builder::new()
@@ -282,7 +273,6 @@ pub fn receiver(
                 &stats,
                 coalesce,
                 use_pinned_memory,
-                in_vote_only_mode,
                 is_staked_service,
             );
         })
@@ -300,7 +290,6 @@ pub fn receiver_atomic(
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
     use_pinned_memory: bool,
-    in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
     Builder::new()
@@ -315,7 +304,6 @@ pub fn receiver_atomic(
                 &stats,
                 coalesce,
                 use_pinned_memory,
-                in_vote_only_mode,
                 is_staked_service,
             );
         })
@@ -659,7 +647,6 @@ mod test {
             stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             true,
-            None,
             false,
         );
         const NUM_PACKETS: usize = 5;

@@ -23,7 +23,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_svm_callback::InvokeContextCallback,
-    solana_transaction_context::TransactionContext,
+    solana_transaction_context::transaction::TransactionContext,
     source_buffer::SourceBuffer,
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,

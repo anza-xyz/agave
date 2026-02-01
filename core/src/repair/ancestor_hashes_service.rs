@@ -171,7 +171,6 @@ impl AncestorHashesService {
             )),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // use_pinned_memory
-            None,                           // in_vote_only_mode
             false,                          // is_staked_service
         );
 
@@ -1314,7 +1313,6 @@ mod test {
                 Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
                 Some(Duration::from_millis(1)), // coalesce
                 false,
-                None,
                 false,
             );
             let (remote_request_sender, remote_request_receiver) = unbounded();

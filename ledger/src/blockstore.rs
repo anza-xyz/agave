@@ -5250,7 +5250,7 @@ pub mod tests {
         solana_signature::Signature,
         solana_storage_proto::convert::generated,
         solana_transaction::Transaction,
-        solana_transaction_context::TransactionReturnData,
+        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,

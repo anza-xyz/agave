@@ -416,10 +416,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     fn cache_entry_at_slot(current: &AccountMapEntry<T>, new_value: SlotListItem<T>) {
         let mut slot_list = current.slot_list_write_lock();
         let (slot, new_entry) = new_value;
-        if !slot_list
-            .iter()
-            .any(|(existing_slot, _)| *existing_slot == slot)
-        {
+        // Find and replace existing entry at this slot, or append if not found
+        if let Some(existing_entry) = slot_list.iter_mut().find(|(s, _)| *s == slot) {
+            existing_entry.1 = new_entry;
+        } else {
             slot_list.push((slot, new_entry));
         }
         current.set_dirty(true);

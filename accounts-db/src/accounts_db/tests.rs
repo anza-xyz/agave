@@ -1325,6 +1325,14 @@ fn test_shrink_zero_lamport_single_ref_account() {
             [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
         ));
 
+        accounts.accounts_index.get_and_then(&pubkey_zero, |entry| {
+            let entry = entry.unwrap();
+            let slot_list = entry.slot_list_read_lock();
+            let (_, account_info) = slot_list.iter().max_by_key(|(s, _)| *s).cloned().unwrap();
+            assert!(account_info.is_zero_lamport());
+            (false, false)
+        });
+
         // Simulate rooting the zero-lamport account, should be a
         // candidate for cleaning
         accounts.add_root_and_flush_write_cache(slot);
