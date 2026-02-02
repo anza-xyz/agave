@@ -5804,9 +5804,9 @@ dependencies = [
 
 [[package]]
 name = "shaq"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c549efa84d2ebc46c68b01f32dea83c187a1ff3f9fa40b4d1d96fec9747a34d"
+checksum = "e7ff8d8358f614b394c8011e4aca6eb9c0bba29bd73d16be593745bd47838cb8"
 dependencies = [
  "libc",
 ]

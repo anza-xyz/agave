@@ -388,7 +388,7 @@ serde_yaml = "0.9.34"
 serial_test = "3.3.1"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
-shaq = { version = "1.0.1" }
+shaq = { version = "1.0.2" }
 shuttle = "0.7.1"
 signal-hook = "0.4.3"
 siphasher = "1.0.2"
