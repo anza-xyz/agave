@@ -136,9 +136,6 @@ pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIV
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
-/// Minimum stake required for a node to bypass the initial ping check when joining gossip.
-pub(crate) const MIN_STAKE_TO_SKIP_PING: u64 = 10_000 * solana_native_token::LAMPORTS_PER_SOL;
-
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
     #[error("NoPeers")]
@@ -2019,7 +2016,6 @@ impl ClusterInfo {
                 &mut rng,
                 &self_keypair,
                 value,
-                stakes,
                 &self.socket_addr_space,
                 &self.ping_cache,
                 &mut pings,
@@ -2500,19 +2496,14 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     rng: &mut R,
     keypair: &Keypair,
     value: &CrdsValue,
-    stakes: &HashMap<Pubkey, u64>,
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
     pings: &mut Vec<(SocketAddr, Ping)>,
 ) -> bool {
-    let (pubkey, addr) = match value.data() {
-        CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
+    let addr = match value.data() {
+        CrdsData::ContactInfo(node) => node.gossip(),
         _ => return true, // If not a contact-info, nothing to verify.
     };
-    // For (sufficiently) staked nodes, don't bother with ping/pong.
-    if stakes.get(pubkey).copied() >= Some(MIN_STAKE_TO_SKIP_PING) {
-        return true;
-    }
     // Invalid addresses are not verifiable.
     let Some(addr) = addr.filter(|addr| socket_addr_space.check(addr)) else {
         return false;
