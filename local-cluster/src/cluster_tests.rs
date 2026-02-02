@@ -114,7 +114,7 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
                 continue;
             }
             let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            LocalCluster::poll_for_processed_transaction(&client, &transaction)
+            LocalCluster::poll_for_successfully_processed_transaction(&client, &transaction)
                 .unwrap()
                 .unwrap();
         }
@@ -670,7 +670,7 @@ fn poll_all_nodes_for_signature(
             continue;
         }
         let client = new_tpu_quic_client(validator, connection_cache.clone()).unwrap();
-        LocalCluster::poll_for_processed_transaction(&client, transaction)?.unwrap();
+        LocalCluster::poll_for_successfully_processed_transaction(&client, transaction)?.unwrap();
     }
 
     Ok(())

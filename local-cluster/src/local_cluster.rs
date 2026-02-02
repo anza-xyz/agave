@@ -967,10 +967,11 @@ impl LocalCluster {
     }
 
     /// Poll RPC to see if transaction was processed. Return an error if unable
-    /// determine if the transaction was processed before its blockhash expires.
-    /// Return Ok(Some(())) if the transaction was processed, Ok(None) if the
-    /// transaction was not processed.
-    pub fn poll_for_processed_transaction(
+    /// to determine if the transaction was processed before its blockhash
+    /// expires or if the transaction execution result was an error. Return
+    /// Ok(Some(())) if the transaction was processed successfully. Return
+    /// Ok(None) if the transaction was not processed.
+    pub fn poll_for_successfully_processed_transaction(
         client: &QuicTpuClient,
         transaction: &Transaction,
     ) -> std::result::Result<Option<()>, TransportError> {
@@ -983,8 +984,13 @@ impl LocalCluster {
                 CommitmentConfig::processed(),
             )?;
 
-            if status.is_some() {
-                return Ok(Some(()));
+            if let Some(tx_result) = status {
+                match tx_result {
+                    Ok(_) => return Ok(Some(())),
+                    Err(e) => {
+                        return Err(TransportError::TransactionError(e));
+                    }
+                }
             }
 
             if !client.rpc_client().is_blockhash_valid(
@@ -1015,7 +1021,7 @@ impl LocalCluster {
         // in LocalCluster integration tests
         for attempt in 1..=attempts {
             client.send_transaction_to_upcoming_leaders(transaction)?;
-            if Self::poll_for_processed_transaction(client, transaction)?.is_some() {
+            if Self::poll_for_successfully_processed_transaction(client, transaction)?.is_some() {
                 return Ok(());
             }
 
