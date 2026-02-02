@@ -595,7 +595,6 @@ dependencies = [
  "arc-swap",
  "aya",
  "bytes",
- "caps",
  "crossbeam-channel",
  "libc",
  "log",

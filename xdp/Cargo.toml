@@ -22,4 +22,3 @@ thiserror = { workspace = true }
 agave-xdp-ebpf = { workspace = true }
 aya = { workspace = true }
 bytes = { workspace = true }
-caps = { workspace = true }
