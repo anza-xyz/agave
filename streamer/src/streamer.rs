@@ -9,7 +9,9 @@ use {
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
+    crossbeam_channel::{
+        Receiver, RecvTimeoutError, SendError, Sender, TryRecvError, TrySendError,
+    },
     histogram::Histogram,
     solana_net_utils::multihomed_sockets::{
         BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
@@ -488,6 +490,7 @@ fn recv_send(
     Ok(())
 }
 
+/*
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
 ) -> Result<(Vec<PacketBatch>, usize, Duration)> {
@@ -501,6 +504,47 @@ pub fn recv_packet_batches(
         trace!("got more packets");
         num_packets += packet_batch.len();
         packet_batches.push(packet_batch);
+    }
+    let recv_duration = recv_start.elapsed();
+    trace!(
+        "packet batches len: {}, num packets: {}",
+        packet_batches.len(),
+        num_packets
+    );
+    Ok((packet_batches, num_packets, recv_duration))
+}*/
+
+pub fn recv_packet_batches(
+    recvr: &PacketBatchReceiver,
+) -> Result<(Vec<PacketBatch>, usize, Duration)> {
+    const MAX_RECV_ATTEMPTS: usize = 1_000;
+    let recv_start = Instant::now();
+
+    let mut num_packets = 0;
+    let mut packet_batches = Vec::new();
+    let mut num_attempts = 0;
+
+    while num_attempts < MAX_RECV_ATTEMPTS {
+        loop {
+            match recvr.try_recv() {
+                Ok(packet_batch) => {
+                    trace!("got more packets");
+                    num_packets += packet_batch.len();
+                    packet_batches.push(packet_batch);
+                }
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(StreamerError::RecvTimeout(RecvTimeoutError::Disconnected));
+                }
+            }
+        }
+        if num_packets > 0 {
+            break;
+        }
+        sleep(Duration::from_millis(1));
+        num_attempts += 1;
     }
     let recv_duration = recv_start.elapsed();
     trace!(
