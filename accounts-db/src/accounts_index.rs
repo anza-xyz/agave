@@ -43,6 +43,7 @@ use {
     thiserror::Error,
 };
 pub use {
+    bucket_map_holder::{DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT},
     iter::ITER_BATCH_SIZE,
     secondary::{
         AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude, IndexKey,
@@ -229,14 +230,25 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 }
 
 /// specification of how much memory the in-mem portion of account index can hold
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
     /// evict from in-mem when usage exceeds threshold in bytes
-    Threshold(u64),
+    Threshold(IndexLimitThreshold),
+}
+
+/// Configuration for threshold-based accounts index limit
+#[derive(Debug, Clone)]
+pub struct IndexLimitThreshold {
+    /// The memory limit, in bytes, for the entire accounts index.
+    pub num_bytes: u64,
+    /// Number of entries below an in-mem index bin's usable capacity at which to begin evicting.
+    pub num_entries_overhead: usize,
+    /// Number of entries to evict, once we've hit the high watermark.
+    pub num_entries_to_evict: usize,
 }
 
 #[derive(Debug, Clone)]
