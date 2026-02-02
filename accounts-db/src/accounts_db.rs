@@ -21,7 +21,7 @@
 mod accounts_db_config;
 mod geyser_plugin_utils;
 pub mod stats;
-pub mod tests;
+pub(crate) mod tests;
 
 pub use accounts_db_config::{
     AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
