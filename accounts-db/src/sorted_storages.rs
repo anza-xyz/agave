@@ -97,35 +97,26 @@ impl<'a> SortedStorages<'a> {
             adjust_min_max(slot);
         }
 
-        let mut slot_count = 0;
-        let mut time = Measure::start("get slot");
-        let source_ = source.clone();
-        let mut storage_count = 0;
-        source_.for_each(|(_, slot)| {
-            storage_count += 1;
-            slot_count += 1;
-            adjust_min_max(slot);
-        });
-        time.stop();
-        let mut time2 = Measure::start("sort");
-        let range;
+        let mut time = Measure::start("build sorted storages");
         let mut storages = HashMap::default();
-        if min > max {
-            range = Range::default();
+        source.for_each(|(original_storages, slot)| {
+            adjust_min_max(slot);
+            assert!(
+                storages.insert(slot, original_storages).is_none(),
+                "slots are not unique"
+            ); // we should not encounter the same slot twice
+        });
+
+        let range = if min > max {
+            Range::default()
         } else {
-            range = Range {
+            Range {
                 start: min,
                 end: max,
-            };
-            source.for_each(|(original_storages, slot)| {
-                assert!(
-                    storages.insert(slot, original_storages).is_none(),
-                    "slots are not unique"
-                ); // we should not encounter the same slot twice
-            });
-        }
-        time2.stop();
-        debug!("SortedStorages, times: {}, {}", time.as_us(), time2.as_us());
+            }
+        };
+        time.stop();
+        debug!("SortedStorages, time: {}", time.as_us());
         Self { range, storages }
     }
 }
