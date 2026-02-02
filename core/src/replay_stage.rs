@@ -630,7 +630,7 @@ impl ReplayStage {
 
         trace!("replay stage");
 
-        let mut identity_keypair = cluster_info.keypair().clone();
+        let mut identity_keypair = cluster_info.keypair();
         let mut my_pubkey = identity_keypair.pubkey();
 
         let mut highest_frozen_slot = bank_forks

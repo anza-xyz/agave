@@ -1514,8 +1514,8 @@ impl Validator {
             banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
             leader_window_info_receiver,
-            highest_parent_ready,
-            replay_highest_frozen,
+            highest_parent_ready: highest_parent_ready.clone(),
+            replay_highest_frozen: replay_highest_frozen.clone(),
             record_receiver_receiver,
         };
         let block_creation_loop = BlockCreationLoop::new(block_creation_loop_config);
@@ -1706,8 +1706,8 @@ impl Validator {
             vote_connection_cache,
             AlpenglowInitializationState {
                 leader_window_info_sender,
-                replay_highest_frozen: replay_highest_frozen.clone(),
-                highest_parent_ready: highest_parent_ready.clone(),
+                replay_highest_frozen,
+                highest_parent_ready,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
                 cancel: cancel.clone(),
