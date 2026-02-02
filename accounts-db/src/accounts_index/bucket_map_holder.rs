@@ -513,7 +513,7 @@ struct ThresholdEntriesPerBin {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {super::*, rayon::prelude::*, std::time::Instant, test_case::test_case};
 
     #[test]
