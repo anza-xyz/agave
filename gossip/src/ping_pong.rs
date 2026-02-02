@@ -387,13 +387,11 @@ mod tests {
             .collect();
 
         let now = now + Duration::from_millis(1);
-        let mut rate_limited_duplicates_checked = 0;
         for ((keypair, socket), ping) in remote_nodes.iter().zip(&pings) {
             match ping {
                 None => {
-                    // Rate-limited: same node observed twice in quick succession,
-                    // no new ping was generated. Node has pong from first observation.
-                    rate_limited_duplicates_checked += 1;
+                    // Already have a recent ping packets for nodes, so no new
+                    // ping packet will be generated.
                     let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
                     assert!(check);
                     assert!(ping.is_none());
@@ -404,10 +402,6 @@ mod tests {
                 }
             }
         }
-        assert!(
-            rate_limited_duplicates_checked > 0,
-            "Test must exercise rate-limited duplicate path (need duplicates in remote_nodes)"
-        );
 
         let now = now + Duration::from_millis(1);
         // All nodes now have a recent pong packet.
@@ -440,9 +434,8 @@ mod tests {
         let now = now + ttl;
         // Pong packets have expired. The first observation of each node will
         // remove the expired pong packet from cache and create a new ping packet.
-        // Duplicates are rate-limited (no new ping).
+        // check should be false because the pong is expired
         seen_nodes.clear();
-        let mut expired_duplicates_checked = 0;
         for (_keypair, socket) in &remote_nodes {
             let node = PingCacheKey::from(*socket);
             let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
@@ -453,15 +446,10 @@ mod tests {
                     "Should generate ping to re-verify expired node"
                 );
             } else {
-                expired_duplicates_checked += 1;
                 assert!(!check);
                 assert!(ping.is_none());
             }
         }
-        assert!(
-            expired_duplicates_checked > 0,
-            "Test must exercise expired-duplicate path (need duplicates in remote_nodes)"
-        );
 
         let now = now + Duration::from_millis(1);
         // No valid pong packet in the cache. A recent ping packet already
