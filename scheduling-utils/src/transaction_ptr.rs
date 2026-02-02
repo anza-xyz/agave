@@ -99,12 +99,15 @@ pub struct TransactionPtrBatch<'a, M = ()> {
 }
 
 impl<'a, M> TransactionPtrBatch<'a, M> {
-    const TX_CORE_SIZE: usize = std::mem::size_of::<SharableTransactionRegion>();
-    const TX_TOTAL_SIZE: usize = Self::TX_CORE_SIZE + std::mem::size_of::<M>();
+    const TX_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
+    const TX_CORE_END: usize = Self::TX_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+
+    const TX_META_START: usize = Self::TX_CORE_END.next_multiple_of(align_of::<M>());
+    const TX_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
+    const TX_META_END: usize = Self::TX_META_START + Self::TX_META_SIZE;
+
     #[allow(dead_code, reason = "Invariant assertion")]
-    const TX_BATCH_SIZE_ASSERT: () =
-        assert!(Self::TX_TOTAL_SIZE * MAX_TRANSACTIONS_PER_MESSAGE < 4096);
-    const TX_BATCH_META_OFFSET: usize = Self::TX_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+    const TX_BATCH_SIZE_ASSERT: () = assert!(Self::TX_META_END <= 4096);
 
     /// # Safety
     /// - [`SharableTransactionBatchRegion`] must reference a valid offset and length
@@ -121,7 +124,7 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         // SAFETY:
         // - Assuming the batch was originally allocated to support `M`, this call will also be
         //   safe.
-        let meta_ptr = unsafe { base.byte_add(Self::TX_BATCH_META_OFFSET).cast() };
+        let meta_ptr = unsafe { base.byte_add(Self::TX_META_START).cast() };
 
         Self {
             tx_ptr,
