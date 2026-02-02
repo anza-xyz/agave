@@ -359,7 +359,7 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::*,
         crate::{
