@@ -268,8 +268,10 @@ impl Tvu {
                 thread: bls_streamer_t,
                 key_updater: bls_key_updater,
             } = {
-                // quic server params, 8 connections per min from an IP, num_threads 1
-                let quic_server_params = QuicStreamerConfig::default();
+                let quic_server_params = QuicStreamerConfig {
+                    num_threads: NonZeroUsize::new(4.min(num_cpus::get())).unwrap(),
+                    ..Default::default()
+                };
                 let qos_config = SimpleQosConfig {
                     max_streams_per_second: 30,
                     // Cap by # of active validators (some overhead for epoch boundaries)
