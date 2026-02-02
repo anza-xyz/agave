@@ -1648,10 +1648,10 @@ impl ClusterInfo {
     where
         R: Rng + CryptoRng,
     {
-        let mut cache = HashMap::<SocketAddr, bool>::new();
+        let mut cache = HashMap::<(Pubkey, SocketAddr), bool>::new();
         let mut ping_cache = self.ping_cache.lock().unwrap();
         let mut hard_check = move |node: (Pubkey, SocketAddr)| {
-            let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node.1);
+            let (check, ping) = ping_cache.check(rng, &self.keypair(), now, &node.0, node.1);
             if let Some(ping) = ping {
                 let ping = Protocol::PingMessage(ping);
                 if let Some(pkt) = make_gossip_packet(node.1, &ping, &self.stats) {
@@ -1671,7 +1671,7 @@ impl ClusterInfo {
         move |request| {
             ContactInfo::is_valid_address(&request.addr, &self.socket_addr_space) && {
                 let node = (request.pubkey, request.addr);
-                *cache.entry(node.1).or_insert_with(|| hard_check(node))
+                *cache.entry(node).or_insert_with(|| hard_check(node))
             }
         }
     }
@@ -2519,7 +2519,7 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     };
     let (out, ping) = {
         let mut ping_cache = ping_cache.lock().unwrap();
-        ping_cache.check(rng, keypair, Instant::now(), addr)
+        ping_cache.check(rng, keypair, Instant::now(), pubkey, addr)
     };
     if let Some(ping) = ping {
         pings.push((addr, ping));
@@ -2695,8 +2695,9 @@ mod tests {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
             remote_nodes
                 .iter()
-                .map(|(_, socket)| {
-                    let (check, ping) = ping_cache.check(&mut rng, &this_node, now, *socket);
+                .map(|(keypair, socket)| {
+                    let (check, ping) =
+                        ping_cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
                     // Assert that initially remote nodes will not pass the
                     // ping/pong check.
                     assert!(!check);
@@ -2714,21 +2715,22 @@ mod tests {
         // Assert that remote nodes now pass the ping/pong check.
         {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
-            for (_, socket) in &remote_nodes {
-                let (check, _) = ping_cache.check(&mut rng, &this_node, now, *socket);
+            for (keypair, socket) in &remote_nodes {
+                let (check, _) =
+                    ping_cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
                 assert!(check);
             }
         }
         // Assert that a new random remote node still will not pass the check.
         {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
-            let socket = loop {
-                let (_keypair, socket) = new_rand_remote_node(&mut rng);
+            let (pubkey, socket) = loop {
+                let (keypair, socket) = new_rand_remote_node(&mut rng);
                 if !remote_ips.contains(&socket.ip()) {
-                    break socket;
+                    break (keypair.pubkey(), socket);
                 }
             };
-            let (check, _) = ping_cache.check(&mut rng, &this_node, now, socket);
+            let (check, _) = ping_cache.check(&mut rng, &this_node, now, &pubkey, socket);
             assert!(!check);
         }
     }
@@ -2939,11 +2941,11 @@ mod tests {
             SocketAddrSpace::Unspecified,
         );
         let stakes = HashMap::<Pubkey, u64>::default();
-        cluster_info
-            .ping_cache
-            .lock()
-            .unwrap()
-            .mock_pong(peer.gossip().unwrap(), Instant::now());
+        cluster_info.ping_cache.lock().unwrap().mock_pong(
+            *peer.pubkey(),
+            peer.gossip().unwrap(),
+            Instant::now(),
+        );
         cluster_info.insert_info(peer);
         cluster_info.gossip.refresh_push_active_set(
             &cluster_info.keypair(),
@@ -3405,11 +3407,11 @@ mod tests {
         let other_node_pubkey = solana_pubkey::new_rand();
         let other_node = ContactInfo::new_localhost(&other_node_pubkey, timestamp());
         assert_ne!(other_node.gossip().unwrap(), entrypoint.gossip().unwrap());
-        cluster_info
-            .ping_cache
-            .lock()
-            .unwrap()
-            .mock_pong(other_node.gossip().unwrap(), Instant::now());
+        cluster_info.ping_cache.lock().unwrap().mock_pong(
+            *other_node.pubkey(),
+            other_node.gossip().unwrap(),
+            Instant::now(),
+        );
         cluster_info.insert_info(other_node.clone());
         stakes.insert(other_node_pubkey, 10);
 

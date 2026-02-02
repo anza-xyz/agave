@@ -58,9 +58,9 @@ pub struct PingCache<const N: usize> {
     hashers: [SipHasher24; 2],
     // When hashers were last refreshed.
     key_refresh: Instant,
-    // Timestamp of last ping message sent to a remote address key.
+    // Timestamp of last ping message sent to a remote IP.
     // Used to rate limit pings to remote addresses.
-    pings: LruCache<PingCacheKey, Instant>,
+    pings: LruCache<IpAddr, Instant>,
     // Verified pong responses from remote nodes.
     pongs: LruCache<PingCacheKey, Instant>,
     // Timestamp of last ping message sent to a remote address key.
@@ -69,29 +69,23 @@ pub struct PingCache<const N: usize> {
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 enum PingCacheKey {
-    Ip(IpAddr),
-    Socket(SocketAddr), // For loopback (local cluster tests)
+    Ip(Pubkey, IpAddr),
+    Socket(Pubkey, SocketAddr), // For loopback (local cluster tests)
 }
 
 impl PingCacheKey {
-    fn ip(self) -> IpAddr {
-        match self {
-            Self::Ip(ip) => ip,
-            Self::Socket(socket) => socket.ip(),
+    fn from(pubkey: Pubkey, socket: SocketAddr) -> Self {
+        if socket.ip().is_loopback() {
+            Self::Socket(pubkey, socket)
+        } else {
+            Self::Ip(pubkey, socket.ip())
         }
     }
 
-    fn is_loopback(self) -> bool {
-        self.ip().is_loopback()
-    }
-}
-
-impl From<SocketAddr> for PingCacheKey {
-    fn from(socket: SocketAddr) -> Self {
-        if socket.ip().is_loopback() {
-            Self::Socket(socket)
-        } else {
-            Self::Ip(socket.ip())
+    fn ip(self) -> IpAddr {
+        match self {
+            Self::Ip(_, ip) => ip,
+            Self::Socket(_, socket) => socket.ip(),
         }
     }
 }
@@ -203,12 +197,12 @@ impl<const N: usize> PingCache<N> {
         }
     }
 
-    /// Checks if the pong hash and address match a ping message sent
+    /// Checks if the pong hash, pubkey, and address match a ping message sent
     /// out previously. If so records current timestamp for the remote address and
     /// returns true.
     /// Note: Does not verify the signature.
     pub fn add(&mut self, pong: &Pong, socket: SocketAddr, now: Instant) -> bool {
-        let remote_node = PingCacheKey::from(socket);
+        let remote_node = PingCacheKey::from(pong.pubkey(), socket);
         if !self.hashers.iter().copied().any(|hasher| {
             let token = make_ping_token::<N>(hasher, &remote_node);
             hash_ping_token(&token) == pong.hash
@@ -240,17 +234,18 @@ impl<const N: usize> PingCache<N> {
         rng: &mut R,
         keypair: &Keypair,
         now: Instant,
+        remote_pubkey: Pubkey,
         remote_socket: SocketAddr,
     ) -> Option<Ping<N>> {
-        let remote_node = PingCacheKey::from(remote_socket);
+        let remote_node = PingCacheKey::from(remote_pubkey, remote_socket);
         // Rate limit consecutive pings sent to a remote node (non-loopback addresses).
-        if !remote_node.is_loopback() {
-            if let Some(&last_ping) = self.pings.peek(&remote_node)
+        if !remote_socket.ip().is_loopback() {
+            if let Some(&last_ping) = self.pings.peek(&remote_socket.ip())
                 && now.saturating_duration_since(last_ping) < self.rate_limit_delay
             {
                 return None;
             }
-            self.pings.put(remote_node, now);
+            self.pings.put(remote_socket.ip(), now);
         }
         self.maybe_refresh_key(rng, now);
         let token = make_ping_token::<N>(self.hashers[0], &remote_node);
@@ -258,7 +253,7 @@ impl<const N: usize> PingCache<N> {
         Some(Ping::new(token, keypair))
     }
 
-    /// Returns true if the remote node has responded to a ping message.
+    /// Returns true if the remote pubkey at the address has responded to a ping message.
     /// Removes expired pong messages. In order to extend verification before
     /// expiration, if the pong message is not too recent, and the node has not
     /// been pinged recently, calls the given function to generates a new ping
@@ -271,9 +266,11 @@ impl<const N: usize> PingCache<N> {
         rng: &mut R,
         keypair: &Keypair,
         now: Instant,
+        remote_pubkey: &Pubkey,
         remote_socket: SocketAddr,
     ) -> (bool, Option<Ping<N>>) {
-        let remote_node = PingCacheKey::from(remote_socket);
+        let remote_pubkey = *remote_pubkey;
+        let remote_node = PingCacheKey::from(remote_pubkey, remote_socket);
         let (check, should_ping) = match self.pongs.get(&remote_node) {
             None => (false, true),
             Some(t) => {
@@ -290,7 +287,7 @@ impl<const N: usize> PingCache<N> {
             }
         };
         let ping = should_ping
-            .then(|| self.maybe_ping(rng, keypair, now, remote_socket))
+            .then(|| self.maybe_ping(rng, keypair, now, remote_pubkey, remote_socket))
             .flatten();
         (check, ping)
     }
@@ -304,8 +301,8 @@ impl<const N: usize> PingCache<N> {
     }
 
     /// Only for tests and simulations.
-    pub fn mock_pong(&mut self, socket: SocketAddr, now: Instant) {
-        self.pongs.put(PingCacheKey::from(socket), now);
+    pub fn mock_pong(&mut self, pubkey: Pubkey, socket: SocketAddr, now: Instant) {
+        self.pongs.put(PingCacheKey::from(pubkey, socket), now);
     }
 }
 
@@ -377,9 +374,10 @@ mod tests {
         let mut seen_nodes = HashSet::<PingCacheKey>::new();
         let pings: Vec<Option<Ping<32>>> = remote_nodes
             .iter()
-            .map(|(_keypair, socket)| {
-                let node = PingCacheKey::from(*socket);
-                let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+            .map(|(keypair, socket)| {
+                let node = PingCacheKey::from(keypair.pubkey(), *socket);
+                let (check, ping) =
+                    cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
                 assert!(!check);
                 assert_eq!(seen_nodes.insert(node), ping.is_some());
                 ping
@@ -394,7 +392,8 @@ mod tests {
                     // Rate-limited: same node observed twice in quick succession,
                     // no new ping was generated. Node has pong from first observation.
                     rate_limited_duplicates_checked += 1;
-                    let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+                    let (check, ping) =
+                        cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
                     assert!(check);
                     assert!(ping.is_none());
                 }
@@ -411,8 +410,8 @@ mod tests {
 
         let now = now + Duration::from_millis(1);
         // All nodes now have a recent pong packet.
-        for (_keypair, socket) in &remote_nodes {
-            let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+        for (keypair, socket) in &remote_nodes {
+            let (check, ping) = cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
             assert!(check);
             assert!(ping.is_none());
         }
@@ -421,9 +420,9 @@ mod tests {
         // All nodes still have a valid pong packet, but the cache will create
         // a new ping packet to extend verification.
         seen_nodes.clear();
-        for (_keypair, socket) in &remote_nodes {
-            let node = PingCacheKey::from(*socket);
-            let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+        for (keypair, socket) in &remote_nodes {
+            let node = PingCacheKey::from(keypair.pubkey(), *socket);
+            let (check, ping) = cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
             assert!(check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
         }
@@ -431,8 +430,8 @@ mod tests {
         let now = now + Duration::from_millis(1);
         // All nodes still have a valid pong packet, and a very recent ping
         // packet pending response. So no new ping packet will be created.
-        for (_keypair, socket) in &remote_nodes {
-            let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+        for (keypair, socket) in &remote_nodes {
+            let (check, ping) = cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
             assert!(check);
             assert!(ping.is_none());
         }
@@ -443,9 +442,9 @@ mod tests {
         // Duplicates are rate-limited (no new ping).
         seen_nodes.clear();
         let mut expired_duplicates_checked = 0;
-        for (_keypair, socket) in &remote_nodes {
-            let node = PingCacheKey::from(*socket);
-            let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+        for (keypair, socket) in &remote_nodes {
+            let node = PingCacheKey::from(keypair.pubkey(), *socket);
+            let (check, ping) = cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
             if seen_nodes.insert(node) {
                 assert!(!check, "Expired pong should return check=false");
                 assert!(
@@ -466,8 +465,8 @@ mod tests {
         let now = now + Duration::from_millis(1);
         // No valid pong packet in the cache. A recent ping packet already
         // created, so no new one will be created.
-        for (_keypair, socket) in &remote_nodes {
-            let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+        for (keypair, socket) in &remote_nodes {
+            let (check, ping) = cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
             assert!(!check);
             assert!(ping.is_none());
         }
@@ -476,9 +475,9 @@ mod tests {
         // No valid pong packet in the cache. Another ping packet will be
         // created for the first observation of each node.
         seen_nodes.clear();
-        for (_keypair, socket) in &remote_nodes {
-            let node = PingCacheKey::from(*socket);
-            let (check, ping) = cache.check(&mut rng, &this_node, now, *socket);
+        for (keypair, socket) in &remote_nodes {
+            let node = PingCacheKey::from(keypair.pubkey(), *socket);
+            let (check, ping) = cache.check(&mut rng, &this_node, now, &keypair.pubkey(), *socket);
             assert!(!check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
         }
@@ -495,10 +494,16 @@ mod tests {
         let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
 
         // Add a pong for the remote node
-        cache.mock_pong(remote_socket, now);
+        cache.mock_pong(this_node.pubkey(), remote_socket, now);
 
         // Verify the pong is valid. `check` should return true
-        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_socket);
+        let (check, ping) = cache.check(
+            &mut rng,
+            &this_node,
+            now,
+            &this_node.pubkey(),
+            remote_socket,
+        );
         assert!(check, "Pong should be valid immediately after adding");
         assert!(ping.is_none(), "Should not generate ping for recent pong");
 
@@ -506,11 +511,52 @@ mod tests {
         now = now + ttl + Duration::from_secs(1);
 
         // After expiration, check should return false but should_ping should be true (to re-verify)
-        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_socket);
+        let (check, ping) = cache.check(
+            &mut rng,
+            &this_node,
+            now,
+            &this_node.pubkey(),
+            remote_socket,
+        );
         assert!(!check, "Expired pong should return check=false");
         assert!(
             ping.is_some(),
             "Should generate ping to re-verify expired node"
         );
+    }
+
+    #[test]
+    fn test_ping_cache_requires_pubkey_for_same_ip() {
+        let mut rng = rand::rng();
+        let ttl = Duration::from_secs(60);
+        let delay = Duration::from_secs(1);
+        let mut now = Instant::now();
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let this_node = Keypair::new();
+        let remote_a = Keypair::new();
+        let remote_b = Keypair::new();
+        let socket_a = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(9, 9, 9, 9), 8000));
+        let socket_b = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(9, 9, 9, 9), 8001));
+
+        let (check, ping) = cache.check(&mut rng, &this_node, now, &remote_a.pubkey(), socket_a);
+        assert!(!check);
+        let ping_a = ping.expect("expected ping for first observation");
+        let pong_a = Pong::new(&ping_a, &remote_a);
+        assert!(cache.add(&pong_a, socket_a, now));
+
+        now = now + delay + Duration::from_millis(1);
+        let (check, ping) = cache.check(&mut rng, &this_node, now, &remote_b.pubkey(), socket_b);
+        assert!(
+            !check,
+            "Different pubkey on same IP should not be verified by prior pong"
+        );
+        let ping_b = ping.expect("expected ping for unverified pubkey");
+        let pong_b = Pong::new(&ping_b, &remote_b);
+        assert!(cache.add(&pong_b, socket_b, now));
+
+        let now = now + Duration::from_millis(1);
+        let (check, ping) = cache.check(&mut rng, &this_node, now, &remote_b.pubkey(), socket_b);
+        assert!(check);
+        assert!(ping.is_none());
     }
 }
