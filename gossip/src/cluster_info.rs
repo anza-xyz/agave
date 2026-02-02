@@ -516,7 +516,7 @@ impl ClusterInfo {
                 }
                 let rpc_addr = node_rpc.ip();
                 Some(format!(
-                    "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}| {:5}| {}\n",
+                    "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}| {:5}| {}\n",
                     rpc_addr.to_string(),
                     if node.pubkey() == &my_pubkey {
                         "me"
@@ -539,9 +539,9 @@ impl ClusterInfo {
 
         format!(
             "RPC Address       |Age(ms)| Node identifier                              \
-             | Version | RPC  |PubSub|ShredVer\n\
+             |       Version       | RPC  |PubSub|ShredVer\n\
              ------------------+-------+----------------------------------------------\
-             +---------+------+------+--------\n\
+             +---------------------+------+------+--------\n\
              {}\
              RPC Enabled Nodes: {}",
             nodes.join(""),
@@ -575,7 +575,7 @@ impl ClusterInfo {
                     }
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5} | {:5}| {:5}| {:5}| {:5}| \
+                        "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}|  {:5} | {:5}| {:5}| {:5}| {:5}| \
                          {:5}| {}\n",
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
@@ -617,8 +617,8 @@ impl ClusterInfo {
 
         format!(
             // this is using an oversized raw string to simplify lining up the columns
-            r#"IP Address        |Age(ms)| Node identifier                              | Version |Gossip|TPUvote | TPU  |TPUfwd| TVU  |ServeR|Alpeng|ShredVer
-------------------+-------+----------------------------------------------+---------+------+--------+------+------+------+------+------+----------
+            r#"IP Address        |Age(ms)| Node identifier                              |       Version       |Gossip|TPUvote | TPU  |TPUfwd| TVU  |ServeR|Alpeng|ShredVer
+------------------+-------+----------------------------------------------+---------------------+------+--------+------+------+------+------+------+----------
 {}Nodes: {}{}{}"#,
             nodes.join(""),
             nodes.len().saturating_sub(shred_spy_nodes),
@@ -3795,8 +3795,8 @@ mod tests {
         agave_logger::setup();
         // If you change the format of cluster_info_trace or rpc_info_trace, please make sure
         // you read the actual output so the headers line up with the output.
-        const CLUSTER_INFO_TRACE_LENGTH: usize = 436;
-        const RPC_INFO_TRACE_LENGTH: usize = 335;
+        const CLUSTER_INFO_TRACE_LENGTH: usize = 472;
+        const RPC_INFO_TRACE_LENGTH: usize = 371;
         let keypair43 = Arc::new(
             Keypair::try_from(
                 [
