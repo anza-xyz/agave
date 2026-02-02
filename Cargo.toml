@@ -112,7 +112,6 @@ members = [
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
-    "thread-manager",
     "tls-utils",
     "tokens",
     "tps-client",
@@ -208,7 +207,6 @@ agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.0.0-alph
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
-agave-thread-manager = { path = "thread-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "transaction-view", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
