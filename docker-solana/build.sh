@@ -20,18 +20,15 @@ if [[ -z $CHANNEL_OR_TAG ]]; then
 fi
 
 cd "$(dirname "$0")"
-rm -rf usr/
-../ci/docker-run-default-image.sh scripts/cargo-install-all.sh docker-solana/usr
 
-cp -f ../scripts/run.sh usr/bin/solana-run.sh
-cp -f ../fetch-core-bpf.sh usr/bin/
-cp -f ../fetch-spl.sh usr/bin/
-cp -f ../fetch-programs.sh usr/bin/
-(
-  cd usr/bin
-  ./fetch-core-bpf.sh
-  ./fetch-spl.sh
-)
+# download from release.anza.xyz
+rm -rf /tmp/docker-solana
+sh -c "$(curl -sSfL "https://release.anza.xyz/${CHANNEL_OR_TAG}/install")" init "${CHANNEL_OR_TAG}" --data-dir /tmp/docker-solana
+
+# prepare usr/bin
+rm -rf usr/
+mkdir -p usr/bin
+cp -r /tmp/docker-solana/active_release/bin/* usr/bin/
 
 docker build \
   --build-arg "BASE_IMAGE=${CI_DOCKER_ARG_BASE_IMAGE}" \
