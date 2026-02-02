@@ -374,7 +374,7 @@ reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
-rts-alloc = { version = "1.0.0" }
+rts-alloc = { version = "2.0.0" }
 rustls = { version = "0.23.36", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"

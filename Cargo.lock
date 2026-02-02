@@ -6286,9 +6286,9 @@ dependencies = [
 
 [[package]]
 name = "rts-alloc"
-version = "1.0.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cd8c332d71e3025b63eb4df047f91ce34873b196dd59b07540a91756ba97e05"
+checksum = "8a0d46bfcacc6e65b67c547e5083ffd549fe80dee8ec337507dd7f01d26763f4"
 dependencies = [
  "libc",
 ]

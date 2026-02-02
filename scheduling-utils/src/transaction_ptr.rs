@@ -50,7 +50,8 @@ impl TransactionPtr {
         sharable_transaction_region: &SharableTransactionRegion,
         allocator: &Allocator,
     ) -> Self {
-        let ptr = allocator.ptr_from_offset(sharable_transaction_region.offset);
+        // SAFETY: `sharable_transaction_region.offset` was allocated by `allocator`.
+        let ptr = unsafe { allocator.ptr_from_offset(sharable_transaction_region.offset) };
         Self {
             ptr,
             count: sharable_transaction_region.length as usize,
@@ -116,7 +117,10 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         sharable_transaction_batch_region: &SharableTransactionBatchRegion,
         allocator: &'a Allocator,
     ) -> Self {
-        let base = allocator.ptr_from_offset(sharable_transaction_batch_region.transactions_offset);
+        // SAFETY: `sharable_transaction_batch_region.transactions_offset` was allocated by `allocator`.
+        let base = unsafe {
+            allocator.ptr_from_offset(sharable_transaction_batch_region.transactions_offset)
+        };
         let tx_ptr = base.cast();
         // SAFETY:
         // - Assuming the batch was originally allocated to support `M`, this call will also be
