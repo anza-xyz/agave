@@ -455,6 +455,7 @@ impl JsonRpcRequestProcessor {
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank = bank_forks.read().unwrap().root_bank();
         let blockstore = Arc::new(Blockstore::open(&get_tmp_ledger_path!()).unwrap());
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
         let exit = Arc::new(AtomicBool::new(false));
         let cluster_info = Arc::new({
             let keypair = Arc::new(Keypair::new());
@@ -510,6 +511,7 @@ impl JsonRpcRequestProcessor {
                 blockstore,
                 0,
                 exit,
+                max_complete_transaction_status_slot.clone(),
             )),
             cluster_info,
             genesis_hash,
@@ -2818,6 +2820,12 @@ pub mod rpc_minimal {
                     num_slots_behind: Some(num_slots),
                 }
                 .into()),
+                RpcHealthStatus::TransactionStatusBehind { num_slots } => {
+                    Err(RpcCustomError::TransactionStatusBehind {
+                        behind_by_slots: num_slots,
+                    }
+                    .into())
+                }
             }
         }
 
@@ -3877,6 +3885,8 @@ pub mod rpc_full {
                             }
                             .into());
                         }
+                        // nothing to do for TransactionStatusBehind
+                        RpcHealthStatus::TransactionStatusBehind { .. } => (),
                     }
                 }
 
