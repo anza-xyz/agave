@@ -243,7 +243,7 @@ borsh = { version = "1.6.0", features = ["derive", "unstable__schema"] }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
-bytemuck = "1.24.0"
+bytemuck = "1.25.0"
 bytemuck_derive = "1.10.2"
 bytes = "1.11"
 bzip2 = "0.6.1"
