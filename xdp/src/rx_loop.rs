@@ -9,10 +9,6 @@ use {
     },
     aya::{maps::XskMap, Ebpf},
     bytes::Bytes,
-    caps::{
-        CapSet,
-        Capability::{CAP_NET_ADMIN, CAP_NET_RAW},
-    },
     crossbeam_channel::Sender,
     libc::{sysconf, _SC_PAGESIZE},
     std::os::fd::AsFd,
@@ -61,10 +57,6 @@ pub fn rx_loop(
             .unwrap();
     let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
 
-    for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
-        caps::raise(None, CapSet::Effective, cap).unwrap();
-    }
-
     let Ok((mut socket, rx)) = Socket::rx(queue, umem, zero_copy, rx_size * 2, rx_size) else {
         panic!("failed to create AF_XDP socket on queue {queue_id:?}");
     };
@@ -90,10 +82,6 @@ pub fn rx_loop(
     } = rx;
 
     let mut rx_ring = rx_ring.unwrap();
-
-    for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
-        caps::drop(None, CapSet::Effective, cap).unwrap();
-    }
 
     let umem_base = umem.as_ptr();
 
@@ -164,5 +152,7 @@ fn kick_error(e: std::io::Error) {
 unsafe fn handle_packet(raw_packet: *const u8, len: usize, sender: &Sender<Bytes>) {
     let byte_slice = unsafe { std::slice::from_raw_parts(raw_packet, len) };
     let bytes = Bytes::copy_from_slice(byte_slice);
-    let _ = sender.try_send(bytes);
+    if let Err(e) = sender.try_send(bytes) {
+        log::warn!("failed to send packet: {e}");
+    }
 }
