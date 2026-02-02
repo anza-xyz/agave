@@ -1351,7 +1351,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
             let items = items.drain(start_index..);
             if use_disk {
-                r_account_maps.startup_insert_only(slot, items);
+                r_account_maps.write_startup_items_to_disk(slot, items);
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
