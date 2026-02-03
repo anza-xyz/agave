@@ -476,7 +476,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Returns a new account data write access handler
     pub fn access_violation_handler(
         &self,
-        stricter_abi_and_runtime_constraints: bool,
+        virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) -> AccessViolationHandler {
         let accounts = Rc::clone(&self.accounts);
@@ -537,7 +537,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 }
 
                 // Potentially unshare / make the account shared data unique (CoW logic).
-                if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
+                if virtual_address_space_adjustments && account_data_direct_mapping {
                     region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
                     region.writable = true;
                 }

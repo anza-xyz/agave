@@ -74,9 +74,9 @@ fn process_instruction(
             let expected = {
                 let data = &instruction_data[1..];
                 let prev_len = account.data_len();
-                // when stricter_abi_and_runtime_constraints is off, this will accidentally clobber
+                // when virtual_address_space_adjustments is off, this will accidentally clobber
                 // whatever comes after the data slice (owner, executable, rent
-                // epoch etc). When stricter_abi_and_runtime_constraints is on, you get an
+                // epoch etc). When virtual_address_space_adjustments is on, you get an
                 // InvalidRealloc error.
                 account.resize(prev_len + data.len())?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
@@ -147,7 +147,7 @@ fn process_instruction(
             let realloc_program_id = accounts[REALLOC_PROGRAM_INDEX].key;
             let realloc_program_owner = accounts[REALLOC_PROGRAM_INDEX].owner;
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
-            let stricter_abi_and_runtime_constraints = instruction_data[1];
+            let virtual_address_space_adjustments = instruction_data[1];
             let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             let prev_len = account.data_len();
             let expected = account.data.borrow()[..new_len].to_vec();
@@ -170,7 +170,7 @@ fn process_instruction(
             // deserialize_parameters_for_abiv0 predates realloc support, and
             // hardcodes the account data length to the original length.
             if !solana_program::bpf_loader_deprecated::check_id(realloc_program_owner)
-                && stricter_abi_and_runtime_constraints == 0
+                && virtual_address_space_adjustments == 0
             {
                 assert_eq!(&*account.data.borrow(), &expected);
                 assert_eq!(
@@ -211,7 +211,7 @@ fn process_instruction(
             };
 
             let mut expected = account.data.borrow().to_vec();
-            let stricter_abi_and_runtime_constraints = instruction_data[1];
+            let virtual_address_space_adjustments = instruction_data[1];
             let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             expected.extend_from_slice(&instruction_data[10..]);
             let mut instruction_data =
@@ -231,7 +231,7 @@ fn process_instruction(
             .unwrap();
 
             assert_eq!(*account.data.borrow(), &prev_data[..new_len]);
-            if stricter_abi_and_runtime_constraints == 0 {
+            if virtual_address_space_adjustments == 0 {
                 assert_eq!(
                     unsafe {
                         std::slice::from_raw_parts(
