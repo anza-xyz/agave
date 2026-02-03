@@ -129,6 +129,12 @@ pub(crate) fn validate_platform_tools_version(
 }
 
 pub(crate) fn make_platform_tools_path_for_version(version: &str) -> PathBuf {
+    // Allow users to override the platform-tools path via environment variable.
+    // This is useful for NixOS and other immutable filesystem environments where
+    // platform-tools are pre-packaged and installed elsewhere.
+    if let Ok(path) = env::var("PLATFORM_TOOLS_PATH") {
+        return PathBuf::from(path);
+    }
     home_dir()
         .join(".cache")
         .join("solana")
@@ -245,6 +251,13 @@ pub(crate) fn install_if_missing(
     target_path: &Path,
     use_rest_api: bool,
 ) -> Result<(), String> {
+    // If PLATFORM_TOOLS_PATH is set, the user has pre-installed platform-tools
+    // (e.g., via Nix). Skip any download/installation operations.
+    if env::var("PLATFORM_TOOLS_PATH").is_ok() {
+        debug!("Using pre-installed platform-tools from PLATFORM_TOOLS_PATH");
+        return Ok(());
+    }
+
     if config.force_tools_install && target_path.is_dir() {
         debug!("Remove directory {target_path:?}");
         fs::remove_dir_all(target_path)
