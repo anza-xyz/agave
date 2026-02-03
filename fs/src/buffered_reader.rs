@@ -391,7 +391,7 @@ impl<R: BufRead> RequiredLenBufRead for BufReaderWithOverflow<R> {
 
 /// Open file at `path` with buffering reader using `buf_size` memory and doing
 /// read-ahead IO reads (if `io_uring` is supported by the platform)
-pub fn large_file_buf_reader(
+pub fn buf_reader_from_path(
     path: &Path,
     buf_size: usize,
     io_setup: &IoSetupState,
@@ -415,6 +415,20 @@ pub fn large_file_buf_reader(
         let _ = io_setup;
         Ok(BufReader::with_capacity(buf_size, file))
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn new_io_uring_file_buf_reader<'a>(
+    buf_size: usize,
+    io_setup: &IoSetupState,
+) -> io::Result<impl FileBufRead<'a>> {
+    assert!(agave_io_uring::io_uring_supported());
+    use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
+
+    SequentialFileReaderBuilder::new()
+        .shared_sqpoll(io_setup.shared_sqpoll_fd())
+        .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+        .build(buf_size)
 }
 
 #[cfg(test)]
