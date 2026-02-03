@@ -1015,7 +1015,7 @@ impl Validator {
 
         let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
         let snapshot_controller = Arc::new(SnapshotController::new(
-            snapshot_request_sender.clone(),
+            snapshot_request_sender,
             config.snapshot_config.clone(),
             bank_forks.read().unwrap().root(),
         ));
@@ -1697,7 +1697,7 @@ impl Validator {
             Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
             prioritization_fee_cache.clone(),
-            banking_tracer.clone(),
+            banking_tracer,
             repair_response_quic_receiver,
             repair_quic_async_senders.repair_request_quic_sender,
             repair_quic_async_senders.ancestor_hashes_request_quic_sender,
@@ -1709,8 +1709,8 @@ impl Validator {
             vote_connection_cache,
             AlpenglowInitializationState {
                 leader_window_info_sender,
-                replay_highest_frozen: replay_highest_frozen.clone(),
-                highest_parent_ready: highest_parent_ready.clone(),
+                replay_highest_frozen,
+                highest_parent_ready,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
                 cancel: cancel.clone(),
@@ -1729,15 +1729,15 @@ impl Validator {
                 wen_restart_coordinator: config.wen_restart_coordinator.unwrap(),
                 last_vote,
                 blockstore: blockstore.clone(),
-                cluster_info: cluster_info.clone(),
+                cluster_info,
                 bank_forks: bank_forks.clone(),
-                wen_restart_repair_slots: wen_restart_repair_slots.clone(),
+                wen_restart_repair_slots,
                 wait_for_supermajority_threshold_percent:
                     WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
                 snapshot_controller: Some(snapshot_controller.clone()),
                 abs_status: accounts_background_service.status().clone(),
                 genesis_config_hash: genesis_config.hash(),
-                exit: exit.clone(),
+                exit,
             })?;
             return Err(ValidatorError::WenRestartFinished.into());
         }
@@ -1770,7 +1770,7 @@ impl Validator {
                 vote_quic: node.sockets.tpu_vote_quic,
                 vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
             },
-            rpc_subscriptions.clone(),
+            rpc_subscriptions,
             transaction_status_sender,
             entry_notification_sender,
             blockstore.clone(),
@@ -2733,10 +2733,10 @@ fn initialize_rpc_transaction_history_services(
         max_complete_transaction_status_slot.clone(),
         enable_rpc_transaction_history,
         transaction_notifier,
-        blockstore.clone(),
+        blockstore,
         enable_extended_tx_metadata_storage,
         dependency_tracker,
-        exit.clone(),
+        exit,
     ));
 
     TransactionHistoryServices {

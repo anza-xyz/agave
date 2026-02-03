@@ -189,6 +189,8 @@ check-cfg = [
 arithmetic_side_effects = "deny"
 default_trait_access = "deny"
 manual_let_else = "deny"
+perf = "deny"
+redundant_clone = "deny"
 used_underscore_binding = "deny"
 
 [workspace.dependencies]

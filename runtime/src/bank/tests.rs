@@ -6044,11 +6044,7 @@ fn test_bank_load_program() {
     let instruction = Instruction::new_with_bytes(program_key, &[], Vec::new());
     let invocation_message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let binding = mint_keypair.insecure_clone();
-    let transaction = Transaction::new(
-        &[&binding],
-        invocation_message.clone(),
-        bank.last_blockhash(),
-    );
+    let transaction = Transaction::new(&[&binding], invocation_message, bank.last_blockhash());
     assert!(bank.process_transaction(&transaction).is_ok());
 
     {
@@ -6115,7 +6111,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     // after creating the program, the new transaction created below with the
     // same `invocation_message` as above doesn't return `AlreadyProcessed` when
     // processed.
-    goto_end_of_slot(bank.clone());
+    goto_end_of_slot(bank);
     let bank = bank_client
         .advance_slot(1, bank_forks.as_ref(), &mint_keypair.pubkey())
         .unwrap();
@@ -6307,7 +6303,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     }
 
     // Advance the bank so that the program becomes effective
-    goto_end_of_slot(bank.clone());
+    goto_end_of_slot(bank);
     let bank = bank_client
         .advance_slot(1, bank_forks.as_ref(), &mint_keypair.pubkey())
         .unwrap();
@@ -11778,7 +11774,7 @@ fn test_deploy_last_epoch_slot() {
         Some(&payer_keypair.pubkey()),
     );
     let signers = &[&payer_keypair, &upgrade_authority_keypair];
-    let transaction = Transaction::new(signers, message.clone(), bank.last_blockhash());
+    let transaction = Transaction::new(signers, message, bank.last_blockhash());
     let ret = bank.process_transaction(&transaction);
     assert!(ret.is_ok(), "ret: {ret:?}");
     goto_end_of_slot(bank.clone());
@@ -11882,8 +11878,7 @@ fn test_loader_v3_to_v4_migration() {
         Some(&payer_keypair.pubkey()),
     );
     let signers = &[&payer_keypair, &program_keypair];
-    let finalized_migration_transaction =
-        Transaction::new(signers, message.clone(), bank.last_blockhash());
+    let finalized_migration_transaction = Transaction::new(signers, message, bank.last_blockhash());
 
     let mut upgradeable_programdata_account = AccountSharedData::new(
         0,
@@ -11917,7 +11912,7 @@ fn test_loader_v3_to_v4_migration() {
     );
     let signers = &[&payer_keypair, &upgrade_authority_keypair];
     let upgradeable_migration_transaction =
-        Transaction::new(signers, message.clone(), bank.last_blockhash());
+        Transaction::new(signers, message, bank.last_blockhash());
 
     let payer_account = AccountSharedData::new(LAMPORTS_PER_SOL, 0, &system_program::id());
     bank.store_account(
@@ -11941,19 +11936,15 @@ fn test_loader_v3_to_v4_migration() {
         Some(&payer_keypair.pubkey()),
     );
     let signers = &[&payer_keypair];
-    let transaction = Transaction::new(signers, message.clone(), bank.last_blockhash());
+    let transaction = Transaction::new(signers, message, bank.last_blockhash());
     let error = bank.process_transaction(&transaction).unwrap_err();
     assert_eq!(
         error,
         TransactionError::InstructionError(0, InstructionError::InvalidArgument)
     );
 
-    let bank = Bank::new_from_parent_with_bank_forks(
-        &bank_forks,
-        bank.clone(),
-        &Pubkey::default(),
-        next_slot,
-    );
+    let bank =
+        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
     next_slot += 1;
 
     // All other error cases

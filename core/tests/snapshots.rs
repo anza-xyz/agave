@@ -100,7 +100,7 @@ impl SnapshotTestConfig {
             ..SnapshotConfig::default()
         };
         SnapshotTestConfig {
-            bank_forks: bank_forks_arc.clone(),
+            bank_forks: bank_forks_arc,
             genesis_config_info,
             snapshot_config,
             incremental_snapshot_archives_dir,
@@ -175,7 +175,7 @@ where
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -399,7 +399,7 @@ fn test_bank_forks_incremental_snapshot() {
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -613,7 +613,7 @@ fn test_snapshots_with_background_services() {
     }
 
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -632,11 +632,11 @@ fn test_snapshots_with_background_services() {
 
     let exit = Arc::new(AtomicBool::new(false));
     let snapshot_packager_service = SnapshotPackagerService::new(
-        pending_snapshot_packages.clone(),
+        pending_snapshot_packages,
         None,
         exit.clone(),
         None,
-        cluster_info.clone(),
+        cluster_info,
         snapshot_controller.clone(),
         false,
     );
@@ -783,7 +783,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     let bank_forks = snapshot_test_config.bank_forks.clone();
 
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));
@@ -797,7 +797,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         None,
         exit.clone(),
         exit_backpressure.clone(),
-        cluster_info.clone(),
+        cluster_info,
         snapshot_controller.clone(),
         false,
     );

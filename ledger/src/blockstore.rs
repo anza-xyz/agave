@@ -4819,7 +4819,7 @@ pub fn create_new_ledger(
     let blockstore = Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
-            column_options: column_options.clone(),
+            column_options,
             ..BlockstoreOptions::default()
         },
     )?;
@@ -11195,7 +11195,7 @@ pub mod tests {
         let next_slot_data_shred = next_slot_data_shreds[0].clone();
 
         assert!(blockstore
-            .insert_shred_return_duplicate(next_slot_data_shred.clone(), &leader_schedule,)
+            .insert_shred_return_duplicate(next_slot_data_shred, &leader_schedule,)
             .is_empty());
 
         // Insert for previous slot
@@ -11248,7 +11248,7 @@ pub mod tests {
 
         // Should not check again, even though this shred conflicts as well
         assert!(blockstore
-            .insert_shred_return_duplicate(data_shred.clone(), &leader_schedule,)
+            .insert_shred_return_duplicate(data_shred, &leader_schedule,)
             .is_empty());
     }
 
@@ -11296,7 +11296,7 @@ pub mod tests {
         );
         // Should not check again, even though this shred conflicts as well
         assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule,)
+            .insert_shred_return_duplicate(coding_shred, &leader_schedule,)
             .is_empty());
     }
 
