@@ -8606,7 +8606,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey 4.0.0",
- "solana-rent 4.0.0",
+ "solana-rent 3.1.0",
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-sbf-rust-invoke-dep",
