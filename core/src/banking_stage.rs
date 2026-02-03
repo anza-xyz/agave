@@ -757,15 +757,8 @@ mod external {
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
-            // Potentially spawn vote worker.
-            let mut threads = Vec::with_capacity(workers.len() + 3);
-            let tpu_to_pack_receivers = BankingPacketReceivers {
-                non_vote_receiver: self.non_vote_receiver.clone(),
-                gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
-                tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
-            };
-
             // Spawn the external consumer workers.
+            let mut threads = Vec::with_capacity(workers.len() + 2);
             let mut worker_metrics = Vec::with_capacity(workers.len());
             for (
                 index,
@@ -806,6 +799,11 @@ mod external {
             }
 
             // Spawn tpu to pack.
+            let tpu_to_pack_receivers = BankingPacketReceivers {
+                non_vote_receiver: self.non_vote_receiver.clone(),
+                gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
+                tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
+            };
             threads.push(tpu_to_pack::spawn(
                 self.worker_exit_signal.clone(),
                 self.banking_shutdown_signal.clone(),
