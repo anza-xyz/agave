@@ -21,7 +21,7 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
     if var_addr >= ebpf::MM_INPUT_START
         && invoke_context
             .get_feature_set()
-            .stricter_abi_and_runtime_constraints
+            .syscall_parameter_address_restrictions
     {
         return Err(SyscallError::InvalidPointer.into());
     }
@@ -214,7 +214,7 @@ declare_builtin_function!(
         if var_addr >= ebpf::MM_INPUT_START
             && invoke_context
                 .get_feature_set()
-                .stricter_abi_and_runtime_constraints
+                .syscall_parameter_address_restrictions
         {
             return Err(SyscallError::InvalidPointer.into());
         }
