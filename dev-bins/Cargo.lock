@@ -7385,7 +7385,7 @@ dependencies = [
  "solana-native-token",
  "solana-poh-config",
  "solana-pubkey 4.0.0",
- "solana-rent 3.0.0",
+ "solana-rent 4.0.0",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
