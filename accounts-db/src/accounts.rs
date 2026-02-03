@@ -594,13 +594,12 @@ impl Accounts {
             for index in 0..accounts.len() {
                 let transaction = transactions
                     .map(|txs| *txs.get(index).expect("txs must be present if provided"));
-                accounts.account(index, |account| {
-                    let account_shared_data = account.take_account();
+                accounts.account_for_geyser(index, |pubkey, account_shared_data| {
                     accounts_db.notify_account_at_accounts_update(
                         slot,
-                        &account_shared_data,
+                        account_shared_data,
                         &transaction,
-                        account.pubkey(),
+                        pubkey,
                         current_write_version,
                     );
                 });

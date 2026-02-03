@@ -174,6 +174,15 @@ impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
         callback((pubkey, account).into())
     }
 
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
+        callback(pubkey, account)
+    }
+
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.reward_commission_accounts.accounts_with_rewards[index]
             .2
