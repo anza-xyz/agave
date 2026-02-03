@@ -732,10 +732,7 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::{
-            logon_flags,
-            server::{AgaveSession, AgaveWorkerSession},
-        },
+        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -743,7 +740,7 @@ mod external {
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
-                flags,
+                flags: _,
                 tpu_to_pack,
                 progress_tracker,
                 workers,
@@ -762,20 +759,10 @@ mod external {
 
             // Potentially spawn vote worker.
             let mut threads = Vec::with_capacity(workers.len() + 3);
-            let tpu_to_pack_receivers = if flags & logon_flags::REROUTE_VOTES != 0 {
-                BankingPacketReceivers {
-                    non_vote_receiver: self.non_vote_receiver.clone(),
-                    gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
-                    tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
-                }
-            } else {
-                threads.push(self.spawn_vote_worker());
-
-                BankingPacketReceivers {
-                    non_vote_receiver: self.non_vote_receiver.clone(),
-                    gossip_vote_receiver: None,
-                    tpu_vote_receiver: None,
-                }
+            let tpu_to_pack_receivers = BankingPacketReceivers {
+                non_vote_receiver: self.non_vote_receiver.clone(),
+                gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
+                tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
             };
 
             // Spawn the external consumer workers.
