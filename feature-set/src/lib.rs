@@ -170,7 +170,7 @@ impl FeatureSet {
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
             enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
-            custom_commission_collector: self.is_active(&custom_commission_collector::id()),
+            custom_commission_collector: false, // Feature disabled for now.
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
         }
     }
@@ -2269,10 +2269,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             commission_rate_in_basis_points::id(),
             "SIMD-0291: Commission rate in basis points",
-        ),
-        (
-            custom_commission_collector::id(),
-            "SIMD-0232: Custom Commission Collector Account",
         ),
         (
             enable_bls12_381_syscall::id(),
