@@ -45,7 +45,7 @@ pub enum BLSOp {
         slot: Slot,
         saved_vote_history: SavedVoteHistoryVersions,
     },
-    PushVoteRefresh {
+    RefreshVote {
         message: Arc<ConsensusMessage>,
         slot: Slot,
     },
