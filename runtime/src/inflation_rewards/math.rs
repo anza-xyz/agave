@@ -38,7 +38,7 @@ pub(super) fn fixed_pow(base_scaled: u128, exp: u128) -> u128 {
 
 /// ln(x) via the atanh trick.
 pub(super) fn fixed_ln(x_scaled: u128) -> i128 {
-    debug_assert!(x_scaled >= SCALE / 2 && x_scaled <= SCALE);
+    debug_assert!((SCALE / 2..=SCALE).contains(&x_scaled));
 
     let x = x_scaled as i128;
     let s = SCALE as i128;
