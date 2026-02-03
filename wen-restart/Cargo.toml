@@ -21,6 +21,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-snapshots = { workspace = true }
+agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 prost = { workspace = true }

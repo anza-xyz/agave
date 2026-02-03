@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
@@ -304,6 +296,7 @@ impl From<StoredConfirmedBlockReward> for Reward {
             post_balance: 0,
             reward_type: None,
             commission: None,
+            commission_bps: None,
         }
     }
 }
@@ -697,6 +690,7 @@ impl LedgerStorage {
                                     slot,
                                     tx_with_meta: tx_with_meta.clone(),
                                     block_time: block.block_time,
+                                    index,
                                 })
                             }
                         })
@@ -740,6 +734,7 @@ impl LedgerStorage {
                         slot,
                         tx_with_meta,
                         block_time: block.block_time,
+                        index,
                     }))
                 }
             }
@@ -880,6 +875,7 @@ impl LedgerStorage {
                         err: tx_by_addr_info.err,
                         memo: tx_by_addr_info.memo,
                         block_time: tx_by_addr_info.block_time,
+                        index: tx_by_addr_info.index,
                     },
                     tx_by_addr_info.index,
                 ));

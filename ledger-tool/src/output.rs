@@ -273,8 +273,9 @@ impl fmt::Display for CliBlockWithEntries {
                         )
                     },
                     reward
-                        .commission
-                        .map(|commission| format!("{commission:>9}%"))
+                        .commission_bps
+                        .map(|bps| format!("{:>8}.{:02}%", bps / 100, bps % 100))
+                        .or_else(|| reward.commission.map(|c| format!("{c:>9}%")))
                         .unwrap_or_else(|| "    -".to_string())
                 )?;
             }

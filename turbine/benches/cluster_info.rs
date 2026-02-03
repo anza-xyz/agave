@@ -1,23 +1,23 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
-    rand::{rng, Rng},
+    bencher::{Bencher, benchmark_group, benchmark_main},
+    rand::{Rng, rng},
     solana_entry::entry::Entry,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
-        genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
-    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
+    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
-    solana_time_utils::{timestamp, AtomicInterval},
+    solana_time_utils::{AtomicInterval, timestamp},
     solana_turbine::{
         broadcast_stage::{
-            broadcast_metrics::TransmitShredsStats, broadcast_shreds, BroadcastSocket,
-            BroadcastStage,
+            BroadcastSocket, BroadcastStage, broadcast_metrics::TransmitShredsStats,
+            broadcast_shreds,
         },
         cluster_nodes::ClusterNodesCache,
     },
@@ -27,8 +27,6 @@ use {
 fn broadcast_shreds_bench(b: &mut Bencher) {
     agave_logger::setup();
     let leader_keypair = Arc::new(Keypair::new());
-    let (quic_endpoint_sender, _quic_endpoint_receiver) =
-        tokio::sync::mpsc::channel(/*capacity:*/ 128);
     let leader_info = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
     let cluster_info = ClusterInfo::new(
         leader_info.info,
@@ -91,7 +89,6 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
             &cluster_info,
             &bank_forks,
             &SocketAddrSpace::Unspecified,
-            &quic_endpoint_sender,
         )
         .unwrap();
     });

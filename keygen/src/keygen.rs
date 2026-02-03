@@ -427,7 +427,10 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
         )
         .subcommand(
             Command::new("recover")
-                .about("Recover keypair from seed phrase and optional BIP39 passphrase")
+                .about(
+                    "Recover keypair from seed phrase and optional BIP39 passphrase, or from a \
+                     base58-encoded keypair",
+                )
                 .disable_version_flag(true)
                 .arg(
                     Arg::new("prompt_signer")
@@ -438,9 +441,12 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
                             SignerSourceParserBuilder::default()
                                 .allow_prompt()
                                 .allow_legacy()
+                                .allow_base58_keypair()
                                 .build(),
                         )
-                        .help("`prompt:` URI scheme or `ASK` keyword"),
+                        .help(
+                            "`prompt:` URI scheme, `ASK` keyword, or base58-encoded keypair string",
+                        ),
                 )
                 .arg(
                     Arg::new("outfile")
@@ -532,7 +538,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
         ("bls_pubkey", matches) => {
             let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
             let bls_keypair = BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED)?;
-            let bls_pubkey: BLSPubkey = bls_keypair.public;
+            let bls_pubkey: BLSPubkey = bls_keypair.public.into();
 
             if matches.try_contains_id("outfile")? {
                 let outfile = matches.get_one::<String>("outfile").unwrap();
@@ -1269,7 +1275,7 @@ mod tests {
     fn test_read_write_bls_pubkey() -> Result<(), std::boxed::Box<dyn std::error::Error>> {
         let filename = "test_bls_pubkey.json";
         let bls_keypair = BLSKeypair::new();
-        let bls_pubkey = bls_keypair.public;
+        let bls_pubkey: BLSPubkey = bls_keypair.public.into();
         write_bls_pubkey_file(filename, bls_pubkey)?;
         let read = read_bls_pubkey_file(filename)?;
         assert_eq!(read, bls_pubkey);
@@ -1300,6 +1306,54 @@ mod tests {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&my_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         let read_bls_pubkey = read_bls_pubkey_file(&outfile_path).unwrap();
-        assert_eq!(read_bls_pubkey, bls_keypair.public);
+        assert_eq!(read_bls_pubkey, bls_keypair.public.into());
+    }
+
+    #[test]
+    fn test_parse_recover_from_base58_keypair() {
+        let keypair = Keypair::new();
+
+        let keypair_base58 = keypair.to_base58_string();
+
+        // Note: The recover command with base58 keypair prompts for confirmation,
+        // but we can test the underlying functionality via keypair_from_source
+        // Here we test that the command parses correctly
+        let default_num_threads = num_cpus::get().to_string();
+        let solana_version = solana_version::version!();
+        let app_matches = app(&default_num_threads, solana_version).get_matches_from(vec![
+            "solana-keygen",
+            "recover",
+            &keypair_base58,
+            "-o",
+            &keypair_base58,
+        ]);
+
+        // Verify the argument was parsed correctly
+        let subcommand = app_matches.subcommand().unwrap();
+        assert_eq!(subcommand.0, "recover");
+        let matches = subcommand.1;
+        assert!(matches.try_contains_id("prompt_signer").unwrap());
+    }
+
+    #[test]
+    fn test_base58_keypair_pubkey_command() {
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let keypair_base58 = keypair.to_base58_string();
+
+        let outfile_dir = tempdir().unwrap();
+        let outfile_path = tmp_outfile_path(&outfile_dir, &pubkey.to_string());
+
+        process_test_command(&[
+            "solana-keygen",
+            "pubkey",
+            &keypair_base58,
+            "--outfile",
+            &outfile_path,
+        ])
+        .unwrap();
+
+        let result_pubkey = read_pubkey_file(&outfile_path).unwrap();
+        assert_eq!(result_pubkey, pubkey);
     }
 }

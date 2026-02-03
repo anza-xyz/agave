@@ -1041,7 +1041,7 @@ impl RpcSubscriptions {
                                             RpcResponse::from(RpcNotificationResponse {
                                                 context: RpcNotificationContext { slot: s },
                                                 value: RpcBlockUpdate {
-                                                    slot,
+                                                    slot: s,
                                                     block: None,
                                                     err: Some(err),
                                                 },

@@ -6,8 +6,7 @@ use {
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
                 ConnectionTableType, CONNECTION_CLOSE_CODE_DISALLOWED,
-                CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT, CONNECTION_CLOSE_REASON_DISALLOWED,
-                CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
+                CONNECTION_CLOSE_REASON_DISALLOWED,
             },
             stream_throttle::{
                 throttle_stream, ConnectionStreamCounter, StakedStreamLoadEMA,
@@ -23,10 +22,6 @@ use {
     },
     percentage::Percentage,
     quinn::{Connection, VarInt},
-    solana_quic_definitions::{
-        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-        QUIC_MIN_STAKED_CONCURRENT_STREAMS, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
-    },
     solana_time_utils as timing,
     std::{
         future::Future,
@@ -38,6 +33,26 @@ use {
     tokio::sync::{Mutex, MutexGuard},
     tokio_util::sync::CancellationToken,
 };
+
+// Empirically found max number of concurrent streams
+// that seems to maximize TPS on GCE (higher values don't seem to
+// give significant improvement or seem to impact stability)
+pub const QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS: u32 = 128;
+pub const QUIC_MIN_STAKED_CONCURRENT_STREAMS: u32 = 128;
+
+// Set the maximum concurrent stream numbers to avoid excessive streams.
+// The value was lowered from 2048 to reduce contention of the limited
+// receive_window among the streams which is observed in CI bench-tests with
+// forwarded packets from staked nodes.
+pub const QUIC_MAX_STAKED_CONCURRENT_STREAMS: u32 = 512;
+
+pub const QUIC_TOTAL_STAKED_CONCURRENT_STREAMS: u32 = 100_000;
+
+/// RTT after which we start BDP scaling
+const REFERENCE_RTT_MS: u32 = 50;
+
+/// Above this RTT we stop scaling for BDP
+const MAX_RTT_MS: u32 = 350;
 
 #[derive(Clone)]
 pub struct SwQosConfig {
@@ -130,8 +145,12 @@ impl SwQos {
     }
 }
 
-fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
-    match peer_type {
+fn compute_max_allowed_uni_streams_with_rtt(
+    rtt_millis: u32,
+    peer_type: ConnectionPeerType,
+    total_stake: u64,
+) -> u32 {
+    let streams = match peer_type {
         ConnectionPeerType::Staked(peer_stake) => {
             // No checked math for f64 type. So let's explicitly check for 0 here
             if total_stake == 0 || peer_stake > total_stake {
@@ -145,7 +164,7 @@ fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u
                 let delta = (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS
                     - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
 
-                (((peer_stake as f64 / total_stake as f64) * delta) as usize
+                (((peer_stake as f64 / total_stake as f64) * delta) as u32
                     + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
                     .clamp(
                         QUIC_MIN_STAKED_CONCURRENT_STREAMS,
@@ -154,7 +173,10 @@ fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u
             }
         }
         ConnectionPeerType::Unstaked => QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    }
+    };
+    // scale amount of streams based on RTT if RTT is larger than REFERENCE_RTT_MS
+    // multiply first then divide to avoid rounding errors.
+    (streams.saturating_mul(rtt_millis.clamp(REFERENCE_RTT_MS, MAX_RTT_MS))) / REFERENCE_RTT_MS
 }
 
 impl SwQos {
@@ -172,13 +194,35 @@ impl SwQos {
         ),
         ConnectionHandlerError,
     > {
-        if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
+        // get current RTT and limit it to MAX_RTT_MS right away
+        let rtt_millis = connection.rtt().as_millis().min(MAX_RTT_MS as u128) as u32;
+        let max_uni_streams = VarInt::from_u32(compute_max_allowed_uni_streams_with_rtt(
+            rtt_millis,
             conn_context.peer_type(),
             conn_context.total_stake,
-        ) as u64)
-        {
-            let remote_addr = connection.remote_address();
+        ));
+        let remote_addr = connection.remote_address();
 
+        let max_connections_per_peer = match conn_context.peer_type() {
+            ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
+            ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
+        };
+        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
+            .try_add_connection(
+                ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
+                remote_addr.port(),
+                client_connection_tracker,
+                Some(connection.clone()),
+                conn_context.peer_type(),
+                conn_context.last_update.clone(),
+                max_connections_per_peer,
+                || Arc::new(ConnectionStreamCounter::new()),
+            )
+        {
+            update_open_connections_stat(&self.stats, &connection_table_l);
+            drop(connection_table_l);
+
+            connection.set_max_concurrent_uni_streams(max_uni_streams);
             debug!(
                 "Peer type {:?}, total stake {}, max streams {} from peer {}",
                 conn_context.peer_type(),
@@ -186,44 +230,12 @@ impl SwQos {
                 max_uni_streams.into_inner(),
                 remote_addr,
             );
-
-            let max_connections_per_peer = match conn_context.peer_type() {
-                ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
-                ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
-            };
-            if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-                .try_add_connection(
-                    ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
-                    remote_addr.port(),
-                    client_connection_tracker,
-                    Some(connection.clone()),
-                    conn_context.peer_type(),
-                    conn_context.last_update.clone(),
-                    max_connections_per_peer,
-                    || Arc::new(ConnectionStreamCounter::new()),
-                )
-            {
-                update_open_connections_stat(&self.stats, &connection_table_l);
-                drop(connection_table_l);
-
-                connection.set_max_concurrent_uni_streams(max_uni_streams);
-
-                Ok((last_update, cancel_connection, stream_counter))
-            } else {
-                self.stats
-                    .connection_add_failed
-                    .fetch_add(1, Ordering::Relaxed);
-                Err(ConnectionHandlerError::ConnectionAddError)
-            }
+            Ok((last_update, cancel_connection, stream_counter))
         } else {
-            connection.close(
-                CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT.into(),
-                CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
-            );
             self.stats
-                .connection_add_failed_invalid_stream_count
+                .connection_add_failed
                 .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::MaxStreamError)
+            Err(ConnectionHandlerError::ConnectionAddError)
         }
     }
 
@@ -515,6 +527,10 @@ impl QosController<SwQosConnectionContext> for SwQos {
 pub mod test {
     use super::*;
 
+    fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> u32 {
+        compute_max_allowed_uni_streams_with_rtt(REFERENCE_RTT_MS, peer_type, total_stake)
+    }
+
     #[test]
     fn test_max_allowed_uni_streams() {
         assert_eq!(
@@ -533,12 +549,34 @@ pub mod test {
         );
         assert_eq!(
             compute_max_allowed_uni_streams(ConnectionPeerType::Staked(100), 10000),
-            ((delta / (100_f64)) as usize + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
+            ((delta / (100_f64)) as u32 + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
                 .min(QUIC_MAX_STAKED_CONCURRENT_STREAMS)
         );
         assert_eq!(
             compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 10000),
             QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
+        );
+    }
+
+    #[test]
+    fn test_max_allowed_uni_streams_with_rtt() {
+        assert_eq!(
+            compute_max_allowed_uni_streams_with_rtt(
+                REFERENCE_RTT_MS / 2,
+                ConnectionPeerType::Unstaked,
+                10000
+            ),
+            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
+            "Max streams should not be less than normal for low RTT"
+        );
+        assert_eq!(
+            compute_max_allowed_uni_streams_with_rtt(
+                REFERENCE_RTT_MS + REFERENCE_RTT_MS / 2,
+                ConnectionPeerType::Unstaked,
+                10000
+            ),
+            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS + QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS / 2,
+            "Max streams should scale with BDP in high-RTT connections"
         );
     }
 }

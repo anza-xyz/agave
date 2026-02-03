@@ -8,12 +8,13 @@ use {
     solana_account::{
         create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
     },
-    solana_bpf_loader_program::{create_vm, load_program_from_bytes},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        create_vm,
+        deploy::load_program_from_bytes,
         invoke_context::InvokeContext,
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET,
@@ -510,7 +511,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 .unwrap(),
             false, // stricter_abi_and_runtime_constraints
             false, // account_data_direct_mapping
-            true,  // for mask_out_rent_epoch_in_vm_serialization
         )
         .unwrap();
 

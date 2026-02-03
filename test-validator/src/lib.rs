@@ -7,6 +7,7 @@ use {
     agave_snapshots::{
         paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig, SnapshotInterval,
     },
+    agave_syscalls::create_program_runtime_environment_v1,
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -48,6 +49,9 @@ use {
     solana_net_utils::{
         find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
     },
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -56,14 +60,13 @@ use {
         client_error::Error as RpcClientError, request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_runtime::{
-        bank_forks::BankForks,
-        genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
+        bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig,
     },
+    solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_transaction::{Transaction, TransactionError},
     solana_validator_exit::Exit,
     std::{
@@ -145,7 +148,6 @@ pub struct TestValidatorGenesis {
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
-    pub tpu_enable_udp: bool,
     pub geyser_plugin_manager: Arc<RwLock<GeyserPluginManager>>,
     admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
@@ -181,7 +183,6 @@ impl Default for TestValidatorGenesis {
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
-            tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
             geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::default())),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
@@ -246,11 +247,6 @@ impl TestValidatorGenesis {
     /// Check if a given TestValidator ledger has already been initialized
     pub fn ledger_exists(ledger_path: &Path) -> bool {
         ledger_path.join("vote-account-keypair.json").exists()
-    }
-
-    pub fn tpu_enable_udp(&mut self, tpu_enable_udp: bool) -> &mut Self {
-        self.tpu_enable_udp = tpu_enable_udp;
-        self
     }
 
     pub fn fee_rate_governor(&mut self, fee_rate_governor: FeeRateGovernor) -> &mut Self {
@@ -804,7 +800,6 @@ pub struct TestValidator {
     preserve_ledger: bool,
     rpc_pubsub_url: String,
     rpc_url: String,
-    tpu: SocketAddr,
     tpu_quic: SocketAddr,
     gossip: SocketAddr,
     validator: Option<Validator>,
@@ -819,11 +814,9 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
         target_lamports_per_signature: u64,
-        tpu_enable_udp: bool,
         wait_for_fees: bool,
     ) -> Self {
         let test_validator = TestValidatorGenesis::default()
-            .tpu_enable_udp(tpu_enable_udp)
             .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
                 lamports_per_byte_year: 1,
@@ -874,23 +867,7 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        Self::start_with_config(
-            mint_address,
-            faucet_addr,
-            socket_addr_space,
-            0,
-            false,
-            false,
-        )
-    }
-
-    /// Create a test validator using udp for TPU.
-    pub fn with_no_fees_udp(
-        mint_address: Pubkey,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, true, false)
+        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, false)
     }
 
     /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
@@ -908,7 +885,6 @@ impl TestValidator {
             faucet_addr,
             socket_addr_space,
             target_lamports_per_signature,
-            false,
             true,
         )
     }
@@ -962,14 +938,26 @@ impl TestValidator {
         let mint_lamports = 500_000_000 * LAMPORTS_PER_SOL;
 
         // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive().clone();
+        let mut feature_set = FeatureSet::all_enabled();
         for feature in &config.deactivate_feature_set {
-            if feature_set.remove(feature) {
-                info!("Feature for {feature:?} deactivated")
+            if FEATURE_NAMES.contains_key(feature) {
+                feature_set.deactivate(feature);
+                info!("Feature for {feature:?} deactivated");
             } else {
                 warn!("Feature {feature:?} set for deactivation is not a known Feature public key",)
             }
         }
+
+        let runtime_features = feature_set.runtime_features();
+        let program_runtime_environment = create_program_runtime_environment_v1(
+            &runtime_features,
+            &SVMTransactionExecutionBudget::new_with_defaults(
+                runtime_features.raise_cpi_nesting_limit_to_8,
+            ),
+            true,
+            false,
+        )?;
+        let program_runtime_environment = Arc::new(program_runtime_environment);
 
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_binaries::spl_programs(&config.rent) {
@@ -977,13 +965,20 @@ impl TestValidator {
         }
         for (address, account) in
             solana_program_binaries::core_bpf_programs(&config.rent, |feature_id| {
-                feature_set.contains(feature_id)
+                feature_set.is_active(feature_id)
             })
         {
             accounts.entry(address).or_insert(account);
         }
         for upgradeable_program in &config.upgradeable_programs {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);
+            let executable =
+                Executable::<InvokeContext>::from_elf(&data, program_runtime_environment.clone())
+                    .map_err(|err| format!("ELF error: {err}"))?;
+            executable
+                .verify::<RequisiteVerifier>()
+                .map_err(|err| format!("ELF error: {err}"))?;
+
             let (programdata_address, _) = Pubkey::find_program_address(
                 &[upgradeable_program.program_id.as_ref()],
                 &upgradeable_program.loader,
@@ -1021,7 +1016,7 @@ impl TestValidator {
             );
         }
 
-        let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+        let mut genesis_config = create_genesis_config_with_leader_ex(
             mint_lamports,
             &mint_address,
             &validator_identity.pubkey(),
@@ -1033,6 +1028,7 @@ impl TestValidator {
             config.fee_rate_governor.clone(),
             config.rent.clone(),
             solana_cluster_type::ClusterType::Development,
+            &feature_set,
             accounts.into_iter().collect(),
         );
         genesis_config.epoch_schedule = config
@@ -1047,13 +1043,6 @@ impl TestValidator {
 
         if let Some(inflation) = config.inflation {
             genesis_config.inflation = inflation;
-        }
-
-        for feature in feature_set {
-            // TODO: remove after cli change for bls_pubkey_management_in_vote_account is checked in
-            if feature != agave_feature_set::bls_pubkey_management_in_vote_account::id() {
-                genesis_utils::activate_feature(&mut genesis_config, feature);
-            }
         }
 
         let ledger_path = match &config.ledger_path {
@@ -1141,7 +1130,6 @@ impl TestValidator {
                 num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
                 num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                     .expect("Number of QUIC endpoints can not be zero"),
-                vortexor_receiver_addr: None,
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
@@ -1161,8 +1149,7 @@ impl TestValidator {
         let vote_account_address = validator_vote_account.pubkey();
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());
         let rpc_pubsub_url = format!("ws://{}/", node.info.rpc_pubsub().unwrap());
-        let tpu = node.info.tpu(Protocol::UDP).unwrap();
-        let tpu_quic = node.info.tpu(Protocol::QUIC).unwrap_or(tpu);
+        let tpu_quic = node.info.tpu(Protocol::QUIC).unwrap();
         let gossip = node.info.gossip().unwrap();
 
         {
@@ -1256,8 +1243,9 @@ impl TestValidator {
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,
-            ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
+            ValidatorTpuConfig::new_for_tests(),
             config.admin_rpc_service_post_init.clone(),
+            None,
         )?);
 
         let test_validator = TestValidator {
@@ -1265,7 +1253,6 @@ impl TestValidator {
             preserve_ledger,
             rpc_pubsub_url,
             rpc_url,
-            tpu,
             tpu_quic,
             gossip,
             validator,
@@ -1395,11 +1382,6 @@ impl TestValidator {
             sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
         }
         panic!("Timeout waiting for program to become usable");
-    }
-
-    /// Return the validator's TPU address
-    pub fn tpu(&self) -> &SocketAddr {
-        &self.tpu
     }
 
     /// Return the validator's TPU QUIC address

@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![no_std]
 
 //! Messages passed between agave and an external pack process.
@@ -167,10 +159,23 @@ pub mod tpu_message_flags {
     pub const FROM_STAKED_NODE: u8 = 1 << 2;
 }
 
-/// Indicates the node is not leader.
-pub const IS_NOT_LEADER: u8 = 0;
-/// Indicates the node is leader.
-pub const IS_LEADER: u8 = 1;
+/// The node is not currently in a leader slot.
+pub const NOT_LEADER: u8 = 0;
+/// The node is in a leader slot but the working bank is not yet ready.
+///
+/// Transactions cannot be processed in this state.
+pub const LEADER_STARTING: u8 = 1;
+/// The node is in a leader slot and has a working bank ready.
+///
+/// Transactions can be processed in this state.
+pub const LEADER_READY: u8 = 2;
+
+#[allow(deprecated)]
+#[deprecated(since = "3.1.0", note = "Use NOT_LEADER instead")]
+pub const IS_NOT_LEADER: u8 = NOT_LEADER;
+#[allow(deprecated)]
+#[deprecated(since = "3.1.0", note = "Use LEADER_READY instead")]
+pub const IS_LEADER: u8 = LEADER_READY;
 
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
@@ -180,17 +185,18 @@ pub const IS_LEADER: u8 = 1;
 )]
 #[repr(C)]
 pub struct ProgressMessage {
-    /// Indicates if node is currently leader or not.
-    /// [`IS_LEADER`] if the node is leader.
-    /// [`IS_NOT_LEADER`] if the node is not leader.
-    /// Other values should be considered invalid.
+    /// Indicates the current leader status of the node.
+    ///
+    /// - [`NOT_LEADER`]: Node is not in a leader slot.
+    /// - [`LEADER_STARTING`]: Node is in a leader slot but bank is not ready.
+    /// - [`LEADER_READY`]: Node is in a leader slot with bank ready for transactions.
+    ///
+    /// # Usage
+    ///
+    /// - To check if within a leader slot: `leader_state != NOT_LEADER`.
+    /// - To check if transactions can be processed: `leader_state == LEADER_READY`.
     pub leader_state: u8,
-    /// The current slot. This along with a leader schedule is not sufficient
-    /// for determining if the node is currently leader. There is a slight
-    /// delay between when a node is supposed to begin its' leader slot, and
-    /// when a bank is ready for processing transactions as leader.
-    /// Using [`Self::leader_state`] for determining if the node is leader
-    /// and has a bank available.
+    /// The current slot.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
     /// This will **not** include the current slot if leader.
@@ -336,6 +342,17 @@ pub mod worker_message_types {
     )]
     #[repr(C)]
     pub struct ExecutionResponse {
+        /// The slot this transaction was executed.
+        ///
+        /// # Note
+        ///
+        /// The current semantics are:
+        ///
+        /// - If we successfully get a bank and try your request, this slot is the latest
+        ///   bank we attempted (during a slot roll we can try 2 banks ).
+        /// - If we do not attempt or attemp and fail to get a bank, this field will be
+        ///   zero.
+        pub execution_slot: u64,
         /// Indicates if the transaction was included in the block or not.
         /// If [`not_included_reasons::NONE`], the transaction was included.
         pub not_included_reason: u8,

@@ -216,7 +216,11 @@ impl BlockstoreCleanupService {
 
             let mut purge_time = Measure::start("purge_slots()");
             // purge any slots older than lowest_cleanup_slot.
-            blockstore.purge_slots(0, lowest_cleanup_slot, PurgeType::CompactionFilter);
+            let _ = blockstore
+                .purge_slots(0, lowest_cleanup_slot, PurgeType::CompactionFilter)
+                .inspect_err(|e| {
+                    error!("Purge failed when cleaning ledger to {lowest_cleanup_slot}: {e:?}")
+                });
             // Update only after purge operation.
             // Safety: This value can be used by compaction_filters shared via Arc<AtomicU64>.
             // Compactions are async and run as a multi-threaded background job. However, this
@@ -259,10 +263,7 @@ impl BlockstoreCleanupService {
 }
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{blockstore::make_many_slot_entries, get_tmp_ledger_path_auto_delete},
-    };
+    use {super::*, crate::blockstore::make_many_slot_entries};
 
     fn flush_blockstore_contents_to_disk(blockstore: Blockstore) -> Blockstore {
         // The find_slots_to_clean() routine uses a method that queries data

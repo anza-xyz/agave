@@ -124,7 +124,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             if last_tick_height == bank.max_tick_height()
                 && bank.slot() > MINIMUM_DUPLICATE_SLOT
                 && self.num_slots_broadcasted.is_multiple_of(DUPLICATE_RATE)
-                && self.recent_blockhash.is_some()
+                && let Some(recent_blockhash) = self.recent_blockhash
             {
                 let entry_batch_len = receive_results.entries.len();
                 let prev_entry_hash =
@@ -146,7 +146,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                         keypair,
                         &Pubkey::new_unique(),
                         1,
-                        self.recent_blockhash.unwrap(),
+                        recent_blockhash,
                     );
                     let new_extra_entry = Entry::new(&prev_entry_hash, 1, vec![extra_tx]);
 
@@ -275,12 +275,16 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             // Store the original shreds that this node replayed
             blockstore_sender.send((original_last_data_shred.clone(), None))?;
 
-            assert!(original_last_data_shred
-                .iter()
-                .all(|shred| shred.slot() == bank.slot()));
-            assert!(partition_last_data_shred
-                .iter()
-                .all(|shred| shred.slot() == bank.slot()));
+            assert!(
+                original_last_data_shred
+                    .iter()
+                    .all(|shred| shred.slot() == bank.slot())
+            );
+            assert!(
+                partition_last_data_shred
+                    .iter()
+                    .all(|shred| shred.slot() == bank.slot())
+            );
 
             if let Some(duplicate_slot_sender) = &self.config.duplicate_slot_sender {
                 let _ = duplicate_slot_sender.send(bank.slot());
@@ -297,7 +301,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         cluster_info: &ClusterInfo,
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
-        _quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (shreds, _) = receiver.recv()?;
         if shreds.is_empty() {

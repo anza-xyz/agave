@@ -138,12 +138,12 @@ impl DuplicateShredHandler {
         // the duplicate slot proof in blockstore
         if entry.iter().flatten().count() == usize::from(num_chunks) {
             let chunks = std::mem::take(entry).into_iter().flatten();
-            let pubkey = self
+            let slot_leader = self
                 .leader_schedule_cache
                 .slot_leader_at(slot, /*bank:*/ None)
                 .ok_or(Error::UnknownSlotLeader(slot))?;
             let (shred1, shred2) =
-                duplicate_shred::into_shreds(&pubkey, chunks, self.shred_version)?;
+                duplicate_shred::into_shreds(&slot_leader.id, chunks, self.shred_version)?;
             if !self.blockstore.has_duplicate_shreds_in_slot(slot) {
                 self.blockstore.store_duplicate_slot(
                     slot,
@@ -187,7 +187,7 @@ impl DuplicateShredHandler {
                     }
             });
         }
-        if self.buffer.len() < BUFFER_CAPACITY {
+        if self.buffer.len() <= BUFFER_CAPACITY {
             return;
         }
         // Lookup stake for each entry.
@@ -238,7 +238,7 @@ mod tests {
         itertools::Itertools,
         solana_keypair::Keypair,
         solana_ledger::{
-            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             get_tmp_ledger_path_auto_delete,
             shred::Shredder,
         },

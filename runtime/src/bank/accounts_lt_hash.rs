@@ -389,18 +389,24 @@ pub enum CacheValue {
 mod tests {
     use {
         super::*,
-        crate::{runtime_config::RuntimeConfig, snapshot_bank_utils, snapshot_utils},
+        crate::{
+            genesis_utils::create_genesis_config_with_leader_ex, runtime_config::RuntimeConfig,
+            snapshot_bank_utils, snapshot_utils,
+        },
+        agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::{
             accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_index::{AccountsIndexConfig, IndexLimit, ACCOUNTS_INDEX_CONFIG_FOR_TESTING},
         },
+        solana_cluster_type::ClusterType,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{self, GenesisConfig},
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::{self as pubkey, Pubkey},
+        solana_rent::Rent,
         solana_signer::Signer as _,
         std::{cmp, iter, str::FromStr as _, sync::Arc},
         tempfile::TempDir,
@@ -418,14 +424,35 @@ mod tests {
 
     /// Creates a genesis config with `features` enabled
     fn genesis_config_with(features: Features) -> (GenesisConfig, Keypair) {
+        let mint_keypair = Keypair::new();
         let mint_lamports = 123_456_789 * LAMPORTS_PER_SOL;
-        match features {
-            Features::None => solana_genesis_config::create_genesis_config(mint_lamports),
-            Features::All => {
-                let info = crate::genesis_utils::create_genesis_config(mint_lamports);
-                (info.genesis_config, info.mint_keypair)
-            }
-        }
+        let validator_lamports = 100 * LAMPORTS_PER_SOL;
+        let validator_stake_lamports = 10 * LAMPORTS_PER_SOL;
+        let validator_pubkey = Pubkey::new_unique();
+        let vote_account_pubkey = Pubkey::new_unique();
+        let stake_account_pubkey = Pubkey::new_unique();
+        let feature_set = match features {
+            Features::None => FeatureSet::default(),
+            Features::All => FeatureSet::all_enabled(),
+        };
+
+        let config = create_genesis_config_with_leader_ex(
+            mint_lamports,
+            &mint_keypair.pubkey(),
+            &validator_pubkey,
+            &vote_account_pubkey,
+            &stake_account_pubkey,
+            None,
+            validator_stake_lamports,
+            validator_lamports,
+            FeeRateGovernor::default(),
+            Rent::default(),
+            ClusterType::Development,
+            &feature_set,
+            vec![],
+        );
+
+        (config, mint_keypair)
     }
 
     #[test]
@@ -448,6 +475,7 @@ mod tests {
 
         let (mut genesis_config, mint_keypair) =
             solana_genesis_config::create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
+        // This test requires zero fees so that we can easily transfer an account's entire balance.
         genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
@@ -801,8 +829,8 @@ mod tests {
         // (note: the number of banks and transfers are arbitrary)
         for _ in 0..9 {
             let slot = bank.slot() + 1;
-            bank =
-                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            let leader_id = *bank.leader_id();
+            bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &leader_id, slot);
             for _ in 0..3 {
                 bank.register_unique_recent_blockhash_for_test();
                 bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
@@ -827,8 +855,8 @@ mod tests {
         let accounts: Vec<_> = iter::repeat_with(Keypair::new).take(num_accounts).collect();
         for i in 0..num_accounts {
             let slot = bank.slot() + 1;
-            bank =
-                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            let leader_id = *bank.leader_id();
+            bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &leader_id, slot);
             bank.register_unique_recent_blockhash_for_test();
 
             // transfer into the accounts so they start with a non-zero balance
@@ -884,6 +912,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,
@@ -950,8 +979,8 @@ mod tests {
         // (note: the number of banks is arbitrary)
         for _ in 0..3 {
             let slot = bank.slot() + 1;
-            bank =
-                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            let leader_id = *bank.leader_id();
+            bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &leader_id, slot);
             bank.register_unique_recent_blockhash_for_test();
             bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
                 .unwrap();
@@ -981,6 +1010,7 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
+            None, // leader_for_tests
             None,
             false,
             false,

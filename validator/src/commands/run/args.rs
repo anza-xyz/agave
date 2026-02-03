@@ -368,18 +368,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("tpu_vortexor_receiver_address")
-            .long("tpu-vortexor-receiver-address")
-            .value_name("HOST:PORT")
-            .takes_value(true)
-            .hidden(hidden_unless_forced())
-            .validator(solana_net_utils::is_host_port)
-            .help(
-                "TPU Vortexor Receiver address to which verified transaction packet will be \
-                 forwarded.",
-            ),
-    )
-    .arg(
         Arg::with_name("public_rpc_addr")
             .long("public-rpc-address")
             .value_name("HOST:PORT")
@@ -703,14 +691,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "A list of validators to gossip with. If specified, gossip will not push/pull \
                  from from validators outside this set. [default: all validators]",
             ),
-    )
-    .arg(
-        Arg::with_name("tpu_connection_pool_size")
-            .long("tpu-connection-pool-size")
-            .takes_value(true)
-            .default_value(&default_args.tpu_connection_pool_size)
-            .validator(is_parsable::<usize>)
-            .help("Controls the TPU connection pool size per remote address"),
     )
     .arg(
         Arg::with_name("tpu_max_connections_per_ipaddr_per_minute")
@@ -1086,6 +1066,32 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Number of bins to divide the accounts index into"),
     )
     .arg(
+        Arg::with_name("accounts_index_limit")
+            .long("accounts-index-limit")
+            .value_name("VALUE")
+            .takes_value(true)
+            .possible_values(&[
+                "minimal",
+                "25GB",
+                "50GB",
+                "100GB",
+                "200GB",
+                "400GB",
+                "800GB",
+                "unlimited",
+            ])
+            .default_value("unlimited")
+            .help("Sets the memory limit for the accounts index")
+            .long_help(
+                "Sets the memory limit for the accounts index. The size options will limit the \
+                 accounts index memory to the specified value. E.g. \"50GB\" means the accounts \
+                 index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
+                 accounts index in memory. The \"minimal\" option reduces memory usage as much as \
+                 possible. All index entries that are not in memory are kept in the disk-backed \
+                 index. The disk-backed index has lower performance; prefer higher limits here.",
+            ),
+    )
+    .arg(
         Arg::with_name("accounts_index_initial_accounts_count")
             .long("accounts-index-initial-accounts-count")
             .value_name("NUMBER")
@@ -1100,19 +1106,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("PATH")
             .takes_value(true)
             .multiple(true)
-            .requires("enable_accounts_disk_index")
             .help(
                 "Persistent accounts-index location. May be specified multiple times. [default: \
                  <LEDGER>/accounts_index]",
-            ),
-    )
-    .arg(
-        Arg::with_name("enable_accounts_disk_index")
-            .long("enable-accounts-disk-index")
-            .help("Enables the disk-based accounts index")
-            .long_help(
-                "Enables the disk-based accounts index. Reduce the memory footprint of the \
-                 accounts index at the cost of index performance.",
             ),
     )
     .arg(

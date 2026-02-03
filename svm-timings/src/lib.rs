@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #[macro_use]
 extern crate eager;
 use {
@@ -44,9 +36,8 @@ impl ProgramTiming {
         self.accumulated_us += other.accumulated_us;
         self.accumulated_units += other.accumulated_units;
         self.count += other.count;
-        // Clones the entire vector, maybe not great...
         self.errored_txs_compute_consumed
-            .extend(other.errored_txs_compute_consumed.clone());
+            .extend(other.errored_txs_compute_consumed.iter().copied());
         self.total_errored_units += other.total_errored_units;
     }
 }

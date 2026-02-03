@@ -16,6 +16,7 @@ use {
             result::{Error, RepairVerifyError, Result},
         },
     },
+    agave_votor_messages::migration::MigrationStatus,
     bincode::{serialize, Options},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -233,7 +234,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "fFcqrZWZX4WcorTUxfMCVWeh2QcwamXKdLTzsDj58Kn")
+    frozen_abi(digest = "HbUQDATKfpN8pjyyarSGa8uN4SuLNTvMf7T5b66ajnNZ")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -345,6 +346,7 @@ pub struct ServeRepair {
     sharable_banks: SharableBanks,
     repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     repair_handler: Box<dyn RepairHandler + Send + Sync>,
+    migration_status: Arc<MigrationStatus>,
 }
 
 // Cache entry for repair peers for a slot.
@@ -408,12 +410,14 @@ impl ServeRepair {
         sharable_banks: SharableBanks,
         repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
         repair_handler: Box<dyn RepairHandler + Send + Sync>,
+        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             cluster_info,
             sharable_banks,
             repair_whitelist,
             repair_handler,
+            migration_status,
         }
     }
 
@@ -426,11 +430,13 @@ impl ServeRepair {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let repair_handler = Box::new(StandardRepairHandler::new(blockstore));
+        let bank_forks_r = bank_forks.read().unwrap();
         Self::new(
             cluster_info,
-            bank_forks.read().unwrap().sharable_banks(),
+            bank_forks_r.sharable_banks(),
             repair_whitelist,
             repair_handler,
+            bank_forks_r.migration_status(),
         )
     }
 
@@ -506,11 +512,18 @@ impl ServeRepair {
                     slot,
                 } => {
                     stats.ancestor_hashes += 1;
-                    (
-                        self.repair_handler
-                            .run_ancestor_hashes(recycler, from_addr, *slot, *nonce),
-                        "AncestorHashes",
-                    )
+                    if self
+                        .migration_status
+                        .should_respond_to_ancestor_hashes_requests(*slot)
+                    {
+                        (
+                            self.repair_handler
+                                .run_ancestor_hashes(recycler, from_addr, *slot, *nonce),
+                            "AncestorHashes",
+                        )
+                    } else {
+                        (None, "AncestorHashes")
+                    }
                 }
                 RepairProtocol::Pong(pong) => {
                     stats.pong += 1;
@@ -946,14 +959,7 @@ impl ServeRepair {
         let mut rng = rand::rng();
         let (check, ping) = request
             .sender()
-            .map(|&sender| {
-                ping_cache.check(
-                    &mut rng,
-                    identity_keypair,
-                    Instant::now(),
-                    (sender, *from_addr),
-                )
-            })
+            .map(|_| ping_cache.check(&mut rng, identity_keypair, Instant::now(), *from_addr))
             .unwrap_or_default();
         let ping_pkt = if let Some(ping) = ping {
             match request {
@@ -1919,7 +1925,6 @@ mod tests {
         );
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
         nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
-        nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr).unwrap();

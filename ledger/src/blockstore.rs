@@ -37,7 +37,7 @@ use {
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{create_ticks, Entry, MaxDataShredsLen},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -82,6 +82,7 @@ use {
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
+    wincode::{containers::Vec as WincodeVec, Deserialize as _},
 };
 
 pub mod blockstore_purge;
@@ -1350,32 +1351,39 @@ impl Blockstore {
         self.completed_slots_senders.lock().unwrap().clear();
     }
 
-    /// Clear `slot` from the Blockstore, see ``Blockstore::purge_slot_cleanup_chaining`
-    /// for more details.
+    /// Clear `slot` from the Blockstore
     ///
     /// This function currently requires `insert_shreds_lock`, as both
     /// `clear_unconfirmed_slot()` and `insert_shreds_handle_duplicate()`
     /// try to perform read-modify-write operation on [`cf::SlotMeta`] column
     /// family.
     pub fn clear_unconfirmed_slot(&self, slot: Slot) {
+        self.clear_unconfirmed_slots(slot, slot);
+    }
+
+    /// Atomically clear a range of `slot` inclusive, similar to `Blockstore::clear_unconfirmed_slot`
+    /// Holds the shred lock during the entire purge.
+    pub fn clear_unconfirmed_slots(&self, start: Slot, end: Slot) {
         let _lock = self.insert_shreds_lock.lock().unwrap();
-        // Purge the slot and insert an empty `SlotMeta` with only the `next_slots` field preserved.
-        // Shreds inherently know their parent slot, and a parent's SlotMeta `next_slots` list
-        // will be updated when the child is inserted (see `Blockstore::handle_chaining()`).
-        // However, we are only purging and repairing the parent slot here. Since the child will not be
-        // reinserted the chaining will be lost. In order for bank forks discovery to ingest the child,
-        // we must retain the chain by preserving `next_slots`.
-        match self.purge_slot_cleanup_chaining(slot) {
-            Ok(_) => {}
-            Err(BlockstoreError::SlotUnavailable) => {
-                error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
+        for slot in start..=end {
+            // Purge the slot and insert an empty `SlotMeta` with only the `next_slots` field preserved.
+            // Shreds inherently know their parent slot, and a parent's SlotMeta `next_slots` list
+            // will be updated when the child is inserted (see `Blockstore::handle_chaining()`).
+            // However, we are only purging and repairing the parent slot here. Since the child will not be
+            // reinserted the chaining will be lost. In order for bank forks discovery to ingest the child,
+            // we must retain the chain by preserving `next_slots`.
+            match self.purge_slot_cleanup_chaining(slot) {
+                Ok(_) => {}
+                Err(BlockstoreError::SlotUnavailable) => {
+                    error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
+                }
+                Err(e) => panic!("Purge database operations failed {e}"),
             }
-            Err(e) => panic!("Purge database operations failed {e}"),
         }
     }
 
-    // Bypasses erasure recovery because it is called from broadcast stage
-    // when inserting own shreds during leader slots.
+    // Bypasses erasure recovery becuase it is called from broadcast stage
+    // when inserting own shreds during leader slots. Stores all shreds in the original column.
     pub fn insert_cow_shreds<'a>(
         &self,
         shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
@@ -3166,7 +3174,7 @@ impl Blockstore {
         if let Some((slot, meta)) =
             self.get_transaction_status(signature, confirmed_unrooted_slots)?
         {
-            let transaction = self
+            let (transaction, index) = self
                 .find_transaction_in_slot(slot, signature)?
                 .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?; // Should not happen
 
@@ -3177,32 +3185,40 @@ impl Blockstore {
                     VersionedTransactionWithStatusMeta { transaction, meta },
                 ),
                 block_time,
+                index,
             }))
         } else {
             Ok(None)
         }
     }
 
+    /// Finds a transaction by signature in the given slot and returns it along with its index.
+    ///
+    /// The index represents the transaction's 0-based position in the flattened list of all
+    /// transactions across all entries in this slot. This matches the `transaction_index`
+    /// stored in `AddressSignatures` when `write_transaction_status` is called during block
+    /// processing.
     fn find_transaction_in_slot(
         &self,
         slot: Slot,
         signature: Signature,
-    ) -> Result<Option<VersionedTransaction>> {
+    ) -> Result<Option<(VersionedTransaction, u32)>> {
         let slot_entries = self.get_slot_entries(slot, 0)?;
         Ok(slot_entries
-            .iter()
-            .cloned()
+            .into_iter()
             .flat_map(|entry| entry.transactions)
-            .map(|transaction| {
+            .enumerate()
+            .map(|(index, transaction)| {
                 if let Err(err) = transaction.sanitize() {
                     warn!(
                         "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: \
                          {slot:?}, {transaction:?}",
                     );
                 }
-                transaction
+                (index, transaction)
             })
-            .find(|transaction| transaction.signatures[0] == signature))
+            .find(|(_, transaction)| transaction.signatures[0] == signature)
+            .map(|(index, transaction)| (transaction, index as u32)))
     }
 
     // DEPRECATED and decommissioned
@@ -3222,9 +3238,9 @@ impl Blockstore {
         &self,
         pubkey: Pubkey,
         slot: Slot,
-    ) -> Result<Vec<(Slot, Signature)>> {
+    ) -> Result<Vec<(Slot, Signature, u32)>> {
         let (lock, lowest_available_slot) = self.ensure_lowest_cleanup_slot();
-        let mut signatures: Vec<(Slot, Signature)> = vec![];
+        let mut signatures: Vec<(Slot, Signature, u32)> = vec![];
         if slot < lowest_available_slot {
             return Ok(signatures);
         }
@@ -3239,11 +3255,11 @@ impl Blockstore {
                     ),
                     IteratorDirection::Forward,
                 ))?;
-        for ((address, transaction_slot, _transaction_index, signature), _) in index_iterator {
+        for ((address, transaction_slot, transaction_index, signature), _) in index_iterator {
             if transaction_slot > slot || address != pubkey {
                 break;
             }
-            signatures.push((slot, signature));
+            signatures.push((transaction_slot, signature, transaction_index));
         }
         drop(lock);
         Ok(signatures)
@@ -3346,7 +3362,7 @@ impl Blockstore {
         get_until_slot_timer.stop();
 
         // Fetch the list of signatures that affect the given address
-        let mut address_signatures = vec![];
+        let mut address_signatures: Vec<(Slot, Signature, u32)> = vec![];
 
         // Get signatures in `slot`
         let mut get_initial_slot_timer = Measure::start("get_initial_slot_timer");
@@ -3356,7 +3372,7 @@ impl Blockstore {
             address_signatures.extend(
                 signatures
                     .into_iter()
-                    .filter(|(_, signature)| !excluded_signatures.contains(signature)),
+                    .filter(|(_, signature, _)| !excluded_signatures.contains(signature)),
             )
         } else {
             address_signatures.append(&mut signatures);
@@ -3378,13 +3394,13 @@ impl Blockstore {
 
         // Iterate until limit is reached
         while address_signatures.len() < limit {
-            if let Some(((key_address, slot, _transaction_index, signature), _)) = iterator.next() {
+            if let Some(((key_address, slot, transaction_index, signature), _)) = iterator.next() {
                 if slot < lowest_slot {
                     break;
                 }
                 if key_address == address {
                     if self.is_root(slot) || confirmed_unrooted_slots.contains(&slot) {
-                        address_signatures.push((slot, signature));
+                        address_signatures.push((slot, signature, transaction_index));
                     }
                     continue;
                 }
@@ -3395,13 +3411,13 @@ impl Blockstore {
 
         let address_signatures_iter = address_signatures
             .into_iter()
-            .filter(|(_, signature)| !until_excluded_signatures.contains(signature))
+            .filter(|(_, signature, _)| !until_excluded_signatures.contains(signature))
             .take(limit);
 
         // Fill in the status information for each found transaction
         let mut get_status_info_timer = Measure::start("get_status_info_timer");
         let mut infos = vec![];
-        for (slot, signature) in address_signatures_iter {
+        for (slot, signature, index) in address_signatures_iter {
             let transaction_status =
                 self.get_transaction_status(signature, &confirmed_unrooted_slots)?;
             let err = transaction_status.and_then(|(_slot, status)| status.status.err());
@@ -3413,6 +3429,7 @@ impl Blockstore {
                 err,
                 memo,
                 block_time,
+                index,
             });
         }
         get_status_info_timer.stop();
@@ -3694,7 +3711,7 @@ impl Blockstore {
                         )))
                     })
                     .and_then(|payload| {
-                        wincode::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
+                        <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
                             BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
                                 format!("could not reconstruct entries: {e:?}"),
                             )))
@@ -5212,7 +5229,6 @@ pub mod tests {
         super::*,
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
             shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
@@ -5224,6 +5240,7 @@ pub mod tests {
         solana_entry::entry::{next_entry, next_entry_mut},
         solana_genesis_utils::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
         solana_hash::Hash,
+        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
         solana_packet::PACKET_DATA_SIZE,
         solana_pubkey::Pubkey,
@@ -5233,7 +5250,7 @@ pub mod tests {
         solana_signature::Signature,
         solana_storage_proto::convert::generated,
         solana_transaction::Transaction,
-        solana_transaction_context::TransactionReturnData,
+        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
@@ -7885,7 +7902,9 @@ pub mod tests {
         assert_eq!(blockstore.lowest_slot_with_genesis(), 0);
         assert_eq!(blockstore.lowest_slot(), 1);
 
-        blockstore.purge_slots(0, 1, PurgeType::CompactionFilter);
+        blockstore
+            .purge_slots(0, 1, PurgeType::CompactionFilter)
+            .unwrap();
         assert_eq!(blockstore.get_first_available_block().unwrap(), 3);
         assert_eq!(blockstore.lowest_slot_with_genesis(), 2);
         assert_eq!(blockstore.lowest_slot(), 2);
@@ -8758,7 +8777,9 @@ pub mod tests {
 
         if simulate_blockstore_cleanup_service {
             *blockstore.lowest_cleanup_slot.write().unwrap() = lowest_cleanup_slot;
-            blockstore.purge_slots(0, lowest_cleanup_slot, PurgeType::CompactionFilter);
+            blockstore
+                .purge_slots(0, lowest_cleanup_slot, PurgeType::CompactionFilter)
+                .unwrap();
         }
 
         let are_missing = check_for_missing();
@@ -8868,14 +8889,15 @@ pub mod tests {
             })
             .collect();
 
-        for tx_with_meta in expected_transactions.clone() {
+        for (index, tx_with_meta) in expected_transactions.clone().into_iter().enumerate() {
             let signature = tx_with_meta.transaction.signatures[0];
             assert_eq!(
                 blockstore.get_rooted_transaction(signature).unwrap(),
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta.clone()),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
             assert_eq!(
@@ -8885,7 +8907,8 @@ pub mod tests {
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
         }
@@ -8991,7 +9014,7 @@ pub mod tests {
             })
             .collect();
 
-        for tx_with_meta in expected_transactions.clone() {
+        for (index, tx_with_meta) in expected_transactions.clone().into_iter().enumerate() {
             let signature = tx_with_meta.transaction.signatures[0];
             assert_eq!(
                 blockstore
@@ -9000,7 +9023,8 @@ pub mod tests {
                 Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
-                    block_time: None
+                    block_time: None,
+                    index: index as u32,
                 })
             );
             assert_eq!(blockstore.get_rooted_transaction(signature).unwrap(), None);
@@ -9135,25 +9159,28 @@ pub mod tests {
         let slot1_signatures = blockstore
             .find_address_signatures_for_slot(address0, 1)
             .unwrap();
-        for (i, (slot, signature)) in slot1_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot1_signatures.iter().enumerate() {
             assert_eq!(*slot, slot1);
             assert_eq!(*signature, Signature::from([i as u8 + 1; 64]));
+            assert_eq!(*index, (i + 1) as u32);
         }
 
         let slot2_signatures = blockstore
             .find_address_signatures_for_slot(address0, 2)
             .unwrap();
-        for (i, (slot, signature)) in slot2_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot2_signatures.iter().enumerate() {
             assert_eq!(*slot, slot2);
             assert_eq!(*signature, Signature::from([i as u8 + 5; 64]));
+            assert_eq!(*index, (i + 5) as u32);
         }
 
         let slot3_signatures = blockstore
             .find_address_signatures_for_slot(address0, 3)
             .unwrap();
-        for (i, (slot, signature)) in slot3_signatures.iter().enumerate() {
+        for (i, (slot, signature, index)) in slot3_signatures.iter().enumerate() {
             assert_eq!(*slot, slot3);
             assert_eq!(*signature, Signature::from([i as u8 + 9; 64]));
+            assert_eq!(*index, (i + 9) as u32);
         }
     }
 
@@ -9934,14 +9961,14 @@ pub mod tests {
             .insert_shreds(all_shreds, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
 
         // Test inserting just the codes, enough for recovery
         blockstore
             .insert_shreds(coding_shreds.clone(), Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
 
         // Test inserting some codes, but not enough for recovery
         blockstore
@@ -9952,7 +9979,7 @@ pub mod tests {
             )
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
 
         // Test inserting just the codes, and some data, enough for recovery
         let shreds: Vec<_> = data_shreds[..data_shreds.len() - 1]
@@ -9964,7 +9991,7 @@ pub mod tests {
             .insert_shreds(shreds, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
 
         // Test inserting some codes, and some data, but enough for recovery
         let shreds: Vec<_> = data_shreds[..data_shreds.len() / 2 - 1]
@@ -9976,7 +10003,7 @@ pub mod tests {
             .insert_shreds(shreds, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
 
         // Test inserting all shreds in 2 rounds, make sure nothing is lost
         let shreds1: Vec<_> = data_shreds[..data_shreds.len() / 2 - 1]
@@ -9996,7 +10023,7 @@ pub mod tests {
             .insert_shreds(shreds2, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
 
         // Test not all, but enough data and coding shreds in 2 rounds to trigger recovery,
         // make sure nothing is lost
@@ -10021,7 +10048,7 @@ pub mod tests {
             .insert_shreds(shreds2, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
 
         // Test insert shreds in 2 rounds, but not enough to trigger
         // recovery, make sure nothing is lost
@@ -10046,7 +10073,7 @@ pub mod tests {
             .insert_shreds(shreds2, Some(&leader_schedule_cache), false)
             .unwrap();
         verify_index_integrity(&blockstore, slot);
-        blockstore.purge_and_compact_slots(0, slot);
+        blockstore.purge_slots(0, slot, PurgeType::Exact).unwrap();
     }
 
     fn setup_erasure_shreds(
@@ -10115,9 +10142,10 @@ pub mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = FixedSchedule {
-            leader_schedule: Arc::new(Box::new(IdentityKeyedLeaderSchedule::new_from_schedule(
-                vec![leader_keypair.pubkey()],
-            ))),
+            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader {
+                id: leader_keypair.pubkey(),
+                vote_address: Pubkey::new_unique(),
+            }])),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 
@@ -10383,6 +10411,7 @@ pub mod tests {
                 post_balance: u64::MAX,
                 reward_type: Some(RewardType::Fee),
                 commission: None,
+                commission_bps: None,
             })
             .collect();
         let protobuf_rewards: generated::Rewards = rewards.into();
@@ -10456,6 +10485,7 @@ pub mod tests {
                 post_balance: 42,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData {

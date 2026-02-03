@@ -6,7 +6,6 @@ use {
     rand::Rng,
     solana_perf::{
         packet::{to_packet_batches, BytesPacket, BytesPacketBatch, PacketBatch},
-        recycler::Recycler,
         sigverify,
         test_tx::{test_multisig_tx, test_tx},
     },
@@ -143,22 +142,8 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
     })
 }
 
-fn bench_get_offsets(b: &mut Bencher) {
-    let tx = test_tx();
-
-    // generate packet vector
-    let mut batches = to_packet_batches(&std::iter::repeat_n(tx, 1024).collect::<Vec<_>>(), 1024);
-
-    let recycler = Recycler::default();
-    // verify packets
-    b.iter(|| {
-        let _ans = sigverify::generate_offsets(&mut batches, &recycler, false);
-    })
-}
-
 benchmark_group!(
     benches,
-    bench_get_offsets,
     bench_sigverify_uneven,
     bench_sigverify_high_packets_large_batch,
     bench_sigverify_high_packets_small_batch,

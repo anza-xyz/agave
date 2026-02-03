@@ -17,7 +17,7 @@ use {
 
 // Allows scheduling a large number of reads such that temporary disk access delays
 // shouldn't block decompression (unless read bandwidth is saturated).
-const MAX_SNAPSHOT_READER_BUF_SIZE: u64 = 128 * 1024 * 1024;
+const MAX_SNAPSHOT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
 // The buffer should be large enough to saturate write I/O bandwidth, while also accommodating:
 // - Many small files: each file consumes at least one write-capacity-sized chunk (0.5-1 MiB).
 // - Large files: their data may accumulate in backlog buffers while waiting for file open
@@ -31,24 +31,18 @@ pub fn streaming_unarchive_snapshot(
     ledger_dir: PathBuf,
     snapshot_archive_path: PathBuf,
     archive_format: ArchiveFormat,
-    memlock_budget_size: usize,
+    io_setup: IoSetupState,
 ) -> JoinHandle<Result<(), UnpackError>> {
     let do_unpack = move |archive_path: &Path| {
         let (decompressor, file_creator) = {
-            let archive_size = fs::metadata(archive_path)?.len() as usize;
-
-            let io_setup = IoSetupState::default().with_shared_sqpoll()?;
-
-            // Bound the buffers based on available memlock budget (reader and writer might use it to
-            // register buffer in kernel) and input archive size (decompression multiplies content size,
+            // Bound the buffers based on input archive size (decompression multiplies content size,
             // but buffering more than origin isn't necessary).
-            let read_write_budget_size = (memlock_budget_size / 2).min(archive_size);
+            let archive_size = fs::metadata(archive_path)?.len() as usize;
+            let read_buf_size = MAX_SNAPSHOT_READER_BUF_SIZE.min(archive_size);
+            let write_buf_size = MAX_UNPACK_WRITE_BUF_SIZE.min(archive_size);
 
-            let read_buf_size = MAX_SNAPSHOT_READER_BUF_SIZE.min(read_write_budget_size as u64);
             let decompressor =
                 decompressed_tar_reader(archive_format, archive_path, read_buf_size, &io_setup)?;
-
-            let write_buf_size = MAX_UNPACK_WRITE_BUF_SIZE.min(read_write_budget_size);
             (
                 decompressor,
                 file_creator(write_buf_size, &io_setup, move |file_info| {
@@ -115,10 +109,9 @@ pub fn unpack_genesis_archive(
 fn decompressed_tar_reader(
     archive_format: ArchiveFormat,
     archive_path: &Path,
-    buf_size: u64,
+    buf_size: usize,
     io_setup: &IoSetupState,
 ) -> io::Result<ArchiveFormatDecompressor<impl BufRead + use<>>> {
-    let buf_reader =
-        buffered_reader::large_file_buf_reader(archive_path, buf_size as usize, io_setup)?;
+    let buf_reader = buffered_reader::large_file_buf_reader(archive_path, buf_size, io_setup)?;
     ArchiveFormatDecompressor::new(archive_format, buf_reader)
 }

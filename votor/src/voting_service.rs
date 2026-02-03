@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use {
     crate::{
         staked_validators_cache::StakedValidatorsCache,
@@ -23,21 +21,11 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
 
 const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
 const STAKED_VALIDATORS_CACHE_NUM_EPOCH_CAP: usize = 5;
 
-#[derive(Debug, Error)]
-enum SendVoteError {
-    #[error(transparent)]
-    BincodeError(#[from] bincode::Error),
-    #[error(transparent)]
-    TransportError(#[from] TransportError),
-}
-
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum BLSOp {
     PushVote {
@@ -298,7 +286,10 @@ mod tests {
             quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
-        std::{net::SocketAddr, sync::Arc},
+        std::{
+            net::SocketAddr,
+            sync::{Arc, RwLock},
+        },
         test_case::test_case,
         tokio_util::sync::CancellationToken,
     };
@@ -382,7 +373,7 @@ mod tests {
         let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
 
         // Send a BLS message via the VotingService
-        bls_sender.send(bls_op).unwrap();
+        assert!(bls_sender.send(bls_op).is_ok());
 
         // Start a quick streamer to handle quick control packets
         let (sender, receiver) = crossbeam_channel::unbounded();
@@ -394,22 +385,24 @@ mod tests {
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
         )));
-        let cancel_token = CancellationToken::new();
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
+            endpoints: _,
             thread: quic_server_thread,
-            ..
+            key_updater: _,
         } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
-            "quic_streamer_test",
+            "voting_service_test",
             [socket],
             &Keypair::new(),
             sender,
             staked_nodes,
             QuicStreamerConfig::default_for_tests(),
             SwQosConfig::default(),
-            cancel_token.clone(),
+            cancel.clone(),
         )
         .unwrap();
+
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
         let received_message = packet
@@ -422,7 +415,7 @@ mod tests {
                 )
             });
         assert_eq!(received_message, expected_message);
-        cancel_token.cancel();
+        cancel.cancel();
         quic_server_thread.join().unwrap();
     }
 }

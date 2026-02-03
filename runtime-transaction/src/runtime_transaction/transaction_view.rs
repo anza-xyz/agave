@@ -10,10 +10,10 @@ use {
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
     solana_message::{
-        compiled_instruction::CompiledInstruction,
-        v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
         LegacyMessage, MessageHeader, SanitizedMessage, TransactionSignatureDetails,
         VersionedMessage,
+        compiled_instruction::CompiledInstruction,
+        v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
     },
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -219,7 +219,7 @@ mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_message::{v0, AddressLookupTableAccount, SimpleAddressLoader},
+        solana_message::{AddressLookupTableAccount, SimpleAddressLoader, v0},
         solana_signature::Signature,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
@@ -240,7 +240,8 @@ mod tests {
 
         let hash = Hash::new_unique();
         let transaction =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true, true)
+                .unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -273,7 +274,7 @@ mod tests {
         ) {
             let bytes = bincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -340,7 +341,7 @@ mod tests {
             let bytes =
                 bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], true, true).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,

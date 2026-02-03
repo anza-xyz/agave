@@ -12,7 +12,7 @@ edition = { workspace = true }
 crate-type = ["cdylib"]
 
 [dependencies]
-solana-curve25519 = { workspace = true, features = ["agave-unstable-api"] }
+solana-curve25519 = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 

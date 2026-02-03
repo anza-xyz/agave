@@ -2,7 +2,8 @@
 use {
     crate::{
         account_storage::stored_account_info::StoredAccountInfo,
-        accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
+        account_storage_entry::AccountStorageEntry,
+        accounts_db::{AccountFromStorage, AccountsDb},
         is_zero_lamport::IsZeroLamport,
         utils::create_account_shared_data,
     },
@@ -358,12 +359,13 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
+            account_storage_entry::AccountStorageEntry,
+            accounts_db::get_temp_accounts_paths,
             accounts_file::AccountsFileProvider,
         },
         rand::Rng,

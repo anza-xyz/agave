@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! The solana-program-test provides a BanksClient-based test framework SBF programs
 #![allow(clippy::arithmetic_side_effects)]
 
@@ -14,7 +6,7 @@
 pub use tokio;
 use {
     agave_feature_set::{
-        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FEATURE_NAMES,
+        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES,
     },
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
@@ -66,7 +58,6 @@ use {
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
-        convert::TryFrom,
         fs::File,
         io::{self, Read},
         mem::transmute,
@@ -143,15 +134,11 @@ pub fn invoke_builtin_function(
     let deduplicated_indices: HashSet<IndexOfAccount> = instruction_account_indices.collect();
 
     // Serialize entrypoint parameters with SBF ABI
-    let mask_out_rent_epoch_in_vm_serialization = invoke_context
-        .get_feature_set()
-        .mask_out_rent_epoch_in_vm_serialization;
     let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
         serialize_parameters(
             &instruction_context,
             false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
             false, // There is no VM so account_data_direct_mapping can not be implemented here
-            mask_out_rent_epoch_in_vm_serialization,
         )?;
 
     // Deserialize data back into instruction params
@@ -815,6 +802,19 @@ impl ProgramTest {
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
 
+        // Remove features tagged to deactivate
+        let mut feature_set = FeatureSet::all_enabled();
+        for deactivate_feature_pk in &self.deactivate_feature_set {
+            if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
+                feature_set.deactivate(deactivate_feature_pk);
+            } else {
+                warn!(
+                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
+                     Feature public key"
+                );
+            }
+        }
+
         let mut genesis_config = create_genesis_config_with_leader_ex(
             1_000_000 * LAMPORTS_PER_SOL,
             &mint_keypair.pubkey(),
@@ -823,30 +823,13 @@ impl ProgramTest {
             &Pubkey::new_unique(),
             None,
             bootstrap_validator_stake_lamports,
-            42,
+            890_880,
             fee_rate_governor,
             rent.clone(),
             ClusterType::Development,
+            &feature_set,
             std::mem::take(&mut self.genesis_accounts),
         );
-
-        // Remove features tagged to deactivate
-        for deactivate_feature_pk in &self.deactivate_feature_set {
-            if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
-                match genesis_config.accounts.remove(deactivate_feature_pk) {
-                    Some(_) => debug!("Feature for {deactivate_feature_pk:?} deactivated"),
-                    None => warn!(
-                        "Feature {deactivate_feature_pk:?} set for deactivation not found in \
-                         genesis_config account list, ignored."
-                    ),
-                }
-            } else {
-                warn!(
-                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
-                     Feature public key"
-                );
-            }
-        }
 
         let target_tick_duration = Duration::from_micros(100);
         genesis_config.poh_config = PohConfig::new_sleep(target_tick_duration);

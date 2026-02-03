@@ -258,6 +258,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         .subcommand(
             SubCommand::with_name("ping")
                 .about("Submit transactions sequentially")
+                .setting(AppSettings::Hidden)
                 .arg(
                     Arg::with_name("interval")
                         .short("i")
@@ -745,35 +746,37 @@ pub async fn process_catchup(
     progress_bar.set_message("Connecting...");
 
     if let Some(our_localhost_port) = our_localhost_port {
-        let gussed_default = Some(format!("http://localhost:{our_localhost_port}"));
-        if node_json_rpc_url.is_some() && node_json_rpc_url != gussed_default {
-            // go to new line to leave this message on console
-            println!(
-                "Preferring explicitly given rpc ({}) as us, although --our-localhost is given\n",
-                node_json_rpc_url.as_ref().unwrap()
-            );
-        } else {
-            node_json_rpc_url = gussed_default;
+        let gussed_default = format!("http://localhost:{our_localhost_port}");
+        match node_json_rpc_url.as_ref() {
+            Some(node_json_rpc_url) if node_json_rpc_url != &gussed_default => {
+                // go to new line to leave this message on console
+                println!(
+                    "Preferring explicitly given rpc ({node_json_rpc_url}) as us, although \
+                     --our-localhost is given\n"
+                )
+            }
+            _ => {
+                node_json_rpc_url = Some(gussed_default);
+            }
         }
     }
 
     let (node_client, node_pubkey) = if our_localhost_port.is_some() {
         let client = RpcClient::new(node_json_rpc_url.unwrap());
-        let guessed_default = Some(client.get_identity().await?);
+        let guessed_default = client.get_identity().await?;
         (
             client,
-            (if node_pubkey.is_some() && node_pubkey != guessed_default {
-                // go to new line to leave this message on console
-                println!(
-                    "Preferring explicitly given node pubkey ({}) as us, although --our-localhost \
-                     is given\n",
-                    node_pubkey.unwrap()
-                );
-                node_pubkey
-            } else {
-                guessed_default
-            })
-            .unwrap(),
+            (match node_pubkey {
+                Some(node_pubkey) if node_pubkey != guessed_default => {
+                    // go to new line to leave this message on console
+                    println!(
+                        "Preferring explicitly given node pubkey ({node_pubkey}) as us, although \
+                         --our-localhost is given\n"
+                    );
+                    node_pubkey
+                }
+                _ => guessed_default,
+            }),
         )
     } else if let Some(node_pubkey) = node_pubkey {
         if let Some(node_json_rpc_url) = node_json_rpc_url {
@@ -1923,13 +1926,18 @@ pub async fn process_show_stakes(
             let mut pubkeys: HashSet<String> =
                 pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
 
-            let vote_account_pubkeys: HashSet<String> = vote_accounts
+            let vote_account_pubkeys: HashSet<Pubkey> = vote_accounts
                 .current
                 .into_iter()
                 .chain(vote_accounts.delinquent)
                 .filter_map(|vote_acc| {
-                    (pubkeys.remove(&vote_acc.node_pubkey) || pubkeys.remove(&vote_acc.vote_pubkey))
-                        .then_some(vote_acc.vote_pubkey)
+                    if pubkeys.remove(&vote_acc.node_pubkey)
+                        || pubkeys.remove(&vote_acc.vote_pubkey)
+                    {
+                        Pubkey::from_str(&vote_acc.vote_pubkey).ok()
+                    } else {
+                        None
+                    }
                 })
                 .collect();
 
@@ -1942,7 +1950,7 @@ pub async fn process_show_stakes(
             vote_account_progress_bar.finish_and_clear();
             vote_account_pubkeys
         }
-        None => HashSet::new(),
+        None => HashSet::<Pubkey>::new(),
     };
 
     let mut program_accounts_config = RpcProgramAccountsConfig {
@@ -1958,16 +1966,12 @@ pub async fn process_show_stakes(
 
     // Use server-side filtering if only one vote account is provided
     if vote_account_pubkeys.len() == 1 {
+        let filter_pubkey = vote_account_pubkeys.iter().next().unwrap();
         program_accounts_config.filters = Some(vec![
             // Filter by `StakeStateV2::Stake(_, _)`
             RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
             // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
-            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
-                124,
-                Pubkey::from_str(vote_account_pubkeys.iter().next().unwrap())
-                    .unwrap()
-                    .as_ref(),
-            )),
+            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(124, filter_pubkey.as_ref())),
         ]);
     }
 
@@ -2025,7 +2029,7 @@ pub async fn process_show_stakes(
                 }
                 StakeStateV2::Stake(_, stake, _) => {
                     if vote_account_pubkeys.is_empty()
-                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey.to_string())
+                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey)
                     {
                         stake_accounts.push(CliKeyedStakeState {
                             stake_pubkey: stake_pubkey.to_string(),
@@ -2297,6 +2301,7 @@ pub async fn process_transaction_history(
                             block_time,
                             slot,
                             transaction: transaction_with_meta,
+                            ..
                         } = confirmed_transaction;
 
                         let decoded_transaction =

@@ -61,10 +61,6 @@ const CONNECTION_CLOSE_REASON_DROPPED_ENTRY: &[u8] = b"dropped";
 pub(crate) const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
 pub(crate) const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
 
-pub(crate) const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
-pub(crate) const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] =
-    b"exceed_max_stream_count";
-
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 
@@ -98,7 +94,9 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 #[derive(Clone)]
 struct PacketAccumulator {
     pub meta: Meta,
-    pub chunks: SmallVec<[Bytes; 2]>,
+    // the capacity here should match or exceed the capacity of the chunks
+    // array used by handle_connection()
+    pub chunks: SmallVec<[Bytes; 4]>,
     pub start_time: Instant,
 }
 
@@ -251,12 +249,13 @@ where
     C: ConnectionContext + Send + Sync + 'static,
 {
     let quic_server_params = Arc::new(quic_server_params);
+    let num_shards = (quic_server_params.num_threads.get() * 2).next_power_of_two();
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
         // allow for 10x burst to make sure we can accommodate legitimate
         // bursts from container environments running multiple pods on same IP
         quic_server_params.max_connections_per_ipaddr_per_min * 10,
-        quic_server_params.num_threads.get() * 2,
+        num_shards,
     ));
     let overall_connection_rate_limiter = Arc::new(TokenBucket::new(
         MAX_CONNECTION_BURST,
@@ -412,7 +411,6 @@ pub fn get_connection_stake(
 #[derive(Debug)]
 pub(crate) enum ConnectionHandlerError {
     ConnectionAddError,
-    MaxStreamError,
 }
 
 pub(crate) fn update_open_connections_stat<S: OpaqueStreamerCounter>(
@@ -784,7 +782,6 @@ fn handle_chunks(
     // done receiving chunks
     let bytes_sent = accum.meta.size;
 
-    //
     // 86% of transactions/packets come in one chunk. In that case,
     // we can just move the chunk to the `Packet` and no copy is
     // made.
@@ -797,8 +794,7 @@ fn handle_chunks(
             accum.meta.clone(),
         )
     } else {
-        let size: usize = accum.chunks.iter().map(Bytes::len).sum();
-        let mut buf = BytesMut::with_capacity(size);
+        let mut buf = BytesMut::with_capacity(bytes_sent);
         for chunk in &accum.chunks {
             buf.put_slice(chunk);
         }

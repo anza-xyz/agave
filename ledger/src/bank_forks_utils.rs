@@ -5,7 +5,6 @@ use {
             self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
         entry_notifier_service::EntryNotifierSender,
-        leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     agave_snapshots::{
@@ -58,61 +57,15 @@ pub enum BankForksUtilsError {
 
     #[error("failed to process blockstore from genesis: {0}")]
     ProcessBlockstoreFromGenesis(#[source] BlockstoreProcessorError),
-
-    #[error("failed to process blockstore from root: {0}")]
-    ProcessBlockstoreFromRoot(#[source] BlockstoreProcessorError),
 }
 
-pub type LoadResult = result::Result<
-    (
-        Arc<RwLock<BankForks>>,
-        LeaderScheduleCache,
-        Option<StartingSnapshotHashes>,
-    ),
-    BankForksUtilsError,
->;
+pub type LoadResult =
+    result::Result<(Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>), BankForksUtilsError>;
 
-/// Load the banks via genesis or a snapshot then processes all full blocks in blockstore
+/// Load the banks via genesis or a snapshot
 ///
-/// If a snapshot config is given, and a snapshot is found, it will be loaded.  Otherwise, load
+/// If a snapshot config is given, and a snapshot is found, it will be loaded. Otherwise, load
 /// from genesis.
-#[allow(clippy::too_many_arguments)]
-pub fn load(
-    genesis_config: &GenesisConfig,
-    blockstore: &Blockstore,
-    account_paths: Vec<PathBuf>,
-    snapshot_config: &SnapshotConfig,
-    process_options: ProcessOptions,
-    transaction_status_sender: Option<&TransactionStatusSender>,
-    entry_notification_sender: Option<&EntryNotifierSender>,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
-) -> LoadResult {
-    let (bank_forks, leader_schedule_cache, starting_snapshot_hashes, ..) = load_bank_forks(
-        genesis_config,
-        blockstore,
-        account_paths,
-        snapshot_config,
-        &process_options,
-        transaction_status_sender,
-        entry_notification_sender,
-        accounts_update_notifier,
-        exit,
-    )?;
-    blockstore_processor::process_blockstore_from_root(
-        blockstore,
-        &bank_forks,
-        &leader_schedule_cache,
-        &process_options,
-        transaction_status_sender,
-        entry_notification_sender,
-        None, // snapshot_controller
-    )
-    .map_err(BankForksUtilsError::ProcessBlockstoreFromRoot)?;
-
-    Ok((bank_forks, leader_schedule_cache, starting_snapshot_hashes))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn load_bank_forks(
     genesis_config: &GenesisConfig,
@@ -197,12 +150,6 @@ pub fn load_bank_forks(
             (bank_forks, None)
         };
 
-    let mut leader_schedule_cache =
-        LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
-    if process_options.full_leader_cache {
-        leader_schedule_cache.set_max_schedules(usize::MAX);
-    }
-
     if let Some(ref new_hard_forks) = process_options.new_hard_forks {
         let root_bank = bank_forks.read().unwrap().root_bank();
         new_hard_forks
@@ -210,7 +157,7 @@ pub fn load_bank_forks(
             .for_each(|hard_fork_slot| root_bank.register_hard_fork(*hard_fork_slot));
     }
 
-    Ok((bank_forks, leader_schedule_cache, starting_snapshot_hashes))
+    Ok((bank_forks, starting_snapshot_hashes))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -276,6 +223,7 @@ fn bank_forks_from_snapshot(
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
+            None, // leader_for_tests
             process_options.limit_load_slot_count_from_snapshot,
             process_options.verify_index,
             process_options.accounts_db_config.clone(),
@@ -301,6 +249,7 @@ fn bank_forks_from_snapshot(
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
+            None, // leader_for_tests
             process_options.limit_load_slot_count_from_snapshot,
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,

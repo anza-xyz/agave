@@ -737,7 +737,7 @@ mod test {
         solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_transaction::Transaction,
-        solana_transaction_context::TransactionReturnData,
+        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_status::{Reward, RewardType, TransactionStatusMeta},
         std::io::BufWriter,
     };
@@ -813,6 +813,7 @@ mod test {
                 post_balance: 9_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData {
@@ -893,6 +894,7 @@ Rewards:
                 post_balance: 14_900,
                 reward_type: Some(RewardType::Rent),
                 commission: None,
+                commission_bps: None,
             }]),
             loaded_addresses,
             return_data: Some(TransactionReturnData {

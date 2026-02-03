@@ -416,11 +416,11 @@ async fn test_cli_program_deploy_no_authority() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true, true; "Feature enabled, skip preflight")]
 #[test_case(true, false; "Feature enabled, don't skip preflight")]
 #[test_case(false, true; "Feature disabled, skip preflight")]
 #[test_case(false, false; "Feature disabled, don't skip preflight")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
     agave_logger::setup();
 
@@ -541,9 +541,9 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Feature enabled")]
 #[test_case(false; "Feature disabled")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     agave_logger::setup();
 
@@ -1111,9 +1111,9 @@ async fn test_cli_program_deploy_with_authority() {
     assert_eq!("none", authority_pubkey_str);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Skip preflight")]
 #[test_case(false; "Dont skip preflight")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     agave_logger::setup();
 
@@ -1700,15 +1700,11 @@ async fn test_cli_program_write_buffer() {
     file.read_to_end(&mut program_data).unwrap();
     let max_len = program_data.len();
     let minimum_balance_for_buffer = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-            max_len,
-        ))
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(max_len))
         .await
         .unwrap();
     let minimum_balance_for_buffer_default = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-            max_len,
-        ))
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(max_len))
         .await
         .unwrap();
 
@@ -2105,9 +2101,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     file.read_to_end(&mut program_data).unwrap();
     let max_len = program_data.len();
     let minimum_balance_for_buffer = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-            max_len,
-        ))
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(max_len))
         .await
         .unwrap();
 

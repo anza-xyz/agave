@@ -6,7 +6,7 @@ use {
             quic::spawn_server,
             swqos::{SwQos, SwQosConfig},
         },
-        quic::{QuicServerError, QuicStreamerConfig, StreamerStats},
+        quic::{QuicServerError, QuicStreamerConfig, StreamerStats, QUIC_MAX_TIMEOUT},
         streamer::StakedNodes,
     },
     crossbeam_channel::{unbounded, Receiver, Sender},
@@ -20,7 +20,6 @@ use {
         SocketConfiguration as SocketConfig,
     },
     solana_perf::packet::PacketBatch,
-    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
@@ -30,6 +29,11 @@ use {
     tokio::{task::JoinHandle, time::sleep},
     tokio_util::sync::CancellationToken,
 };
+
+/// Duration for QUIC keep-alive in tests. Typically tests are running for shorter duration that
+/// connection timeout and keep-alive is not strictly necessary. But for longer running tests, it
+/// makes sense to have keep-alive enable and set the value to be around half of the connection timeout.
+const QUIC_KEEP_ALIVE_FOR_TESTS: Duration = Duration::from_secs(5);
 
 /// Spawn a streamer instance in the current tokio runtime.
 pub fn spawn_stake_weighted_qos_server(
@@ -80,8 +84,8 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let mut transport_config = TransportConfig::default();
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     transport_config.max_idle_timeout(Some(timeout));
-    transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
-    transport_config.send_fairness(QUIC_SEND_FAIRNESS);
+    transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE_FOR_TESTS));
+    transport_config.send_fairness(false);
     config.transport_config(Arc::new(transport_config));
 
     config

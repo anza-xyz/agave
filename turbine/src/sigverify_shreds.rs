@@ -1,12 +1,12 @@
 use {
     crate::{
-        cluster_nodes::{self, check_feature_activation, ClusterNodesCache},
+        cluster_nodes::{ClusterNodesCache, DATA_PLANE_FANOUT, check_feature_activation},
         retransmit_stage::RetransmitStage,
     },
     agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::{Either, Itertools},
-    rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -17,7 +17,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{verify_shreds, LruCache, SlotPubkeys},
+        sigverify_shreds::{LruCache, SlotPubkeys, verify_shreds},
     },
     solana_perf::{
         self,
@@ -31,8 +31,8 @@ use {
     std::{
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicUsize, Ordering},
         },
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -358,8 +358,7 @@ fn verify_retransmitter_signature(
     };
     let cluster_nodes =
         cluster_nodes_cache.get(shred.slot(), root_bank, working_bank, cluster_info);
-    let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), root_bank);
-    let parent = match cluster_nodes.get_retransmit_parent(&leader, &shred, data_plane_fanout) {
+    let parent = match cluster_nodes.get_retransmit_parent(&leader.id, &shred, DATA_PLANE_FANOUT) {
         Ok(Some(parent)) => parent,
         Ok(None) => {
             stats
@@ -422,6 +421,7 @@ fn get_slot_leaders<'a>(
             let slot = shred.and_then(shred::layout::get_slot)?;
             let leader = leader_schedule_cache
                 .slot_leader_at(slot, Some(bank))
+                .map(|leader| leader.id)
                 .filter(|leader| leader != self_pubkey);
             if leader.is_none() {
                 packet.meta_mut().set_discard(true);
@@ -556,7 +556,7 @@ mod tests {
     use {
         super::*,
         rand::Rng,
-        solana_entry::entry::{create_ticks, Entry},
+        solana_entry::entry::{Entry, create_ticks},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,

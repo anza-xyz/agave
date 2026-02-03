@@ -1,0 +1,15 @@
+[workspace]
+members = ["a", "b", "c", "d"]
+
+resolver = "2"
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+
+
+[workspace.dependencies]
+a = { path = "a", version = "=1.0.0" }
+b = { path = "b", version = "=1.0.0" }
+c = { path = "c", version = "=1.0.0" }
+d = { path = "d", version = "=1.0.0" }

@@ -1,6 +1,6 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
-    rand::{prelude::IndexedRandom as _, Rng},
+    bencher::{Bencher, benchmark_group, benchmark_main},
+    rand::{Rng, prelude::IndexedRandom as _},
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
@@ -10,7 +10,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_turbine::{
-        cluster_nodes::{make_test_cluster, new_cluster_nodes, ClusterNodes},
+        cluster_nodes::{ClusterNodes, make_test_cluster, new_cluster_nodes},
         retransmit_stage::RetransmitStage,
     },
 };

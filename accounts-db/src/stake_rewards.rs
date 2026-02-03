@@ -5,18 +5,24 @@ use {
         is_zero_lamport::IsZeroLamport,
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
-    serde::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_reward_info::RewardInfo,
+    solana_reward_info::RewardType,
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StakeRewardInfo {
+    pub reward_type: RewardType,
+    pub lamports: i64,
+    pub post_balance: u64,
+    pub commission_bps: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct StakeReward {
     pub stake_pubkey: Pubkey,
-    pub stake_reward_info: RewardInfo,
+    pub stake_reward_info: StakeRewardInfo,
     pub stake_account: AccountSharedData,
 }
 
@@ -76,7 +82,7 @@ use {
         stake_flags::StakeFlags,
         state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
     },
-    solana_vote_program::vote_state,
+    solana_vote_program::vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
 };
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
@@ -95,9 +101,12 @@ impl StakeReward {
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
             &validator_voting_keypair.pubkey(),
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
             &validator_voting_keypair.pubkey(),
-            None,
             1000,
+            &validator_voting_keypair.pubkey(),
+            0,
+            &validator_voting_keypair.pubkey(),
             validator_stake_lamports,
         );
 
@@ -112,11 +121,11 @@ impl StakeReward {
 
         Self {
             stake_pubkey: Pubkey::new_unique(),
-            stake_reward_info: RewardInfo {
+            stake_reward_info: StakeRewardInfo {
                 reward_type: solana_reward_info::RewardType::Staking,
                 lamports: reward_lamports,
-                post_balance: 0,     /* unused atm */
-                commission: Some(0), /* unused but tests require some value */
+                post_balance: 0,         /* unused atm */
+                commission_bps: Some(0), /* unused but tests require some value */
             },
 
             stake_account: validator_stake_account,

@@ -1,25 +1,31 @@
 use {
     crate::{
-        instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount,
+        instruction_accounts::{BorrowedInstructionAccount, InstructionAccount},
+        transaction::TransactionContext,
         vm_addresses::{
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
             GUEST_REGION_SIZE,
         },
         vm_slice::VmSlice,
-        IndexOfAccount, InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
     },
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    std::{collections::HashSet, ops::Range},
+    std::collections::HashSet,
 };
 
 /// Instruction shared between runtime and programs.
 #[repr(C)]
 #[derive(Debug)]
 pub struct InstructionFrame {
-    pub nesting_level: usize,
-    pub program_account_index_in_tx: IndexOfAccount,
+    /// Reserved field for alignment and potential future usage.
+    pub reserved: u16,
+    pub program_account_index_in_tx: u16,
+    pub nesting_level: u16,
+    /// This is the index of the parent instruction if this is a CPI and u16::MAX if this is a
+    /// top-level instruction
+    pub index_of_caller_instruction: u16,
     pub instruction_accounts: VmSlice<InstructionAccount>,
     pub instruction_data: VmSlice<u8>,
 }
@@ -29,22 +35,17 @@ impl Default for InstructionFrame {
         InstructionFrame {
             nesting_level: 0,
             program_account_index_in_tx: 0,
+            index_of_caller_instruction: u16::MAX,
             // Using u64::MAX as the default pointer value, since it shall never be accessible.
             instruction_accounts: VmSlice::new(0, 0),
             instruction_data: VmSlice::new(0, 0),
+            reserved: 0,
         }
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl InstructionFrame {
-    /// This function retrieves the range to index transaction_context.deduplication_maps
-    pub fn deduplication_map_range(instruction_index: usize) -> Range<usize> {
-        instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
-            ..instruction_index
-                .saturating_add(1)
-                .saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
-    }
-
     pub fn configure_vm_slices(
         &mut self,
         instruction_index: u64,

@@ -306,7 +306,6 @@ fn main() -> Result<()> {
                     stats.clone(),
                     None,  // coalesce
                     true,  // use_pinned_memory
-                    None,  // in_vote_only_mode
                     false, // is_staked_service
                 ));
             }

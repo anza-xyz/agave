@@ -1,15 +1,12 @@
 use {
-    crate::{
-        blockstore::Blockstore,
-        leader_schedule::{FixedSchedule, LeaderSchedule},
-        leader_schedule_utils,
-    },
+    crate::blockstore::Blockstore,
     itertools::Itertools,
     log::*,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
+    solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, leader_schedule_utils},
     std::{
         collections::{hash_map::Entry, HashMap, VecDeque},
         sync::{
@@ -67,12 +64,6 @@ impl LeaderScheduleCache {
         cache
     }
 
-    pub fn set_max_schedules(&mut self, max_schedules: usize) {
-        if max_schedules > 0 {
-            self.max_schedules = CacheCapacity(max_schedules);
-        }
-    }
-
     pub fn max_schedules(&self) -> usize {
         self.max_schedules.0
     }
@@ -90,7 +81,7 @@ impl LeaderScheduleCache {
         }
     }
 
-    pub fn slot_leader_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<Pubkey> {
+    pub fn slot_leader_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<SlotLeader> {
         if let Some(bank) = bank {
             self.slot_leader_at_else_compute(slot, bank)
         } else if self.epoch_schedule.slots_per_epoch == 0 {
@@ -161,7 +152,7 @@ impl LeaderScheduleCache {
         self.fixed_schedule = fixed_schedule.map(Arc::new);
     }
 
-    fn slot_leader_at_no_compute(&self, slot: Slot) -> Option<Pubkey> {
+    fn slot_leader_at_no_compute(&self, slot: Slot) -> Option<SlotLeader> {
         let (epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(slot);
         if let Some(ref fixed_schedule) = self.fixed_schedule {
             return Some(fixed_schedule.leader_schedule[slot_index]);
@@ -174,7 +165,7 @@ impl LeaderScheduleCache {
             .map(|schedule| schedule[slot_index])
     }
 
-    fn slot_leader_at_else_compute(&self, slot: Slot, bank: &Bank) -> Option<Pubkey> {
+    fn slot_leader_at_else_compute(&self, slot: Slot, bank: &Bank) -> Option<SlotLeader> {
         let cache_result = self.slot_leader_at_no_compute(slot);
         // Forbid asking for slots in an unconfirmed epoch
         let bank_epoch = self.epoch_schedule.get_epoch_and_slot_index(slot).0;
@@ -187,7 +178,7 @@ impl LeaderScheduleCache {
         } else {
             let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
             self.compute_leader_schedule(epoch, bank)
-                .map(|epoch_schedule| epoch_schedule[slot_index])
+                .map(|leader_schedule| leader_schedule[slot_index])
         }
     }
 
@@ -250,8 +241,6 @@ mod tests {
                 bootstrap_validator_stake_lamports, create_genesis_config,
                 create_genesis_config_with_leader, GenesisConfigInfo,
             },
-            get_tmp_ledger_path_auto_delete,
-            leader_schedule::IdentityKeyedLeaderSchedule,
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
@@ -260,6 +249,7 @@ mod tests {
             EpochSchedule, DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
+        solana_leader_schedule::{LeaderSchedule, SlotLeader},
         solana_runtime::stake_utils,
         solana_signer::Signer,
         std::{sync::Arc, thread::Builder},
@@ -308,10 +298,7 @@ mod tests {
         let mut cached_schedules: HashMap<Epoch, Arc<LeaderSchedule>> = HashMap::new();
         let mut order = VecDeque::new();
         for i in 0..=MAX_SCHEDULES {
-            cached_schedules.insert(
-                i as u64,
-                Arc::new(Box::new(IdentityKeyedLeaderSchedule::default())),
-            );
+            cached_schedules.insert(i as u64, Arc::new(LeaderSchedule::default()));
             order.push_back(i as u64);
         }
         LeaderScheduleCache::retain_latest(&mut cached_schedules, &mut order, MAX_SCHEDULES);
@@ -374,9 +361,15 @@ mod tests {
     #[test]
     fn test_next_leader_slot() {
         let pubkey = solana_pubkey::new_rand();
-        let mut genesis_config =
-            create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
-                .genesis_config;
+        let GenesisConfigInfo {
+            mut genesis_config,
+            voting_keypair,
+            ..
+        } = create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports());
+        let slot_leader = SlotLeader {
+            id: pubkey,
+            vote_address: voting_keypair.pubkey(),
+        };
         genesis_config.epoch_schedule = EpochSchedule::custom(
             DEFAULT_SLOTS_PER_EPOCH,
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET,
@@ -388,7 +381,7 @@ mod tests {
 
         assert_eq!(
             cache.slot_leader_at(bank.slot(), Some(&bank)).unwrap(),
-            pubkey
+            slot_leader
         );
         assert_eq!(
             cache.next_leader_slot(&pubkey, 0, &bank, None, u64::MAX),
@@ -424,9 +417,15 @@ mod tests {
     #[test]
     fn test_next_leader_slot_blockstore() {
         let pubkey = solana_pubkey::new_rand();
-        let mut genesis_config =
-            create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
-                .genesis_config;
+        let GenesisConfigInfo {
+            mut genesis_config,
+            voting_keypair,
+            ..
+        } = create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports());
+        let slot_leader = SlotLeader {
+            id: pubkey,
+            vote_address: voting_keypair.pubkey(),
+        };
         genesis_config.epoch_schedule.warmup = false;
 
         let bank = Bank::new_for_tests(&genesis_config);
@@ -438,7 +437,7 @@ mod tests {
 
         assert_eq!(
             cache.slot_leader_at(bank.slot(), Some(&bank)).unwrap(),
-            pubkey
+            slot_leader,
         );
         // Check that the next leader slot after 0 is slot 1
         assert_eq!(
@@ -548,7 +547,7 @@ mod tests {
 
         let schedule = cache.compute_leader_schedule(epoch, &bank).unwrap();
         let mut index = 0;
-        while schedule[index] != node_pubkey {
+        while schedule[index].id != node_pubkey {
             index += 1;
             assert_ne!(index, genesis_config.epoch_schedule.slots_per_epoch);
         }
@@ -610,19 +609,5 @@ mod tests {
         assert!(cache.slot_leader_at(223, Some(&bank2)).is_some());
         assert_eq!(bank2.get_epoch_and_slot_index(224).0, 3);
         assert!(cache.slot_leader_at(224, Some(&bank2)).is_none());
-    }
-
-    #[test]
-    fn test_set_max_schedules() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let mut cache = LeaderScheduleCache::new_from_bank(&bank);
-
-        // Max schedules must be greater than 0
-        cache.set_max_schedules(0);
-        assert_eq!(cache.max_schedules(), MAX_SCHEDULES);
-
-        cache.set_max_schedules(usize::MAX);
-        assert_eq!(cache.max_schedules(), usize::MAX);
     }
 }
