@@ -1315,6 +1315,11 @@ pub mod upgrade_bpf_stake_program_to_v5 {
     pub mod buffer {
         solana_pubkey::declare_id!("4EBQBjw1kqF1dqUBb6fc5Ji4tCEQgNf9ESGGX3smwXwh");
     }
+
+}
+
+pub mod integer_inflation_rewards {
+    solana_pubkey::declare_id!("iiiiizJfxinmojuyTqKwoHp61ti6RGTkreBhU7SuNGb");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2354,8 +2359,13 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0449: Direct Account Pointers in Program Input",
         ),
         (
+<<<<<<< HEAD
             upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
+=======
+            integer_inflation_rewards::id(),
+            "use integer math for inflation reward calculations",
+>>>>>>> 515270e76e (feat: integer math for inflation calculations)
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
