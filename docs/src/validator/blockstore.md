@@ -43,35 +43,34 @@ Repair requests for recent shreds are served out of RAM or recent files and out 
 
 ## Blockstore Design
 
-1. Entries in the Blockstore are stored as key-value pairs, where the key is the concatenated slot index and shred index for an entry, and the value is the entry data. Note shred indexes are zero-based for each slot \(i.e. they're slot-relative\).
+1. Entries in the Blockstore are stored as key-value pairs, where the key is the concatenated slot index and shred index for a shred, and the value is the serialized shred data. Entries are reconstructed from the stored shreds. Note shred indexes are zero-based for each slot \(i.e. they're slot-relative\).
 2. The Blockstore maintains metadata for each slot, in the `SlotMeta` struct containing:
 
-   - `slot_index` - The index of this slot
-   - `num_blocks` - The number of blocks in the slot \(used for chaining to a previous slot\)
-   - `consumed` - The highest shred index `n`, such that for all `m < n`, there exists a shred in this slot with shred index equal to `n` \(i.e. the highest consecutive shred index\).
-   - `received` - The highest received shred index for the slot
+   - `slot` - The index of this slot.
+   - `consumed` - The total number of consecutive shreds starting from index 0 that have been received for this slot. While the slot is incomplete, this is also the index of the first missing shred.
+   - `received` - The index *plus one* of the highest shred received for the slot. This can be used together with `consumed` to determine the range of possible holes \(`consumed..received`\).
+   - `first_shred_timestamp` - The timestamp of the first time a shred was added for this slot.
+   - `last_index` - The index of the shred that is flagged as the last shred for this slot. This field is `None` until the leader for the slot transmits the last shred and marks it accordingly.
+   - `parent_slot` - The slot index of the block this slot derives from. The parent slot of the head of a detached chain of slots is `None`.
    - `next_slots` - A list of future slots this slot could chain to. Used when rebuilding
 
      the ledger to find possible fork points.
 
-   - `last_index` - The index of the shred that is flagged as the last shred for this slot. This flag on a shred will be set by the leader for a slot when they are transmitting the last shred for a slot.
-   - `is_connected` - True iff every block from 0...slot forms a full sequence without any holes. We can derive is_connected for each slot with the following rules. Let slot\(n\) be the slot with index `n`, and slot\(n\).is_full\(\) is true if the slot with index `n` has all the ticks expected for that slot. Let is_connected\(n\) be the statement that "the slot\(n\).is_connected is true". Then:
+   - `is_connected` - A derived property that is true iff this slot is full and all of its ancestor slots back to slot 0 form a full, contiguous sequence without any holes. Informally, slot\(n\) is connected if slot\(n\) is full and its `parent_slot` is connected \(with slot 0 considered connected once it is full\).
 
-     is_connected\(0\) is_connected\(n+1\) iff \(is_connected\(n\) and slot\(n\).is_full\(\)
-
-3. Chaining - When a shred for a new slot `x` arrives, we check the number of blocks \(`num_blocks`\) for that new slot \(this information is encoded in the shred\). We then know that this new slot chains to slot `x - num_blocks`.
-4. Subscriptions - The Blockstore records a set of slots that have been "subscribed" to. This means entries that chain to these slots will be sent on the Blockstore channel for consumption by the ReplayStage. See the `Blockstore APIs` for details.
-5. Update notifications - The Blockstore notifies listeners when slot\(n\).is_connected is flipped from false to true for any `n`.
+3. Chaining - When shreds for a new slot `x` arrive, the Blockstore records the parent-child relationship between slot `x` and its `parent_slot`, which is derived from information encoded in the shred. The `parent_slot` and `next_slots` fields together describe the tree of forks.
+4. Progress tracking - ReplayStage uses the Blockstore's query APIs to discover child slots and fetch entries for the slots it is currently replaying. ReplayStage is responsible for tracking which slots it is interested in and for pulling new entries from Blockstore as they become available.
+5. Connected status - The connected status of each slot is stored in its `SlotMeta` and can be queried by components like ReplayStage to determine when a slot has become fully connected.
 
 ## Blockstore APIs
 
-The Blockstore offers a subscription based API that ReplayStage uses to ask for entries it's interested in. These subscription API's are as follows:
+The Blockstore exposes query-based APIs that ReplayStage uses to discover forks and fetch entries for the slots it's interested in. The key APIs are as follows:
 
 1. `fn get_slots_since(slots: &[u64]) -> Result<HashMap<u64, Vec<u64>>>`: Returns slots that are connected to any of the elements of `slots`. This method enables the discovery of new children slots.
 
 2. `fn get_slot_entries(slot: Slot, shred_start_index: u64) -> Result<Vec<Entry>>`: For the specified `slot`, return a vector of the available, contiguous entries starting from `shred_start_index`. Shreds are fragments of serialized entries so the conversion from entry index to shred index is not one-to-one. However, there is a similar function `get_slot_entries_with_shred_info()` that returns the number of shreds that comprise the returned entry vector. This allows a caller to track progress through the slot.
 
-Note: Cumulatively, this means that the replay stage will now have to know when a slot is finished, and subscribe to the next slot it's interested in to get the next set of entries. Previously, the burden of chaining slots fell on the Blockstore.
+Note: Cumulatively, this means that the replay stage will now have to know when a slot is finished and decide which slot to fetch next, using these APIs to discover new child slots and retrieve the next set of entries. Previously, the burden of chaining slots fell more heavily on the Blockstore.
 
 ## Interfacing with Bank
 
