@@ -172,7 +172,7 @@ impl FeatureSet {
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
             custom_commission_collector: self.is_active(&custom_commission_collector::id()),
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
-            block_revenue_sharing: self.is_active(&block_revenue_sharing::id()),
+            block_revenue_sharing: false, // Hard-coded as disabled for now. Not a fully-implemented feature yet.
         }
     }
 }
@@ -2310,10 +2310,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             limit_instruction_accounts::id(),
             "SIMD-406: Maximum instruction accounts",
-        ),
-        (
-            block_revenue_sharing::id(),
-            "SIMD-0123: Block Revenue Sharing",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
