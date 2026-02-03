@@ -363,11 +363,6 @@ mod tests {
         stop_use_static_simple_vote_tx_cost: bool,
         simd_0387_enabled: bool,
     ) {
-        // SIMD-0387 requires `stop_use_static_simple_vote_tx_cost`.
-        if simd_0387_enabled && !stop_use_static_simple_vote_tx_cost {
-            return;
-        }
-
         agave_logger::setup();
 
         use {
@@ -400,6 +395,8 @@ mod tests {
 
         // Verify actual cost matches expected.
         let expected_cost = if !stop_use_static_simple_vote_tx_cost {
+            // Simple vote shortcut is active - use static cost regardless of
+            // SIMD-0387 status.
             SIMPLE_VOTE_USAGE_COST
         } else {
             // when feature `stop-use-static-simple-vote-tx-cost` is enabled, vote transaction
