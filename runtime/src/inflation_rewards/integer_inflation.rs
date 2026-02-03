@@ -106,10 +106,13 @@ impl IntegerInflation {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use {
-        rand::Rng, rand::SeedableRng, rand_chacha::ChaChaRng,
-        solana_clock::DEFAULT_SLOTS_PER_EPOCH, solana_inflation::Inflation, test_case::test_matrix,
+        super::*,
+        rand::{Rng, SeedableRng},
+        rand_chacha::ChaChaRng,
+        solana_clock::DEFAULT_SLOTS_PER_EPOCH,
+        solana_inflation::Inflation,
+        test_case::test_matrix,
     };
 
     const SLOTS_PER_YEAR: f64 = NANOS_PER_YEAR as f64 / NS_PER_SLOT as f64;
