@@ -83,7 +83,7 @@ solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-votor = { path = ".", features = ["dev-context-only-utils"] }
+agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 rand = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
