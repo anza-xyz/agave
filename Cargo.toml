@@ -392,7 +392,7 @@ shaq = { version = "1.0.2" }
 shuttle = "0.7.1"
 signal-hook = "0.4.3"
 siphasher = "1.0.2"
-slab = "0.4.11"
+slab = "0.4.12"
 smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
 smpl_jwt = "0.7.1"
 socket2 = "0.6.2"
