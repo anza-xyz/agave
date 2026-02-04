@@ -6,15 +6,16 @@ use {
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
     },
+    arc_swap::ArcSwap,
     log::*,
     solana_clock::UnixTimestamp,
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
     solana_transaction_status::{Reward, RewardsAndNumPartitions},
-    std::sync::{Arc, RwLock},
+    std::sync::Arc,
 };
 
 pub(crate) struct BlockMetadataNotifierImpl {
-    plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
 }
 
 impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
@@ -32,7 +33,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         entry_count: u64,
         commission_rate_in_basis_points: bool,
     ) {
-        let plugin_manager = self.plugin_manager.read().unwrap();
+        let plugin_manager = self.plugin_manager.load();
         if plugin_manager.plugins.is_empty() {
             return;
         }
@@ -127,7 +128,7 @@ impl BlockMetadataNotifierImpl {
         }
     }
 
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
         Self { plugin_manager }
     }
 }
