@@ -176,7 +176,7 @@ use {
 };
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
-const MAX_PENDING_REPAIR_REQUESTS_RESPONSES: usize = 1024;
+const MAX_PENDING_REPAIR_REQUESTS_RESPONSES: usize = 10240;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 // Right now since we reuse the wait for supermajority code, the
 // following threshold should always greater than or equal to
