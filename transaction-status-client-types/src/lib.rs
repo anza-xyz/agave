@@ -742,12 +742,14 @@ impl TransactionStatus {
         match &self.confirmation_status {
             Some(status) => status.clone(),
             None => {
-                if self.confirmations.is_none() {
-                    TransactionConfirmationStatus::Finalized
-                } else if self.confirmations.unwrap() > 0 {
-                    TransactionConfirmationStatus::Confirmed
+                if let Some(confirmations) = self.confirmations {
+                    if confirmations > 0 {
+                        TransactionConfirmationStatus::Confirmed
+                    } else {
+                        TransactionConfirmationStatus::Processed
+                    }
                 } else {
-                    TransactionConfirmationStatus::Processed
+                    TransactionConfirmationStatus::Finalized
                 }
             }
         }

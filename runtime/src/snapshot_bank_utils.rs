@@ -48,7 +48,6 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
-    solana_leader_schedule::SlotLeader,
     solana_measure::{measure::Measure, measure_time},
     solana_pubkey::Pubkey,
     solana_slot_history::{Check, SlotHistory},
@@ -141,7 +140,6 @@ pub fn bank_from_snapshot_archives(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
@@ -202,7 +200,6 @@ pub fn bank_from_snapshot_archives(
         account_paths,
         storage_and_next_append_vec_id,
         debug_keys,
-        leader_for_tests,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -316,7 +313,6 @@ pub fn bank_from_latest_snapshot_archives(
         genesis_config,
         runtime_config,
         debug_keys,
-        None, // leader_for_tests
         limit_load_slot_count_from_snapshot,
         accounts_db_skip_shrink,
         accounts_db_force_initial_clean,
@@ -341,7 +337,6 @@ pub fn bank_from_snapshot_dir(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
@@ -389,7 +384,6 @@ pub fn bank_from_snapshot_dir(
             account_paths,
             storage_and_next_append_vec_id,
             debug_keys,
-            leader_for_tests,
             limit_load_slot_count_from_snapshot,
             verify_index,
             accounts_db_config,
@@ -798,7 +792,6 @@ mod tests {
         super::*,
         crate::{
             bank::{tests::create_simple_test_bank, BankTestConfig},
-            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
             snapshot_package::BankSnapshotPackage,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
@@ -816,9 +809,9 @@ mod tests {
             accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_file::StorageAccess,
         },
+        solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
@@ -924,10 +917,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            Some(SlotLeader {
-                id: *original_bank.leader_id(),
-                ..SlotLeader::new_unique()
-            }), // genesis doesn't have a staked node
             None,
             false,
             false,
@@ -949,16 +938,8 @@ mod tests {
         let key2 = Keypair::new();
         let key3 = Keypair::new();
 
-        // Create genesis config with a staked leader
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        // Create a few accounts
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
         let bank_test_config = BankTestConfig {
             accounts_db_config: AccountsDbConfig {
@@ -1018,7 +999,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             false,
@@ -1043,15 +1023,7 @@ mod tests {
         let key4 = Keypair::new();
         let key5 = Keypair::new();
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
@@ -1126,7 +1098,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             false,
@@ -1157,15 +1128,7 @@ mod tests {
         let key4 = Keypair::new();
         let key5 = Keypair::new();
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
@@ -1252,7 +1215,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             false,
@@ -1273,15 +1235,7 @@ mod tests {
         let key2 = Keypair::new();
         let key3 = Keypair::new();
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
@@ -1414,15 +1368,8 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let GenesisConfigInfo {
-            mut genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        let (mut genesis_config, mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         // test expects 0 transaction fee
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
@@ -1503,7 +1450,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             false,
@@ -1561,7 +1507,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             false,
@@ -1589,15 +1534,7 @@ mod tests {
         let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1898,15 +1835,7 @@ mod tests {
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
         let bank_test_config = BankTestConfig {
@@ -2001,7 +1930,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             false,
@@ -2044,15 +1972,7 @@ mod tests {
         let key2 = Keypair::new();
 
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let GenesisConfigInfo {
-            mut genesis_config,
-            mint_keypair: mint,
-            ..
-        } = create_genesis_config_with_leader(
-            1_000_000 * LAMPORTS_PER_SOL,
-            &collector,
-            1_000_000 * LAMPORTS_PER_SOL,
-        );
+        let (mut genesis_config, mint) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
         // Disable fees so fees don't need to be calculated
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
@@ -2111,7 +2031,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -2152,7 +2071,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -2190,10 +2108,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            Some(SlotLeader {
-                id: *bank.leader_id(),
-                ..SlotLeader::new_unique()
-            }), // genesis doesn't have a staked node
             None,
             false,
             AccountsDbConfig {
