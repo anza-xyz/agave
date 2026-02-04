@@ -57,6 +57,7 @@ use {
     },
     storage::SerializableStorage,
     types::{SerdeAccountsLtHash, UnusedRentCollector},
+    wincode::{SchemaReadOwned, SchemaWrite, io::std_write::WriteAdapter},
 };
 
 mod obsolete_accounts;
@@ -67,12 +68,13 @@ mod types;
 mod utils;
 
 pub(crate) use {
-    obsolete_accounts::SerdeObsoleteAccountsMap,
+    obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
-const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
+const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
+type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Deserialize)]
@@ -373,15 +375,20 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
+pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> wincode::WriteResult<()>
 where
     W: Write,
-    T: Serialize,
+    T: SchemaWrite<MaxStreamSizeConfig, Src = T>,
 {
-    bincode::options()
-        .with_fixint_encoding()
-        .with_limit(MAX_STREAM_SIZE)
-        .serialize_into(writer, value)
+    wincode::config::serialize_into(WriteAdapter::new(writer), value, MaxStreamSizeConfig::new())
+}
+
+pub(crate) fn deserialize_wincode_from<R, T>(reader: R) -> wincode::ReadResult<T>
+where
+    R: Read,
+    T: SchemaReadOwned<MaxStreamSizeConfig, Dst = T>,
+{
+    wincode::config::deserialize_from(io::BufReader::new(reader), MaxStreamSizeConfig::new())
 }
 
 pub(crate) fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
@@ -390,7 +397,7 @@ where
     T: DeserializeOwned,
 {
     bincode::options()
-        .with_limit(MAX_STREAM_SIZE)
+        .with_limit(MAX_STREAM_SIZE as u64)
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from::<R, T>(reader)

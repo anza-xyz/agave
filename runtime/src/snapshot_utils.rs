@@ -715,7 +715,6 @@ fn serialize_obsolete_accounts(
         ))
     })?;
 
-    file_stream.flush()?;
     Ok(file_stream.bytes_written())
 }
 
@@ -739,11 +738,9 @@ fn deserialize_obsolete_accounts(
         return Err(IoError::other(error_message).into());
     }
 
-    let mut data_file_stream = BufReader::new(obsolete_accounts_file);
-
-    let obsolete_accounts = serde_snapshot::deserialize_from(&mut data_file_stream)?;
-
-    Ok(obsolete_accounts)
+    Ok(serde_snapshot::deserialize_wincode_from(
+        obsolete_accounts_file,
+    )?)
 }
 
 pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
@@ -2648,11 +2645,13 @@ mod tests {
         // Deserialize
         let deserialized_accounts =
             deserialize_obsolete_accounts(bank_snapshot_dir, MAX_OBSOLETE_ACCOUNTS_FILE_SIZE)
-                .unwrap();
+                .unwrap()
+                .into_dashmap();
 
         // Verify
         for storage in &snapshot_storages {
-            assert!(deserialized_accounts.remove(&storage.slot()).unwrap().2 == 0);
+            let obsolete_accounts = deserialized_accounts.remove(&storage.slot()).unwrap().1;
+            assert!(obsolete_accounts.into_tuple().2 == 0);
         }
     }
 
