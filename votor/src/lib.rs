@@ -26,6 +26,7 @@ pub mod vote_history_storage;
 pub mod voting_service;
 pub mod voting_utils;
 pub mod votor;
+mod welford_stats;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
