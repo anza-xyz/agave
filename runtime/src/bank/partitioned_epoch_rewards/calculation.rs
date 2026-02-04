@@ -69,12 +69,12 @@ impl RewardsAccumulator {
             .saturating_add(stakers_reward);
     }
 
-    /// Merges two instances by combining their vote rewards and stake rewards.
+    /// Merges two instances by combining their reward commissions and stake rewards.
     ///
-    /// To minimize reallocations, the instance with more vote rewards is used
+    /// To minimize reallocations, the instance with more reward commissions is used
     /// as the base and the smaller instance is merged into it.
     fn accumulate_into_larger(self, rhs: Self) -> Self {
-        // Check which instance has more vote rewards. Treat the bigger one
+        // Check which instance has more reward commissions. Treat the bigger one
         // as a destination, which is going to be extended. This way we make
         // the reallocation as small as possible.
         let (mut dst, src) = if self.reward_commissions.len() >= rhs.reward_commissions.len() {
@@ -498,7 +498,7 @@ impl Bank {
             new_rate_activation_epoch,
             commission_rate_in_basis_points,
         ) {
-            Ok((stake_reward, vote_rewards, stake)) => {
+            Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
                     stake_pubkey,
                     stake,
@@ -509,7 +509,7 @@ impl Bank {
                 let reward_commission = RewardCommission {
                     commission_bps,
                     commission_account: vote_account,
-                    commission_lamports: vote_rewards,
+                    commission_lamports,
                 };
                 Some(DelegationRewards {
                     stake_reward,
@@ -691,9 +691,9 @@ impl Bank {
     }
 
     /// If rewards are still active, recalculates partitioned stake rewards and
-    /// updates Bank::epoch_reward_status. This method assumes that vote rewards
-    /// have already been calculated and delivered, and *only* recalculates
-    /// stake rewards
+    /// updates Bank::epoch_reward_status. This method assumes that reward
+    /// commissions have already been calculated and delivered, and *only*
+    /// recalculates stake rewards
     pub(in crate::bank) fn recalculate_partitioned_rewards_if_active<F, TP>(
         &mut self,
         thread_pool_builder: F,
