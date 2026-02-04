@@ -65,6 +65,7 @@ fn is_init_account_v2_enabled(invoke_context: &InvokeContext) -> bool {
     feature_set.vote_state_v4
         && feature_set.commission_rate_in_basis_points
         && feature_set.custom_commission_collector
+        && feature_set.block_revenue_sharing
         && feature_set.bls_pubkey_management_in_vote_account
 }
 
