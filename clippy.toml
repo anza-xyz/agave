@@ -4,7 +4,10 @@ too-many-arguments-threshold = 9
 disallowed-methods = [
     { path = "std::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_with_config, bind_to, etc instead for proper socket configuration." },
     { path = "tokio::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_to_async or bind_to_with_config_non_blocking instead for proper socket configuration." },
-    { path = "lazy_static::initialize", reason = "Deprecated. Use std::{cell::{LazyCell, OnceCell}, sync::{LazyLock, OnceLock}} as appropriate." }
+    { path = "lazy_static::initialize", reason = "Deprecated. Use std::{cell::{LazyCell, OnceCell}, sync::{LazyLock, OnceLock}} as appropriate." },
+    { path = "bytes::BytesMut::reserve", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0007.html" },
+    { path = "bytes::BytesMut::put_bytes", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0007.html" },
+    { path = "bytes::BytesMut::resize", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0007.html" },
 ]
 
 disallowed-macros = [
