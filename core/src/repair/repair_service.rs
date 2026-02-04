@@ -16,6 +16,7 @@ use {
                 self, RepairPeers, RepairProtocol, RepairRequestHeader, ServeRepair,
                 ShredRepairType, REPAIR_PEERS_CACHE_CAPACITY,
             },
+            serve_repair_service,
         },
     },
     bytes::Bytes,
@@ -152,6 +153,7 @@ impl RepairMetrics {
             self.timing.report();
             self.best_repairs_stats.report();
             *self = Self::default();
+            serve_repair_service::report_stats();
         }
     }
 }

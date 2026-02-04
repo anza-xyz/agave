@@ -84,24 +84,15 @@ impl ServeRepairService {
     }
 }
 
-fn report_stats(dropped_batches: usize, dropped_packets: usize) {
-    static DROPPED_PACKETS: AtomicUsize = AtomicUsize::new(0);
-    static DROPPED_BATCHES: AtomicUsize = AtomicUsize::new(0);
-
-    let old_dropped_batches = DROPPED_BATCHES.fetch_add(dropped_batches, Ordering::Relaxed);
-    let old_dropped_packets = DROPPED_PACKETS.fetch_add(dropped_packets, Ordering::Relaxed);
+static DROPPED_PACKETS: AtomicUsize = AtomicUsize::new(0);
+static DROPPED_BATCHES: AtomicUsize = AtomicUsize::new(0);
+pub(crate) fn report_stats() {
+    let dropped_batches = DROPPED_BATCHES.load(Ordering::Relaxed);
+    let dropped_packets = DROPPED_PACKETS.load(Ordering::Relaxed);
     datapoint_info!(
         "adapt-repair-request-packets",
-        (
-            "dropped_packets",
-            (old_dropped_packets + dropped_packets) as i64,
-            i64
-        ),
-        (
-            "dropped_batches",
-            (old_dropped_batches + dropped_batches) as i64,
-            i64
-        ),
+        ("dropped_packets", dropped_packets as i64, i64),
+        ("dropped_batches", dropped_batches as i64, i64),
     );
 }
 
@@ -110,7 +101,6 @@ pub(crate) fn adapt_repair_requests_packets(
     packets_receiver: Receiver<PacketBatch>,
     remote_request_sender: Sender<RemoteRequest>,
 ) {
-    report_stats(0, 0);
     'recv_batch: for packets in packets_receiver {
         let total_packets = packets.len();
         for (i, packet) in packets.iter().enumerate() {
@@ -125,7 +115,8 @@ pub(crate) fn adapt_repair_requests_packets(
             match remote_request_sender.try_send(request) {
                 Ok(_) => {}
                 Err(crossbeam_channel::TrySendError::Full(_)) => {
-                    report_stats(1, total_packets - i);
+                    DROPPED_BATCHES.fetch_add(1, Ordering::Relaxed);
+                    DROPPED_PACKETS.fetch_add(total_packets - i, Ordering::Relaxed);
                     continue 'recv_batch;
                 }
                 Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
