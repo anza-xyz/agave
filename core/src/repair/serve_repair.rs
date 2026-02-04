@@ -1138,7 +1138,7 @@ impl ServeRepair {
         if !pending_pings.is_empty() {
             stats.pings_sent += pending_pings.len();
             let batch = RecycledPacketBatch::new(pending_pings);
-            let _ = packet_batch_sender.send(batch.into());
+            let _ = packet_batch_sender.try_send(batch.into());
         }
     }
 
@@ -1416,7 +1416,7 @@ fn send_response(
     repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
 ) -> bool {
     match protocol {
-        Protocol::UDP => packet_batch_sender.send(packets).is_ok(),
+        Protocol::UDP => packet_batch_sender.try_send(packets).is_ok(),
         Protocol::QUIC => packets
             .iter()
             .filter_map(|packet| {
