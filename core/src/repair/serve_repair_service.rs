@@ -90,7 +90,7 @@ fn report_stats(dropped_batches: usize, dropped_packets: usize) {
 
     let old_dropped_batches = DROPPED_BATCHES.fetch_add(dropped_batches, Ordering::Relaxed);
     let old_dropped_packets = DROPPED_PACKETS.fetch_add(dropped_packets, Ordering::Relaxed);
-    datapoint_debug!(
+    datapoint_info!(
         "adapt-repair-request-packets",
         (
             "dropped_packets",
