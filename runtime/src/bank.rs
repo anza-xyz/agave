@@ -1872,7 +1872,6 @@ impl Bank {
         let leader: SlotLeader;
         #[cfg(not(feature = "dev-context-only-utils"))]
         {
-            _ = leader_for_tests;
             leader = Self::slot_leader_from_epoch_stakes(
                 fields.slot,
                 &fields.epoch_schedule,
