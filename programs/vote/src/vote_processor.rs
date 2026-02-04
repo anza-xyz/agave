@@ -488,20 +488,20 @@ mod tests {
     #[derive(Clone, Copy, Default)]
     struct VoteProgramFeatures {
         vote_state_v4: bool,
-        bls_pubkey_management_in_vote_account: bool,
         commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
+        bls_pubkey_management_in_vote_account: bool,
     }
 
     impl VoteProgramFeatures {
         fn all_enabled() -> Self {
             Self {
                 vote_state_v4: true,
-                bls_pubkey_management_in_vote_account: true,
                 commission_rate_in_basis_points: true,
                 custom_commission_collector: true,
                 block_revenue_sharing: true,
+                bls_pubkey_management_in_vote_account: true,
             }
         }
     }
@@ -533,10 +533,10 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         let VoteProgramFeatures {
             vote_state_v4,
-            bls_pubkey_management_in_vote_account,
             commission_rate_in_basis_points,
             custom_commission_collector,
             block_revenue_sharing,
+            bls_pubkey_management_in_vote_account,
         } = features;
         let cu_consumed = RefCell::new(0u64);
         let accounts = mock_process_instruction_with_feature_set(
@@ -564,10 +564,10 @@ mod tests {
             },
             &SVMFeatureSet {
                 vote_state_v4,
-                bls_pubkey_management_in_vote_account,
                 commission_rate_in_basis_points,
                 custom_commission_collector,
                 block_revenue_sharing,
+                bls_pubkey_management_in_vote_account,
                 ..SVMFeatureSet::all_enabled()
             },
         );
@@ -889,13 +889,15 @@ mod tests {
         [false, true],
         [false, true],
         [false, true],
+        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account(
         vote_state_v4: bool,
-        bls_pubkey_management_in_vote_account: bool,
         commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
+        block_revenue_sharing: bool,
+        bls_pubkey_management_in_vote_account: bool,
     ) {
         let vote_pubkey = solana_pubkey::new_rand();
         let vote_account = AccountSharedData::new(100, vote_state_size_of(vote_state_v4), &id());
@@ -933,15 +935,17 @@ mod tests {
 
         let features = VoteProgramFeatures {
             vote_state_v4,
-            bls_pubkey_management_in_vote_account,
             commission_rate_in_basis_points,
             custom_commission_collector,
+            block_revenue_sharing,
+            bls_pubkey_management_in_vote_account,
         };
 
         let all_v2_features_enabled = vote_state_v4
-            && bls_pubkey_management_in_vote_account
             && commission_rate_in_basis_points
-            && custom_commission_collector;
+            && custom_commission_collector
+            && block_revenue_sharing
+            && bls_pubkey_management_in_vote_account;
 
         // processing incompatible instruction should fail
         if all_v2_features_enabled {
@@ -1047,13 +1051,15 @@ mod tests {
         [false, true],
         [false, true],
         [false, true],
+        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account_v2(
         vote_state_v4: bool,
-        bls_pubkey_management_in_vote_account: bool,
         commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
+        block_revenue_sharing: bool,
+        bls_pubkey_management_in_vote_account: bool,
     ) {
         let vote_pubkey = solana_pubkey::new_rand();
         let vote_account = AccountSharedData::new(100, vote_state_size_of(vote_state_v4), &id());
@@ -1095,15 +1101,17 @@ mod tests {
 
         let features = VoteProgramFeatures {
             vote_state_v4,
-            bls_pubkey_management_in_vote_account,
             commission_rate_in_basis_points,
             custom_commission_collector,
+            block_revenue_sharing,
+            bls_pubkey_management_in_vote_account,
         };
 
         let all_v2_features_enabled = vote_state_v4
-            && bls_pubkey_management_in_vote_account
             && commission_rate_in_basis_points
-            && custom_commission_collector;
+            && custom_commission_collector
+            && block_revenue_sharing
+            && bls_pubkey_management_in_vote_account;
 
         // processing incompatible instruction should fail
         if all_v2_features_enabled {
