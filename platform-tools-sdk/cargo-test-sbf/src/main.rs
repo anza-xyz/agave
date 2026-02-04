@@ -401,13 +401,18 @@ fn main() {
             Arg::new("skip_tools_install")
                 .long("skip-tools-install")
                 .takes_value(false)
-                .help("Passed through to cargo-build-sbf. Skip downloading and installing platform-tools"),
+                .help(
+                    "Passed through to cargo-build-sbf. Skip downloading and installing \
+                     platform-tools",
+                ),
         )
         .arg(
             Arg::new("no_rustup_override")
                 .long("no-rustup-override")
                 .takes_value(false)
-                .help("Passed through to cargo-build-sbf. Do not use rustup to manage the toolchain"),
+                .help(
+                    "Passed through to cargo-build-sbf. Do not use rustup to manage the toolchain",
+                ),
         )
         .arg(
             Arg::new("tools_version")
