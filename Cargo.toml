@@ -400,7 +400,7 @@ solana-account-decoder = { path = "account-decoder", version = "=4.0.0-alpha.0",
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.0"
 solana-accounts-db = { path = "accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-address = "2.0.0"
+solana-address = "2.1.0"
 solana-address-lookup-table-interface = "3.0.1"
 solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
