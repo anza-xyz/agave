@@ -570,4 +570,53 @@ mod tests {
         );
         assert!(container.pop().is_none());
     }
+
+    #[test]
+    fn test_next_recheck_id_descends_and_wraps() {
+        let mut container = TransactionStateContainer::with_capacity(8);
+        for priority in [5, 10, 5, 1] {
+            let (transaction, max_age, priority, cost) = test_transaction(priority);
+            container.insert_new_transaction(transaction, max_age, priority, cost);
+        }
+
+        let mut cursor = None;
+        let mut seen_priorities = Vec::new();
+        while let Some(id) = container.next_recheck_id(cursor.as_ref()) {
+            seen_priorities.push(id.priority);
+            cursor = Some(id);
+        }
+
+        assert_eq!(seen_priorities, vec![10, 5, 5, 1]);
+
+        // When starting a new sweep, we should wrap back to the highest priority.
+        let wrapped = container.next_recheck_id(None).unwrap();
+        assert_eq!(wrapped.priority, 10);
+    }
+
+    #[test]
+    fn test_remove_by_id_removes_from_queue() {
+        let mut container = TransactionStateContainer::with_capacity(4);
+        for priority in [7, 3] {
+            let (transaction, max_age, priority, cost) = test_transaction(priority);
+            container.insert_new_transaction(transaction, max_age, priority, cost);
+        }
+
+        let (highest, lowest) = (
+            *container.priority_queue.last().unwrap(),
+            *container.priority_queue.first().unwrap(),
+        );
+
+        // Removing an in-queue transaction drops it from both structures.
+        container.remove_by_id(highest.id);
+        assert!(!container.priority_queue.contains(&highest));
+        assert_eq!(container.queue_size(), 1);
+        assert!(container.get_transaction(highest.id).is_none());
+
+        // Removing after pop should still clean up the map even if not in queue.
+        let popped = container.pop().unwrap();
+        assert_eq!(popped, lowest);
+        container.remove_by_id(popped.id);
+        assert!(container.get_transaction(popped.id).is_none());
+        assert!(container.is_empty());
+    }
 }
