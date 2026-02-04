@@ -28,6 +28,7 @@ use {
 };
 
 /// Socket configurations for different usage patterns
+#[derive(Default)]
 struct SocketConfigs {
     read_write: SocketConfig,
     primarily_read_quic: SocketConfig,
@@ -68,16 +69,19 @@ impl Node {
     /// and the minimum receive buffer size (SO_RCVBUF) is 256 bytes
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html
     fn create_socket_configs() -> SocketConfigs {
-        const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
-
-        SocketConfigs {
-            read_write: SocketConfig::default(),
-            primarily_read_quic: SocketConfig::default()
-                .send_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-            primarily_write_quic: SocketConfig::default()
-                .recv_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
-            primarily_read_udp: SocketConfig::default().send_buffer_size(0),
-            primarily_write_udp: SocketConfig::default().recv_buffer_size(0),
+        if cfg!(target_os = "linux") {
+            const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
+            SocketConfigs {
+                read_write: SocketConfig::default(),
+                primarily_read_quic: SocketConfig::default()
+                    .send_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
+                primarily_write_quic: SocketConfig::default()
+                    .recv_buffer_size(QUIC_CONTROL_TRAFFIC_BUFFER_SIZE),
+                primarily_read_udp: SocketConfig::default().send_buffer_size(0),
+                primarily_write_udp: SocketConfig::default().recv_buffer_size(0),
+            }
+        } else {
+            SocketConfigs::default()
         }
     }
 

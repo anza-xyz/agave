@@ -75,7 +75,6 @@ use {
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_transaction::sanitized::SanitizedTransaction,
     std::{
         borrow::Cow,
         boxed::Box,
@@ -5616,7 +5615,6 @@ impl AccountsDb {
     pub(crate) fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         // If all transactions in a batch are errored,
@@ -5636,7 +5634,7 @@ impl AccountsDb {
 
         // Store the accounts in the write cache
         let mut store_accounts_time = Measure::start("store_accounts");
-        let infos = self.write_accounts_to_cache(accounts.target_slot(), &accounts, transactions);
+        let infos = self.write_accounts_to_cache(accounts.target_slot(), &accounts);
         store_accounts_time.stop();
         self.stats
             .store_accounts_to_cache_us
@@ -5779,43 +5777,14 @@ impl AccountsDb {
         &self,
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
-        txs: Option<&[&SanitizedTransaction]>,
     ) -> Vec<AccountInfo> {
-        let mut current_write_version = if self.accounts_update_notifier.is_some() {
-            self.write_version
-                .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel)
-        } else {
-            0
-        };
-
         (0..accounts_and_meta_to_store.len())
             .map(|index| {
-                let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
-                accounts_and_meta_to_store.account(index, |account| {
-                    let account_shared_data = account.take_account();
-                    let pubkey = account.pubkey();
+                accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
                     let account_info =
                         AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
-
-                    // if geyser is enabled, send the account update notification
-                    // with the original version of the account
-                    self.notify_account_at_accounts_update(
-                        slot,
-                        &account_shared_data,
-                        &txn,
-                        pubkey,
-                        current_write_version,
-                    );
-                    current_write_version = current_write_version.saturating_add(1);
-
-                    // ...but when actually storing the account, if its balance is zero,
-                    // use the default, which zeroes out all the account fields
-                    let account_to_store = if account.is_zero_lamport() {
-                        AccountSharedData::default()
-                    } else {
-                        account_shared_data
-                    };
-                    self.accounts_cache.store(slot, pubkey, account_to_store);
+                    self.accounts_cache
+                        .store(slot, account.pubkey(), account.take_account());
                     account_info
                 })
             })
@@ -7160,16 +7129,11 @@ impl AccountsDb {
         // Pre-populate new zero-lamport accounts with single-lamport placeholders.
         self.store_accounts_unfrozen(
             (slot, pre_populate_zero_lamport.as_slice()),
-            None,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
 
         // Then store the actual accounts provided by the caller.
-        self.store_accounts_unfrozen(
-            accounts,
-            None,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-        );
+        self.store_accounts_unfrozen(accounts, UpdateIndexThreadSelection::PoolWithThreshold);
     }
 
     #[allow(clippy::needless_range_loop)]

@@ -1,13 +1,10 @@
 use {
     crate::repair::{quic_endpoint::RemoteRequest, serve_repair::ServeRepair},
     bytes::Bytes,
-    crossbeam_channel::{bounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Receiver, Sender},
     solana_net_utils::SocketAddrSpace,
     solana_perf::{packet::PacketBatch, recycler::Recycler},
-    solana_streamer::{
-        evicting_sender::EvictingSender,
-        streamer::{self, StreamerReceiveStats},
-    },
+    solana_streamer::streamer::{self, StreamerReceiveStats},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc},
@@ -32,8 +29,7 @@ impl ServeRepairService {
         stats_reporter_sender: Sender<Box<dyn FnOnce() + Send>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        const REQUEST_CHANNEL_SIZE: usize = 4096;
-        let (request_sender, request_receiver) = EvictingSender::new_bounded(REQUEST_CHANNEL_SIZE);
+        let (request_sender, request_receiver) = unbounded();
         let serve_repair_socket = Arc::new(serve_repair_socket);
         let t_receiver = streamer::receiver(
             "solRcvrServeRep".to_string(),
@@ -50,13 +46,7 @@ impl ServeRepairService {
             .name(String::from("solServRAdapt"))
             .spawn(|| adapt_repair_requests_packets(request_receiver, remote_request_sender))
             .unwrap();
-        // NOTE: we use a larger sending channel here compared to the receiving one.
-        //
-        // That's because by the time we're done with the work to compute the repair packets,
-        // discarding the packet because of a full channel seems like a waste. For that reason the
-        // push to this channel is blocking and having more space here gives the sending thread an
-        // much greater chance to get to pulling from this channel before the channel fills up.
-        let (response_sender, response_receiver) = bounded(3 * REQUEST_CHANNEL_SIZE);
+        let (response_sender, response_receiver) = unbounded();
         let t_responder = streamer::responder(
             "Repair",
             serve_repair_socket,
@@ -95,9 +85,8 @@ pub(crate) fn adapt_repair_requests_packets(
                 remote_address: packet.meta().socket_addr(),
                 bytes: Bytes::from(bytes),
             };
-            if remote_request_sender.try_send(request).is_err() {
-                // The receiver end of the channel is disconnected or full, discard this request.
-                return;
+            if remote_request_sender.send(request).is_err() {
+                return; // The receiver end of the channel is disconnected.
             }
         }
     }

@@ -232,7 +232,9 @@ impl XdpRetransmitBuilder {
         caps::drop(None, CapSet::Effective, CAP_NET_RAW).expect("drop CAP_NET_RAW capability");
         caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
 
-        let router = router_result?;
+        let mut router = router_result?;
+        router.build_caches()?;
+
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(router));
         let route_monitor_handle = RouteMonitor::start(

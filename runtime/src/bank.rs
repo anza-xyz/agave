@@ -39,7 +39,7 @@ use {
         bank::{
             metrics::*,
             partitioned_epoch_rewards::{
-                CachedVoteAccounts, EpochRewardStatus, VoteRewardsAccounts,
+                CachedVoteAccounts, EpochRewardStatus, RewardCommissionAccounts,
             },
         },
         bank_forks::BankForks,
@@ -941,13 +941,13 @@ pub struct Bank {
 }
 
 #[derive(Debug)]
-struct VoteReward {
-    vote_account: AccountSharedData,
+struct RewardCommission {
+    commission_account: AccountSharedData,
     commission_bps: u16,
-    vote_rewards: u64,
+    commission_lamports: u64,
 }
 
-type VoteRewards = HashMap<Pubkey, VoteReward, PubkeyHasherBuilder>;
+type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1872,6 +1872,7 @@ impl Bank {
         let leader: SlotLeader;
         #[cfg(not(feature = "dev-context-only-utils"))]
         {
+            _ = leader_for_tests;
             leader = Self::slot_leader_from_epoch_stakes(
                 fields.slot,
                 &fields.epoch_schedule,
@@ -2473,55 +2474,57 @@ impl Bank {
         }
     }
 
-    /// Convert computed VoteRewards to VoteRewardsAccounts for storing.
+    /// Convert computed RewardCommissions to RewardCommissionAccounts for storing.
     ///
-    /// This function processes vote rewards and consolidates them into a single
-    /// structure containing the pubkey, reward info, and updated account data
-    /// for each vote account. The resulting structure is optimized for storage
-    /// by combining previously separate rewards and accounts vectors into a
-    /// single accounts_with_rewards vector.
-    fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
-        let mut result = VoteRewardsAccounts {
-            accounts_with_rewards: Vec::with_capacity(vote_account_rewards.len()),
-            total_vote_rewards_lamports: 0,
+    /// This function processes reward commissions and consolidates them into a
+    /// single structure containing the pubkey, reward info, and updated account
+    /// data for each commission account. The resulting structure is optimized
+    /// for storage by combining previously separate rewards and accounts
+    /// vectors into a single accounts_with_rewards vector.
+    fn calculate_commission_accounts(
+        reward_commissions: RewardCommissions,
+    ) -> RewardCommissionAccounts {
+        let mut result = RewardCommissionAccounts {
+            accounts_with_rewards: Vec::with_capacity(reward_commissions.len()),
+            total_reward_commission_lamports: 0,
         };
         for (
-            vote_pubkey,
-            VoteReward {
-                mut vote_account,
+            commission_pubkey,
+            RewardCommission {
+                mut commission_account,
                 commission_bps,
-                vote_rewards,
+                commission_lamports,
             },
-        ) in vote_account_rewards
+        ) in reward_commissions
         {
-            if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
-                debug!("reward redemption failed for {vote_pubkey}: {err:?}");
+            if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
+                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
                 continue;
             }
 
             result.accounts_with_rewards.push((
-                vote_pubkey,
+                commission_pubkey,
                 RewardInfo {
                     reward_type: RewardType::Voting,
-                    lamports: vote_rewards as i64,
-                    post_balance: vote_account.lamports(),
+                    lamports: commission_lamports as i64,
+                    post_balance: commission_account.lamports(),
                     commission_bps: Some(commission_bps),
                 },
-                vote_account,
+                commission_account,
             ));
-            result.total_vote_rewards_lamports += vote_rewards;
+            result.total_reward_commission_lamports += commission_lamports;
         }
         result
     }
 
-    fn update_vote_rewards(&self, vote_rewards: &VoteRewardsAccounts) {
+    fn update_reward_commissions(&self, reward_commission_accounts: &RewardCommissionAccounts) {
         let mut rewards = self.rewards.write().unwrap();
-        rewards.reserve(vote_rewards.accounts_with_rewards.len());
-        vote_rewards
+        rewards.reserve(reward_commission_accounts.accounts_with_rewards.len());
+        reward_commission_accounts
             .accounts_with_rewards
             .iter()
-            .for_each(|(vote_pubkey, vote_reward, _)| {
-                rewards.push((*vote_pubkey, *vote_reward));
+            .for_each(|(commission_pubkey, reward_commission, _)| {
+                rewards.push((*commission_pubkey, *reward_commission));
             });
     }
 

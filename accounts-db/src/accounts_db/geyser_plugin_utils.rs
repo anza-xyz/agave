@@ -29,6 +29,7 @@ mod tests {
     use {
         super::*,
         crate::{
+            accounts::Accounts,
             accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_update_notifier_interface::{
                 AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
@@ -175,12 +176,10 @@ mod tests {
 
     #[test]
     fn test_notify_account_at_accounts_update() {
-        let mut accounts = AccountsDb::new_single_for_tests();
-
-        let notifier = GeyserTestPlugin::default();
-
-        let notifier = Arc::new(notifier);
-        accounts.set_geyser_plugin_notifier(Some(notifier.clone()));
+        let notifier = Arc::new(GeyserTestPlugin::default());
+        let mut accounts_db = AccountsDb::new_single_for_tests();
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Account with key1 is updated twice in two different slots -- should only get notified twice.
         // Account with key2 is updated slot0, should get notified once
@@ -190,24 +189,24 @@ mod tests {
         let account1 =
             AccountSharedData::new(account1_lamports1, 1, AccountSharedData::default().owner());
         let slot0 = 0;
-        accounts.store_for_tests((slot0, &[(&key1, &account1)][..]));
+        accounts.store_accounts_seq((slot0, &[(&key1, &account1)][..]), None);
 
         let key2 = solana_pubkey::new_rand();
         let account2_lamports: u64 = 200;
         let account2 =
             AccountSharedData::new(account2_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_for_tests((slot0, &[(&key2, &account2)][..]));
+        accounts.store_accounts_seq((slot0, &[(&key2, &account2)][..]), None);
 
         let account1_lamports2 = 2;
         let slot1 = 1;
         let account1 = AccountSharedData::new(account1_lamports2, 1, account1.owner());
-        accounts.store_for_tests((slot1, &[(&key1, &account1)][..]));
+        accounts.store_accounts_seq((slot1, &[(&key1, &account1)][..]), None);
 
         let key3 = solana_pubkey::new_rand();
         let account3_lamports: u64 = 300;
         let account3 =
             AccountSharedData::new(account3_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_for_tests((slot1, &[(&key3, &account3)][..]));
+        accounts.store_accounts_seq((slot1, &[(&key3, &account3)][..]), None);
 
         assert_eq!(notifier.accounts_notified.get(&key1).unwrap().len(), 2);
         assert_eq!(
@@ -247,10 +246,10 @@ mod tests {
     /// account's information.  The most important is the account's original owner.
     #[test]
     fn test_notify_closed_account() {
+        let notifier = Arc::new(GeyserTestPlugin::default());
         let mut accounts_db = AccountsDb::new_single_for_tests();
-        let notifier = GeyserTestPlugin::default();
-        let notifier = Arc::new(notifier);
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        let accounts = Accounts::new(Arc::new(accounts_db));
 
         let address = solana_pubkey::new_rand();
         let owner = solana_pubkey::new_rand();
@@ -259,8 +258,8 @@ mod tests {
 
         let slot_open = 6;
         let slot_close = slot_open + 1;
-        accounts_db.store_for_tests((slot_open, [(&address, &account_open)].as_slice()));
-        accounts_db.store_for_tests((slot_close, [(&address, &account_close)].as_slice()));
+        accounts.store_accounts_seq((slot_open, [(&address, &account_open)].as_slice()), None);
+        accounts.store_accounts_seq((slot_close, [(&address, &account_close)].as_slice()), None);
 
         let notifications = notifier.accounts_notified.get(&address).unwrap().clone();
         assert_eq!(notifications.len(), 2);

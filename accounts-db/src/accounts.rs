@@ -555,11 +555,7 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.accounts_db.store_accounts_unfrozen(
-            accounts,
-            transactions,
-            UpdateIndexThreadSelection::Inline,
-        );
+        self._store_accounts(accounts, transactions, UpdateIndexThreadSelection::Inline);
     }
 
     /// Store `accounts` into the DB
@@ -571,11 +567,48 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.accounts_db.store_accounts_unfrozen(
+        self._store_accounts(
             accounts,
             transactions,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
+    }
+
+    /// Store `accounts` into the DB
+    ///
+    /// This version is a private impl, performing the common additional tasks
+    /// when storing accounts that fall outside AccountsDb itself.
+    /// E.g. geyser account update notifications.
+    fn _store_accounts<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        transactions: Option<&'a [&'a SanitizedTransaction]>,
+        update_index_thread_selection: UpdateIndexThreadSelection,
+    ) {
+        let accounts_db = &self.accounts_db;
+        if accounts_db.has_accounts_update_notifier() {
+            let mut current_write_version = accounts_db
+                .write_version
+                .fetch_add(accounts.len() as u64, Ordering::AcqRel);
+            let slot = accounts.target_slot();
+            for index in 0..accounts.len() {
+                let transaction = transactions
+                    .map(|txs| *txs.get(index).expect("txs must be present if provided"));
+                accounts.account(index, |account| {
+                    let account_shared_data = account.take_account();
+                    accounts_db.notify_account_at_accounts_update(
+                        slot,
+                        &account_shared_data,
+                        &transaction,
+                        account.pubkey(),
+                        current_write_version,
+                    );
+                });
+                current_write_version = current_write_version.saturating_add(1);
+            }
+        }
+
+        accounts_db.store_accounts_unfrozen(accounts, update_index_thread_selection);
     }
 
     /// Add a slot to root.  Root slots cannot be purged

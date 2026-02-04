@@ -81,8 +81,7 @@ pub fn process_instruction(
         #[cfg(not(target_os = "solana"))]
         panic!();
     }
-    // clippy 1.92 started marking `num` as unused in the assert below
-    #[allow(unused_variables)]
+
     {
         // Test - float math functions
         let zero = accounts[0].try_borrow_mut_data()?.len() as f64;
