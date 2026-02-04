@@ -4,7 +4,6 @@ use {
     super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
     crate::banking_stage::scheduler_messages::TransactionId,
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
-    itertools::MinMaxResult,
     slab::{Slab, VacantEntry},
     solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
@@ -109,7 +108,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     fn flush_held_transactions(&mut self);
 
-    fn get_min_max_priority(&self) -> MinMaxResult<u64>;
+    fn get_min_max_priority(&self) -> Option<(u64, u64)>;
 
     /// Return the next-lower priority ID strictly below `cursor` in the queue, or the
     /// highest if `cursor` is `None` (i.e. start a new sweep).
@@ -208,14 +207,10 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         core::mem::swap(&mut self.held_transactions, &mut held_transactions);
     }
 
-    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
-        match self.priority_queue.first() {
-            Some(min) => match self.priority_queue.last() {
-                Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
-                None => MinMaxResult::OneElement(min.priority),
-            },
-            None => MinMaxResult::NoElements,
-        }
+    fn get_min_max_priority(&self) -> Option<(u64, u64)> {
+        self.priority_queue
+            .first()
+            .map(|first| (self.priority_queue.last().unwrap().priority, first.priority))
     }
 
     fn next_recheck_id(
@@ -390,7 +385,7 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     }
 
     #[inline]
-    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+    fn get_min_max_priority(&self) -> Option<(u64, u64)> {
         self.inner.get_min_max_priority()
     }
 
