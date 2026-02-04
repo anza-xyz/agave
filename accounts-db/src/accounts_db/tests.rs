@@ -6605,6 +6605,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey1, &zero_account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
+        None,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
@@ -6623,6 +6624,7 @@ fn test_new_zero_lamport_accounts_skipped() {
             .as_slice(),
         ),
         UpdateIndexThreadSelection::Inline,
+        None,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(!accounts_db
@@ -6648,6 +6650,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey2, &zero_account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
+        None,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey2));
     assert!(accounts_db
@@ -6675,6 +6678,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey1, &account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
+        None,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey1));
 
@@ -6683,6 +6687,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey3, &zero_account)].as_slice()),
         UpdateIndexThreadSelection::Inline,
+        None,
     );
     accounts_db.add_root_and_flush_write_cache(slot);
 
@@ -6704,35 +6709,36 @@ enum InitialState {
     WithoutLamports,
 }
 
-#[test_case(InitialState::None, vec![0], None, 1, 0;
+#[test_case(InitialState::None, vec![0], None, 1, 0, 0;
     "store_single_zero_lamport")]
-#[test_case(InitialState::None, vec![100, 200, 300], Some(300), 0, 2;
+#[test_case(InitialState::None, vec![100, 200, 300], Some(300), 0, 0, 2;
 "store_multiple_duplicates_some_lamports")]
-#[test_case(InitialState::None, vec![11, 0, 12, 0], None, 1, 3;
+#[test_case(InitialState::None, vec![11, 0, 12, 0], None, 1, 0, 3;
     "store_mixed_accounts_ending_with_zero_lamports")]
-#[test_case(InitialState::None, vec![0, 5, 0, 10], Some(10), 0, 3;
+#[test_case(InitialState::None, vec![0, 5, 0, 10], Some(10), 0, 0, 3;
 "store_mixed_accounts_ending_with_nonzero_lamports")]
-#[test_case(InitialState::WithLamports(10), vec![0], Some(0), 0, 0;
+#[test_case(InitialState::WithLamports(10), vec![0], Some(0), 0, 0, 0;
 "overwrite_existing_account_with_zero_lamports")]
-#[test_case(InitialState::WithLamports(50), vec![101, 102, 103], Some(103), 0, 2;
+#[test_case(InitialState::WithLamports(50), vec![101, 102, 103], Some(103), 0, 0, 2;
 "overwrite_existing_account_with_duplicate_some_lamports")]
-#[test_case(InitialState::WithLamports(50), vec![0, 5, 0, 10], Some(10), 0, 3;
+#[test_case(InitialState::WithLamports(50), vec![0, 5, 0, 10], Some(10), 0, 0, 3;
 "overwrite_existing_account_mixed_ending_some_lamports")]
-#[test_case(InitialState::WithLamports(50), vec![11, 0, 12, 0], Some(0), 0, 3;
+#[test_case(InitialState::WithLamports(50), vec![11, 0, 12, 0], Some(0), 0, 0, 3;
 "overwrite_existing_account_mixed_ending_zero_lamports")]
-#[test_case(InitialState::WithoutLamports, vec![0], Some(0), 0, 0;
+#[test_case(InitialState::WithoutLamports, vec![0], Some(0), 0, 1, 0;
 "overwrite_zero_lamport_account_with_zero_lamports")]
-#[test_case(InitialState::WithoutLamports, vec![5], Some(5), 0, 0;
+#[test_case(InitialState::WithoutLamports, vec![5], Some(5), 0, 0, 0;
 "overwrite_zero_lamport_account_with_some_lamports")]
-#[test_case(InitialState::WithoutLamports, vec![0, 10, 0, 15], Some(15), 0, 3;
+#[test_case(InitialState::WithoutLamports, vec![0, 10, 0, 15], Some(15), 0, 0, 3;
 "overwrite_zero_lamport_account_mixed_ending_some_lamports")]
-#[test_case(InitialState::WithoutLamports, vec![12, 0, 25, 0], Some(0),0, 3;
-"overwrite_zero_lamport_account__mixed_ending_zero_lamports")]
+#[test_case(InitialState::WithoutLamports, vec![12, 0, 25, 0], Some(0), 0, 1, 3;
+"overwrite_zero_lamport_account_mixed_ending_zero_lamports")]
 fn test_write_accounts_to_cache_scenarios(
     initial_state: InitialState,
     batch_accounts: Vec<u64>,
     expected_lamports: Option<u64>,
     expected_ephemeral_skips: u64,
+    expected_ancestors_skipped: u64,
     expected_duplicate_skips: u64,
 ) {
     let db = AccountsDb::new_single_for_tests();
@@ -6750,6 +6756,7 @@ fn test_write_accounts_to_cache_scenarios(
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
                 UpdateIndexThreadSelection::Inline,
+                None,
             );
         }
         InitialState::WithoutLamports => {
@@ -6759,11 +6766,13 @@ fn test_write_accounts_to_cache_scenarios(
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
                 UpdateIndexThreadSelection::Inline,
+                None,
             );
             // Overwrite with a zero-lamport account to simulate ephemeral setup
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account_zero)].as_slice()),
                 UpdateIndexThreadSelection::Inline,
+                None,
             );
         }
     }
@@ -6776,7 +6785,11 @@ fn test_write_accounts_to_cache_scenarios(
         .collect();
     let batch: Vec<_> = accounts.iter().map(|account| (&key, account)).collect();
 
-    db.store_accounts_unfrozen((slot, batch.as_slice()), UpdateIndexThreadSelection::Inline);
+    db.store_accounts_unfrozen(
+        (slot, batch.as_slice()),
+        UpdateIndexThreadSelection::Inline,
+        Some(&ancestors),
+    );
 
     // Verify results
     let loaded = db.load_without_fixed_root(&ancestors, &key);
@@ -6798,6 +6811,15 @@ fn test_write_accounts_to_cache_scenarios(
     assert_eq!(
         ephemeral, expected_ephemeral_skips,
         "Wrong number of ephemeral skips"
+    );
+
+    let ancestors_zero_lamport = db
+        .stats
+        .num_ancestors_zero_skipped
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        ancestors_zero_lamport, expected_ancestors_skipped,
+        "Wrong number of ancestors zero lamport skips"
     );
 
     let duplicates = db
