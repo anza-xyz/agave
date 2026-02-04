@@ -176,7 +176,6 @@ use {
 };
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
-const MAX_PENDING_REPAIR_REQUESTS_RESPONSES: usize = 1024;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 // Right now since we reuse the wait for supermajority code, the
 // following threshold should always greater than or equal to
@@ -1460,10 +1459,8 @@ impl Validator {
                 bank_forks_r.migration_status(),
             )
         };
-        let (repair_request_quic_sender, repair_request_quic_receiver) =
-            bounded(MAX_PENDING_REPAIR_REQUESTS_RESPONSES);
-        let (repair_response_quic_sender, repair_response_quic_receiver) =
-            bounded(MAX_PENDING_REPAIR_REQUESTS_RESPONSES);
+        let (repair_request_quic_sender, repair_request_quic_receiver) = unbounded();
+        let (repair_response_quic_sender, repair_response_quic_receiver) = unbounded();
         let (ancestor_hashes_response_quic_sender, ancestor_hashes_response_quic_receiver) =
             unbounded();
 
