@@ -239,8 +239,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
     /// Returns the index in the instruction trace of the current executing instruction
     pub fn get_current_instruction_index(&self) -> Result<usize, InstructionError> {
-        self.get_instruction_stack_height()
-            .checked_sub(1)
+        self.instruction_stack
+            .last()
+            .copied()
             .ok_or(InstructionError::CallDepth)
     }
 
@@ -248,8 +249,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn get_current_instruction_context(
         &self,
     ) -> Result<InstructionContext<'_, '_>, InstructionError> {
-        let level = self.get_current_instruction_index()?;
-        self.get_instruction_context_at_nesting_level(level)
+        let index_in_trace = self.get_current_instruction_index()?;
+        self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
     /// Returns a view on the next instruction. This function assumes it has already been
