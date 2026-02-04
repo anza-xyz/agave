@@ -5139,33 +5139,37 @@ impl AccountsDb {
         }
     }
 
-    /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Updates the accounts index with the given accounts. If store_account is false, skip storing
+    /// the account in the index as the account was not stored in the cache
     /// Used for cached accounts only.
     fn update_index_cached_accounts<'a>(
         &self,
-        infos: Vec<AccountInfo>,
         accounts: &impl StorableAccounts<'a>,
+        store_account: &[bool],
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         let target_slot = accounts.target_slot();
-        let len = std::cmp::min(accounts.len(), infos.len());
+        let len = accounts.len();
+        assert_eq!(accounts.len(), store_account.len());
 
         let update = |start, end| {
             (start..end).for_each(|i| {
-                accounts.account(i, |account| {
-                    let info = infos[i];
-                    debug_assert!(info.is_cached());
-                    self.accounts_index.upsert(
-                        target_slot,
-                        target_slot,
-                        account.pubkey(),
-                        &account,
-                        &self.account_indexes,
-                        info,
-                        ReclaimsSlotList::default().as_mut(),
-                        UpsertReclaim::PreviousSlotEntryWasCached,
-                    );
-                });
+                if store_account[i] {
+                    accounts.account(i, |account| {
+                        let info =
+                            AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
+                        self.accounts_index.upsert(
+                            target_slot,
+                            target_slot,
+                            account.pubkey(),
+                            &account,
+                            &self.account_indexes,
+                            info,
+                            ReclaimsSlotList::default().as_mut(),
+                            UpsertReclaim::PreviousSlotEntryWasCached,
+                        );
+                    });
+                }
             });
         };
 
@@ -5634,7 +5638,8 @@ impl AccountsDb {
 
         // Store the accounts in the write cache
         let mut store_accounts_time = Measure::start("store_accounts");
-        let infos = self.write_accounts_to_cache(accounts.target_slot(), &accounts);
+        let (store_account, num_ephemeral_accounts_skipped) =
+            self.write_accounts_to_cache(accounts.target_slot(), &accounts);
         store_accounts_time.stop();
         self.stats
             .store_accounts_to_cache_us
@@ -5643,15 +5648,19 @@ impl AccountsDb {
         // Update the index
         let mut update_index_time = Measure::start("update_index");
 
-        self.update_index_cached_accounts(infos, &accounts, update_index_thread_selection);
+        self.update_index_cached_accounts(&accounts, &store_account, update_index_thread_selection);
 
         update_index_time.stop();
         self.stats
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
+        self.stats.num_store_accounts_to_cache.fetch_add(
+            (accounts.len() - num_ephemeral_accounts_skipped) as u64,
+            Ordering::Relaxed,
+        );
         self.stats
-            .num_store_accounts_to_cache
-            .fetch_add(accounts.len() as u64, Ordering::Relaxed);
+            .num_ephemeral_accounts_skipped
+            .fetch_add(num_ephemeral_accounts_skipped as u64, Ordering::Relaxed);
         self.report_store_timings();
     }
 
@@ -5773,22 +5782,35 @@ impl AccountsDb {
         }
     }
 
+    // Stores accounts in the write cache. If an account is zero-lamport and not present in the
+    // index, there is no need to store it in the write cache as it will not effect the database
+    // hash. The function returns a vector of booleans indicating whether each account was stored,
+    // and the number of accounts that were skipped.
     fn write_accounts_to_cache<'a, 'b>(
         &self,
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
-    ) -> Vec<AccountInfo> {
-        (0..accounts_and_meta_to_store.len())
+    ) -> (Vec<bool>, usize) {
+        let mut accounts_skipped = 0;
+        let store_account = (0..accounts_and_meta_to_store.len())
             .map(|index| {
                 accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
-                    let account_info =
-                        AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
+                    if account.is_zero_lamport()
+                        && self
+                            .accounts_index
+                            .get_and_then(account.pubkey(), |account| (true, account.is_none()))
+                    {
+                        accounts_skipped += 1;
+                        return false;
+                    }
                     self.accounts_cache
                         .store(slot, account.pubkey(), account.take_account());
-                    account_info
+                    true
                 })
             })
-            .collect()
+            .collect();
+
+        (store_account, accounts_skipped)
     }
 
     fn write_accounts_to_storage<'a>(
@@ -6039,6 +6061,13 @@ impl AccountsDb {
                     "num_zero_lamport_accounts_added",
                     self.stats
                         .num_zero_lamport_accounts_added
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_ephemeral_accounts_skipped",
+                    self.stats
+                        .num_ephemeral_accounts_skipped
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
