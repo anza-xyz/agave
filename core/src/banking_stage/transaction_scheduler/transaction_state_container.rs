@@ -5,13 +5,12 @@ use {
     crate::banking_stage::scheduler_messages::TransactionId,
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     itertools::MinMaxResult,
-    min_max_heap::MinMaxHeap,
     slab::{Slab, VacantEntry},
     solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    std::sync::Arc,
+    std::{collections::BTreeSet, sync::Arc},
 };
 
 /// This structure will hold `TransactionState` for the entirety of a
@@ -42,7 +41,7 @@ use {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     capacity: usize,
-    priority_queue: MinMaxHeap<TransactionPriorityId>,
+    priority_queue: BTreeSet<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
     held_transactions: Vec<TransactionPriorityId>,
 }
@@ -124,7 +123,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     fn with_capacity(capacity: usize) -> Self {
         Self {
             capacity,
-            priority_queue: MinMaxHeap::with_capacity(capacity + EXTRA_CAPACITY),
+            priority_queue: BTreeSet::new(),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
             held_transactions: Vec::with_capacity(capacity),
         }
@@ -143,7 +142,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn pop(&mut self) -> Option<TransactionPriorityId> {
-        self.priority_queue.pop_max()
+        self.priority_queue.pop_last()
     }
 
     fn get_mut_transaction_state(
@@ -164,7 +163,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         priority_ids: impl Iterator<Item = TransactionPriorityId>,
     ) -> usize {
         for id in priority_ids {
-            self.priority_queue.push(id);
+            self.priority_queue.insert(id);
         }
 
         // The number of items in the `id_to_transaction_state` map is
@@ -177,7 +176,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             .saturating_sub(self.capacity);
 
         for _ in 0..num_dropped {
-            let priority_id = self.priority_queue.pop_min().expect("queue is not empty");
+            let priority_id = self.priority_queue.pop_first().expect("queue is not empty");
             self.id_to_transaction_state.remove(priority_id.id);
         }
 
@@ -189,7 +188,11 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn remove_by_id(&mut self, id: TransactionId) {
-        self.id_to_transaction_state.remove(id);
+        let state = self.id_to_transaction_state.remove(id);
+        let removed = self
+            .priority_queue
+            .remove(&TransactionPriorityId::new(state.priority(), id));
+        assert!(!removed, "Until we adjust callers this will no-op");
     }
 
     fn flush_held_transactions(&mut self) {
@@ -199,8 +202,8 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn get_min_max_priority(&self) -> MinMaxResult<u64> {
-        match self.priority_queue.peek_min() {
-            Some(min) => match self.priority_queue.peek_max() {
+        match self.priority_queue.first() {
+            Some(min) => match self.priority_queue.last() {
                 Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
                 None => MinMaxResult::OneElement(min.priority),
             },
