@@ -2888,7 +2888,7 @@ pub mod rpc_minimal {
             let version = solana_version::Version::default();
             Ok(RpcVersionInfo {
                 solana_core: version.to_string(),
-                feature_set: Some(version.feature_set),
+                feature_set: Some(version.feature_set()),
             })
         }
 
@@ -3659,8 +3659,8 @@ pub mod rpc_full {
                         {
                             (
                                 Some(version.to_string()),
-                                Some(version.feature_set),
-                                Some(version.client),
+                                Some(version.feature_set()),
+                                u16::try_from(version.client().clone()).ok(),
                             )
                         } else {
                             (None, None, None)
@@ -5191,7 +5191,7 @@ pub mod tests {
             "rpc": format!("127.0.0.1:8899"),
             "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
-            "featureSet": version.feature_set,
+            "featureSet": version.feature_set(),
             "clientId": 3u16,
         }, {
             "pubkey": rpc.leader_pubkey().to_string(),
@@ -5207,7 +5207,7 @@ pub mod tests {
             "rpc": format!("127.0.0.1:8899"),
             "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
-            "featureSet": version.feature_set,
+            "featureSet": version.feature_set(),
             "clientId": 3u16,
         }]);
         assert_eq!(result, expected);
@@ -7157,7 +7157,7 @@ pub mod tests {
             let version = solana_version::Version::default();
             json!({
                 "solana-core": version.to_string(),
-                "feature-set": version.feature_set,
+                "feature-set": version.feature_set(),
             })
         };
         assert_eq!(result, expected);

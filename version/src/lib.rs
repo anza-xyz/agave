@@ -11,7 +11,7 @@ pub mod v2;
 pub mod v3;
 pub mod v4;
 
-pub use {client_ids::*, v3::*};
+pub use {client_ids::*, v4::*};
 
 pub(crate) fn compute_commit(sha1: Option<&'static str>) -> Option<u32> {
     u32::from_str_radix(sha1?.get(..8)?, /*radix:*/ 16).ok()
