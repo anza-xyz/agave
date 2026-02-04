@@ -127,54 +127,6 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
     true
 }
 
-<<<<<<< HEAD
-#[derive(Clone)]
-struct RouteTable {
-    routes: Vec<RouteEntry>,
-}
-
-impl RouteTable {
-    pub fn new() -> Result<Self, io::Error> {
-        let routes = netlink_get_routes(AF_INET as u8)?;
-        Ok(Self { routes })
-    }
-
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = &RouteEntry> {
-        self.routes.iter()
-    }
-
-    pub fn upsert(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(existing) = self.routes.iter_mut().find(|old| old.same_key(&new_route)) {
-            if existing != &new_route {
-                *existing = new_route;
-                return true;
-            }
-            false
-        } else {
-            self.routes.push(new_route);
-            true
-        }
-    }
-
-    pub fn remove(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
-            self.routes.swap_remove(i);
-            return true;
-        }
-        false
-    }
-}
-
-#[derive(Clone)]
-pub struct Router {
-    arp_table: ArpTable,
-    route_table: RouteTable,
-=======
-<<<<<<< HEAD
-pub struct Router {
-    arp_table: ArpTable,
-    routes: Vec<RouteEntry>,
-=======
 #[derive(Clone)]
 struct RouteTable {
     routes: Vec<RouteEntry>,
@@ -267,26 +219,16 @@ pub struct Router {
     // cache for gre route info to avoid repeated lookups in the common case
     // where there is only one gre interface
     cached_gre_info: Option<GreRouteInfo>,
->>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
->>>>>>> a02e5a2f7c (XDP support for DZ IBRL (#9715))
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
         Ok(Self {
             arp_table: ArpTable::new()?,
-<<<<<<< HEAD
-            route_table: RouteTable::new()?,
-=======
-<<<<<<< HEAD
-            routes: netlink_get_routes(AF_INET as u8)?,
-=======
             route_table: RouteTable::new()?,
             interface_table: InterfaceTable::new()?,
             cached_default_route: None,
             cached_gre_info: None,
->>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
->>>>>>> a02e5a2f7c (XDP support for DZ IBRL (#9715))
         })
     }
 
@@ -306,12 +248,6 @@ impl Router {
             None => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         };
 
-<<<<<<< HEAD
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
-=======
-<<<<<<< HEAD
-        let mac_addr = self.arp_table.lookup(next_hop_ip).cloned();
-=======
         let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
         let preferred_src_ip = match default_route.pref_src {
             Some(IpAddr::V4(v4)) => Some(v4),
@@ -323,8 +259,6 @@ impl Router {
             .iter()
             .find(|i| i.if_index == if_index)
             .and_then(|interface| self.interface_gre_route_info(interface));
->>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
->>>>>>> a02e5a2f7c (XDP support for DZ IBRL (#9715))
 
         Ok(NextHop {
             ip_addr: next_hop_ip,
@@ -356,17 +290,10 @@ impl Router {
             None => dest_ip,
         };
 
-<<<<<<< HEAD
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
-=======
-<<<<<<< HEAD
-        let mac_addr = self.arp_table.lookup(next_hop_ip).cloned();
-=======
         let preferred_src_ip = match route.pref_src {
             Some(IpAddr::V4(v4)) => Some(v4),
             _ => None,
         };
->>>>>>> a02e5a2f7c (XDP support for DZ IBRL (#9715))
 
         if let Some(default_route) = &self.cached_default_route {
             if default_route.ip_addr == next_hop_ip && default_route.if_index == if_index {
@@ -393,7 +320,6 @@ impl Router {
         }
 
         let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
->>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
 
         let next_hop = NextHop {
             ip_addr: next_hop_ip,
@@ -453,11 +379,6 @@ impl Router {
             mac_addr,
         })
     }
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
->>>>>>> a02e5a2f7c (XDP support for DZ IBRL (#9715))
 
     pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
         self.route_table.upsert(new_route)
@@ -474,8 +395,6 @@ impl Router {
     pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
         self.arp_table.remove(ip, if_index)
     }
-<<<<<<< HEAD
-=======
 
     pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) -> bool {
         self.interface_table.upsert(new_interface)
@@ -484,8 +403,6 @@ impl Router {
     pub fn remove_interface(&mut self, if_index: u32) -> bool {
         self.interface_table.remove(if_index)
     }
->>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
->>>>>>> a02e5a2f7c (XDP support for DZ IBRL (#9715))
 }
 
 #[derive(Clone)]
