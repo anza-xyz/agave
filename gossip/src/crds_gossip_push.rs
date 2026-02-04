@@ -429,7 +429,7 @@ mod tests {
         let push = CrdsGossipPush::default();
         let mut ping_cache = new_ping_cache();
         let peer = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
-        ping_cache.mock_pong(peer.gossip().unwrap(), Instant::now());
+        ping_cache.mock_pong(*peer.pubkey(), peer.gossip().unwrap(), Instant::now());
         let peer = CrdsValue::new_unsigned(CrdsData::from(peer));
         assert_eq!(
             crds.insert(peer.clone(), now, GossipRoute::LocalMessage),
@@ -481,7 +481,7 @@ mod tests {
             .map(|wallclock| {
                 let mut peer = ContactInfo::new_rand(&mut rng, /*pubkey=*/ None);
                 peer.set_wallclock(wallclock);
-                ping_cache.mock_pong(peer.gossip().unwrap(), Instant::now());
+                ping_cache.mock_pong(*peer.pubkey(), peer.gossip().unwrap(), Instant::now());
                 CrdsValue::new_unsigned(CrdsData::from(peer))
             })
             .collect();

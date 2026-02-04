@@ -112,7 +112,6 @@ members = [
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
-    "thread-manager",
     "tls-utils",
     "tokens",
     "tps-client",
@@ -208,7 +207,6 @@ agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.0.0-alph
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
-agave-thread-manager = { path = "thread-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "transaction-view", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -218,7 +216,7 @@ ahash = "0.8.12"
 anyhow = "1.0.100"
 aquamarine = "0.6.0"
 arbitrary = "1.4.2"
-arc-swap = "1.8.0"
+arc-swap = "1.8.1"
 array-bytes = "=1.4.1"
 arrayref = "0.3.9"
 arrayvec = "0.7.6"
@@ -245,7 +243,7 @@ bv = "0.11.1"
 byte-unit = "4.0.19"
 bytemuck = "1.25.0"
 bytemuck_derive = "1.10.2"
-bytes = "1.11"
+bytes = "1.11.1"
 bzip2 = "0.6.1"
 caps = "0.5.6"
 cargo_metadata = "0.15.4"
@@ -392,7 +390,7 @@ shaq = { version = "1.0.2" }
 shuttle = "0.7.1"
 signal-hook = "0.4.3"
 siphasher = "1.0.2"
-slab = "0.4.11"
+slab = "0.4.12"
 smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
 smpl_jwt = "0.7.1"
 socket2 = "0.6.2"
