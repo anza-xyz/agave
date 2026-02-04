@@ -681,13 +681,12 @@ mod tests {
         solana_clock::Slot,
         solana_hash::Hash,
         solana_runtime::{
-            bank::{Bank, NewBankOptions},
+            bank::{Bank, NewBankOptions, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{
                 create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
             },
         },
-        solana_signer::Signer,
         std::sync::{Arc, RwLock},
         test_case::test_case,
     };
@@ -706,8 +705,8 @@ mod tests {
         ConsensusMessage::new_vote(*vote, signature, rank as u16)
     }
 
-    fn create_bank(slot: Slot, parent: Arc<Bank>, pubkey: &Pubkey) -> Bank {
-        Bank::new_from_parent_with_options(parent, pubkey, slot, NewBankOptions::default())
+    fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
+        Bank::new_from_parent_with_options(parent, leader, slot, NewBankOptions::default())
     }
 
     fn create_bank_forks(validator_keypairs: &[ValidatorVoteKeypairs]) -> Arc<RwLock<BankForks>> {
@@ -941,10 +940,10 @@ mod tests {
         let (validator_keypairs, mut pool, _) = create_initial_state();
 
         let bank_forks = create_bank_forks(&validator_keypairs);
-        let my_pubkey = validator_keypairs[0].vote_keypair.pubkey();
 
         // Create bank 5
-        let bank = create_bank(5, bank_forks.read().unwrap().get(0).unwrap(), &my_pubkey);
+        let parent = bank_forks.read().unwrap().get(0).unwrap();
+        let bank = create_bank(5, parent.clone(), *parent.leader());
         bank.freeze();
         bank_forks.write().unwrap().insert(bank);
 
@@ -1897,12 +1896,12 @@ mod tests {
         assert!(pool.skip_certified(1));
         assert!(pool.is_finalized(2));
 
-        let new_bank = Arc::new(create_bank(2, root_bank, &Pubkey::new_unique()));
+        let new_bank = Arc::new(create_bank(2, root_bank, SlotLeader::new_unique()));
         pool.prune_old_state(new_bank.slot());
         // Check that cert for 1 is gone, but cert for 2 is still there
         assert!(!pool.skip_certified(1));
         assert!(pool.is_finalized(2));
-        let new_bank = Arc::new(create_bank(3, new_bank, &Pubkey::new_unique()));
+        let new_bank = Arc::new(create_bank(3, new_bank, SlotLeader::new_unique()));
         pool.prune_old_state(new_bank.slot());
         // Now both certs should be gone
         assert!(!pool.skip_certified(1));

@@ -35,7 +35,7 @@ const _: () = assert!(std::mem::size_of::<Age>() == std::mem::size_of::<AtomicAg
 /// higher the utilization of the in-mem index bins.
 ///
 /// This value is used to compute the high watermark.
-const NUM_ENTRIES_OVERHEAD: usize = 5_000;
+pub const DEFAULT_NUM_ENTRIES_OVERHEAD: usize = 5_000;
 
 /// The number of entries to evict, once we've hit the high watermark.
 ///
@@ -46,7 +46,7 @@ const NUM_ENTRIES_OVERHEAD: usize = 5_000;
 /// with that goal.
 ///
 /// This value is used to compute the low watermark.
-const NUM_ENTRIES_TO_EVICT: usize = 10_000;
+pub const DEFAULT_NUM_ENTRIES_TO_EVICT: usize = 10_000;
 
 pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub disk: Option<BucketMap<(Slot, U)>>,
@@ -92,7 +92,7 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 
     /// Precomputed thresholds per bin for flushing and eviction
     /// None for Minimal/InMemOnly, Some(threshold_entries_per_bin) for Threshold
-    threshold_entries_per_bin: Option<ThresholdEntriesPerBin>,
+    pub(super) threshold_entries_per_bin: Option<ThresholdEntriesPerBin>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for BucketMapHolder<T, U> {
@@ -265,9 +265,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         };
 
         // Compute threshold_entries once here
-        let threshold_entries_per_bin = match config.index_limit {
+        let threshold_entries_per_bin = match &config.index_limit {
             IndexLimit::InMemOnly | IndexLimit::Minimal => None,
-            IndexLimit::Threshold(limit_bytes) => {
+            IndexLimit::Threshold(threshold) => {
+                let limit_bytes = threshold.num_bytes;
                 let bytes_per_entry = InMemAccountsIndex::<T, U>::size_of_uninitialized()
                     + InMemAccountsIndex::<T, U>::size_of_single_entry();
                 let limit_entries = (limit_bytes as usize) / bytes_per_entry;
@@ -275,10 +276,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
                 let target_entries_per_bin =
                     Self::calculate_target_entries_per_bin(entries_per_bin);
                 let high_water_mark = target_entries_per_bin
-                    .checked_sub(NUM_ENTRIES_OVERHEAD)
+                    .checked_sub(threshold.num_entries_overhead)
                     .expect("limit too small for high watermark");
                 let low_water_mark = high_water_mark
-                    .checked_sub(NUM_ENTRIES_TO_EVICT)
+                    .checked_sub(threshold.num_entries_to_evict)
                     .expect("limit too small for low watermark");
                 #[rustfmt::skip]
                 info!(
@@ -502,19 +503,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
 
 /// Precomputed thresholds derived from the configured per-bin target.
 #[derive(Clone, Copy, Debug)]
-struct ThresholdEntriesPerBin {
+pub struct ThresholdEntriesPerBin {
     /// Rounded target entries per bin used as the baseline for thresholds.
-    _target_entries: usize,
+    pub _target_entries: usize,
     /// Entry count above which a bin triggers flushing to disk and eviction
     /// from in-memory index.
-    high_water_mark: usize,
+    pub high_water_mark: usize,
     /// Entry count to reach after flushing/evicting from a bin.
-    low_water_mark: usize,
+    pub low_water_mark: usize,
 }
 
 #[cfg(test)]
-pub mod tests {
-    use {super::*, rayon::prelude::*, std::time::Instant, test_case::test_case};
+mod tests {
+    use {
+        super::*, crate::accounts_index::IndexLimitThreshold, rayon::prelude::*,
+        std::time::Instant, test_case::test_case,
+    };
 
     #[test]
     fn test_next_bucket_to_flush() {
@@ -624,11 +628,17 @@ pub mod tests {
     #[test]
     fn test_should_flush_threshold() {
         let bins = 1;
-        let num_entries = (NUM_ENTRIES_OVERHEAD + NUM_ENTRIES_TO_EVICT) * 3;
+        let num_entries_overhead = DEFAULT_NUM_ENTRIES_OVERHEAD;
+        let num_entries_to_evict = DEFAULT_NUM_ENTRIES_TO_EVICT;
+        let num_entries = (num_entries_overhead + num_entries_to_evict) * 3;
         let bytes_per_entry = InMemAccountsIndex::<u64, u64>::size_of_uninitialized()
             + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
         let config = AccountsIndexConfig {
-            index_limit: IndexLimit::Threshold((num_entries * bytes_per_entry) as u64),
+            index_limit: IndexLimit::Threshold(IndexLimitThreshold {
+                num_bytes: (num_entries * bytes_per_entry) as u64,
+                num_entries_overhead,
+                num_entries_to_evict,
+            }),
             ..Default::default()
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
@@ -705,7 +715,11 @@ pub mod tests {
             + InMemAccountsIndex::<u64, u64>::size_of_single_entry();
         let limit_bytes = (num_entries * bytes_per_entry) as u64;
         let config = AccountsIndexConfig {
-            index_limit: IndexLimit::Threshold(limit_bytes),
+            index_limit: IndexLimit::Threshold(IndexLimitThreshold {
+                num_bytes: limit_bytes,
+                num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
+                num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
+            }),
             ..Default::default()
         };
         let test = BucketMapHolder::<u64, u64>::new(num_bins, &config, 1);

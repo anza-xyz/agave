@@ -30,7 +30,10 @@ use {
     solana_perf::packet::{to_packet_batches, PacketBatch},
     solana_poh::poh_recorder::{create_test_recorder, PohRecorder, WorkingBankEntry},
     solana_pubkey::{self as pubkey, Pubkey},
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{
+        bank::{Bank, SlotLeader},
+        bank_forks::BankForks,
+    },
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
@@ -520,7 +523,7 @@ fn main() {
     let mut tx_total_us = 0;
     let base_tx_count = bank.transaction_count();
     let mut txs_processed = 0;
-    let collector = solana_pubkey::new_rand();
+    let leader = SlotLeader::new_unique();
     let mut total_sent = 0;
     for current_iteration_index in 0..iterations {
         trace!("RUNNING ITERATION {current_iteration_index}");
@@ -582,7 +585,7 @@ fn main() {
                 assert_matches!(result, Ok(_));
             }
             let new_slot = bank.slot() + 1;
-            let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
+            let new_bank = Bank::new_from_parent(bank.clone(), leader, new_slot);
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");

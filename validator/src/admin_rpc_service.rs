@@ -1639,7 +1639,10 @@ mod tests {
                     KeyUpdaterType::TpuForwards,
                     KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
-                    KeyUpdaterType::RpcService
+                    KeyUpdaterType::RpcService,
+                    KeyUpdaterType::Bls,
+                    KeyUpdaterType::BlsConnectionCache,
+                    KeyUpdaterType::VoteClient,
                 ])
             );
             let mut io = MetaIoHandler::default();

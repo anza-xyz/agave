@@ -30,6 +30,7 @@ impl PubkeysPtr {
     ///
     /// # Safety
     ///
+    /// - `sharable_pubkeys.offset` must have been allocated by `allocator`.
     /// - The allocation pointed to by this region must not have previously been freed.
     /// - Pointer must be exclusive so that calling [`Self::free`] is safe.
     /// - `sharable_pubkeys.num_pubkeys` must be accurate and not overrun the allocation.
@@ -38,7 +39,8 @@ impl PubkeysPtr {
         allocator: &Allocator,
     ) -> Self {
         assert_ne!(sharable_pubkeys.num_pubkeys, 0);
-        let ptr = allocator.ptr_from_offset(sharable_pubkeys.offset).cast();
+        // SAFETY: `sharable_pubkeys.offset` was allocated by `allocator`.
+        let ptr = unsafe { allocator.ptr_from_offset(sharable_pubkeys.offset) }.cast();
 
         Self {
             ptr,

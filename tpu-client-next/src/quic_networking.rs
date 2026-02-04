@@ -6,6 +6,7 @@ use {
         crypto::rustls::QuicClientConfig, default_runtime, ClientConfig, Connection, Endpoint,
         EndpointConfig, IdleTimeout, TransportConfig,
     },
+    rustls::KeyLogFile,
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
     solana_tls_utils::tls_client_config_builder,
     std::{sync::Arc, time::Duration},
@@ -35,6 +36,7 @@ pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -
         .expect("Failed to set QUIC client certificates");
     crypto.enable_early_data = true;
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
+    crypto.key_log = Arc::new(KeyLogFile::new());
 
     let transport_config = {
         let mut res = TransportConfig::default();

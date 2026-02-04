@@ -3,7 +3,7 @@ use {
     super::*,
     crate::{
         accounts_file::AccountsFileProvider,
-        accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
+        accounts_index::{test_utils::*, AccountSecondaryIndexesIncludeExclude},
         append_vec::{test_utils::TempFile, AppendVec},
         storable_accounts::AccountForStorage,
     },
@@ -1325,6 +1325,14 @@ fn test_shrink_zero_lamport_single_ref_account() {
             [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
         ));
 
+        accounts.accounts_index.get_and_then(&pubkey_zero, |entry| {
+            let entry = entry.unwrap();
+            let slot_list = entry.slot_list_read_lock();
+            let (_, account_info) = slot_list.iter().max_by_key(|(s, _)| *s).cloned().unwrap();
+            assert!(account_info.is_zero_lamport());
+            (false, false)
+        });
+
         // Simulate rooting the zero-lamport account, should be a
         // candidate for cleaning
         accounts.add_root_and_flush_write_cache(slot);
@@ -2047,11 +2055,6 @@ fn test_hash_stored_account() {
         "Account-based hashing must be consistent with StoredAccountInfo-based one."
     );
 }
-
-// something we can get a ref to
-
-pub static EPOCH_SCHEDULE: std::sync::LazyLock<EpochSchedule> =
-    std::sync::LazyLock::new(EpochSchedule::default);
 
 #[test]
 fn test_verify_bank_capitalization() {
@@ -4978,7 +4981,14 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         info.num_obsolete_accounts_skipped,
         num_accounts_to_mark_obsolete as u64
     );
-    assert_eq!(storage_info.len(), 1);
+    assert_eq!(
+        storage_info.len(),
+        if num_accounts_to_mark_obsolete < account_sizes.len() {
+            1
+        } else {
+            0
+        }
+    );
 
     for entry in storage_info.iter() {
         // Sum up the stored size of all non obsolete accounts
@@ -6578,117 +6588,4 @@ fn test_batch_insert_zero_lamport_single_ref_account_offsets() {
     let count5 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets5);
     assert_eq!(count5, 3, "Should insert only 3 new offsets (60, 70, 80)");
     assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 8);
-}
-
-#[test]
-fn test_new_zero_lamport_accounts_skipped() {
-    let accounts_db = AccountsDb::new_single_for_tests();
-    let pubkey1 = Pubkey::new_unique();
-    let pubkey2 = Pubkey::new_unique();
-    let pubkey3 = Pubkey::new_unique();
-    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
-    let account = AccountSharedData::new(100, 0, &Pubkey::default());
-    let slot = 0;
-
-    // 1. Insert a single zero-lamport account and verify it is not added to the index or the
-    //    write cache. Since this is the first write to this slot, the slot cache should not be
-    //    created.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey1, &zero_account)].as_slice()),
-        None,
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
-    assert!(!accounts_db.accounts_index.contains(&pubkey1));
-    assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
-
-    // 2. Insert a zero-lamport (pubkey1) together with non-zero lamport accounts
-    //    (pubkey2, pubkey3) in the same slot and verify only the non-zero lamport pubkeys are
-    //    indexed.
-    accounts_db.store_accounts_unfrozen(
-        (
-            slot,
-            [
-                (&pubkey1, &zero_account),
-                (&pubkey2, &account),
-                (&pubkey3, &account),
-            ]
-            .as_slice(),
-        ),
-        None,
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
-    assert!(!accounts_db.accounts_index.contains(&pubkey1));
-    assert!(!accounts_db
-        .accounts_cache
-        .slot_cache(slot)
-        .unwrap()
-        .contains_key(&pubkey1));
-    assert!(accounts_db.accounts_index.contains(&pubkey2));
-    assert!(accounts_db
-        .accounts_cache
-        .slot_cache(slot)
-        .unwrap()
-        .contains_key(&pubkey2));
-    assert!(accounts_db.accounts_index.contains(&pubkey3));
-    assert!(accounts_db
-        .accounts_cache
-        .slot_cache(slot)
-        .unwrap()
-        .contains_key(&pubkey3));
-
-    // 3. Insert a zero-lamport update for an already-indexed pubkey (pubkey2).
-    //    Verify pubkey2 remains in the index and gets added to the slot cache.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey2, &zero_account)].as_slice()),
-        None,
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
-    assert!(accounts_db.accounts_index.contains(&pubkey2));
-    assert!(accounts_db
-        .accounts_cache
-        .slot_cache(slot)
-        .unwrap()
-        .contains_key(&pubkey2));
-
-    // 4. Flush the slot to simulate write-cache -> storage transition and verify
-    //    pubkey1 is still not present while pubkey2 remains indexed but is now zero-lamport.
-    accounts_db.add_root_and_flush_write_cache(slot);
-    assert!(!accounts_db.accounts_index.contains(&pubkey1));
-    assert!(accounts_db.accounts_index.contains(&pubkey2));
-    assert!(accounts_db.accounts_index.contains(&pubkey3));
-
-    // Verify pubkey2 is present in slot in the index with a zero-lamport AccountInfo.
-    assert!(accounts_db.accounts_index.get_and_then(&pubkey2, |entry| {
-        let account_info = *entry.unwrap().slot_list_read_lock().first().unwrap();
-        (false, account_info.1.is_zero_lamport())
-    }));
-
-    // 5. Add a non-zero lamport account for a pubkey that was previously only written as zero
-    //    (pubkey1) and verify the pubkey is added to the index.
-    let slot = slot + 1;
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey1, &account)].as_slice()),
-        None,
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
-    assert!(accounts_db.accounts_index.contains(&pubkey1));
-
-    // 6. Set pubkey3 to zero lamports and flush. Verify pubkey3 is present in the index with
-    // a zero-lamport AccountInfo after flushing.
-    accounts_db.store_accounts_unfrozen(
-        (slot, [(&pubkey3, &zero_account)].as_slice()),
-        None,
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
-    accounts_db.add_root_and_flush_write_cache(slot);
-
-    // Verify pubkey3 is present in slot in the index with a zero-lamport AccountInfo.
-    let slot_list = accounts_db.accounts_index.get_and_then(&pubkey3, |entry| {
-        let entry = entry.expect("must exist");
-        (false, entry.slot_list_read_lock().clone_list())
-    });
-
-    // pubkey3 should be present in the index and marked as zero-lamport for this slot.
-    let account_info = slot_list.iter().find(|(s, _)| *s == slot).unwrap();
-    assert!(account_info.1.is_zero_lamport());
 }

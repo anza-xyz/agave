@@ -531,15 +531,12 @@ impl SendTransactionService {
 mod test {
     use {
         super::*,
-        crate::{
-            test_utils::{CreateClient, Stoppable},
-            transaction_client::TpuClientNextClient,
-        },
+        crate::test_utils::create_client_for_tests,
         crossbeam_channel::{bounded, unbounded},
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
-        solana_pubkey::Pubkey,
+        solana_runtime::bank::SlotLeader,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
@@ -555,12 +552,8 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = unbounded();
 
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
-            "127.0.0.1:0".parse().unwrap(),
-            None,
-            1,
-        );
+        let client =
+            create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
             &bank_forks,
@@ -575,7 +568,7 @@ mod test {
 
         drop(sender);
         send_transaction_service.join().unwrap();
-        client.stop();
+        client.cancel();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -597,12 +590,8 @@ mod test {
         };
 
         let exit = Arc::new(AtomicBool::new(false));
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
-            "127.0.0.1:0".parse().unwrap(),
-            None,
-            1,
-        );
+        let client =
+            create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service = SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -618,7 +607,7 @@ mod test {
 
         thread::spawn(move || {
             exit.store(true, Ordering::Relaxed);
-            client.stop();
+            client.cancel();
         });
 
         let mut option = Ok(());
@@ -640,7 +629,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         );
         let root_bank = bank_forks
@@ -666,7 +655,7 @@ mod test {
             .unwrap()
             .insert(Bank::new_from_parent(
                 root_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 2,
             ))
             .clone_without_scheduler();
@@ -713,8 +702,8 @@ mod test {
             ),
         );
 
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+        let client = create_client_for_tests(
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,
@@ -907,7 +896,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.stop();
+        client.cancel();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -922,7 +911,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         );
         let root_bank = bank_forks
@@ -957,7 +946,7 @@ mod test {
             .unwrap()
             .insert(Bank::new_from_parent(
                 root_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 2,
             ))
             .clone_without_scheduler();
@@ -1002,8 +991,8 @@ mod test {
             ),
         );
         let stats = SendTransactionServiceStats::default();
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+        let client = create_client_for_tests(
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,
@@ -1239,6 +1228,6 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.stop();
+        client.cancel();
     }
 }

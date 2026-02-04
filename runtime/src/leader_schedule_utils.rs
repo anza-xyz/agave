@@ -1,21 +1,36 @@
 use {
-    crate::leader_schedule::LeaderSchedule,
+    crate::bank::Bank,
     solana_clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_epoch_schedule::EpochSchedule,
+    solana_leader_schedule::LeaderSchedule,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_vote::vote_account::VoteAccountsHashMap,
     std::collections::HashMap,
 };
 
 /// Return the leader schedule for the given epoch.
 pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
-    bank.epoch_vote_accounts(epoch).map(|vote_accounts_map| {
-        LeaderSchedule::new(
-            vote_accounts_map,
-            epoch,
-            bank.get_slots_in_epoch(epoch),
-            NUM_CONSECUTIVE_LEADER_SLOTS,
-        )
-    })
+    leader_schedule_from_vote_accounts(
+        epoch,
+        bank.epoch_schedule(),
+        bank.epoch_vote_accounts(epoch)?,
+    )
+}
+
+/// Return the leader schedule for the given epoch using vote accounts directly.
+/// This is useful for computing the leader schedule during snapshot restoration
+/// before a Bank is fully constructed.
+pub fn leader_schedule_from_vote_accounts(
+    epoch: Epoch,
+    epoch_schedule: &EpochSchedule,
+    epoch_vote_accounts: &VoteAccountsHashMap,
+) -> Option<LeaderSchedule> {
+    Some(LeaderSchedule::new(
+        epoch_vote_accounts,
+        epoch,
+        epoch_schedule.get_slots_in_epoch(epoch),
+        NUM_CONSECUTIVE_LEADER_SLOTS,
+    ))
 }
 
 /// Map of leader base58 identity pubkeys to the slot indices relative to the first epoch slot
@@ -43,7 +58,7 @@ pub fn leader_schedule_by_identity<'a>(
 pub fn slot_leader_at(slot: Slot, bank: &Bank) -> Option<Pubkey> {
     let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
 
-    leader_schedule(epoch, bank).map(|leader_schedule| leader_schedule[slot_index])
+    leader_schedule(epoch, bank).map(|leader_schedule| leader_schedule[slot_index].id)
 }
 
 // Returns the number of ticks remaining from the specified tick_height to the end of the
@@ -81,7 +96,7 @@ pub fn remaining_slots_in_window(slot: Slot) -> u64 {
 mod tests {
     use {
         super::*,
-        solana_runtime::genesis_utils::{
+        crate::genesis_utils::{
             bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
         },
     };
@@ -96,9 +111,9 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let leader_schedule = leader_schedule(0, &bank).unwrap();
 
-        assert_eq!(leader_schedule[0], pubkey);
-        assert_eq!(leader_schedule[1], pubkey);
-        assert_eq!(leader_schedule[2], pubkey);
+        assert_eq!(leader_schedule[0].id, pubkey);
+        assert_eq!(leader_schedule[1].id, pubkey);
+        assert_eq!(leader_schedule[2].id, pubkey);
     }
 
     #[test]

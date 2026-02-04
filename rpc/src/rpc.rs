@@ -126,7 +126,7 @@ use {
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
         send_transaction_service::Config as SendTransactionServiceConfig,
-        send_transaction_service::SendTransactionService, test_utils::ClientWithCreator,
+        send_transaction_service::SendTransactionService,
     },
 };
 
@@ -445,11 +445,11 @@ impl JsonRpcRequestProcessor {
     }
 
     #[cfg(test)]
-    pub fn new_from_bank<Client: ClientWithCreator>(
-        bank: Bank,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        use crate::rpc_service::service_runtime;
+    pub fn new_from_bank(bank: Bank, socket_addr_space: SocketAddrSpace) -> Self {
+        use {
+            crate::rpc_service::service_runtime,
+            solana_send_transaction_service::test_utils::create_client_for_tests,
+        };
 
         let genesis_hash = bank.hash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -476,7 +476,7 @@ impl JsonRpcRequestProcessor {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
             &bank_forks,
@@ -2929,7 +2929,7 @@ pub mod rpc_minimal {
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
                     let mut schedule_by_identity =
-                        solana_ledger::leader_schedule_utils::leader_schedule_by_identity(
+                        solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule
                                 .get_slot_leaders()
                                 .iter()
@@ -3837,6 +3837,9 @@ pub mod rpc_full {
                 preflight_bank
                     .feature_set
                     .is_active(&agave_feature_set::static_instruction_limit::id()),
+                preflight_bank
+                    .feature_set
+                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
             )?;
             let blockhash = *transaction.message().recent_blockhash();
             let message_hash = *transaction.message_hash();
@@ -3999,6 +4002,8 @@ pub mod rpc_full {
                 bank.get_reserved_account_keys(),
                 bank.feature_set
                     .is_active(&agave_feature_set::static_instruction_limit::id()),
+                bank.feature_set
+                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
             )?;
 
             let verification_error = if sig_verify {
@@ -4411,6 +4416,7 @@ fn sanitize_transaction(
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
     enable_static_instruction_limit: bool,
+    enable_instruction_accounts_limit: bool,
 ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
@@ -4419,6 +4425,7 @@ fn sanitize_transaction(
         address_loader,
         reserved_account_keys,
         enable_static_instruction_limit,
+        enable_instruction_accounts_limit,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
@@ -4568,14 +4575,12 @@ pub mod tests {
             filter::MemcmpEncodedBytes,
         },
         solana_runtime::{
-            bank::BankTestConfig,
+            bank::{BankTestConfig, SlotLeader},
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
         },
         solana_sdk_ids::bpf_loader_upgradeable,
-        solana_send_transaction_service::{
-            test_utils::CreateClient, transaction_client::TpuClientNextClient,
-        },
+        solana_send_transaction_service::test_utils::create_client_for_tests,
         solana_sha256_hasher::hash,
         solana_signer::Signer,
         solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
@@ -4989,7 +4994,7 @@ pub mod tests {
             let mut parent_bank = self.bank_forks.read().unwrap().working_bank();
             for (i, root) in roots.iter().enumerate() {
                 let new_bank =
-                    Bank::new_from_parent(parent_bank.clone(), parent_bank.leader_id(), *root);
+                    Bank::new_from_parent(parent_bank.clone(), *parent_bank.leader(), *root);
                 parent_bank = self
                     .bank_forks
                     .write()
@@ -5008,7 +5013,7 @@ pub mod tests {
             self.blockstore.set_roots(roots.iter()).unwrap();
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
-                parent_bank.leader_id(),
+                *parent_bank.leader(),
                 roots.iter().max().unwrap() + 1,
             );
             self.bank_forks.write().unwrap().insert(new_bank);
@@ -5036,7 +5041,11 @@ pub mod tests {
                 .bank_forks
                 .write()
                 .unwrap()
-                .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
+                .insert(Bank::new_from_parent(
+                    parent_bank,
+                    SlotLeader::default(),
+                    slot,
+                ))
                 .clone_without_scheduler();
 
             let new_block_commitment = BlockCommitmentCache::new(
@@ -5092,10 +5101,7 @@ pub mod tests {
         let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let bank = meta.bank_forks.read().unwrap().root_bank();
         bank.transfer(20, &genesis.mint_keypair, &bob_pubkey)
@@ -5113,10 +5119,7 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5143,10 +5146,7 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5269,10 +5269,7 @@ pub mod tests {
         let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -6837,10 +6834,7 @@ pub mod tests {
     fn test_rpc_send_bad_tx() {
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
@@ -6908,12 +6902,7 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
-            my_tpu_address,
-            None,
-            1,
-        );
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -7206,12 +7195,7 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
-            my_tpu_address,
-            None,
-            1,
-        );
+        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,
@@ -8926,13 +8910,13 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
-        let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
+        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
-        let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
+        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
         let prioritization_fee_cache_inner = None;
@@ -9211,6 +9195,7 @@ pub mod tests {
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
                 true,
+                true,
             )
             .unwrap_err(),
             expect58
@@ -9236,6 +9221,7 @@ pub mod tests {
                 versioned_tx,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
+                true,
                 true,
             )
             .unwrap_err(),

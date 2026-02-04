@@ -42,8 +42,13 @@ impl<D: TransactionData> TransactionView<false, D> {
     pub fn sanitize(
         self,
         enable_static_instruction_limit: bool,
+        enable_instruction_accounts_limit: bool,
     ) -> Result<SanitizedTransactionView<D>> {
-        sanitize(&self, enable_static_instruction_limit)?;
+        sanitize(
+            &self,
+            enable_static_instruction_limit,
+            enable_instruction_accounts_limit,
+        )?;
         Ok(SanitizedTransactionView {
             data: self.data,
             frame: self.frame,
@@ -53,9 +58,16 @@ impl<D: TransactionData> TransactionView<false, D> {
 
 impl<D: TransactionData> TransactionView<true, D> {
     /// Creates a new `TransactionView`, running sanitization checks.
-    pub fn try_new_sanitized(data: D, enable_static_instruction_limit: bool) -> Result<Self> {
+    pub fn try_new_sanitized(
+        data: D,
+        enable_static_instruction_limit: bool,
+        enable_instruction_accounts_limit: bool,
+    ) -> Result<Self> {
         let unsanitized_view = TransactionView::try_new_unsanitized(data)?;
-        unsanitized_view.sanitize(enable_static_instruction_limit)
+        unsanitized_view.sanitize(
+            enable_static_instruction_limit,
+            enable_instruction_accounts_limit,
+        )
     }
 }
 

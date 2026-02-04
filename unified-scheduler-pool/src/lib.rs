@@ -2944,7 +2944,7 @@ mod tests {
         solana_poh::record_channels::record_channels,
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             installed_scheduler_pool::{
@@ -3704,7 +3704,7 @@ mod tests {
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let child_bank = Bank::new_from_parent(bank, &Pubkey::default(), 1);
+        let child_bank = Bank::new_from_parent(bank, SlotLeader::default(), 1);
 
         let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
 
@@ -4165,7 +4165,7 @@ mod tests {
         // Create new bank to observe behavior difference around session ending
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
@@ -4246,7 +4246,7 @@ mod tests {
 
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
         // Immediately trigger WouldExceedMaxBlockCostLimit by setting all cost limits to 0
@@ -4273,7 +4273,7 @@ mod tests {
         record_receiver.shutdown();
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
         // Revert the block cost limit
@@ -4328,7 +4328,7 @@ mod tests {
         let bank0 = setup_dummy_fork_graph(bank0).0;
         let bank1 = Arc::new(Bank::new_from_parent(
             bank0.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             bank0.slot().checked_add(1).unwrap(),
         ));
 
@@ -4552,7 +4552,7 @@ mod tests {
             let slot = bank.slot();
             bank = Bank::new_from_parent(
                 Arc::new(bank),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot.checked_add(1).unwrap(),
             );
         }

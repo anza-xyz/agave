@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use {
     crate::voting_service::AlpenglowPortOverride,
     lru::LruCache,

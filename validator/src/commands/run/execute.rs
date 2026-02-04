@@ -11,6 +11,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
+    agave_votor::vote_history_storage,
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
@@ -18,7 +19,10 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, ScanFilter},
+        accounts_index::{
+            AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, IndexLimitThreshold,
+            ScanFilter, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
+        },
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -521,20 +525,40 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
+    let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
+        vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
+    );
+
     let accounts_index_limit =
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
-    let index_limit = match accounts_index_limit.as_str() {
-        "minimal" => IndexLimit::Minimal,
-        "25GB" => IndexLimit::Threshold(25_000_000_000),
-        "50GB" => IndexLimit::Threshold(50_000_000_000),
-        "100GB" => IndexLimit::Threshold(100_000_000_000),
-        "200GB" => IndexLimit::Threshold(200_000_000_000),
-        "400GB" => IndexLimit::Threshold(400_000_000_000),
-        "800GB" => IndexLimit::Threshold(800_000_000_000),
-        "unlimited" => IndexLimit::InMemOnly,
-        x => {
-            // clap will enforce only the above values are possible
-            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+    let index_limit = {
+        enum CliIndexLimit {
+            Minimal,
+            Unlimited,
+            Threshold(u64),
+        }
+        let cli_index_limit = match accounts_index_limit.as_str() {
+            "minimal" => CliIndexLimit::Minimal,
+            "unlimited" => CliIndexLimit::Unlimited,
+            "25GB" => CliIndexLimit::Threshold(25_000_000_000),
+            "50GB" => CliIndexLimit::Threshold(50_000_000_000),
+            "100GB" => CliIndexLimit::Threshold(100_000_000_000),
+            "200GB" => CliIndexLimit::Threshold(200_000_000_000),
+            "400GB" => CliIndexLimit::Threshold(400_000_000_000),
+            "800GB" => CliIndexLimit::Threshold(800_000_000_000),
+            x => {
+                // clap will enforce only the above values are possible
+                unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+            }
+        };
+        match cli_index_limit {
+            CliIndexLimit::Minimal => IndexLimit::Minimal,
+            CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
+            CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
+                num_bytes,
+                num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
+                num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
+            }),
         }
     };
     // Note: need to still handle --enable-accounts-disk-index until it is removed
@@ -742,6 +766,7 @@ pub fn execute(
         logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
+        vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
@@ -852,6 +877,7 @@ pub fn execute(
             Arc::new(AtomicBool::new(false)),
         )]
         .into(),
+        voting_service_test_override: None,
     };
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {

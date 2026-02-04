@@ -9,6 +9,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     agave_snapshots::snapshot_config::SnapshotConfig,
+    agave_votor_messages::migration::MigrationStatus,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::Sender,
     itertools::Itertools,
@@ -57,7 +58,7 @@ use {
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
-    solana_vote::vote_account::VoteAccountsHashMap,
+    solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
@@ -821,6 +822,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("invalid retransmitter signature final fec set")]
     InvalidRetransmitterSignatureFinalFecSet,
+
+    #[error("user transactions found in vote only mode bank at slot {0}")]
+    UserTransactionsInVoteOnlyBank(Slot),
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -831,7 +835,6 @@ pub type ProcessSlotCallback = Arc<dyn Fn(&Bank) + Sync + Send>;
 pub struct ProcessOptions {
     /// Run PoH, transaction signature and other transaction verification on the entries.
     pub run_verification: bool,
-    pub full_leader_cache: bool,
     pub halt_at_slot: Option<Slot>,
     pub slot_callback: Option<ProcessSlotCallback>,
     pub new_hard_forks: Option<Vec<Slot>>,
@@ -859,7 +862,7 @@ pub fn test_process_blockstore(
     opts: &ProcessOptions,
     exit: Arc<AtomicBool>,
 ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
-    let (bank_forks, leader_schedule_cache, ..) = crate::bank_forks_utils::load_bank_forks(
+    let (bank_forks, _) = crate::bank_forks_utils::load_bank_forks(
         genesis_config,
         blockstore,
         Vec::new(),
@@ -871,6 +874,9 @@ pub fn test_process_blockstore(
         exit.clone(),
     )
     .unwrap();
+
+    let leader_schedule_cache =
+        LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
 
     process_blockstore_from_root(
         blockstore,
@@ -925,6 +931,7 @@ pub(crate) fn process_blockstore_for_bank_0(
         opts,
         transaction_status_sender,
         entry_notification_sender,
+        &bank_forks.read().unwrap().migration_status(),
     )?;
 
     Ok(bank_forks)
@@ -1050,9 +1057,10 @@ pub fn process_blockstore_from_root(
 /// Verify that a segment of entries has the correct number of ticks and hashes
 fn verify_ticks(
     bank: &Bank,
-    mut entries: &[Entry],
+    entries: &[Entry],
     slot_full: bool,
     tick_hash_count: &mut u64,
+    migration_status: &MigrationStatus,
 ) -> std::result::Result<(), BlockError> {
     let next_bank_tick_height = bank.tick_height() + entries.tick_count();
     let max_bank_tick_height = bank.max_tick_height();
@@ -1080,33 +1088,8 @@ fn verify_ticks(
         }
     }
 
-    if let Some(first_alpenglow_slot) = bank
-        .feature_set
-        .activated_slot(&agave_feature_set::alpenglow::id())
-    {
-        if bank.parent_slot() >= first_alpenglow_slot {
-            // If both the parent and the bank slot are in an epoch post alpenglow activation,
-            // no tick verification is needed
-            return Ok(());
-        }
-
-        // If the bank is in the alpenglow epoch, but the parent is from an epoch
-        // where the feature flag is not active, we must verify ticks that correspond
-        // to the epoch in which PoH is active. This verification is critical, as otherwise
-        // a leader could jump the gun and publish a block in the alpenglow epoch without waiting
-        // the appropriate time as determined by PoH in the prior epoch.
-        if bank.slot() >= first_alpenglow_slot && next_bank_tick_height == max_bank_tick_height {
-            if entries.is_empty() {
-                // This shouldn't happen, but good to double check
-                error!("Processing empty entries in verify_ticks()");
-                return Ok(());
-            }
-            // last entry must be a tick, as verified by the `has_trailing_entry`
-            // check above. Because in Alpenglow the last tick does not have any
-            // hashing guarantees, we pass everything but that last tick to the
-            // entry verification.
-            entries = &entries[..entries.len() - 1];
-        }
+    if migration_status.should_have_alpenglow_ticks(bank.slot()) {
+        return Ok(());
     }
 
     let hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
@@ -1133,6 +1116,7 @@ fn confirm_full_slot(
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
+    migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let mut confirmation_timing = ConfirmationTiming::default();
     let skip_verification = !opts.run_verification;
@@ -1150,6 +1134,7 @@ fn confirm_full_slot(
         opts.allow_dead_slots,
         opts.runtime_config.log_messages_bytes_limit,
         None,
+        migration_status,
     )?;
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
@@ -1488,6 +1473,7 @@ pub fn confirm_slot(
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
+    migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
 
@@ -1517,6 +1503,7 @@ pub fn confirm_slot(
         replay_vote_sender,
         log_messages_bytes_limit,
         prioritization_fee_cache,
+        migration_status,
     )
 }
 
@@ -1533,6 +1520,7 @@ fn confirm_slot_entries(
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
+    migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let ConfirmationTiming {
         confirmation_elapsed,
@@ -1585,21 +1573,23 @@ fn confirm_slot_entries(
 
     if !skip_verification {
         let tick_hash_count = &mut progress.tick_hash_count;
-        verify_ticks(bank, &entries, slot_full, tick_hash_count).map_err(|err| {
-            warn!(
-                "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, last_blockhash: \
-                 {}, shred_index: {}, slot_full: {}",
-                err,
-                slot,
-                num_entries,
-                bank.tick_height(),
-                progress.last_entry,
-                bank.last_blockhash(),
-                num_shreds,
-                slot_full,
-            );
-            err
-        })?;
+        verify_ticks(bank, &entries, slot_full, tick_hash_count, migration_status).map_err(
+            |err| {
+                warn!(
+                    "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, \
+                     last_blockhash: {}, shred_index: {}, slot_full: {}",
+                    err,
+                    slot,
+                    num_entries,
+                    bank.tick_height(),
+                    progress.last_entry,
+                    bank.last_blockhash(),
+                    num_shreds,
+                    slot_full,
+                );
+                err
+            },
+        )?;
     }
 
     let last_entry_hash = entries.last().map(|e| e.hash);
@@ -1647,14 +1637,36 @@ fn confirm_slot_entries(
         .expect("Transaction verification generates entries");
 
     let mut replay_timer = Measure::start("replay_elapsed");
+    let is_vote_only_bank = bank.vote_only_bank();
     let replay_entries: Vec<_> = entries
         .into_iter()
         .zip(entry_tx_starting_indexes)
-        .map(|(entry, tx_starting_index)| ReplayEntry {
-            entry,
-            starting_index: tx_starting_index,
+        .map(|(entry, tx_starting_index)| {
+            if !is_vote_only_bank {
+                return Ok(ReplayEntry {
+                    entry,
+                    starting_index: tx_starting_index,
+                });
+            }
+
+            // If bank is in vote-only mode, validate that entries contain only vote transactions
+            if let EntryType::Transactions(ref transactions) = entry {
+                if transactions
+                    .iter()
+                    .any(|tx| !is_valid_vote_only_transaction(tx))
+                {
+                    return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
+                        bank.slot(),
+                    ));
+                }
+            }
+            Ok(ReplayEntry {
+                entry,
+                starting_index: tx_starting_index,
+            })
         })
-        .collect();
+        .collect::<result::Result<Vec<_>, _>>()?;
+
     let process_result = process_entries(
         bank,
         replay_tx_thread_pool,
@@ -1703,6 +1715,7 @@ fn process_bank_0(
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
+    migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     assert_eq!(bank0.slot(), 0);
     let mut progress = ConfirmationProgress::new(bank0.last_blockhash());
@@ -1716,6 +1729,7 @@ fn process_bank_0(
         entry_notification_sender,
         None,
         &mut ExecuteTimings::default(),
+        migration_status,
     )
     .map_err(|_| BlockstoreProcessorError::FailedToReplayBank0)?;
     if let Some((result, _timings)) = bank0.wait_for_completed_scheduler() {
@@ -1742,6 +1756,7 @@ fn process_next_slots(
     leader_schedule_cache: &LeaderScheduleCache,
     pending_slots: &mut Vec<(SlotMeta, Bank, Hash)>,
     opts: &ProcessOptions,
+    migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     if meta.next_slots.is_empty() {
         return Ok(());
@@ -1772,12 +1787,12 @@ fn process_next_slots(
         if next_meta.is_full() {
             let next_bank = Bank::new_from_parent(
                 bank.clone(),
-                &leader_schedule_cache
+                leader_schedule_cache
                     .slot_leader_at(*next_slot, Some(bank))
                     .unwrap(),
                 *next_slot,
             );
-            set_alpenglow_ticks(&next_bank);
+            set_alpenglow_ticks(&next_bank, migration_status);
             trace!(
                 "New bank for slot {}, parent slot is {}",
                 next_slot,
@@ -1794,67 +1809,22 @@ fn process_next_slots(
 
 /// Set alpenglow bank tick height.
 ///
-/// For alpenglow banks this tick height is `max_tick_height` - 1, for a bank on the epoch boundary
-/// of feature activation, we need ticks_per_slot for each slot between the parent and epoch boundary
-/// and one extra tick for the alpenglow bank
-pub fn set_alpenglow_ticks(bank: &Bank) {
-    let Some(first_alpenglow_slot) = bank
-        .feature_set
-        .activated_slot(&agave_feature_set::alpenglow::id())
-    else {
+/// For alpenglow banks the bank tick height is `max_tick_height` - 1, as only the Alpentick
+/// (fake tick to signal bank completion) will be present.
+///
+/// For PoH banks this is 0.
+pub fn set_alpenglow_ticks(bank: &Bank, migration_status: &MigrationStatus) {
+    if !migration_status.should_have_alpenglow_ticks(bank.slot()) {
+        // PoH Bank do not adjust ticks
         return;
-    };
-
-    let Some(alpenglow_ticks) = calculate_alpenglow_ticks(
-        bank.slot(),
-        first_alpenglow_slot,
-        bank.parent_slot(),
-        bank.ticks_per_slot(),
-    ) else {
-        return;
-    };
+    }
 
     info!(
         "Alpenglow: Setting tick height for slot {} to {}",
         bank.slot(),
-        bank.max_tick_height() - alpenglow_ticks
+        bank.max_tick_height() - 1
     );
-    bank.set_tick_height(bank.max_tick_height() - alpenglow_ticks);
-}
-
-/// Calculates how many ticks are needed for a block at `slot` with parent `parent_slot`
-///
-/// If both `parent_slot` and `slot` are greater than or equal to `first_alpenglow_slot`, then
-/// only 1 tick is needed. This tick has no hashing guarantees, it is simply used as a signal
-/// for the end of the block.
-///
-/// If both `parent_slot` and `slot` are less than `first_alpenglow_slot`, we need the
-/// appropriate amount of PoH ticks, indicated by a None return value.
-///
-/// If `parent_slot` is less than `first_alpenglow_slot` and `slot` is greater than or equal
-/// to `first_alpenglow_slot` (A block that "straddles" the activation epoch boundary) then:
-///
-/// 1. All slots between `parent_slot` and `first_alpenglow_slot` need to have `ticks_per_slot` ticks
-/// 2. One extra tick for the actual alpenglow slot
-/// 3. There are no ticks for any skipped alpenglow slots
-fn calculate_alpenglow_ticks(
-    slot: Slot,
-    first_alpenglow_slot: Slot,
-    parent_slot: Slot,
-    ticks_per_slot: u64,
-) -> Option<u64> {
-    // Slots before alpenglow shouldn't have alpenglow ticks
-    if slot < first_alpenglow_slot {
-        return None;
-    }
-
-    let alpenglow_ticks = if parent_slot < first_alpenglow_slot && slot >= first_alpenglow_slot {
-        (first_alpenglow_slot - parent_slot - 1) * ticks_per_slot + 1
-    } else {
-        1
-    };
-
-    Some(alpenglow_ticks)
+    bank.set_tick_height(bank.max_tick_height() - 1);
 }
 
 /// Starting with the root slot corresponding to `start_slot_meta`, iteratively
@@ -1875,6 +1845,7 @@ fn load_frozen_forks(
     timing: &mut ExecuteTimings,
     snapshot_controller: Option<&SnapshotController>,
 ) -> result::Result<(u64, usize), BlockstoreProcessorError> {
+    let migration_status = bank_forks.read().unwrap().migration_status();
     let blockstore_max_root = blockstore.max_root();
     let mut root = bank_forks.read().unwrap().root();
     let max_root = std::cmp::max(root, blockstore_max_root);
@@ -1900,6 +1871,7 @@ fn load_frozen_forks(
         leader_schedule_cache,
         &mut pending_slots,
         opts,
+        &migration_status,
     )?;
 
     if Some(bank_forks.read().unwrap().root()) != opts.halt_at_slot {
@@ -1954,6 +1926,7 @@ fn load_frozen_forks(
                 entry_notification_sender,
                 None,
                 timing,
+                &migration_status,
             ) {
                 assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
                 if opts.abort_on_invalid_block {
@@ -2074,6 +2047,7 @@ fn load_frozen_forks(
                 leader_schedule_cache,
                 &mut pending_slots,
                 opts,
+                &migration_status,
             )?;
         }
     } else if opts.run_final_accounts_hash_calc {
@@ -2139,6 +2113,7 @@ pub fn process_single_slot(
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
+    migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
     // Mark corrupt slots as dead so validators don't replay this slot and
@@ -2153,6 +2128,7 @@ pub fn process_single_slot(
         entry_notification_sender,
         replay_vote_sender,
         timing,
+        migration_status,
     )
     .and_then(|()| {
         if let Some((result, completed_timings)) = bank.wait_for_completed_scheduler() {
@@ -2331,6 +2307,7 @@ pub mod tests {
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, Instruction},
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::declare_process_instruction,
         solana_pubkey::Pubkey,
@@ -3199,21 +3176,6 @@ pub mod tests {
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
         let bank = bank_forks[0].clone();
         assert_eq!(bank.tick_height(), 1);
-    }
-
-    #[test]
-    fn test_process_ledger_options_full_leader_cache() {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(123);
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let opts = ProcessOptions {
-            full_leader_cache: true,
-            ..ProcessOptions::default()
-        };
-        let (_bank_forks, leader_schedule) =
-            test_process_blockstore(&genesis_config, &blockstore, &opts, Arc::default());
-        assert_eq!(leader_schedule.max_schedules(), usize::MAX);
     }
 
     #[test]
@@ -4220,12 +4182,13 @@ pub mod tests {
             &opts,
             None,
             None,
+            &MigrationStatus::default(),
         )
         .unwrap();
         let bank0_last_blockhash = bank0.last_blockhash();
         let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
             bank0.clone_without_scheduler(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         ));
         confirm_full_slot(
@@ -4238,6 +4201,7 @@ pub mod tests {
             None,
             None,
             &mut ExecuteTimings::default(),
+            &MigrationStatus::default(),
         )
         .unwrap();
         bank_forks.write().unwrap().set_root(1, None, None);
@@ -4379,7 +4343,7 @@ pub mod tests {
             i += 1;
 
             let slot = bank.slot() + rng().random_range(1..3);
-            bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
+            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), slot));
         }
     }
 
@@ -4505,7 +4469,7 @@ pub mod tests {
             .unwrap()
             .insert(Bank::new_from_parent(
                 bank0.clone(),
-                &solana_pubkey::new_rand(),
+                SlotLeader::new_unique(),
                 1,
             ))
             .clone_without_scheduler();
@@ -4861,6 +4825,7 @@ pub mod tests {
             None,
             None,
             None,
+            &MigrationStatus::default(),
         )
     }
 
@@ -4954,6 +4919,7 @@ pub mod tests {
             None,
             None,
             None,
+            &MigrationStatus::default(),
         )
         .unwrap();
         assert_eq!(progress.num_txs, 2);
@@ -4998,6 +4964,7 @@ pub mod tests {
             None,
             None,
             None,
+            &MigrationStatus::default(),
         )
         .unwrap();
         assert_eq!(progress.num_txs, 5);
@@ -5237,7 +5204,7 @@ pub mod tests {
         const HASHES_PER_TICK: u64 = 10;
         const TICKS_PER_SLOT: u64 = 2;
 
-        let leader_id = Pubkey::new_unique();
+        let leader = SlotLeader::new_unique();
 
         let GenesisConfigInfo {
             mut genesis_config,
@@ -5263,7 +5230,7 @@ pub mod tests {
         assert_eq!(slot_0_bank.get_hash_age(&genesis_hash), Some(1));
         assert_eq!(slot_0_bank.get_hash_age(&slot_0_hash), Some(0));
 
-        let new_bank = Bank::new_from_parent(slot_0_bank, &leader_id, 2);
+        let new_bank = Bank::new_from_parent(slot_0_bank, leader, 2);
         let slot_2_bank = bank_forks
             .write()
             .unwrap()
@@ -5398,61 +5365,5 @@ pub mod tests {
         );
         // Adding another None will noop (even though the block is already full)
         assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
-    }
-
-    #[test]
-    fn test_calculate_alpenglow_ticks() {
-        let first_alpenglow_slot = 10;
-        let ticks_per_slot = 2;
-
-        // Slots before alpenglow don't have alpenglow ticks
-        let slot = 9;
-        let parent_slot = 8;
-        assert!(
-            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
-                .is_none()
-        );
-
-        // First alpenglow slot should only have 1 tick
-        let slot = first_alpenglow_slot;
-        let parent_slot = first_alpenglow_slot - 1;
-        assert_eq!(
-            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
-                .unwrap(),
-            1
-        );
-
-        // First alpenglow slot with skipped non-alpenglow slots
-        // need to have `ticks_per_slot` ticks per skipped slot and
-        // then one additional tick for the first alpenglow slot
-        let slot = first_alpenglow_slot;
-        let num_skipped_slots = 3;
-        let parent_slot = first_alpenglow_slot - num_skipped_slots - 1;
-        assert_eq!(
-            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
-                .unwrap(),
-            num_skipped_slots * ticks_per_slot + 1
-        );
-
-        // Skipped alpenglow slots don't need any additional ticks
-        let slot = first_alpenglow_slot + 2;
-        let parent_slot = first_alpenglow_slot;
-        assert_eq!(
-            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
-                .unwrap(),
-            1
-        );
-
-        // Skipped alpenglow slots along skipped non-alpenglow slots
-        // need to have `ticks_per_slot` ticks per skipped non-alpenglow
-        // slot only and then one additional tick for the alpenglow slot
-        let slot = first_alpenglow_slot + 2;
-        let num_skipped_non_alpenglow_slots = 4;
-        let parent_slot = first_alpenglow_slot - num_skipped_non_alpenglow_slots - 1;
-        assert_eq!(
-            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
-                .unwrap(),
-            num_skipped_non_alpenglow_slots * ticks_per_slot + 1
-        );
     }
 }

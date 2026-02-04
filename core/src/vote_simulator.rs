@@ -21,6 +21,7 @@ use {
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
+    solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
@@ -95,7 +96,7 @@ impl VoteSimulator {
             }
             let parent = *walk.get_parent().unwrap().data();
             let parent_bank = self.bank_forks.read().unwrap().get(parent).unwrap();
-            let new_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), slot);
+            let new_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), slot);
             let new_bank = self
                 .bank_forks
                 .write()
@@ -186,6 +187,7 @@ impl VoteSimulator {
             .map(|(_slot, bank)| bank)
             .collect();
         let mut vote_slots = HashSet::default();
+        let migration_status = self.bank_forks.read().unwrap().migration_status();
         let _ = ReplayStage::compute_bank_stats(
             my_pubkey,
             &ancestors,
@@ -198,6 +200,7 @@ impl VoteSimulator {
             &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,
             &mut vote_slots,
+            migration_status.as_ref(),
         );
 
         let vote_bank = self

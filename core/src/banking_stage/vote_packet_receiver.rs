@@ -110,6 +110,9 @@ impl VotePacketReceiver {
                     // NB: It's safe to always pass false in here as simple vote
                     // transactions are guaranteed to be a single instruction.
                     false,
+                    // Vote instructions are created in the validator code, and they are not
+                    // referencing more than 255 accounts, so it is safe to set this to true.
+                    true,
                 ) {
                     Ok(pkt) => Some(pkt),
                     Err(err) => {

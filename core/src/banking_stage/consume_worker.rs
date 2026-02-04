@@ -348,11 +348,6 @@ pub(crate) mod external {
                     .map(|()| true);
             }
 
-            let BankPair {
-                root_bank,
-                working_bank: _,
-            } = self.sharable_banks.load();
-
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
@@ -394,7 +389,7 @@ pub(crate) mod external {
                     )
                 };
                 let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank, &root_bank);
+                    Self::translate_transaction_batch(&batch, bank);
 
                 // Enforce all or nothing on translation_results.
                 let execution_flags = ExecutionFlags {
@@ -510,7 +505,7 @@ pub(crate) mod external {
 
             // Do resolving next since we (currently) need resolved transactions for status checks.
             let (parsing_and_resolve_results, txs, max_ages) =
-                Self::translate_transaction_batch(&batch, &working_bank, &root_bank);
+                Self::translate_transaction_batch(&batch, &root_bank);
 
             if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
                 self.check_resolve_pubkeys(
@@ -774,6 +769,9 @@ pub(crate) mod external {
             let enable_static_instruction_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
+            let enable_instruction_accounts_limit = bank
+                .feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             for (tx_ptr, _) in batch.iter() {
@@ -781,6 +779,7 @@ pub(crate) mod external {
                 match SanitizedTransactionView::try_new_sanitized(
                     tx_ptr,
                     enable_static_instruction_limit,
+                    enable_instruction_accounts_limit,
                 ) {
                     Ok(view) => {
                         parsing_results.push(Ok(()));
@@ -959,13 +958,15 @@ pub(crate) mod external {
         /// Translate batch of transactions into usable
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
-            working_bank: &Bank,
-            root_bank: &Bank,
+            bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_static_instruction_limit = root_bank
+            let enable_static_instruction_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
-            let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+            let enable_instruction_accounts_limit = bank
+                .feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID);
+            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -973,10 +974,10 @@ pub(crate) mod external {
             for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
-                    working_bank,
-                    root_bank,
+                    bank,
                     enable_static_instruction_limit,
                     transaction_account_lock_limit,
+                    enable_instruction_accounts_limit,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -992,23 +993,23 @@ pub(crate) mod external {
 
         fn translate_transaction(
             transaction_ptr: TransactionPtr,
-            working_bank: &Bank,
-            root_bank: &Bank,
+            bank: &Bank,
             enable_static_instruction_limit: bool,
             transaction_account_lock_limit: usize,
+            enable_instruction_accounts_limit: bool,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
-                working_bank,
-                root_bank,
+                bank,
                 enable_static_instruction_limit,
                 transaction_account_lock_limit,
+                enable_instruction_accounts_limit,
             )
             .map(|(view, deactivation_slot)| {
                 (
                     view,
                     MaxAge {
-                        sanitized_epoch: root_bank.epoch(),
+                        sanitized_epoch: bank.epoch(),
                         alt_invalidation_slot: deactivation_slot,
                     },
                 )
@@ -1184,9 +1185,9 @@ pub(crate) mod external {
                     translate_to_runtime_view(
                         &simple_tx[..],
                         &bank,
-                        &bank,
                         true,
                         bank.get_transaction_account_lock_limit(),
+                        true,
                     )
                     .ok()
                     .unwrap()
@@ -1374,8 +1375,8 @@ pub(crate) mod external {
 
             let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
             let parsed_transactions = [
-                SanitizedTransactionView::try_new_sanitized(&tx1[..], true).unwrap(),
-                SanitizedTransactionView::try_new_sanitized(&tx2[..], true).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx1[..], true, true).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx2[..], true, true).unwrap(),
             ];
             bank.store_account(
                 &parsed_transactions[1].static_account_keys()[0],
@@ -1425,7 +1426,7 @@ pub(crate) mod external {
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
                 RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                        SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
+                        SanitizedTransactionView::try_new_sanitized(tx, true, true).unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
                     )
@@ -2157,6 +2158,7 @@ mod tests {
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
             v0::{self, LoadedAddresses},
@@ -2217,7 +2219,7 @@ mod tests {
         // Warp to next epoch for MaxAge tests.
         let mut bank = Bank::new_from_parent(
             bank.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             bank.get_epoch_info().slots_in_epoch,
         );
         if !relax_intrabatch_account_locks {
@@ -2575,6 +2577,8 @@ mod tests {
                 &HashSet::default(),
                 bank.feature_set
                     .is_active(&agave_feature_set::static_instruction_limit::id()),
+                bank.feature_set
+                    .is_active(&agave_feature_set::limit_instruction_accounts::id()),
             )
             .unwrap()
         };

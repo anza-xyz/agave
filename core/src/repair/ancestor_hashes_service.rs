@@ -171,7 +171,6 @@ impl AncestorHashesService {
             )),
             Some(Duration::from_millis(1)), // coalesce
             false,                          // use_pinned_memory
-            None,                           // in_vote_only_mode
             false,                          // is_staked_service
         );
 
@@ -603,11 +602,13 @@ impl AncestorHashesService {
         retryable_slots_receiver: RetryableSlotsReceiver,
     ) -> JoinHandle<()> {
         let serve_repair = {
+            let bank_forks_r = repair_info.bank_forks.read().unwrap();
             ServeRepair::new(
                 repair_info.cluster_info.clone(),
-                repair_info.bank_forks.read().unwrap().sharable_banks(),
+                bank_forks_r.sharable_banks(),
                 repair_info.repair_whitelist.clone(),
                 Box::new(StandardRepairHandler::new(blockstore)),
+                bank_forks_r.migration_status(),
             )
         };
         let mut repair_stats = AncestorRepairRequestsStats::default();
@@ -920,6 +921,7 @@ mod test {
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::make_many_slot_entries, get_tmp_ledger_path,
             get_tmp_ledger_path_auto_delete, shred::Nonce,
@@ -1269,11 +1271,13 @@ mod test {
             let ledger_path = get_tmp_ledger_path!();
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
             let responder_serve_repair = {
+                let bank_forks_r = vote_simulator.bank_forks.read().unwrap();
                 ServeRepair::new(
                     Arc::new(cluster_info),
-                    vote_simulator.bank_forks.read().unwrap().sharable_banks(),
+                    bank_forks_r.sharable_banks(),
                     Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
+                    bank_forks_r.migration_status(),
                 )
             };
 
@@ -1310,7 +1314,6 @@ mod test {
                 Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
                 Some(Duration::from_millis(1)), // coalesce
                 false,
-                None,
                 false,
             );
             let (remote_request_sender, remote_request_receiver) = unbounded();
@@ -1376,11 +1379,13 @@ mod test {
             let ledger_path = get_tmp_ledger_path!();
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
             let requester_serve_repair = {
+                let bank_forks_r = bank_forks.read().unwrap();
                 ServeRepair::new(
                     requester_cluster_info.clone(),
-                    bank_forks.read().unwrap().sharable_banks(),
+                    bank_forks_r.sharable_banks(),
                     repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore)),
+                    bank_forks_r.migration_status(),
                 )
             };
             let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = unbounded();
@@ -1909,7 +1914,7 @@ mod test {
         let bank_forks = &repair_info.bank_forks;
         let root_bank = bank_forks.read().unwrap().root_bank();
         let new_root_slot = dead_duplicate_confirmed_slot_2 + 1;
-        let new_root_bank = Bank::new_from_parent(root_bank, &Pubkey::default(), new_root_slot);
+        let new_root_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), new_root_slot);
         new_root_bank.freeze();
         {
             let mut w_bank_forks = bank_forks.write().unwrap();

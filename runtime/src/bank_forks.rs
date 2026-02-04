@@ -22,7 +22,7 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
         time::Instant,
@@ -99,7 +99,6 @@ pub struct BankForks {
     root: Arc<AtomicSlot>,
     working_slot: Slot,
     sharable_banks: SharableBanks,
-    in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
     dumped_slot_subscribers: Vec<DumpedSlotSubscription>,
@@ -159,7 +158,6 @@ impl BankForks {
             },
             banks,
             descendants,
-            in_vote_only_mode: Arc::new(AtomicBool::new(false)),
             highest_slot_at_startup: 0,
             scheduler_pool: None,
             dumped_slot_subscribers: vec![],
@@ -185,10 +183,6 @@ impl BankForks {
 
     pub fn banks(&self) -> &HashMap<Slot, BankWithScheduler> {
         &self.banks
-    }
-
-    pub fn get_vote_only_mode_signal(&self) -> Arc<AtomicBool> {
-        self.in_vote_only_mode.clone()
     }
 
     pub fn migration_status(&self) -> Arc<MigrationStatus> {
@@ -473,6 +467,13 @@ impl BankForks {
                  {root}"
             );
             root_bank.clear_epoch_rewards_cache();
+
+            // If we have rooted a block in the new epoch since Alpenglow has been activated, advance MigrationStatus
+            if self.migration_status.is_alpenglow_enabled()
+                && !self.migration_status.is_full_alpenglow_epoch()
+            {
+                self.migration_status.alpenglow_rooted_new_epoch(new_epoch);
+            }
         }
         let root_tx_count = root_bank
             .parents()
@@ -774,7 +775,7 @@ mod tests {
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
-        solana_pubkey::Pubkey,
+        solana_leader_schedule::SlotLeader,
         solana_signer::Signer,
         solana_vote_program::vote_state::BlockTimestamp,
     };
@@ -808,7 +809,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
-        let child_bank = Bank::new_from_parent(bank_forks[0].clone(), &Pubkey::default(), 1);
+        let child_bank = Bank::new_from_parent(bank_forks[0].clone(), SlotLeader::default(), 1);
         child_bank.register_default_tick_for_test();
         bank_forks.insert(child_bank);
         assert_eq!(bank_forks[1u64].tick_height(), 1);
@@ -822,9 +823,9 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
         bank_forks.insert(bank);
-        let bank = Bank::new_from_parent(bank0, &Pubkey::default(), 2);
+        let bank = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
         bank_forks.insert(bank);
         let descendants = bank_forks.descendants();
         let children: HashSet<u64> = [1u64, 2u64].iter().copied().collect();
@@ -840,9 +841,9 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
         bank_forks.insert(bank);
-        let bank = Bank::new_from_parent(bank0, &Pubkey::default(), 2);
+        let bank = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
         bank_forks.insert(bank);
         let ancestors = bank_forks.ancestors();
         assert!(ancestors[&0].is_empty());
@@ -859,7 +860,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let child_bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.insert(child_bank);
 
         let frozen_slots: HashSet<Slot> = bank_forks
@@ -877,7 +878,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let child_bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.insert(child_bank);
         assert_eq!(bank_forks.active_bank_slots(), vec![1]);
     }
@@ -912,9 +913,9 @@ mod tests {
             let update_timestamp_case = slot == slots_in_epoch;
 
             let child1 =
-                Bank::new_from_parent(bank_forks0[slot - 1].clone(), &Pubkey::default(), slot);
+                Bank::new_from_parent(bank_forks0[slot - 1].clone(), SlotLeader::default(), slot);
             let child2 =
-                Bank::new_from_parent(bank_forks1[slot - 1].clone(), &Pubkey::default(), slot);
+                Bank::new_from_parent(bank_forks1[slot - 1].clone(), SlotLeader::default(), slot);
 
             if update_timestamp_case {
                 for child in &[&child1, &child2] {
@@ -959,7 +960,7 @@ mod tests {
             let parent: Arc<Bank> = bank_forks.read().unwrap().banks[parent].clone();
             bank_forks.write().unwrap().insert(Bank::new_from_parent(
                 parent,
-                &Pubkey::default(),
+                SlotLeader::default(),
                 *child,
             ));
         }

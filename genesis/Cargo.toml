@@ -35,7 +35,7 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-solana-account = "=3.3.0"
+solana-account = "=3.4.0"
 solana-bls-signatures = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
@@ -44,7 +44,7 @@ solana-cluster-type = "=3.0.0"
 solana-commitment-config = "=3.1.0"
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=3.0.0"
-solana-feature-gate-interface = "=3.0.0"
+solana-feature-gate-interface = "=3.1.0"
 solana-fee-calculator = "=3.0.0"
 solana-genesis-config = "=3.0.0"
 solana-genesis-utils = { workspace = true }

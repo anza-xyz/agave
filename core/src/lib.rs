@@ -14,6 +14,7 @@ pub mod banking_stage;
 pub mod banking_trace;
 #[allow(dead_code)]
 mod block_creation_loop;
+mod bls_sigverifier;
 pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;
 pub mod commitment_service;
@@ -24,7 +25,6 @@ pub mod drop_bank_service;
 pub mod fetch_stage;
 pub mod forwarding_stage;
 pub mod gen_keys;
-mod mock_alpenglow_consensus;
 pub mod next_leader;
 pub mod optimistic_confirmation_verifier;
 pub mod repair;

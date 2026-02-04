@@ -57,7 +57,7 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_votor_messages::{consensus_message::ConsensusMessage, migration::MigrationStatus},
+    agave_votor_messages::consensus_message::ConsensusMessage,
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -100,7 +100,6 @@ pub struct VotorConfig {
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     pub consensus_metrics_sender: ConsensusMetricsEventSender,
-    pub migration_status: Arc<MigrationStatus>,
 
     // Senders / Notifiers
     pub snapshot_controller: Option<Arc<SnapshotController>>,
@@ -152,7 +151,6 @@ impl Votor {
             cluster_info,
             leader_schedule_cache,
             rpc_subscriptions,
-            migration_status,
             snapshot_controller,
             bls_sender,
             commitment_sender,
@@ -168,6 +166,7 @@ impl Votor {
             consensus_metrics_receiver,
         } = config;
 
+        let migration_status = bank_forks.read().unwrap().migration_status();
         let identity_keypair = cluster_info.keypair().clone();
         let has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
 

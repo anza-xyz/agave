@@ -16,7 +16,6 @@ members = [
     "bucket_map",
     "builtins",
     "builtins-default-costs",
-    "cargo-registry",
     "clap-utils",
     "clap-v3-utils",
     "cli",
@@ -44,6 +43,7 @@ members = [
     "io-uring",
     "keygen",
     "lattice-hash",
+    "leader-schedule",
     "ledger",
     "local-cluster",
     "logger",
@@ -95,7 +95,6 @@ members = [
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
-    "thread-manager",
     "tls-utils",
     "tokens",
     "tps-client",
@@ -164,6 +163,7 @@ level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
     'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+    'cfg(target_arch, values("sbf"))',
 ]
 
 # Clippy lint configuration that can not be applied in clippy.toml
@@ -177,7 +177,6 @@ used_underscore_binding = "deny"
 Inflector = "0.11.4"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-bls12-381 = { path = "bls12-381", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-cargo-registry = { path = "cargo-registry", version = "=4.0.0-alpha.0" }
 agave-feature-set = { path = "feature-set", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.0.0-alpha.0" }
@@ -190,7 +189,6 @@ agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.0.0-alph
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
-agave-thread-manager = { path = "thread-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "transaction-view", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -200,7 +198,7 @@ ahash = "0.8.12"
 anyhow = "1.0.100"
 aquamarine = "0.6.0"
 arbitrary = "1.4.2"
-arc-swap = "1.8.0"
+arc-swap = "1.8.1"
 array-bytes = "=1.4.1"
 arrayref = "0.3.9"
 arrayvec = "0.7.6"
@@ -225,9 +223,9 @@ borsh = { version = "1.6.0", features = ["derive", "unstable__schema"] }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
-bytemuck = "1.24.0"
+bytemuck = "1.25.0"
 bytemuck_derive = "1.10.2"
-bytes = "1.11"
+bytes = "1.11.1"
 bzip2 = "0.6.1"
 caps = "0.5.6"
 cargo_metadata = "0.15.4"
@@ -264,8 +262,8 @@ enum-iterator = "2.3.0"
 env_logger = "0.11.8"
 fast-math = "0.1"
 fd-lock = "4.0.4"
-five8_const = "0.1.4"
-flate2 = "1.1.8"
+five8 = "1.0.0"
+flate2 = "1.1.9"
 fnv = "1.0.7"
 fs_extra = "1.3.0"
 futures = "0.3.31"
@@ -351,12 +349,12 @@ rand_chacha = "0.9.0"
 rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
-regex = "1.12.2"
+regex = "1.12.3"
 reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
-rts-alloc = { version = "1.0.0" }
+rts-alloc = { version = "2.0.0" }
 rustls = { version = "0.23.36", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
@@ -370,21 +368,21 @@ serde_yaml = "0.9.34"
 serial_test = "3.3.1"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
-shaq = { version = "1.0.1" }
+shaq = { version = "1.0.2" }
 shuttle = "0.7.1"
 signal-hook = "0.4.3"
 siphasher = "1.0.2"
-slab = "0.4.11"
+slab = "0.4.12"
 smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
 smpl_jwt = "0.7.1"
 socket2 = "0.6.2"
 soketto = "0.8"
-solana-account = "3.3.0"
+solana-account = "3.4.0"
 solana-account-decoder = { path = "account-decoder", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.0"
 solana-accounts-db = { path = "accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-address = "2.0.0"
+solana-address = "2.1.0"
 solana-address-lookup-table-interface = "3.0.1"
 solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -432,7 +430,7 @@ solana-epoch-rewards-hasher = "3.1.0"
 solana-epoch-schedule = "3.0.0"
 solana-example-mocks = "3.0.0"
 solana-faucet = { path = "faucet", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-feature-gate-interface = "3.0.0"
+solana-feature-gate-interface = "3.1.0"
 solana-fee = { path = "fee", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-fee-calculator = "3.0.0"
 solana-fee-structure = "3.0.0"
@@ -454,6 +452,7 @@ solana-keccak-hasher = "3.1.0"
 solana-keypair = "3.1.0"
 solana-last-restart-slot = "3.0.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-leader-schedule = { path = "leader-schedule", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ledger = { path = "ledger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-loader-v2-interface = "3.0.0"
 solana-loader-v3-interface = "6.1.0"
@@ -515,9 +514,9 @@ solana-serde = "3.0.0"
 solana-serde-varint = "3.0.0"
 solana-serialize-utils = "3.1.0"
 solana-sha256-hasher = "3.1.0"
-solana-short-vec = "3.1.0"
+solana-short-vec = "3.2.0"
 solana-shred-version = "3.0.0"
-solana-signature = { version = "3.1.0", default-features = false }
+solana-signature = { version = "3.2.0", default-features = false }
 solana-signer = "3.0.0"
 solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.0.0"
