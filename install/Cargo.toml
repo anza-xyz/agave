@@ -42,7 +42,7 @@ solana-message = "=3.0.1"
 solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-rpc-client = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-signature = { version = "=3.1.0", default-features = false }
+solana-signature = { version = "=3.2.0", default-features = false }
 solana-signer = "=3.0.0"
 solana-transaction = "=3.0.2"
 solana-version = { workspace = true }
