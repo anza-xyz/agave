@@ -415,6 +415,7 @@ pub struct IndexGenerationInfo {
 
 #[derive(Debug, Default)]
 struct IndexGenerationThreadState {
+    keyed_account_infos: Vec<(Pubkey, AccountInfo)>,
     storage_info: StorageSizeAndCountList,
 }
 
@@ -6119,7 +6120,10 @@ impl AccountsDb {
         let mut zero_lamport_offsets = vec![];
         let mut all_accounts_are_zero_lamports = true;
         let mut slot_lt_hash = SlotLtHash::default();
-        let mut keyed_account_infos = vec![];
+        assert!(
+            thread_state.keyed_account_infos.is_empty(),
+            "only reuse capacity, not items"
+        );
 
         let geyser_notifier = self
             .accounts_update_notifier
@@ -6171,7 +6175,7 @@ impl AccountsDb {
                     }
                     zero_lamport_pubkeys.push(*account.pubkey);
                 }
-                keyed_account_infos.push((
+                thread_state.keyed_account_infos.push((
                     *account.pubkey,
                     AccountInfo::new(
                         StorageLocation::AppendVec(store_id, offset), // will never be cached
@@ -6212,7 +6216,7 @@ impl AccountsDb {
 
         let (insert_info, insert_time_us) = measure_us!(self
             .accounts_index
-            .insert_new_if_missing_into_primary_index(slot, keyed_account_infos));
+            .insert_new_if_missing_into_primary_index(slot, &mut thread_state.keyed_account_infos));
 
         if insert_info.count > 0 {
             // second, collect into the shared DashMap once we've figured out all the info per store_id
