@@ -14,7 +14,8 @@ use {
             consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
             transaction_scheduler::{
-                receive_and_buffer::ReceivingStats, transaction_state_container::StateContainer,
+                receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
+                transaction_state_container::StateContainer,
             },
             TOTAL_BUFFERED_PACKETS,
         },
@@ -34,6 +35,8 @@ use {
         time::{Duration, Instant},
     },
 };
+
+const CHECK_CHUNK: usize = 128;
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -81,6 +84,10 @@ where
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     /// Detailed scheduling metrics.
     scheduling_details: SchedulingDetails,
+    /// Cursor for incremental recheck sweep of the priority queue.
+    recheck_cursor: Option<TransactionPriorityId>,
+    /// Recheck IDs scracth space.
+    recheck_chunk: Vec<TransactionPriorityId>,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -109,6 +116,8 @@ where
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
             scheduling_details: SchedulingDetails::default(),
+            recheck_cursor: None,
+            recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
         }
     }
 
@@ -175,6 +184,7 @@ where
             }
 
             self.receive_completed()?;
+            self.incremental_recheck();
             self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
             self.receive_and_buffer_packets(&decision).map_err(|_| {
                 SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
@@ -243,12 +253,7 @@ where
                     timing_metrics.clear_time_us += clear_time_us;
                 });
             }
-            BufferedPacketsDecision::ForwardAndHold => {
-                let (_, clean_time_us) = measure_us!(self.clean_queue());
-                self.timing_metrics.update(|timing_metrics| {
-                    timing_metrics.clean_time_us += clean_time_us;
-                });
-            }
+            BufferedPacketsDecision::ForwardAndHold => {}
             BufferedPacketsDecision::Hold => {}
         }
 
@@ -295,65 +300,71 @@ where
         });
     }
 
-    /// Clean unprocessable transactions from the queue. These will be transactions that are
-    /// expired, already processed, or are no longer sanitizable.
-    /// This only clears pending transactions, and does **not** clear in-flight transactions.
-    fn clean_queue(&mut self) {
-        // Clean up any transactions that have already been processed, are too old, or do not have
-        // valid nonce accounts.
-        const MAX_TRANSACTION_CHECKS: usize = 10_000;
-        let mut transaction_ids = Vec::with_capacity(MAX_TRANSACTION_CHECKS);
-
-        while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
-            let Some(id) = self.container.pop() else {
-                break;
-            };
-            transaction_ids.push(id);
-        }
-
+    /// Incrementally recheck queued transactions for validity. A cursor walks the
+    /// priority queue from highest to lowest priority. When the cursor reaches the end it
+    /// wraps back to the top, continuously sweeping the queue.
+    fn incremental_recheck(&mut self) {
         let bank = self.bank_forks.read().unwrap().working_bank();
 
-        const CHUNK_SIZE: usize = 128;
-        let mut error_counters = TransactionErrorMetrics::default();
-        let mut num_dropped_on_clean = Saturating::<usize>(0);
-        for chunk in transaction_ids.chunks(CHUNK_SIZE) {
-            let lock_results = vec![Ok(()); chunk.len()];
-            let sanitized_txs: Vec<_> = chunk
-                .iter()
-                .map(|id| {
-                    self.container
-                        .get_transaction(id.id)
-                        .expect("transaction must exist")
-                })
-                .collect();
+        // Start a new sweep if we have no active cursor.
+        if self.recheck_cursor.is_none() {
+            self.recheck_cursor = self.container.next_recheck_id(None);
+        }
 
-            let check_results = bank.check_transactions::<R::Transaction>(
-                &sanitized_txs,
-                &lock_results,
-                MAX_PROCESSING_AGE,
-                &mut error_counters,
-            );
+        // Walk the cursor to collect up to one chunk of valid IDs.
+        self.recheck_chunk.clear();
+        while self.recheck_chunk.len() < CHECK_CHUNK {
+            let Some(curr) = self.recheck_cursor.take() else {
+                break;
+            };
 
-            // Remove errored transactions
-            for (result, id) in check_results.iter().zip(chunk.iter()) {
-                if result.is_err() {
-                    num_dropped_on_clean += 1;
-                    self.container.remove_by_id(id.id);
-                }
+            // Advance cursor before we potentially remove `curr`.
+            self.recheck_cursor = self.container.next_recheck_id(Some(&curr));
+
+            // Skip if transaction was removed or is in-flight.
+            if self.container.get_transaction(curr.id).is_none() {
+                continue;
             }
 
-            // Push non-errored transaction into queue.
-            self.container.push_ids_into_queue(
-                check_results
-                    .into_iter()
-                    .zip(chunk.iter())
-                    .filter(|(r, _)| r.is_ok())
-                    .map(|(_, id)| *id),
-            );
+            self.recheck_chunk.push(curr);
+        }
+
+        // Bail if no work to do (should only happen if container is empty).
+        if self.recheck_chunk.is_empty() {
+            return;
+        }
+
+        // TODO: This alloc annoys.
+        //
+        // Build our recheck batch & feed it through bank.
+        let txs: Vec<_> = self
+            .recheck_chunk
+            .iter()
+            .map(|pid| {
+                self.container
+                    .get_transaction(pid.id)
+                    .expect("transaction must exist")
+            })
+            .collect();
+        let lock_results = vec![Ok(()); txs.len()];
+        let mut error_counters = TransactionErrorMetrics::default();
+        let results = bank.check_transactions::<R::Transaction>(
+            &txs,
+            &lock_results,
+            MAX_PROCESSING_AGE,
+            &mut error_counters,
+        );
+
+        let mut num_dropped = Saturating(0usize);
+        for (result, pid) in results.iter().zip(self.recheck_chunk.iter()) {
+            if result.is_err() {
+                num_dropped += 1;
+                self.container.remove_by_id(pid.id);
+            }
         }
 
         self.count_metrics.update(|count_metrics| {
-            count_metrics.num_dropped_on_clean += num_dropped_on_clean;
+            count_metrics.num_dropped_on_clean += num_dropped;
         });
     }
 

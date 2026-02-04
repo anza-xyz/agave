@@ -10,7 +10,7 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    std::{collections::BTreeSet, sync::Arc},
+    std::{collections::BTreeSet, ops::Bound, sync::Arc},
 };
 
 /// This structure will hold `TransactionState` for the entirety of a
@@ -111,6 +111,13 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     fn get_min_max_priority(&self) -> MinMaxResult<u64>;
 
+    /// Return the next-lower priority ID strictly below `cursor` in the queue, or the
+    /// highest if `cursor` is `None` (i.e. start a new sweep).
+    fn next_recheck_id(
+        &self,
+        cursor: Option<&TransactionPriorityId>,
+    ) -> Option<TransactionPriorityId>;
+
     #[cfg(feature = "dev-context-only-utils")]
     fn clear(&mut self);
 }
@@ -189,10 +196,10 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
     fn remove_by_id(&mut self, id: TransactionId) {
         let state = self.id_to_transaction_state.remove(id);
-        let removed = self
-            .priority_queue
+        // Remove from queue if present. May not be present if the transaction was already popped
+        // (in-flight/scheduling).
+        self.priority_queue
             .remove(&TransactionPriorityId::new(state.priority(), id));
-        assert!(!removed, "Until we adjust callers this will no-op");
     }
 
     fn flush_held_transactions(&mut self) {
@@ -208,6 +215,20 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
                 None => MinMaxResult::OneElement(min.priority),
             },
             None => MinMaxResult::NoElements,
+        }
+    }
+
+    fn next_recheck_id(
+        &self,
+        cursor: Option<&TransactionPriorityId>,
+    ) -> Option<TransactionPriorityId> {
+        match cursor {
+            None => self.priority_queue.last().copied(),
+            Some(cursor) => self
+                .priority_queue
+                .range((Bound::Unbounded, Bound::Excluded(cursor)))
+                .next_back()
+                .copied(),
         }
     }
 
@@ -371,6 +392,14 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     #[inline]
     fn get_min_max_priority(&self) -> MinMaxResult<u64> {
         self.inner.get_min_max_priority()
+    }
+
+    #[inline]
+    fn next_recheck_id(
+        &self,
+        cursor: Option<&TransactionPriorityId>,
+    ) -> Option<TransactionPriorityId> {
+        self.inner.next_recheck_id(cursor)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
