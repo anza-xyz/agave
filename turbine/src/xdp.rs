@@ -165,6 +165,7 @@ impl XdpRetransmitter {
             .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
+<<<<<<< HEAD
         // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(Router::new()?));
         let monitor_handle = RouteMonitor::start(
@@ -175,6 +176,63 @@ impl XdpRetransmitter {
 
         let mut threads = vec![];
         threads.push(monitor_handle);
+=======
+<<<<<<< HEAD
+        let mut threads = vec![];
+=======
+        caps::drop(None, CapSet::Effective, CAP_NET_RAW).expect("drop CAP_NET_RAW capability");
+        caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
+
+        let mut router = router_result?;
+        router.build_caches()?;
+
+        // Use ArcSwap for lock-free updates of the routing table
+        let atomic_router = Arc::new(ArcSwap::from_pointee(router));
+        let route_monitor_handle = RouteMonitor::start(
+            Arc::clone(&atomic_router),
+            exit.clone(),
+            ROUTE_MONITOR_UPDATE_INTERVAL,
+            || {
+                // we need to retain CAP_NET_ADMIN in case the netlink socket needs reinitialized
+                let retained_caps = caps::CapsHashSet::from_iter([caps::Capability::CAP_NET_ADMIN]);
+                caps::set(None, caps::CapSet::Permitted, &retained_caps)
+                    .expect("linux allows permitted capset to be set");
+                info!("route monitor thread started");
+            },
+        );
+
+        let maybe_ebpf = maybe_ebpf_result.transpose()?;
+
+        Ok(Self {
+            tx_loops,
+            rtx_channel_cap,
+            maybe_ebpf,
+            atomic_router,
+            route_monitor_handle,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn build(self) -> (XdpRetransmitter, XdpSender) {
+        (
+            XdpRetransmitter { threads: vec![] },
+            XdpSender { senders: vec![] },
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn build(self) -> (XdpRetransmitter, XdpSender) {
+        const DROP_CHANNEL_CAP: usize = 1_000_000;
+
+        let Self {
+            tx_loops,
+            rtx_channel_cap,
+            maybe_ebpf,
+            atomic_router,
+            route_monitor_handle,
+        } = self;
+>>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
+>>>>>>> a02e5a2f7c (XDP support for DZ IBRL (#9715))
 
         let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(

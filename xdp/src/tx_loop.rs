@@ -2,11 +2,16 @@
 
 use {
     crate::{
+<<<<<<< HEAD
         device::{NetworkDevice, QueueId, RingSizes},
+=======
+        device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
+        gre::{construct_gre_packet, gre_packet_size},
+>>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
         netlink::MacAddress,
         packet::{
-            write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
-            UDP_HEADER_SIZE,
+            write_eth_header, write_ip_header_for_udp, write_udp_header, ETH_HEADER_SIZE,
+            IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
         route::NextHop,
         set_cpu_affinity,
@@ -184,8 +189,97 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
                             break;
                         }
 
+<<<<<<< HEAD
                         // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
                         // complete some work
+=======
+                    let len = payload.as_ref().len();
+
+                    let dst = addr.ip();
+                    let Some(next_hop) = route_fn(&dst) else {
+                        log::warn!("dropping packet: no route for peer {addr}");
+                        batched_packets -= 1;
+                        umem.release(frame.offset());
+                        continue;
+                    };
+
+                    if let Some(gre) = &next_hop.gre {
+                        frame.set_len(gre_packet_size(len));
+                        let packet = umem.map_frame_mut(&frame);
+                        let inner_src_ip = next_hop.preferred_src_ip.unwrap_or(src_ip);
+                        if let Err(err) = construct_gre_packet(
+                            packet,
+                            &src_mac,
+                            &gre.mac_addr,
+                            &inner_src_ip,
+                            &dst_ip,
+                            src_port,
+                            addr.port(),
+                            payload.as_ref(),
+                            &gre.tunnel_info,
+                        ) {
+                            log::warn!("dropping packet: {err}");
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        }
+                    } else {
+                        // we need the MAC address to send the packet
+                        let Some(dest_mac) = next_hop.mac_addr else {
+                            log::warn!(
+                                "dropping packet: peer {addr} must be routed through {} which has \
+                                 no known MAC address",
+                                next_hop.ip_addr
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+
+                        const PACKET_HEADER_SIZE: usize =
+                            ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
+                        frame.set_len(PACKET_HEADER_SIZE + len);
+                        let packet = umem.map_frame_mut(&frame);
+
+                        // write the payload first as it's needed for checksum calculation (if enabled)
+                        packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
+
+                        write_eth_header(packet, &src_mac.0, &dest_mac.0);
+
+                        write_ip_header_for_udp(
+                            &mut packet[ETH_HEADER_SIZE..],
+                            &src_ip,
+                            &dst_ip,
+                            (UDP_HEADER_SIZE + len) as u16,
+                        );
+
+                        write_udp_header(
+                            &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
+                            &src_ip,
+                            src_port,
+                            &dst_ip,
+                            addr.port(),
+                            len as u16,
+                            // don't do checksums
+                            false,
+                        );
+                    }
+
+                    ring.write(frame, 0)
+                        .map_err(|_| "ring full")
+                        // this should never happen as we check for available slots above
+                        .expect("failed to write to ring");
+
+                    batched_packets -= 1;
+                    chunk_remaining -= 1;
+
+                    // check if it's time to commit the ring and kick the driver
+                    if chunk_remaining == 0 {
+                        chunk_remaining = BATCH_SIZE.min(batched_packets);
+
+                        // commit new frames
+                        ring.commit();
+>>>>>>> 19c1e4ed9 (XDP support for DZ IBRL (#9715))
                         kick(&ring);
                     }
                 }
