@@ -387,6 +387,8 @@ fn test_program_sbf_loader_deprecated() {
 
 #[test]
 #[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
+// In SBPFv3, we don't have a verification step for undefined syscalls, and we don't do dynamic
+// symbol resolution, so this test would pass.
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     agave_logger::setup();
 
