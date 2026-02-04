@@ -208,9 +208,10 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn get_min_max_priority(&self) -> Option<(u64, u64)> {
-        self.priority_queue
-            .first()
-            .map(|first| (self.priority_queue.last().unwrap().priority, first.priority))
+        let min = self.priority_queue.first()?.priority;
+        let max = self.priority_queue.last().unwrap().priority;
+
+        Some((min, max))
     }
 
     fn next_recheck_id(
