@@ -6704,3 +6704,119 @@ fn test_new_zero_lamport_accounts_skipped() {
     let account_info = slot_list.iter().find(|(s, _)| *s == slot).unwrap();
     assert!(account_info.1.is_zero_lamport());
 }
+
+#[derive(Debug, Clone)]
+enum InitialState {
+    None,
+    WithLamports(u64),
+    WithoutLamports,
+}
+
+#[test_case(InitialState::None, vec![0], None, 1, 0;
+    "store_single_zero_lamport")]
+#[test_case(InitialState::None, vec![100, 200, 300], Some(300), 0, 2;
+"store_multiple_duplicates_some_lamports")]
+#[test_case(InitialState::None, vec![11, 0, 12, 0], None, 1, 3;
+    "store_mixed_accounts_ending_with_zero_lamports")]
+#[test_case(InitialState::None, vec![0, 5, 0, 10], Some(10), 0, 3;
+"store_mixed_accounts_ending_with_nonzero_lamports")]
+#[test_case(InitialState::WithLamports(10), vec![0], Some(0), 0, 0;
+"overwrite_existing_account_with_zero_lamports")]
+#[test_case(InitialState::WithLamports(50), vec![101, 102, 103], Some(103), 0, 2;
+"overwrite_existing_account_with_duplicate_some_lamports")]
+#[test_case(InitialState::WithLamports(50), vec![0, 5, 0, 10], Some(10), 0, 3;
+"overwrite_existing_account_mixed_ending_some_lamports")]
+#[test_case(InitialState::WithLamports(50), vec![11, 0, 12, 0], Some(0), 0, 3;
+"overwrite_existing_account_mixed_ending_zero_lamports")]
+#[test_case(InitialState::WithoutLamports, vec![0], Some(0), 0, 0;
+"overwrite_zero_lamport_account_with_zero_lamports")]
+#[test_case(InitialState::WithoutLamports, vec![5], Some(5), 0, 0;
+"overwrite_zero_lamport_account_with_some_lamports")]
+#[test_case(InitialState::WithoutLamports, vec![0, 10, 0, 15], Some(15), 0, 3;
+"overwrite_zero_lamport_account_mixed_ending_some_lamports")]
+#[test_case(InitialState::WithoutLamports, vec![12, 0, 25, 0], Some(0),0, 3;
+"overwrite_zero_lamport_account__mixed_ending_zero_lamports")]
+fn test_write_accounts_to_cache_scenarios(
+    initial_state: InitialState,
+    batch_accounts: Vec<u64>,
+    expected_lamports: Option<u64>,
+    expected_ephemeral_skips: u64,
+    expected_duplicate_skips: u64,
+) {
+    let db = AccountsDb::new_single_for_tests();
+    let slot: Slot = 1;
+    let key = solana_pubkey::new_rand();
+    let ancestors = vec![(1, 1), (2, 2)].into_iter().collect();
+
+    // Setup initial state
+    match initial_state {
+        InitialState::None => {
+            // No setup needed
+        }
+        InitialState::WithLamports(lamports) => {
+            let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
+            db.store_accounts_unfrozen(
+                (slot, [(&key, &account)].as_slice()),
+                UpdateIndexThreadSelection::PoolWithThreshold,
+            );
+        }
+        InitialState::WithoutLamports => {
+            let account = AccountSharedData::new(1, 0, &Pubkey::default());
+            let account_zero = AccountSharedData::new(0, 0, &Pubkey::default());
+            // Store a non-zero account first to create the index entry
+            db.store_accounts_unfrozen(
+                (slot, [(&key, &account)].as_slice()),
+                UpdateIndexThreadSelection::PoolWithThreshold,
+            );
+            // Overwrite with a zero-lamport account to simulate ephemeral setup
+            db.store_accounts_unfrozen(
+                (slot, [(&key, &account_zero)].as_slice()),
+                UpdateIndexThreadSelection::PoolWithThreshold,
+            );
+        }
+    }
+
+    let slot = 2;
+    // Store batch accounts
+    let accounts: Vec<_> = batch_accounts
+        .iter()
+        .map(|&lamports| AccountSharedData::new(lamports, 0, &Pubkey::default()))
+        .collect();
+    let batch: Vec<_> = accounts.iter().map(|account| (&key, account)).collect();
+
+    db.store_accounts_unfrozen(
+        (slot, batch.as_slice()),
+        UpdateIndexThreadSelection::PoolWithThreshold,
+    );
+
+    // Verify results
+    let loaded = db.load_without_fixed_root(&ancestors, &key);
+    match expected_lamports {
+        Some(expected) => {
+            assert!(loaded.is_some(), "Account should be loadable");
+            let (acc, _) = loaded.unwrap();
+            assert_eq!(acc.lamports(), expected, "Wrong lamports");
+        }
+        None => {
+            assert!(loaded.is_none(), "Account should not be loadable");
+        }
+    }
+
+    let ephemeral = db
+        .stats
+        .num_ephemeral_accounts_skipped
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        ephemeral, expected_ephemeral_skips,
+        "Wrong number of ephemeral skips"
+    );
+
+    let duplicates = db
+        .stats
+        .num_duplicate_accounts_skipped
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        duplicates, expected_duplicate_skips,
+        "Wrong number of duplicate skips"
+    );
+}

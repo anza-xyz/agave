@@ -38,8 +38,9 @@ use {
         account_storage_entry::AccountStorageEntry,
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
-            AccountsStats, CleanAccountsStats, FlushStats, ObsoleteAccountsStats, PurgeStats,
-            ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
+            AccountsStats, CacheAccountsStoreStats, CleanAccountsStats, FlushStats,
+            ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
+            StoreAccountsTiming,
         },
         accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
@@ -5638,7 +5639,7 @@ impl AccountsDb {
 
         // Store the accounts in the write cache
         let mut store_accounts_time = Measure::start("store_accounts");
-        let (store_account, num_ephemeral_accounts_skipped) =
+        let (store_account, cache_account_store_stats) =
             self.write_accounts_to_cache(accounts.target_slot(), &accounts);
         store_accounts_time.stop();
         self.stats
@@ -5654,13 +5655,7 @@ impl AccountsDb {
         self.stats
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
-        self.stats.num_store_accounts_to_cache.fetch_add(
-            (accounts.len() - num_ephemeral_accounts_skipped) as u64,
-            Ordering::Relaxed,
-        );
-        self.stats
-            .num_ephemeral_accounts_skipped
-            .fetch_add(num_ephemeral_accounts_skipped as u64, Ordering::Relaxed);
+        self.stats.accumulate(&cache_account_store_stats);
         self.report_store_timings();
     }
 
@@ -5786,31 +5781,44 @@ impl AccountsDb {
     // index, there is no need to store it in the write cache as it will not effect the database
     // hash. The function returns a vector of booleans indicating whether each account was stored,
     // and the number of accounts that were skipped.
+    // Ordering of account is important as duplicate pubkeys are possible. The last account in
+    // accounts_and_meta_to_store for each pubkey is stored in the write cache
     fn write_accounts_to_cache<'a, 'b>(
         &self,
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
-    ) -> (Vec<bool>, usize) {
-        let mut accounts_skipped = 0;
-        let store_account = (0..accounts_and_meta_to_store.len())
-            .map(|index| {
-                accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
-                    if account.is_zero_lamport()
-                        && self
-                            .accounts_index
-                            .get_and_then(account.pubkey(), |account| (true, account.is_none()))
-                    {
-                        accounts_skipped += 1;
-                        return false;
-                    }
-                    self.accounts_cache
-                        .store(slot, account.pubkey(), account.take_account());
-                    true
-                })
-            })
-            .collect();
+    ) -> (Vec<bool>, CacheAccountsStoreStats) {
+        let len = accounts_and_meta_to_store.len();
+        let mut pubkey_set = HashSet::with_capacity(len);
+        let mut cache_account_store_stats = CacheAccountsStoreStats::default();
+        let mut store_accounts = vec![false; len];
 
-        (store_account, accounts_skipped)
+        (0..len).rev().for_each(|index| {
+            accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
+                let pubkey = account.pubkey();
+                let duplicate_account = !pubkey_set.insert(*pubkey);
+                if duplicate_account {
+                    // If the same account is written multiple times in the same batch,
+                    // only store the latest version
+                    cache_account_store_stats.num_duplicate_accounts_skipped += 1;
+                    return;
+                }
+                if account.is_zero_lamport()
+                    && self
+                        .accounts_index
+                        .get_and_then(pubkey, |account| (true, account.is_none()))
+                {
+                    cache_account_store_stats.num_ephemeral_accounts_skipped += 1;
+                    return;
+                }
+
+                self.accounts_cache
+                    .store(slot, pubkey, account.take_account());
+                store_accounts[index] = true;
+            })
+        });
+
+        (store_accounts, cache_account_store_stats)
     }
 
     fn write_accounts_to_storage<'a>(
@@ -6068,6 +6076,13 @@ impl AccountsDb {
                     "num_ephemeral_accounts_skipped",
                     self.stats
                         .num_ephemeral_accounts_skipped
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_duplicate_accounts_skipped",
+                    self.stats
+                        .num_duplicate_accounts_skipped
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
