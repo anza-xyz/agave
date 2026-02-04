@@ -4575,7 +4575,7 @@ pub mod tests {
             filter::MemcmpEncodedBytes,
         },
         solana_runtime::{
-            bank::{BankTestConfig, SlotLeader},
+            bank::BankTestConfig,
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
         },
@@ -4994,7 +4994,7 @@ pub mod tests {
             let mut parent_bank = self.bank_forks.read().unwrap().working_bank();
             for (i, root) in roots.iter().enumerate() {
                 let new_bank =
-                    Bank::new_from_parent(parent_bank.clone(), *parent_bank.leader(), *root);
+                    Bank::new_from_parent(parent_bank.clone(), parent_bank.leader_id(), *root);
                 parent_bank = self
                     .bank_forks
                     .write()
@@ -5013,7 +5013,7 @@ pub mod tests {
             self.blockstore.set_roots(roots.iter()).unwrap();
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
-                *parent_bank.leader(),
+                parent_bank.leader_id(),
                 roots.iter().max().unwrap() + 1,
             );
             self.bank_forks.write().unwrap().insert(new_bank);
@@ -5041,11 +5041,7 @@ pub mod tests {
                 .bank_forks
                 .write()
                 .unwrap()
-                .insert(Bank::new_from_parent(
-                    parent_bank,
-                    SlotLeader::default(),
-                    slot,
-                ))
+                .insert(Bank::new_from_parent(parent_bank, &Pubkey::default(), slot))
                 .clone_without_scheduler();
 
             let new_block_commitment = BlockCommitmentCache::new(
@@ -8910,13 +8906,13 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
-        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
-        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
+        let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
         let prioritization_fee_cache_inner = None;

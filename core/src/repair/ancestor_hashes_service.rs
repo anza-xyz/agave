@@ -921,7 +921,6 @@ mod test {
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::make_many_slot_entries, get_tmp_ledger_path,
             get_tmp_ledger_path_auto_delete, shred::Nonce,
@@ -1914,7 +1913,7 @@ mod test {
         let bank_forks = &repair_info.bank_forks;
         let root_bank = bank_forks.read().unwrap().root_bank();
         let new_root_slot = dead_duplicate_confirmed_slot_2 + 1;
-        let new_root_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), new_root_slot);
+        let new_root_bank = Bank::new_from_parent(root_bank, &Pubkey::default(), new_root_slot);
         new_root_bank.freeze();
         {
             let mut w_bank_forks = bank_forks.write().unwrap();

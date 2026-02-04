@@ -20,13 +20,13 @@ use {
     },
     solana_entry::entry::Entry,
     solana_hash::Hash,
-    solana_leader_schedule::SlotLeader,
     solana_ledger::{
         blockstore::Blockstore, create_new_tmp_ledger_auto_delete,
         genesis_utils::create_genesis_config, leader_schedule_cache::LeaderScheduleCache,
     },
     solana_perf::packet::to_packet_batches,
     solana_poh::poh_recorder::create_test_recorder,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
         installed_scheduler_pool::SchedulingContext,
@@ -94,12 +94,12 @@ fn test_scheduler_waited_by_drop_bank_service() {
 
     // Create bank, which is pruned later
     let pruned = 2;
-    let pruned_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), pruned);
+    let pruned_bank = Bank::new_from_parent(genesis_bank.clone(), &Pubkey::default(), pruned);
     let pruned_bank = bank_forks.write().unwrap().insert(pruned_bank);
 
     // Create new root bank
     let root = 3;
-    let root_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), root);
+    let root_bank = Bank::new_from_parent(genesis_bank.clone(), &Pubkey::default(), root);
     root_bank.freeze();
     let root_hash = root_bank.hash();
     bank_forks.write().unwrap().insert(root_bank);
@@ -260,7 +260,7 @@ fn test_scheduler_producing_blocks() {
     let tx = RuntimeTransaction::from_transaction_for_tests(tx);
 
     // Crate tpu_bank
-    let tpu_bank = Bank::new_from_parent(genesis_bank.clone(), SlotLeader::default(), 2);
+    let tpu_bank = Bank::new_from_parent(genesis_bank.clone(), &Pubkey::default(), 2);
     let tpu_bank = bank_forks
         .write()
         .unwrap()

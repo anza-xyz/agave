@@ -5,7 +5,7 @@ use super::Bank;
 mod tests {
     use {
         super::*, crate::inflation_rewards::points::PointValue,
-        solana_genesis_config::create_genesis_config, solana_leader_schedule::SlotLeader,
+        solana_genesis_config::create_genesis_config, solana_pubkey::Pubkey,
         solana_sysvar::epoch_rewards::EpochRewards, std::sync::Arc,
     };
 
@@ -29,7 +29,7 @@ mod tests {
         let bank1_slot = bank0.slot() + 1;
         let bank1 = Arc::new(Bank::new_from_parent(
             bank0.clone(),
-            SlotLeader::default(),
+            &Pubkey::default(),
             bank1_slot,
         ));
 
@@ -49,7 +49,7 @@ mod tests {
         assert_eq!(bank0_cached_rent, bank1_cached_rent);
 
         let bank2_slot = bank1.slot() + 1;
-        let bank2 = Bank::new_from_parent(bank1.clone(), SlotLeader::default(), bank2_slot);
+        let bank2 = Bank::new_from_parent(bank1.clone(), &Pubkey::default(), bank2_slot);
 
         let bank2_sysvar_cache = bank2.transaction_processor.sysvar_cache();
         let bank2_cached_clock = bank2_sysvar_cache.get_clock();
@@ -77,7 +77,7 @@ mod tests {
         let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let bank1_slot = bank0.slot() + 1;
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), bank1_slot);
+        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), bank1_slot);
 
         let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache();
         let bank1_cached_clock = bank1_sysvar_cache.get_clock();

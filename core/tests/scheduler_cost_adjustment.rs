@@ -8,7 +8,6 @@ use {
     solana_genesis_config::{create_genesis_config, GenesisConfig},
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
-    solana_leader_schedule::SlotLeader,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
@@ -67,7 +66,7 @@ impl TestSetup {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             self.genesis_config
                 .epoch_schedule
                 .get_first_slot_in_epoch(1),

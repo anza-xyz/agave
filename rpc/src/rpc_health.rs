@@ -135,10 +135,8 @@ pub mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
         },
-        solana_runtime::{
-            bank::{Bank, SlotLeader},
-            bank_forks::BankForks,
-        },
+        solana_pubkey::Pubkey,
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
     };
 
     #[test]
@@ -180,25 +178,25 @@ pub mod tests {
         assert_eq!(health.check(), RpcHealthStatus::Behind { num_slots: 15 });
 
         // Simulate this node observing slot 4 as optimistically confirmed - status still behind
-        let bank4 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 4));
+        let bank4 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 4));
         optimistically_confirmed_bank.write().unwrap().bank = bank4.clone();
         assert_eq!(health.check(), RpcHealthStatus::Behind { num_slots: 11 });
 
         // Simulate this node observing slot 5 as optimistically confirmed - status now ok
         // as distance is <= health_check_slot_distance
-        let bank5 = Arc::new(Bank::new_from_parent(bank4, SlotLeader::default(), 5));
+        let bank5 = Arc::new(Bank::new_from_parent(bank4, &Pubkey::default(), 5));
         optimistically_confirmed_bank.write().unwrap().bank = bank5.clone();
         assert_eq!(health.check(), RpcHealthStatus::Ok);
 
         // Node now up with tip of cluster
-        let bank15 = Arc::new(Bank::new_from_parent(bank5, SlotLeader::default(), 15));
+        let bank15 = Arc::new(Bank::new_from_parent(bank5, &Pubkey::default(), 15));
         optimistically_confirmed_bank.write().unwrap().bank = bank15.clone();
         assert_eq!(health.check(), RpcHealthStatus::Ok);
 
         // Node "beyond" tip of cluster - this technically isn't possible but could be
         // observed locally due to a race between updates to Blockstore and
         // OptimisticallyConfirmedBank. Either way, not a problem and status is ok.
-        let bank16 = Arc::new(Bank::new_from_parent(bank15, SlotLeader::default(), 16));
+        let bank16 = Arc::new(Bank::new_from_parent(bank15, &Pubkey::default(), 16));
         optimistically_confirmed_bank.write().unwrap().bank = bank16.clone();
         assert_eq!(health.check(), RpcHealthStatus::Ok);
     }
