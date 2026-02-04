@@ -184,7 +184,10 @@ where
             }
 
             self.receive_completed()?;
-            self.incremental_recheck();
+            let (_, clean_time_us) = measure_us!(self.incremental_recheck());
+            self.timing_metrics.update(|timing_metrics| {
+                timing_metrics.clean_time_us += clean_time_us;
+            });
             self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
             self.receive_and_buffer_packets(&decision).map_err(|_| {
                 SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
