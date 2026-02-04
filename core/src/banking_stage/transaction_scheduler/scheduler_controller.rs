@@ -86,7 +86,7 @@ where
     scheduling_details: SchedulingDetails,
     /// Cursor for incremental recheck sweep of the priority queue.
     recheck_cursor: Option<TransactionPriorityId>,
-    /// Recheck IDs scracth space.
+    /// Recheck IDs scratch space.
     recheck_chunk: Vec<TransactionPriorityId>,
 }
 
