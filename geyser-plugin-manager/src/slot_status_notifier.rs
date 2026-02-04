@@ -1,14 +1,12 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
-    agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
-    log::*,
-    solana_clock::Slot,
-    solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
-    std::sync::{Arc, RwLock},
+    agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus, arc_swap::ArcSwap, log::*,
+    solana_clock::Slot, solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
+    std::sync::Arc,
 };
 
 pub struct SlotStatusNotifierImpl {
-    plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
@@ -42,12 +40,12 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
 }
 
 impl SlotStatusNotifierImpl {
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
         Self { plugin_manager }
     }
 
     pub fn notify_slot_status(&self, slot: Slot, parent: Option<Slot>, slot_status: SlotStatus) {
-        let plugin_manager = self.plugin_manager.read().unwrap();
+        let plugin_manager = self.plugin_manager.load();
         if plugin_manager.plugins.is_empty() {
             return;
         }
