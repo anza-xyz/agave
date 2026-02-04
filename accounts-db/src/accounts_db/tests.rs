@@ -114,7 +114,10 @@ impl AccountStorageEntry {
     }
 }
 
-/// Helper macro to define accounts_db_test for both `AppendVec` and `HotStorage`.
+/// Macro to define tests for all permutations of accounts-db configs
+///
+/// E.g. account storage file format
+///
 /// This macro supports creating both regular tests and tests that should panic.
 /// Usage:
 ///   For regular test, use the following syntax.
@@ -137,7 +140,7 @@ macro_rules! define_accounts_db_test {
     };
     ($name:ident, |$accounts_db:ident| $inner: tt) => {
         #[test_matrix(
-            [AccountsFileProvider::AppendVec, AccountsFileProvider::HotStorage],
+            [AccountsFileProvider::AppendVec],
             [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
         )]
         fn $name(accounts_file_provider: AccountsFileProvider, mark_obsolete_accounts: MarkObsoleteAccounts) {
@@ -146,7 +149,7 @@ macro_rules! define_accounts_db_test {
     };
     ($name:ident, panic = $panic_message:literal, |$accounts_db:ident| $inner: tt) => {
         #[test_matrix(
-            [AccountsFileProvider::AppendVec, AccountsFileProvider::HotStorage],
+            [AccountsFileProvider::AppendVec],
             [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
         )]
         #[should_panic(expected = $panic_message)]
@@ -3706,13 +3709,6 @@ define_accounts_db_test!(
                     0
                 );
             }
-            AccountsFileProvider::HotStorage => {
-                // For tired-storage, alive bytes are only an approximation.
-                // Therefore, it won't be zero.
-                assert!(
-                    storage.alive_bytes_exclude_zero_lamport_single_ref_accounts() < alive_bytes
-                );
-            }
         }
     }
 );
@@ -4897,12 +4893,7 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(accum.storage_info.len(), 1);
     for (slot, value) in accum.storage_info {
-        let expected_stored_size =
-            if accounts.accounts_file_provider == AccountsFileProvider::HotStorage {
-                33
-            } else {
-                144
-            };
+        let expected_stored_size = 144;
         assert_eq!(
             (slot, value.count, value.stored_size),
             (0, 1, expected_stored_size)
@@ -4958,12 +4949,7 @@ define_accounts_db_test!(
         accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
         assert_eq!(accum.storage_info.len(), 1);
         for (slot, value) in accum.storage_info {
-            let expected_stored_size =
-                if accounts.accounts_file_provider == AccountsFileProvider::HotStorage {
-                    1065
-                } else {
-                    1280
-                };
+            let expected_stored_size = 1280;
             assert_eq!(
                 (slot, value.count, value.stored_size),
                 (0, 2, expected_stored_size)

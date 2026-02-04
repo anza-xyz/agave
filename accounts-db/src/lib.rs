@@ -36,7 +36,6 @@ mod rolling_bit_field;
 pub mod sorted_storages;
 pub mod stake_rewards;
 pub mod storable_accounts;
-pub mod tiered_storage;
 pub mod utils;
 pub mod waitable_condvar;
 
