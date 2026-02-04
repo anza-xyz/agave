@@ -178,15 +178,15 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     append_vec.accounts.write_accounts(&storable_accounts, 0);
 
     assert!(!db.accounts_index.contains(&pubkey));
-    let storage_info = StorageSizeAndCountMap::default();
     let storage = db.get_storage_for_slot(slot0).unwrap();
     let mut reader = append_vec::new_scan_accounts_reader();
+    let mut state = IndexGenerationThreadState::default();
     db.generate_index_for_slot(
         &mut reader,
+        &mut state,
         &storage,
         storage.slot(),
         storage.id(),
-        &storage_info,
     );
 }
 
@@ -4845,11 +4845,11 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
         .write_accounts(&(slot0, &[(&shared_key, &account)][..]), 0);
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
-    let storage_info = StorageSizeAndCountMap::default();
     let mut reader = append_vec::new_scan_accounts_reader();
-    accounts.generate_index_for_slot(&mut reader, &storage, slot0, 0, &storage_info);
-    assert_eq!(storage_info.len(), 1);
-    for entry in storage_info.iter() {
+    let mut state = IndexGenerationThreadState::default();
+    accounts.generate_index_for_slot(&mut reader, &mut state, &storage, slot0, 0);
+    assert_eq!(state.storage_info.len(), 1);
+    for (slot, value) in state.storage_info {
         let expected_stored_size =
             if accounts.accounts_file_provider == AccountsFileProvider::HotStorage {
                 33
@@ -4857,8 +4857,8 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
                 144
             };
         assert_eq!(
-            (entry.key(), entry.value().count, entry.value().stored_size),
-            (&0, 1, expected_stored_size)
+            (slot, value.count, value.stored_size),
+            (0, 1, expected_stored_size)
         );
     }
     accounts.accounts_index.set_startup(Startup::Normal);
@@ -4869,10 +4869,10 @@ define_accounts_db_test!(
     |accounts| {
         // empty store
         let storage = accounts.create_and_insert_store(0, 1, "test");
-        let storage_info = StorageSizeAndCountMap::default();
         let mut reader = append_vec::new_scan_accounts_reader();
-        accounts.generate_index_for_slot(&mut reader, &storage, 0, 0, &storage_info);
-        assert!(storage_info.is_empty());
+        let mut state = IndexGenerationThreadState::default();
+        accounts.generate_index_for_slot(&mut reader, &mut state, &storage, 0, 0);
+        assert!(state.storage_info.is_empty());
     }
 );
 
@@ -4906,11 +4906,11 @@ define_accounts_db_test!(
             0,
         );
 
-        let storage_info = StorageSizeAndCountMap::default();
         let mut reader = append_vec::new_scan_accounts_reader();
-        accounts.generate_index_for_slot(&mut reader, &storage, 0, 0, &storage_info);
-        assert_eq!(storage_info.len(), 1);
-        for entry in storage_info.iter() {
+        let mut state = IndexGenerationThreadState::default();
+        accounts.generate_index_for_slot(&mut reader, &mut state, &storage, 0, 0);
+        assert_eq!(state.storage_info.len(), 1);
+        for (slot, value) in state.storage_info {
             let expected_stored_size =
                 if accounts.accounts_file_provider == AccountsFileProvider::HotStorage {
                     1065
@@ -4918,8 +4918,8 @@ define_accounts_db_test!(
                     1280
                 };
             assert_eq!(
-                (entry.key(), entry.value().count, entry.value().stored_size),
-                (&0, 2, expected_stored_size)
+                (slot, value.count, value.stored_size),
+                (0, 2, expected_stored_size)
             );
         }
         accounts.accounts_index.set_startup(Startup::Normal);
@@ -4974,15 +4974,15 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         .unwrap()
         .mark_accounts_obsolete(accounts_to_mark_obsolete.iter().cloned(), slot0 + 1);
 
-    let storage_info = StorageSizeAndCountMap::default();
     let mut reader = append_vec::new_scan_accounts_reader();
-    let info = accounts.generate_index_for_slot(&mut reader, &storage, 0, 0, &storage_info);
+    let mut state = IndexGenerationThreadState::default();
+    let info = accounts.generate_index_for_slot(&mut reader, &mut state, &storage, 0, 0);
     assert_eq!(
         info.num_obsolete_accounts_skipped,
         num_accounts_to_mark_obsolete as u64
     );
     assert_eq!(
-        storage_info.len(),
+        state.storage_info.len(),
         if num_accounts_to_mark_obsolete < account_sizes.len() {
             1
         } else {
@@ -4990,7 +4990,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         }
     );
 
-    for entry in storage_info.iter() {
+    for (slot, value) in state.storage_info {
         // Sum up the stored size of all non obsolete accounts
         let expected_stored_size: usize = accounts_to_keep
             .iter()
@@ -4998,8 +4998,8 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
             .sum();
 
         assert_eq!(
-            (entry.key(), entry.value().count, entry.value().stored_size),
-            (&0, accounts_to_keep.len(), expected_stored_size)
+            (slot, value.count, value.stored_size),
+            (0, accounts_to_keep.len(), expected_stored_size)
         );
     }
     accounts.accounts_index.set_startup(Startup::Normal);
@@ -5023,21 +5023,20 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     // approx stored count is 1 in store since we added a single account.
     let count = 1;
 
-    // populate based on made up hash data
-    let dashmap = DashMap::default();
-    dashmap.insert(
+    // populate based on made up data
+    let storage_info = vec![vec![(
         0,
         StorageSizeAndCount {
             stored_size: 2,
             count,
         },
-    );
+    )]];
 
     for (_, store) in accounts.storage.iter() {
         assert_eq!(store.count(), 0);
         assert_eq!(store.alive_bytes(), 0);
     }
-    accounts.set_storage_count_and_alive_bytes(dashmap, &mut GenerateIndexTimings::default());
+    accounts.set_storage_count_and_alive_bytes(storage_info, &mut GenerateIndexTimings::default());
     assert_eq!(accounts.storage.len(), 1);
     for (_, store) in accounts.storage.iter() {
         assert_eq!(store.id(), 0);
