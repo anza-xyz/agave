@@ -8,7 +8,7 @@ use {
         storable_accounts::AccountForStorage,
     },
     itertools::Itertools,
-    rand::{prelude::SliceRandom, rng, Rng},
+    rand::{prelude::SliceRandom, rng},
     solana_account::{
         accounts_equal, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
         WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,

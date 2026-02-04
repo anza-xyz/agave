@@ -3,7 +3,7 @@
 use {
     crate::packet::PacketBatch,
     ahash::RandomState,
-    rand::Rng,
+    rand::{Rng, RngExt as _},
     std::{
         hash::Hash,
         iter::repeat_with,

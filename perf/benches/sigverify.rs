@@ -3,7 +3,7 @@
 use {
     bencher::{benchmark_group, benchmark_main, Bencher},
     log::*,
-    rand::Rng,
+    rand::RngExt as _,
     solana_perf::{
         packet::{to_packet_batches, BytesPacket, BytesPacketBatch, PacketBatch},
         sigverify,

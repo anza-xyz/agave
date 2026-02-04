@@ -555,7 +555,7 @@ impl ShredSigVerifyStats {
 mod tests {
     use {
         super::*,
-        rand::Rng,
+        rand::RngExt as _,
         solana_entry::entry::{Entry, create_ticks},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,

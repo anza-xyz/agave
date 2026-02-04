@@ -6,6 +6,7 @@ use {
         tlv::{self, TlvDecodeError, TlvRecord},
     },
     assert_matches::{assert_matches, debug_assert_matches},
+    rand::{Rng, RngExt as _},
     serde::{Deserialize, Deserializer, Serialize},
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -414,7 +415,7 @@ impl ContactInfo {
     }
 
     /// New random ContactInfo for tests and simulations.
-    pub fn new_rand<R: rand::Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+    pub fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         let delay = 10 * 60 * 1000; // 10 minutes
         let now = solana_time_utils::timestamp() - delay + rng.random_range(0..2 * delay);
         let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);

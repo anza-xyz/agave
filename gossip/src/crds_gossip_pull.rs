@@ -23,7 +23,7 @@ use {
     },
     itertools::Itertools,
     rand::{
-        Rng,
+        Rng, RngExt as _,
         distr::{Distribution, weighted::WeightedIndex},
     },
     rayon::{ThreadPool, prelude::*},

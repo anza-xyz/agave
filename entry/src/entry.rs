@@ -602,7 +602,7 @@ mod tests {
     use {
         super::*,
         agave_reserved_account_keys::ReservedAccountKeys,
-        rand::{rng, Rng},
+        rand::{rng, RngExt as _},
         rayon::ThreadPoolBuilder,
         solana_hash::Hash,
         solana_keypair::Keypair,

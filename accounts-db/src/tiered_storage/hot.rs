@@ -847,7 +847,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         memoffset::offset_of,
-        rand::Rng,
+        rand::RngExt as _,
         solana_account::ReadableAccount,
         solana_clock::{Epoch, Slot},
         solana_hash::Hash,

@@ -2500,6 +2500,7 @@ mod tests {
         },
         bincode::serialize,
         itertools::izip,
+        rand::RngExt as _,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,

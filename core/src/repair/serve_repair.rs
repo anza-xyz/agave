@@ -1402,6 +1402,7 @@ mod tests {
         super::*,
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
+        rand::RngExt as _,
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_hash::Hash,
         solana_keypair::Keypair,

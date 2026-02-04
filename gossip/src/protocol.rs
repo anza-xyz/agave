@@ -266,7 +266,7 @@ pub(crate) mod tests {
             },
             duplicate_shred::{self, MAX_DUPLICATE_SHREDS, tests::new_rand_shred},
         },
-        rand::Rng,
+        rand::{Rng, RngExt as _},
         solana_clock::Slot,
         solana_hash::Hash,
         solana_keypair::Keypair,

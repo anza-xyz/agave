@@ -8,7 +8,7 @@ use {
     log::*,
     rand::{
         distr::{Distribution, Uniform},
-        rng, Rng,
+        rng, Rng, RngExt as _,
     },
     solana_core::{
         banking_trace::BankingTracer,

@@ -1,5 +1,8 @@
 use {
-    rand::{rngs::SmallRng, SeedableRng},
+    rand::{
+        rngs::{SmallRng, SysRng},
+        SeedableRng,
+    },
     solana_account::{Account, AccountSharedData},
     solana_accounts_db::read_only_accounts_cache::{ReadOnlyAccountsCache, CACHE_ENTRY_SIZE},
     solana_pubkey::Pubkey,
@@ -23,7 +26,7 @@ fn test_read_only_accounts_cache_eviction(num_accounts: (usize, usize), evict_sa
     let max_cache_size = num_accounts_lo.saturating_mul(CACHE_ENTRY_SIZE.saturating_add(DATA_SIZE));
     // Use SmallRng as it's faster than the default ChaCha and we don't
     // need a crypto rng here.
-    let mut rng = SmallRng::from_os_rng();
+    let mut rng = SmallRng::try_from_rng(&mut SysRng).unwrap();
     let cache = ReadOnlyAccountsCache::new(
         max_cache_size,
         usize::MAX, // <-- do not evict in the background

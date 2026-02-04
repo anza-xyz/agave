@@ -271,7 +271,7 @@ mod tests {
             .map(|offsets| {
                 offsets
                     .offsets
-                    .choose_multiple(&mut rng, number_of_accounts_to_remove)
+                    .sample(&mut rng, number_of_accounts_to_remove)
                     .cloned()
                     .collect::<Vec<_>>()
             })
@@ -388,7 +388,7 @@ mod tests {
             .map(|offsets| {
                 offsets
                     .offsets
-                    .choose_multiple(&mut rng, total_accounts - 1)
+                    .sample(&mut rng, total_accounts - 1)
                     .cloned()
                     .collect::<Vec<_>>()
             })

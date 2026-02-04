@@ -315,7 +315,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::Rng,
+        rand::RngExt as _,
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hash,

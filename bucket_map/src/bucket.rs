@@ -15,7 +15,7 @@ use {
         restart::RestartableBucket,
         MaxSearch, RefCount,
     },
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{

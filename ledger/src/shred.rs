@@ -964,7 +964,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::Rng,
+        rand::{Rng, RngExt as _},
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,

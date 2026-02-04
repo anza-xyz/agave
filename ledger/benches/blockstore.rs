@@ -4,7 +4,7 @@ extern crate solana_ledger;
 extern crate test;
 
 use {
-    rand::Rng,
+    rand::RngExt as _,
     solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,

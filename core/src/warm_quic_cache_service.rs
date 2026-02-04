@@ -2,7 +2,7 @@
 // by the time we need it.
 
 use {
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},

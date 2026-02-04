@@ -18,7 +18,7 @@ use {
 };
 #[cfg(test)]
 use {
-    rand::{prelude::IndexedMutRandom as _, Rng},
+    rand::{prelude::IndexedMutRandom as _, Rng, RngExt as _},
     solana_perf::packet::Packet,
     std::collections::HashMap,
     std::ops::Range,

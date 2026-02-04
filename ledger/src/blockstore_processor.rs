@@ -2301,7 +2301,7 @@ pub mod tests {
             },
         },
         assert_matches::assert_matches,
-        rand::{rng, Rng},
+        rand::{rng, RngExt as _},
         solana_account::{AccountSharedData, WritableAccount},
         solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},

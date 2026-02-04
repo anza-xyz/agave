@@ -4,7 +4,7 @@ use {
     bencher::{Bencher, benchmark_group, benchmark_main},
     bv::BitVec,
     fnv::FnvHasher,
-    rand::Rng,
+    rand::RngExt as _,
     solana_bloom::bloom::{Bloom, BloomHashIndex, ConcurrentBloom},
     solana_hash::Hash,
     solana_sha256_hasher::hash,

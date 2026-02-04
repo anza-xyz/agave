@@ -104,7 +104,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::{seq::SliceRandom, Rng},
+        rand::{seq::SliceRandom, Rng, RngExt as _},
         rayon::ThreadPoolBuilder,
         solana_entry::entry::Entry,
         solana_hash::Hash,

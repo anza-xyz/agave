@@ -92,7 +92,7 @@ impl fmt::Display for Checksum {
 mod tests {
     use {
         super::*,
-        rand::Rng,
+        rand::RngExt as _,
         std::ops::{Add, Sub},
     };
 

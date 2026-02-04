@@ -933,7 +933,7 @@ mod test {
         for &idx in data_indexes
             .clone()
             .collect::<Vec<_>>()
-            .choose_multiple(&mut rng, erasure_config.num_data)
+            .sample(&mut rng, erasure_config.num_data)
         {
             index.data_mut().remove(idx);
 
@@ -946,7 +946,7 @@ mod test {
 
         for &idx in coding_indexes
             .collect::<Vec<_>>()
-            .choose_multiple(&mut rng, erasure_config.num_coding)
+            .sample(&mut rng, erasure_config.num_coding)
         {
             index.coding_mut().remove(idx);
 

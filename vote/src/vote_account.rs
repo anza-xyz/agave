@@ -94,7 +94,7 @@ impl VoteAccount {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_random() -> VoteAccount {
         use {
-            rand::Rng as _,
+            rand::RngExt as _,
             solana_clock::Clock,
             solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
         };
@@ -456,7 +456,7 @@ mod tests {
     use {
         super::*,
         bincode::Options,
-        rand::Rng,
+        rand::{Rng, RngExt as _},
         solana_account::WritableAccount,
         solana_clock::Clock,
         solana_pubkey::Pubkey,

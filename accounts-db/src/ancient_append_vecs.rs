@@ -17,7 +17,7 @@ use {
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align,
     },
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
     solana_measure::measure_us,

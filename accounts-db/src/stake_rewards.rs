@@ -79,7 +79,7 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
 
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    rand::Rng,
+    rand::RngExt as _,
     solana_account::{state_traits::StateMut, WritableAccount},
     solana_clock::Epoch,
     solana_keypair::Keypair,

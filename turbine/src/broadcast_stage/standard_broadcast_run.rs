@@ -491,7 +491,7 @@ mod test {
     use {
         super::*,
         crossbeam_channel::unbounded,
-        rand::Rng,
+        rand::RngExt as _,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},

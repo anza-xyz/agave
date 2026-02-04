@@ -12,7 +12,7 @@ use {
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,

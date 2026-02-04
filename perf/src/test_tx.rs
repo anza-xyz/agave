@@ -1,5 +1,5 @@
 use {
-    rand::{CryptoRng, Rng, RngCore},
+    rand::{CryptoRng, Rng, RngExt as _},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -57,7 +57,7 @@ pub fn test_multisig_tx() -> Transaction {
 
 pub fn new_test_vote_tx<R>(rng: &mut R) -> Transaction
 where
-    R: CryptoRng + RngCore,
+    R: CryptoRng + Rng,
 {
     let mut slots: Vec<Slot> = std::iter::repeat_with(|| rng.random()).take(5).collect();
     slots.sort_unstable();

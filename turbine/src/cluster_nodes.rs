@@ -3,7 +3,7 @@ use {
     agave_feature_set::{self as feature_set},
     itertools::Either,
     lazy_lru::LruCache,
-    rand::{Rng, RngCore, SeedableRng, seq::SliceRandom},
+    rand::{Rng, RngExt as _, SeedableRng, TryRng, seq::SliceRandom},
     rand_chacha::{ChaCha8Rng, ChaChaRng},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
@@ -29,6 +29,7 @@ use {
         cell::RefCell,
         cmp::Ordering,
         collections::{HashMap, HashSet},
+        convert::Infallible,
         iter::repeat_with,
         marker::PhantomData,
         net::SocketAddr,
@@ -218,25 +219,26 @@ impl TurbineRng {
     }
 }
 
-impl RngCore for TurbineRng {
-    fn next_u32(&mut self) -> u32 {
+impl TryRng for TurbineRng {
+    type Error = Infallible;
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         match self {
-            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.next_u32(),
-            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.next_u32(),
+            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.try_next_u32(),
+            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.try_next_u32(),
         }
     }
 
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         match self {
-            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.next_u64(),
-            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.next_u64(),
+            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.try_next_u64(),
+            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.try_next_u64(),
         }
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         match self {
-            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.fill_bytes(dest),
-            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.fill_bytes(dest),
+            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.try_fill_bytes(dest),
+            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.try_fill_bytes(dest),
         }
     }
 }

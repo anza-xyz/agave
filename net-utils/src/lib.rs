@@ -22,7 +22,7 @@ pub mod tooling_for_tests;
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
-    rand::{Rng, rng},
+    rand::{RngExt as _, rng},
     std::{
         io::{self},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},

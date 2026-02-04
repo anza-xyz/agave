@@ -5,7 +5,7 @@ extern crate test;
 
 use {
     dashmap::DashMap,
-    rand::Rng,
+    rand::{seq::SliceRandom as _, RngExt as _, SeedableRng},
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -290,7 +290,6 @@ fn bench_sort_and_remove_dups(b: &mut Bencher) {
         }
     }
 
-    use rand::prelude::*;
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
     let accounts: Vec<_> =
         std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
@@ -311,8 +310,6 @@ fn bench_sort_and_remove_dups_no_dups(b: &mut Bencher) {
             pubkey: Pubkey::new_unique(),
         }
     }
-
-    use rand::prelude::*;
 
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
     let mut accounts: Vec<_> =

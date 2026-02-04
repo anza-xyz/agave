@@ -1229,7 +1229,7 @@ mod tests {
     use {
         super::*,
         assert_matches::assert_matches,
-        rand::Rng,
+        rand::RngExt as _,
         solana_account::{
             AccountSharedData, ReadableAccount, WritableAccount,
             create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,

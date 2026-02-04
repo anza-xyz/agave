@@ -5,7 +5,7 @@
 use {
     rand::{
         distr::{weighted::WeightedIndex, Distribution},
-        Rng, SeedableRng,
+        RngExt as _, SeedableRng,
     },
     rand_chacha::ChaChaRng,
     solana_account::AccountSharedData,

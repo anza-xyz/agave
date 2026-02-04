@@ -18,7 +18,7 @@ extern crate test;
 use {
     crossbeam_channel::{unbounded, Receiver},
     log::*,
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     rayon::prelude::*,
     solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
     solana_entry::entry::{next_hash, Entry},

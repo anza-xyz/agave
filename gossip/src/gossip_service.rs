@@ -8,7 +8,7 @@ use {
         epoch_specs::EpochSpecs,
     },
     crossbeam_channel::Sender,
-    rand::{Rng, rng},
+    rand::{RngExt as _, rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
     solana_net_utils::{DEFAULT_IP_ECHO_SERVER_THREADS, SocketAddrSpace},

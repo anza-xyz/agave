@@ -446,7 +446,7 @@ impl WindowService {
 mod test {
     use {
         super::*,
-        rand::Rng,
+        rand::RngExt as _,
         solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,

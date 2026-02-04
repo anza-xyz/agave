@@ -340,7 +340,7 @@ impl Sanitize for DuplicateShred {
 pub(crate) mod tests {
     use {
         super::*,
-        rand::Rng,
+        rand::{Rng, RngExt as _},
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,

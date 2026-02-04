@@ -211,7 +211,7 @@ mod tests {
     use {
         super::*,
         crate::index_entry::MAX_LEGAL_REFCOUNT,
-        rand::{rng, Rng},
+        rand::{rng, RngExt as _},
         std::{collections::HashMap, sync::RwLock},
     };
 

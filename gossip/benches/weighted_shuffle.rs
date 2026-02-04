@@ -1,6 +1,6 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    rand::{Rng, SeedableRng},
+    rand::{Rng, RngExt as _, SeedableRng},
     rand_chacha::ChaChaRng,
     solana_gossip::weighted_shuffle::WeightedShuffle,
     std::{hint::black_box, iter::repeat_with},

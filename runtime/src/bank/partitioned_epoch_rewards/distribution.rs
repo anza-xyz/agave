@@ -320,7 +320,7 @@ mod tests {
             reward_info::RewardInfo,
             stake_utils,
         },
-        rand::Rng,
+        rand::RngExt as _,
         solana_account::from_account,
         solana_accounts_db::stake_rewards::StakeReward,
         solana_epoch_schedule::EpochSchedule,

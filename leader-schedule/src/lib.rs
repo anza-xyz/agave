@@ -85,7 +85,9 @@ fn sort_stakes(stakes: &mut Vec<(SlotLeader, u64)>) {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, itertools::Itertools, rand::Rng, std::iter::repeat_with, test_case::test_case};
+    use {
+        super::*, itertools::Itertools, rand::RngExt, std::iter::repeat_with, test_case::test_case,
+    };
 
     #[test]
     fn test_get_leader_upcoming_slots() {

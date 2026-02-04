@@ -566,7 +566,7 @@ pub mod test {
         super::*,
         agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::{bounded, unbounded},
-        rand::Rng,
+        rand::RngExt as _,
         solana_entry::entry::create_ticks,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,

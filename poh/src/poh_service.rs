@@ -674,7 +674,7 @@ mod tests {
             record_channels::record_channels,
         },
         crossbeam_channel::bounded,
-        rand::{rng, Rng},
+        rand::{rng, RngExt as _},
         solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_hash::Hash,
         solana_ledger::{

@@ -19,7 +19,7 @@ use {
     },
     iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
     log::*,
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     roots_tracker::RootsTracker,
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},

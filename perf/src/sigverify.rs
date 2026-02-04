@@ -527,7 +527,7 @@ mod tests {
         },
         bincode::{deserialize, serialize},
         bytes::{BufMut, Bytes, BytesMut},
-        rand::Rng,
+        rand::RngExt as _,
         solana_keypair::Keypair,
         solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
         solana_packet::PACKET_DATA_SIZE,
