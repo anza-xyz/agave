@@ -81,14 +81,14 @@ impl NodeVoteMetrics {
     }
 }
 
-/// Errors returned from [`AgMetrics::record_vote`].
+/// Errors returned from [`ConsensusMetrics::record_vote`].
 #[derive(Debug)]
 pub enum RecordVoteError {
     /// Could not find start of slot entry.
     SlotNotFound,
 }
 
-/// Errors returned from [`AgMetrics::record_block_hash_seen`].
+/// Errors returned from [`ConsensusMetrics::record_block_hash_seen`].
 #[derive(Debug)]
 pub enum RecordBlockHashError {
     /// Could not find start of slot entry.
