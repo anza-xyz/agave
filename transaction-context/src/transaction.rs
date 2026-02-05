@@ -910,4 +910,102 @@ mod tests {
             1
         );
     }
+
+    #[test]
+    fn test_get_current_instruction_index() {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
+
+        // First top level instruction
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, false),
+                    InstructionAccount::new(1, false, false),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            0
+        );
+        transaction_context.pop().unwrap();
+
+        // Second top-level instruction
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, false),
+                    InstructionAccount::new(1, false, true),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            1
+        );
+
+        // Simulating a CPI
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, true),
+                    InstructionAccount::new(1, false, false),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                Some(1),
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            2
+        );
+
+        // Yet another CPI
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, true),
+                    InstructionAccount::new(1, false, false),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                Some(2),
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            3
+        );
+
+        // CPI return
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            2
+        );
+
+        // CPI return 2
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            1
+        );
+    }
 }
