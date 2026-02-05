@@ -536,7 +536,7 @@ mod test {
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
-        solana_runtime::bank::SlotLeader,
+        solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
@@ -629,7 +629,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            SlotLeader::default(),
+            &Pubkey::default(),
             1,
         );
         let root_bank = bank_forks
@@ -655,7 +655,7 @@ mod test {
             .unwrap()
             .insert(Bank::new_from_parent(
                 root_bank.clone(),
-                SlotLeader::default(),
+                &Pubkey::default(),
                 2,
             ))
             .clone_without_scheduler();
@@ -911,7 +911,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            SlotLeader::default(),
+            &Pubkey::default(),
             1,
         );
         let root_bank = bank_forks
@@ -946,7 +946,7 @@ mod test {
             .unwrap()
             .insert(Bank::new_from_parent(
                 root_bank.clone(),
-                SlotLeader::default(),
+                &Pubkey::default(),
                 2,
             ))
             .clone_without_scheduler();

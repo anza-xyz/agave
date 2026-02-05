@@ -18,6 +18,7 @@ use {
             ExternalRootSource, Tower,
         },
         forwarding_stage::ForwardingClientConfig,
+        next_leader::VotingServiceLeaderUpdater,
         repair::{
             self,
             quic_endpoint::{RepairQuicAsyncSenders, RepairQuicSenders, RepairQuicSockets},
@@ -33,6 +34,7 @@ use {
         },
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
+        voting_service,
     },
     agave_snapshots::{
         snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
@@ -53,8 +55,8 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::move_and_async_delete_path_contents,
     },
-    solana_client::connection_cache::{ConnectionCache, Protocol},
-    solana_clock::Slot,
+    solana_client::connection_cache::ConnectionCache,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_cluster_type::ClusterType,
     solana_entry::poh::compute_hash_time,
     solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
@@ -78,7 +80,7 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_leader_schedule::{FixedSchedule, SlotLeader},
+    solana_leader_schedule::FixedSchedule,
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
@@ -143,7 +145,8 @@ use {
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_tpu_client_next::ClientBuilder,
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
@@ -642,7 +645,7 @@ impl ValidatorTpuConfig {
         };
 
         ValidatorTpuConfig {
-            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+            vote_use_quic: true, // Test with QUIC, even if DEFAULT_VOTE_USE_QUIC if false
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
@@ -687,10 +690,11 @@ pub struct Validator {
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
     xdp_retransmitter: Option<XdpRetransmitter>,
-    // This runtime is used to run the client owned by SendTransactionService.
-    // We don't wait for its JoinHandle here because ownership and shutdown
-    // are managed elsewhere. This variable is intentionally unused.
-    _tpu_client_next_runtime: Option<TokioRuntime>,
+    // These runtimes are used to run the clients owned by SendTransactionService.
+    // We don't wait for their JoinHandle here because ownership and shutdown
+    // are managed elsewhere. These variables are intentionally unused.
+    _rpc_fwd_tpu_client_next_runtime: Option<TokioRuntime>,
+    _quic_vote_tpu_client_next_runtime: Option<TokioRuntime>,
 }
 
 impl Validator {
@@ -866,7 +870,7 @@ impl Validator {
         timer.stop();
         info!("Cleaning orphaned account snapshot directories done. {timer}");
 
-        // token used to cancel tpu-client-next, streamer and BLS streamer.
+        // token used to cancel tpu-client-next, streamer, BLS streamer, and voting over quic service.
         let cancel = CancellationToken::new();
         {
             let exit = exit.clone();
@@ -1205,29 +1209,10 @@ impl Validator {
         let mut tpu_transactions_forwards_client_sockets =
             Some(node.sockets.tpu_transaction_forwarding_clients);
 
-        let vote_connection_cache = if vote_use_quic {
-            let vote_connection_cache = ConnectionCache::new_with_client_options(
-                "connection_cache_vote_quic",
-                tpu_connection_pool_size,
-                Some(node.sockets.quic_vote_client),
-                Some((
-                    &identity_keypair,
-                    node.info
-                        .tpu_vote(Protocol::QUIC)
-                        .ok_or_else(|| {
-                            ValidatorError::Other(String::from("Invalid QUIC address for TPU Vote"))
-                        })?
-                        .ip(),
-                )),
-                Some((&staked_nodes, &identity_keypair.pubkey())),
-            );
-            Arc::new(vote_connection_cache)
-        } else {
-            Arc::new(ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                tpu_connection_pool_size,
-            ))
-        };
+        let udp_vote_connection_cache = Arc::new(ConnectionCache::with_udp(
+            "connection_cache_vote_udp",
+            tpu_connection_pool_size,
+        ));
 
         let bls_connection_cache = Arc::new(ConnectionCache::new_with_client_options(
             "connection_cache_bls_quic",
@@ -1260,14 +1245,59 @@ impl Validator {
         // always need a tokio runtime (and the respective handle) to initialize
         // the QUIC endpoints.
         let current_runtime_handle = tokio::runtime::Handle::try_current();
-        let tpu_client_next_runtime = current_runtime_handle.is_err().then(|| {
+        let rpc_fwd_tpu_client_next_runtime = current_runtime_handle.is_err().then(|| {
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .worker_threads(2)
-                .thread_name("solTpuClientRt")
+                .thread_name("solRpcFwdRt")
                 .build()
                 .unwrap()
         });
+        let rpc_fwd_tpu_client_next_runtime_handle = rpc_fwd_tpu_client_next_runtime
+            .as_ref()
+            .map(TokioRuntime::handle)
+            .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+
+        let (quic_vote_sender, quic_vote_tpu_client_next_runtime) = if vote_use_quic {
+            let rt = current_runtime_handle.is_err().then(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .worker_threads(2)
+                    .thread_name("solQuicVoteRt")
+                    .build()
+                    .unwrap()
+            });
+            let rt_handle = rt
+                .as_ref()
+                .map(TokioRuntime::handle)
+                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+            let leader_updater = Box::new(VotingServiceLeaderUpdater::new(
+                cluster_info.clone(),
+                poh_recorder.clone(),
+            ));
+            let builder = ClientBuilder::new(leader_updater)
+                .bind_socket(node.sockets.quic_vote_client)
+                .leader_send_fanout(voting_service::QUIC_UPCOMING_LEADER_FANOUT_LEADERS)
+                .identity(Arc::as_ref(&identity_keypair))
+                .metric_reporter(|stats, cancel| {
+                    stats.report_to_influxdb(
+                        "vote_client_quic",
+                        Duration::from_millis(DEFAULT_MS_PER_SLOT * 2),
+                        cancel,
+                    )
+                })
+                .cancel_token(cancel.clone())
+                .runtime_handle(rt_handle.clone());
+            let (sender, client) = builder.build()?;
+            let quic_vote_sender = voting_service::QuicVoteSender(sender);
+            key_notifiers
+                .write()
+                .unwrap()
+                .add(KeyUpdaterType::VoteClient, Arc::new(client));
+            (Some(quic_vote_sender), rt)
+        } else {
+            (None, None)
+        };
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1295,15 +1325,10 @@ impl Validator {
             };
 
             let rpc_tpu_client_args = {
-                let runtime_handle = tpu_client_next_runtime
-                    .as_ref()
-                    .map(TokioRuntime::handle)
-                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-
                 RpcTpuClientArgs(
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
-                    runtime_handle.clone(),
+                    rpc_fwd_tpu_client_next_runtime_handle.clone(),
                     cancel.clone(),
                 )
             };
@@ -1703,7 +1728,8 @@ impl Validator {
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
             slot_status_notifier,
-            vote_connection_cache,
+            udp_vote_connection_cache,
+            quic_vote_sender,
             AlpenglowInitializationState {
                 leader_window_info_sender,
                 replay_highest_frozen: replay_highest_frozen.clone(),
@@ -1740,14 +1766,10 @@ impl Validator {
         }
 
         let tpu_forwaring_client_config = {
-            let runtime_handle = tpu_client_next_runtime
-                .as_ref()
-                .map(TokioRuntime::handle)
-                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
             ForwardingClientConfig {
                 stake_identity: Arc::as_ref(&identity_keypair),
                 tpu_client_sockets: tpu_transactions_forwards_client_sockets.take().unwrap(),
-                runtime_handle: runtime_handle.clone(),
+                runtime_handle: rpc_fwd_tpu_client_next_runtime_handle.clone(),
                 cancel: cancel.clone(),
                 node_multihoming: node_multihoming.clone(),
             }
@@ -1876,7 +1898,8 @@ impl Validator {
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
             xdp_retransmitter,
-            _tpu_client_next_runtime: tpu_client_next_runtime,
+            _rpc_fwd_tpu_client_next_runtime: rpc_fwd_tpu_client_next_runtime,
+            _quic_vote_tpu_client_next_runtime: quic_vote_tpu_client_next_runtime,
         })
     }
 
@@ -2523,7 +2546,7 @@ fn maybe_warp_slot(
 
         bank_forks.insert(Bank::warp_from_parent(
             root_bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             warp_slot,
         ));
         bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
@@ -2980,7 +3003,6 @@ mod tests {
         solana_entry::entry,
         solana_genesis_config::create_genesis_config,
         solana_gossip::contact_info::ContactInfo,
-        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore, create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader,
             get_tmp_ledger_path_auto_delete,
@@ -3314,7 +3336,7 @@ mod tests {
         // bank=1, wait=0, should pass, bank is past the wait slot
         let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
             bank_forks.read().unwrap().root_bank(),
-            SlotLeader::default(),
+            &Pubkey::default(),
             1,
         ));
         config.wait_for_supermajority = Some(0);

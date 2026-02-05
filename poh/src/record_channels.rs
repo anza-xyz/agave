@@ -247,28 +247,33 @@ impl RecordReceiver {
 
     /// Try to receive a record from the channel.
     pub fn try_recv(&self) -> Result<Record, TryRecvError> {
-        // In order to avoid returning None when there was an active sender
-        // we load `active_senders` prior to try_recv.
-        let mut sender_active = self.active_senders.load(Ordering::Acquire) > 0;
-
         loop {
             match self.receiver.try_recv() {
                 Ok(record) => {
                     self.on_received_record(record.transaction_batches.len() as u64);
                     return Ok(record);
                 }
+
                 Err(TryRecvError::Empty) => {
-                    if sender_active {
-                        // If the sender is STILL active then we must continue to wait.
-                        // If there is no longer an active sender then we can break,
-                        //   **after** checking the channel again.
-                        // Both cases here are handled if we update `sender_active` and
-                        // go to the next iteration of the loop.
-                        sender_active = self.active_senders.load(Ordering::Acquire) > 0;
+                    // If any sender is still in-flight, we are not allowed to conclude "done".
+                    if self.active_senders.load(Ordering::Acquire) != 0 {
+                        core::hint::spin_loop();
                         continue;
                     }
-                    return Err(TryRecvError::Empty);
+
+                    // No in-flight senders observed, but re-check the channel once more.
+                    // a sender could have enqueued right after the previous Empty observation
+                    // and then dropped active_senders back to 0. Re-check once.
+                    match self.receiver.try_recv() {
+                        Ok(record) => {
+                            self.on_received_record(record.transaction_batches.len() as u64);
+                            return Ok(record);
+                        }
+                        Err(TryRecvError::Empty) => return Err(TryRecvError::Empty),
+                        Err(e) => return Err(e),
+                    }
                 }
+
                 Err(e) => return Err(e),
             }
         }

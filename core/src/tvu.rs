@@ -20,8 +20,7 @@ use {
         repair::repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
         shred_fetch_stage::{ShredFetchStage, SHRED_FETCH_CHANNEL_SIZE},
-        voting_service::VotingService,
-        warm_quic_cache_service::WarmQuicCacheService,
+        voting_service::{QuicVoteSender, VotingService},
         window_service::{WindowService, WindowServiceChannels},
     },
     agave_votor::{
@@ -103,7 +102,6 @@ pub struct Tvu {
     cost_update_service: CostUpdateService,
     voting_service: VotingService,
     bls_voting_service: BLSVotingService,
-    warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
     bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
@@ -224,7 +222,8 @@ impl Tvu {
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
-        vote_connection_cache: Arc<ConnectionCache>,
+        udp_vote_connection_cache: Arc<ConnectionCache>,
+        quic_vote_sender: Option<QuicVoteSender>,
         votor_init: AlpenglowInitializationState,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
@@ -520,7 +519,8 @@ impl Tvu {
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
-            vote_connection_cache.clone(),
+            udp_vote_connection_cache,
+            quic_vote_sender,
         );
 
         let bls_voting_service = BLSVotingService::new(
@@ -530,14 +530,6 @@ impl Tvu {
             bls_connection_cache,
             bank_forks.clone(),
             voting_service_test_override,
-        );
-
-        let warm_quic_cache_service = create_cache_warmer_if_needed(
-            None,
-            vote_connection_cache,
-            cluster_info,
-            poh_recorder,
-            &exit,
         );
 
         let cost_update_service = CostUpdateService::new(cost_update_receiver);
@@ -581,7 +573,6 @@ impl Tvu {
             cost_update_service,
             voting_service,
             bls_voting_service,
-            warm_quic_cache_service,
             drop_bank_service,
             duplicate_shred_listener,
             bls_sigverify_threads,
@@ -605,9 +596,6 @@ impl Tvu {
         self.cost_update_service.join()?;
         self.voting_service.join()?;
         self.bls_voting_service.join()?;
-        if let Some(warmup_service) = self.warm_quic_cache_service {
-            warmup_service.join()?;
-        }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
         if let Some((streamer, sigverifier)) = self.bls_sigverify_threads {
@@ -618,27 +606,6 @@ impl Tvu {
         self.commitment_service.join()?;
         Ok(())
     }
-}
-
-fn create_cache_warmer_if_needed(
-    connection_cache: Option<&Arc<ConnectionCache>>,
-    vote_connection_cache: Arc<ConnectionCache>,
-    cluster_info: &Arc<ClusterInfo>,
-    poh_recorder: &Arc<RwLock<PohRecorder>>,
-    exit: &Arc<AtomicBool>,
-) -> Option<WarmQuicCacheService> {
-    let tpu_connection_cache = connection_cache.filter(|cache| cache.use_quic()).cloned();
-    let vote_connection_cache = Some(vote_connection_cache).filter(|cache| cache.use_quic());
-
-    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
-        WarmQuicCacheService::new(
-            tpu_connection_cache,
-            vote_connection_cache,
-            cluster_info.clone(),
-            poh_recorder.clone(),
-            exit.clone(),
-        )
-    })
 }
 
 #[cfg(test)]
@@ -826,6 +793,7 @@ pub mod tests {
             wen_restart_repair_slots,
             None, // slot_status_notifier
             Arc::new(connection_cache),
+            None,
             AlpenglowInitializationState {
                 leader_window_info_sender,
                 replay_highest_frozen,

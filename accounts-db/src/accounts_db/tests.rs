@@ -59,6 +59,13 @@ where
     ) -> Ret {
         callback(self.1[index].1.into())
     }
+    fn account_for_geyser<Ret>(
+        &self,
+        _index: usize,
+        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        unimplemented!();
+    }
     fn pubkey(&self, index: usize) -> &Pubkey {
         self.1[index].0
     }

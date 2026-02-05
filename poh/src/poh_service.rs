@@ -679,7 +679,6 @@ mod tests {
         rand::{rng, Rng},
         solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_hash::Hash,
-        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -774,7 +773,7 @@ mod tests {
                                 .reset(bank.clone(), next_leader_slot);
                             bank = Arc::new(Bank::new_from_parent(
                                 bank.clone(),
-                                SlotLeader::new_unique(),
+                                &solana_pubkey::new_rand(),
                                 bank.slot() + 1,
                             ));
                             poh_recorder

@@ -174,6 +174,15 @@ impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
         callback((pubkey, account).into())
     }
 
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
+        callback(pubkey, account)
+    }
+
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.reward_commission_accounts.accounts_with_rewards[index]
             .2
@@ -414,7 +423,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::{tests::create_genesis_config, SlotLeader},
+            bank::tests::create_genesis_config,
             bank_forks::BankForks,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
@@ -591,7 +600,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(SlotLeader::new_unique()),
+            Some(Pubkey::new_unique()),
             Arc::default(),
             None,
             None,
@@ -611,7 +620,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             advance_num_slots,
         );
 
@@ -706,7 +715,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(SlotLeader::new_unique()),
+            Some(Pubkey::new_unique()),
             Arc::default(),
             None,
             None,
@@ -820,7 +829,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                SlotLeader::default(),
+                &Pubkey::default(),
                 slot,
             );
             let post_cap = curr_bank.capitalization();
@@ -913,7 +922,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                SlotLeader::default(),
+                &Pubkey::default(),
                 slot,
             );
             let post_cap = curr_bank.capitalization();
@@ -1053,7 +1062,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                SlotLeader::default(),
+                &Pubkey::default(),
                 slot,
             );
 
@@ -1110,7 +1119,7 @@ mod tests {
 
         let epoch_boundary_bank = Arc::new(Bank::new_from_parent(
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             SLOTS_PER_EPOCH,
         ));
         // Slot at the epoch boundary contains voting rewards only, as well as partition data
@@ -1131,7 +1140,7 @@ mod tests {
 
         let partition0_bank = Arc::new(Bank::new_from_parent(
             epoch_boundary_bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             SLOTS_PER_EPOCH + 1,
         ));
         // Slot after the epoch boundary contains first partition of staking
@@ -1148,7 +1157,7 @@ mod tests {
 
         let partition1_bank = Arc::new(Bank::new_from_parent(
             partition0_bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             SLOTS_PER_EPOCH + 2,
         ));
         // Slot 2 after the epoch boundary contains second partition of staking
@@ -1166,8 +1175,7 @@ mod tests {
         // All rewards are recorded
         assert_eq!(total_staking_rewards, num_rewards);
 
-        let bank =
-            Bank::new_from_parent(partition1_bank, SlotLeader::default(), SLOTS_PER_EPOCH + 3);
+        let bank = Bank::new_from_parent(partition1_bank, &Pubkey::default(), SLOTS_PER_EPOCH + 3);
         // Next slot contains empty rewards (since fees are off), and no
         // partitions because not at the epoch boundary
         assert_eq!(

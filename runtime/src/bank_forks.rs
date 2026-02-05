@@ -775,7 +775,7 @@ mod tests {
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
-        solana_leader_schedule::SlotLeader,
+        solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_vote_program::vote_state::BlockTimestamp,
     };
@@ -809,7 +809,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
-        let child_bank = Bank::new_from_parent(bank_forks[0].clone(), SlotLeader::default(), 1);
+        let child_bank = Bank::new_from_parent(bank_forks[0].clone(), &Pubkey::default(), 1);
         child_bank.register_default_tick_for_test();
         bank_forks.insert(child_bank);
         assert_eq!(bank_forks[1u64].tick_height(), 1);
@@ -823,9 +823,9 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
         bank_forks.insert(bank);
-        let bank = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
+        let bank = Bank::new_from_parent(bank0, &Pubkey::default(), 2);
         bank_forks.insert(bank);
         let descendants = bank_forks.descendants();
         let children: HashSet<u64> = [1u64, 2u64].iter().copied().collect();
@@ -841,9 +841,9 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
         bank_forks.insert(bank);
-        let bank = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
+        let bank = Bank::new_from_parent(bank0, &Pubkey::default(), 2);
         bank_forks.insert(bank);
         let ancestors = bank_forks.ancestors();
         assert!(ancestors[&0].is_empty());
@@ -860,7 +860,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let child_bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         bank_forks.insert(child_bank);
 
         let frozen_slots: HashSet<Slot> = bank_forks
@@ -878,7 +878,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let bank0 = bank_forks[0].clone();
-        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let child_bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         bank_forks.insert(child_bank);
         assert_eq!(bank_forks.active_bank_slots(), vec![1]);
     }
@@ -913,9 +913,9 @@ mod tests {
             let update_timestamp_case = slot == slots_in_epoch;
 
             let child1 =
-                Bank::new_from_parent(bank_forks0[slot - 1].clone(), SlotLeader::default(), slot);
+                Bank::new_from_parent(bank_forks0[slot - 1].clone(), &Pubkey::default(), slot);
             let child2 =
-                Bank::new_from_parent(bank_forks1[slot - 1].clone(), SlotLeader::default(), slot);
+                Bank::new_from_parent(bank_forks1[slot - 1].clone(), &Pubkey::default(), slot);
 
             if update_timestamp_case {
                 for child in &[&child1, &child2] {
@@ -960,7 +960,7 @@ mod tests {
             let parent: Arc<Bank> = bank_forks.read().unwrap().banks[parent].clone();
             bank_forks.write().unwrap().insert(Bank::new_from_parent(
                 parent,
-                SlotLeader::default(),
+                &Pubkey::default(),
                 *child,
             ));
         }

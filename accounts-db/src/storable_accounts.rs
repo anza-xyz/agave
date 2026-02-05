@@ -115,6 +115,17 @@ pub trait StorableAccounts<'a>: Sync {
         index: usize,
         callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret;
+    /// Geyser account update notifications need a `&AccountSharedData`. When storing into the
+    /// accounts write cache, we should always have an AccountSharedData, so allow access to it
+    /// when available, which is an optimization to avoid creating a new AccountSharedData only to
+    /// immediately take a reference.
+    /// Note: Only implement this fn if underlying type actually holds an AccountSharedData.
+    /// Otherwise mark it unimplemented!().
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret;
     /// whether account at 'index' has zero lamports
     fn is_zero_lamport(&self, index: usize) -> bool;
     /// data length of account at 'index'
@@ -163,6 +174,15 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSh
     ) -> Ret {
         callback((self.1[index].0, self.1[index].1).into())
     }
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        let pubkey = self.pubkey(index);
+        let account = self.1[index].1;
+        callback(pubkey, account)
+    }
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.1[index].1.is_zero_lamport()
     }
@@ -191,6 +211,15 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(Pubkey, AccountSharedData
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback((&self.1[index].0, &self.1[index].1).into())
+    }
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        let pubkey = self.pubkey(index);
+        let account = &self.1[index].1;
+        callback(pubkey, account)
     }
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.1[index].1.is_zero_lamport()
@@ -331,6 +360,18 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         writer.storage = Some(storage);
         ret
     }
+    fn account_for_geyser<Ret>(
+        &self,
+        _index: usize,
+        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        // StorableAccountsBySlot does not have an AccountSharedData under the hood, so do not
+        // implement this method.
+        // This is fine because StorableAccountsBySlot is never used to store into the accounts
+        // write cache.  It is only used to store into account storage files.  Thus it'll never
+        // be used for geyser account update notifications.
+        unimplemented!();
+    }
     fn is_zero_lamport(&self, index: usize) -> bool {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].1[indexes.1].is_zero_lamport()
@@ -414,6 +455,13 @@ mod tests {
             let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
             callback(account_for_storage)
         }
+        fn account_for_geyser<Ret>(
+            &self,
+            _index: usize,
+            _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+        ) -> Ret {
+            unimplemented!();
+        }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()
         }
@@ -446,6 +494,13 @@ mod tests {
             mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
         ) -> Ret {
             callback((&self.1[index].0, &self.1[index].1).into())
+        }
+        fn account_for_geyser<Ret>(
+            &self,
+            _index: usize,
+            _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+        ) -> Ret {
+            unimplemented!();
         }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].1.lamports() == 0
@@ -480,6 +535,13 @@ mod tests {
             let stored_account_info = self.1[index];
             let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
             callback(account_for_storage)
+        }
+        fn account_for_geyser<Ret>(
+            &self,
+            _index: usize,
+            _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+        ) -> Ret {
+            unimplemented!();
         }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()

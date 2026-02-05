@@ -502,9 +502,8 @@ pub(crate) mod tests {
             bank::{
                 test_utils::goto_end_of_slot,
                 tests::{create_genesis_config, create_simple_test_bank},
-                Bank, SlotLeader,
+                Bank,
             },
-            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
             runtime_config::RuntimeConfig,
             snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
             snapshot_utils::create_tmp_accounts_dir_for_tests,
@@ -1303,7 +1302,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             first_slot_in_next_epoch,
         );
 
@@ -1326,7 +1325,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             first_slot_in_next_epoch,
         );
 
@@ -1338,12 +1337,8 @@ pub(crate) mod tests {
         // effective in the program cache.
         goto_end_of_slot(bank.clone());
         let next_slot = bank.slot() + 1;
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            SlotLeader::default(),
-            next_slot,
-        );
+        let bank =
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
 
         // Successfully invoke the new BPF loader v3 program.
         bank.process_transaction(&Transaction::new(
@@ -1377,7 +1372,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             first_slot_in_next_epoch,
         );
 
@@ -1517,8 +1512,7 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1535,8 +1529,7 @@ pub(crate) mod tests {
 
         // Simulate crossing an epoch boundary again.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 96);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 96);
 
         // Again, assert the feature is still active and the program still was
         // not migrated.
@@ -1623,8 +1616,7 @@ pub(crate) mod tests {
         // Simulate crossing an epoch boundary for a new bank.
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
 
         // Assert the feature is active but the builtin was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -2041,8 +2033,7 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -2053,8 +2044,7 @@ pub(crate) mod tests {
 
         // Simulate crossing an epoch boundary again.
         goto_end_of_slot(bank.clone());
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 96);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 96);
 
         // Again, assert the feature is still active and the program still was
         // not migrated.
@@ -2069,9 +2059,7 @@ pub(crate) mod tests {
     // activated and the migration was successful.
     #[test]
     fn test_startup_from_snapshot_after_replace_spl_token_with_p_token() {
-        let leader_id = Pubkey::new_unique();
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_leader(0, &leader_id, LAMPORTS_PER_SOL);
+        let (genesis_config, _mint_keypair) = create_genesis_config(0);
         let mut bank = Bank::new_for_tests(&genesis_config);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
@@ -2154,7 +2142,6 @@ pub(crate) mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             None,
-            None, // leader_for_tests
             None,
             false,
             false,
@@ -2311,7 +2298,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             first_slot_in_next_epoch,
         );
 
@@ -2334,7 +2321,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            SlotLeader::default(),
+            &Pubkey::default(),
             first_slot_in_next_epoch,
         );
 

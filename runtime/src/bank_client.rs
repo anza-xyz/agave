@@ -27,10 +27,7 @@ mod transaction {
     pub use solana_transaction_error::TransactionResult as Result;
 }
 #[cfg(feature = "dev-context-only-utils")]
-use {
-    crate::bank_forks::BankForks, solana_clock as clock, solana_leader_schedule::SlotLeader,
-    std::sync::RwLock,
-};
+use {crate::bank_forks::BankForks, solana_clock as clock, std::sync::RwLock};
 
 pub struct BankClient {
     bank: Arc<Bank>,
@@ -283,10 +280,13 @@ impl BankClient {
         &mut self,
         by: u64,
         bank_forks: &RwLock<BankForks>,
-        leader: SlotLeader,
+        leader_id: &Pubkey,
     ) -> Option<Arc<Bank>> {
-        let new_bank =
-            Bank::new_from_parent(self.bank.clone(), leader, self.bank.slot().checked_add(by)?);
+        let new_bank = Bank::new_from_parent(
+            self.bank.clone(),
+            leader_id,
+            self.bank.slot().checked_add(by)?,
+        );
         self.bank = bank_forks
             .write()
             .unwrap()

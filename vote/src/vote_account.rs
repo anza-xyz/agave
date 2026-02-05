@@ -183,10 +183,10 @@ impl VoteAccounts {
             .map(|(vote_pubkey, (stake, _vote_account))| (vote_pubkey, *stake))
     }
 
-    pub fn find_max_by_delegated_stake(&self) -> Option<(&Pubkey, &VoteAccount)> {
+    pub fn find_max_by_delegated_stake(&self) -> Option<&VoteAccount> {
         let key = |(_pubkey, (stake, _vote_account)): &(_, &(u64, _))| *stake;
-        let (vote_address, (_stake, vote_account)) = self.vote_accounts.iter().max_by_key(key)?;
-        Some((vote_address, vote_account))
+        let (_pubkey, (_stake, vote_account)) = self.vote_accounts.iter().max_by_key(key)?;
+        Some(vote_account)
     }
 
     pub fn insert(

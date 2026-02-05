@@ -7193,8 +7193,8 @@ impl AccountsDb {
         };
 
         assert_eq!(
+            self.accounts_index.ref_count_from_storage(pubkey),
             expected_ref_count,
-            self.accounts_index.ref_count_from_storage(pubkey)
         );
     }
 

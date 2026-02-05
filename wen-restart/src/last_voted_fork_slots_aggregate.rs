@@ -248,7 +248,7 @@ mod tests {
         solana_gossip::restart_crds_values::RestartLastVotedForkSlots,
         solana_hash::Hash,
         solana_runtime::{
-            bank::{Bank, SlotLeader},
+            bank::Bank,
             epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
@@ -285,7 +285,7 @@ mod tests {
         );
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let bank0 = bank_forks.read().unwrap().root_bank();
-        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         bank_forks.write().unwrap().set_root(1, None, None);
         let root_bank = bank_forks.read().unwrap().root_bank();
@@ -762,7 +762,7 @@ mod tests {
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let root_bank = bank_forks.read().unwrap().root_bank();
         // Add bank 1 linking directly to 0, tweak its epoch_stakes, and then add it to bank_forks.
-        let mut new_root_bank = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 1);
+        let mut new_root_bank = Bank::new_from_parent(root_bank.clone(), &Pubkey::default(), 1);
 
         // For epoch 1, let our validator have 90% of the stake.
         let vote_accounts_hash_map = validator_voting_keypairs

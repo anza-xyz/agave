@@ -12,7 +12,6 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
-    solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
     solana_stake_interface::{
         program as stake_program,
@@ -463,12 +462,9 @@ impl Stakes<StakeAccount> {
         self.stake_delegations.iter().collect()
     }
 
-    pub(crate) fn highest_staked_node(&self) -> Option<SlotLeader> {
-        let (vote_address, vote_account) = self.vote_accounts.find_max_by_delegated_stake()?;
-        Some(SlotLeader {
-            id: *vote_account.node_pubkey(),
-            vote_address: *vote_address,
-        })
+    pub(crate) fn highest_staked_node(&self) -> Option<&Pubkey> {
+        let vote_account = self.vote_accounts.find_max_by_delegated_stake()?;
+        Some(vote_account.node_pubkey())
     }
 }
 
@@ -735,14 +731,8 @@ pub(crate) mod tests {
             .unwrap()
             .node_pubkey;
 
-        let highest_staked_node = stakes_cache.stakes().highest_staked_node();
-        assert_eq!(
-            highest_staked_node,
-            Some(SlotLeader {
-                id: vote11_node_pubkey,
-                vote_address: vote11_pubkey,
-            })
-        );
+        let highest_staked_node = stakes_cache.stakes().highest_staked_node().copied();
+        assert_eq!(highest_staked_node, Some(vote11_node_pubkey));
     }
 
     #[test]
