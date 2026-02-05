@@ -944,10 +944,6 @@ pub struct AccountsDb {
 
     pub(crate) active_stats: ActiveStats,
 
-    /// Used to disable logging dead slots during removal.
-    /// allow disabling noisy log
-    pub log_dead_slots: AtomicBool,
-
     /// debug feature to scan every append vec and verify refcounts are equal
     exhaustively_verify_refcounts: bool,
 
@@ -1125,7 +1121,6 @@ impl AccountsDb {
             remove_unrooted_slots_synchronization: RemoveUnrootedSlotsSynchronization::default(),
             dirty_stores: DashMap::default(),
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
-            log_dead_slots: AtomicBool::new(true),
             accounts_file_provider: AccountsFileProvider::default(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
@@ -5512,25 +5507,15 @@ impl AccountsDb {
         let mut measure = Measure::start("clean_dead_slot");
         let mut rooted_cleaned_count = 0;
         let mut unrooted_cleaned_count = 0;
-        let dead_slots: Vec<_> = dead_slots_iter
-            .map(|slot| {
-                if self.accounts_index.clean_dead_slot(*slot) {
-                    rooted_cleaned_count += 1;
-                } else {
-                    unrooted_cleaned_count += 1;
-                }
-                *slot
-            })
-            .collect();
+        dead_slots_iter.for_each(|slot| {
+            if self.accounts_index.clean_dead_slot(*slot) {
+                rooted_cleaned_count += 1;
+            } else {
+                unrooted_cleaned_count += 1;
+            }
+        });
         measure.stop();
         accounts_index_root_stats.clean_dead_slot_us += measure.as_us();
-        if self.log_dead_slots.load(Ordering::Relaxed) {
-            info!(
-                "remove_dead_slots_metadata: {} dead slots",
-                dead_slots.len()
-            );
-            trace!("remove_dead_slots_metadata: dead_slots: {dead_slots:?}");
-        }
         self.accounts_index
             .update_roots_stats(&mut accounts_index_root_stats);
         accounts_index_root_stats.rooted_cleaned_count += rooted_cleaned_count;
