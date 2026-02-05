@@ -1,5 +1,8 @@
 use {
-    solana_clock::Epoch, solana_epoch_schedule::EpochSchedule, solana_genesis_config::GenesisConfig, solana_rent::{Rent, DEFAULT_BURN_PERCENT}
+    solana_clock::Epoch,
+    solana_epoch_schedule::EpochSchedule,
+    solana_genesis_config::GenesisConfig,
+    solana_rent::{Rent, DEFAULT_BURN_PERCENT},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
