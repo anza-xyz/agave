@@ -34,17 +34,6 @@ pub struct AccountsStats {
     pub num_duplicate_accounts_skipped: AtomicU64,
 }
 
-impl AccountsStats {
-    pub fn accumulate(&self, other: &CacheAccountsStoreStats) {
-        self.num_ephemeral_accounts_skipped
-            .fetch_add(other.num_ephemeral_accounts_skipped, Ordering::Relaxed);
-        self.num_duplicate_accounts_skipped
-            .fetch_add(other.num_duplicate_accounts_skipped, Ordering::Relaxed);
-        self.num_store_accounts_to_cache
-            .fetch_add(other.num_accounts_stored, Ordering::Relaxed);
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct PurgeStats {
     pub last_report: AtomicInterval,

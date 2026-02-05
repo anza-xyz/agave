@@ -62,6 +62,7 @@ use {
         utils::{self, create_account_shared_data},
     },
     agave_fs::buffered_reader::RequiredLenBufFileRead,
+    bv::BitVec,
     dashmap::{DashMap, DashSet},
     log::*,
     rand::{rng, Rng},
@@ -74,7 +75,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rayon_threadlimit::get_thread_count,
     std::{
         borrow::Cow,
@@ -5146,16 +5147,16 @@ impl AccountsDb {
     fn update_index_cached_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
-        store_account: &[bool],
+        store_account: &BitVec,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         let target_slot = accounts.target_slot();
         let len = accounts.len();
-        assert_eq!(accounts.len(), store_account.len());
+        assert_eq!(accounts.len() as u64, store_account.len());
 
         let update = |start, end| {
             (start..end).for_each(|i| {
-                if store_account[i] {
+                if store_account[i as u64] {
                     accounts.account(i, |account| {
                         let info =
                             AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
@@ -5655,7 +5656,18 @@ impl AccountsDb {
         self.stats
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
-        self.stats.accumulate(&cache_account_store_stats);
+        self.stats.num_store_accounts_to_cache.fetch_add(
+            cache_account_store_stats.num_accounts_stored,
+            Ordering::Relaxed,
+        );
+        self.stats.num_ephemeral_accounts_skipped.fetch_add(
+            cache_account_store_stats.num_ephemeral_accounts_skipped,
+            Ordering::Relaxed,
+        );
+        self.stats.num_duplicate_accounts_skipped.fetch_add(
+            cache_account_store_stats.num_duplicate_accounts_skipped,
+            Ordering::Relaxed,
+        );
         self.report_store_timings();
     }
 
@@ -5778,7 +5790,7 @@ impl AccountsDb {
     }
 
     // Stores accounts in the write cache. If an account is zero-lamport and not present in the
-    // index, there is no need to store it in the write cache as it will not effect the database
+    // index, there is no need to store it in the write cache as it will not effect the accounts
     // hash. The function returns a vector of booleans indicating whether each account was stored,
     // and the number of accounts that were skipped.
     // Ordering of account is important as duplicate pubkeys are possible. The last account in
@@ -5787,17 +5799,17 @@ impl AccountsDb {
         &self,
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
-    ) -> (Vec<bool>, CacheAccountsStoreStats) {
+    ) -> (BitVec, CacheAccountsStoreStats) {
         let len = accounts_and_meta_to_store.len();
-        let mut pubkey_set = HashSet::with_capacity(len);
+        let mut pubkey_set = HashSet::with_capacity_and_hasher(len, PubkeyHasherBuilder::default());
         let mut cache_account_store_stats = CacheAccountsStoreStats::default();
-        let mut store_accounts = vec![false; len];
+        let mut store_account = BitVec::new_fill(false, len as u64);
 
         (0..len).rev().for_each(|index| {
             accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
                 let pubkey = account.pubkey();
-                let duplicate_account = !pubkey_set.insert(*pubkey);
-                if duplicate_account {
+                let is_duplicate_account = !pubkey_set.insert(*pubkey);
+                if is_duplicate_account {
                     // If the same account is written multiple times in the same batch,
                     // only store the latest version
                     cache_account_store_stats.num_duplicate_accounts_skipped += 1;
@@ -5814,11 +5826,11 @@ impl AccountsDb {
 
                 self.accounts_cache
                     .store(slot, pubkey, account.take_account());
-                store_accounts[index] = true;
+                store_account.set(index as u64, true);
             })
         });
 
-        (store_accounts, cache_account_store_stats)
+        (store_account, cache_account_store_stats)
     }
 
     fn write_accounts_to_storage<'a>(
