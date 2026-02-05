@@ -11,7 +11,6 @@ pub struct ConnectionCacheStats {
     pub eviction_time_ms: AtomicU64,
     pub sent_packets: AtomicU64,
     pub total_batches: AtomicU64,
-    pub batch_success: AtomicU64,
     pub batch_failure: AtomicU64,
     pub get_connection_ms: AtomicU64,
     pub get_connection_lock_ms: AtomicU64,
@@ -75,9 +74,7 @@ impl ConnectionCacheStats {
         self.sent_packets
             .fetch_add(num_packets as u64, Ordering::Relaxed);
         self.total_batches.fetch_add(1, Ordering::Relaxed);
-        if is_success {
-            self.batch_success.fetch_add(1, Ordering::Relaxed);
-        } else {
+        if !is_success {
             self.batch_failure.fetch_add(1, Ordering::Relaxed);
         }
     }
