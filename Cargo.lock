@@ -11809,9 +11809,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "5.0.0"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7b4fb47dbad5a777e08ac4b1259e1fc5839c2e250512902a6d3b814f5c6040f"
+checksum = "56590ed45c393149100643bd8184c0e56831f576cab8e99fe4088a82aed9ac4b"
 dependencies = [
  "arbitrary",
  "bincode",
@@ -11828,7 +11828,7 @@ dependencies = [
  "solana-instruction",
  "solana-instruction-error",
  "solana-pubkey 4.0.0",
- "solana-rent 3.0.0",
+ "solana-rent 4.0.0",
  "solana-sdk-ids",
  "solana-serde-varint",
  "solana-serialize-utils",
