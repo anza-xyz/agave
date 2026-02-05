@@ -1394,7 +1394,7 @@ fn process_instruction<'a>(
             let stack = unsafe {
                 slice::from_raw_parts_mut(
                     MM_STACK_START as *mut u8,
-                    MAX_CALL_DEPTH * STACK_FRAME_SIZE * 2,
+                    MAX_CALL_DEPTH * STACK_FRAME_SIZE,
                 )
             };
 
@@ -1407,7 +1407,7 @@ fn process_instruction<'a>(
             // When we don't have dynamic stack frames, the stack grows from lower addresses
             // to higher addresses, so we compare accordingly.
             for i in 10..MAX_CALL_DEPTH {
-                let stack = &mut stack[i * STACK_FRAME_SIZE * 2..][..STACK_FRAME_SIZE];
+                let stack = &mut stack[i * STACK_FRAME_SIZE..(i + 1) * STACK_FRAME_SIZE];
                 assert!(stack == &ZEROS[..STACK_FRAME_SIZE], "stack not zeroed");
                 stack.fill(42);
             }
