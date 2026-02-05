@@ -32,7 +32,7 @@ use {
         return_signers_with_config, CliProgram, CliProgramAccountType, CliProgramAuthority,
         CliProgramBuffer, CliProgramId, CliUpgradeableBuffer, CliUpgradeableBuffers,
         CliUpgradeableProgram, CliUpgradeableProgramClosed, CliUpgradeableProgramExtended,
-        CliUpgradeableProgramMigrated, CliUpgradeablePrograms, ReturnSignersConfig,
+        CliUpgradeablePrograms, ReturnSignersConfig,
     },
     solana_client::{
         connection_cache::ConnectionCache,
@@ -173,11 +173,6 @@ pub enum ProgramCliCommand {
         program_pubkey: Pubkey,
         authority_signer_index: SignerIndex,
         additional_bytes: u32,
-    },
-    MigrateProgram {
-        program_pubkey: Pubkey,
-        authority_signer_index: SignerIndex,
-        compute_unit_price: Option<u64>,
     },
 }
 
@@ -649,30 +644,6 @@ impl ProgramSubCommands for App<'_, '_> {
                                      data account",
                                 ),
                         ),
-                )
-                .subcommand(
-                    SubCommand::with_name("migrate")
-                        .about("Migrates an upgradeable program to loader-v4")
-                        .arg(
-                            Arg::with_name("program_id")
-                                .index(1)
-                                .value_name("PROGRAM_ID")
-                                .takes_value(true)
-                                .required(true)
-                                .validator(is_valid_pubkey)
-                                .help("Address of the program to extend"),
-                        )
-                        .arg(
-                            Arg::with_name("authority")
-                                .long("authority")
-                                .value_name("AUTHORITY_SIGNER")
-                                .takes_value(true)
-                                .validator(is_valid_signer)
-                                .help(
-                                    "Upgrade authority [default: the default configured keypair]",
-                                ),
-                        )
-                        .arg(compute_unit_price_arg()),
                 ),
         )
         .subcommand(
@@ -1037,32 +1008,6 @@ pub fn parse_program_subcommand(
                 signers: signer_info.signers,
             }
         }
-        ("migrate", Some(matches)) => {
-            let program_pubkey = pubkey_of(matches, "program_id").unwrap();
-
-            let (authority_signer, authority_pubkey) =
-                signer_of(matches, "authority", wallet_manager)?;
-
-            let signer_info = default_signer.generate_unique_signers(
-                vec![
-                    Some(default_signer.signer_from_path(matches, wallet_manager)?),
-                    authority_signer,
-                ],
-                matches,
-                wallet_manager,
-            )?;
-
-            let compute_unit_price = value_of(matches, "compute_unit_price");
-
-            CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::MigrateProgram {
-                    program_pubkey,
-                    authority_signer_index: signer_info.index_of(authority_pubkey).unwrap(),
-                    compute_unit_price,
-                }),
-                signers: signer_info.signers,
-            }
-        }
         _ => unreachable!(),
     };
     Ok(response)
@@ -1281,20 +1226,6 @@ pub async fn process_program_subcommand(
             )
             .await
         }
-        ProgramCliCommand::MigrateProgram {
-            program_pubkey,
-            authority_signer_index,
-            compute_unit_price,
-        } => {
-            process_migrate_program(
-                &rpc_client,
-                config,
-                *program_pubkey,
-                *authority_signer_index,
-                *compute_unit_price,
-            )
-            .await
-        }
     }
 }
 
@@ -1434,12 +1365,6 @@ async fn process_program_deploy(
     } else {
         fetch_feature_set(&rpc_client).await?
     };
-
-    if !skip_feature_verification
-        && feature_set.is_active(&agave_feature_set::enable_loader_v4::id())
-    {
-        warn!("Loader-v4 is available now. Please migrate your program.");
-    }
 
     let (program_data, program_len, buffer_program_data) =
         if let Some(program_location) = program_location {
@@ -2565,105 +2490,6 @@ async fn process_extend_program(
         .formatted_string(&CliUpgradeableProgramExtended {
             program_id: program_pubkey.to_string(),
             additional_bytes,
-        }))
-}
-
-async fn process_migrate_program(
-    rpc_client: &RpcClient,
-    config: &CliConfig<'_>,
-    program_pubkey: Pubkey,
-    authority_signer_index: SignerIndex,
-    compute_unit_price: Option<u64>,
-) -> ProcessResult {
-    let payer_pubkey = config.signers[0].pubkey();
-    let authority_signer = config.signers[authority_signer_index];
-
-    let program_account = match rpc_client
-        .get_account_with_commitment(&program_pubkey, config.commitment)
-        .await?
-        .value
-    {
-        Some(program_account) => Ok(program_account),
-        None => Err(format!("Unable to find program {program_pubkey}")),
-    }?;
-
-    if !bpf_loader_upgradeable::check_id(&program_account.owner) {
-        return Err(format!("Account {program_pubkey} is not an upgradeable program").into());
-    }
-
-    let Ok(UpgradeableLoaderState::Program {
-        programdata_address: programdata_pubkey,
-    }) = program_account.state()
-    else {
-        return Err(format!("Account {program_pubkey} is not an upgradeable program").into());
-    };
-
-    let Some(programdata_account) = rpc_client
-        .get_account_with_commitment(&programdata_pubkey, config.commitment)
-        .await?
-        .value
-    else {
-        return Err(format!("Program {program_pubkey} is closed").into());
-    };
-
-    let upgrade_authority_address = match programdata_account.state() {
-        Ok(UpgradeableLoaderState::ProgramData {
-            slot: _slot,
-            upgrade_authority_address,
-        }) => upgrade_authority_address,
-        _ => None,
-    };
-
-    if authority_signer.pubkey() != upgrade_authority_address.unwrap_or(program_pubkey) {
-        return Err(format!(
-            "Upgrade authority {:?} does not match {:?}",
-            upgrade_authority_address,
-            Some(authority_signer.pubkey())
-        )
-        .into());
-    }
-
-    let blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut message = Message::new(
-        &vec![loader_v3_instruction::migrate_program(
-            &programdata_pubkey,
-            &program_pubkey,
-            &authority_signer.pubkey(),
-        )]
-        .with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
-        }),
-        Some(&payer_pubkey),
-    );
-    simulate_and_update_compute_unit_limit(&ComputeUnitLimit::Simulated, rpc_client, &mut message)
-        .await?;
-
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
-    let result = rpc_client
-        .send_and_confirm_transaction_with_spinner_and_config(
-            &tx,
-            config.commitment,
-            config.send_transaction_config,
-        )
-        .await;
-    if let Err(err) = result {
-        if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidInstructionData,
-        )) = err.kind()
-        {
-            return Err("Migrating a program is not supported by the cluster".into());
-        } else {
-            return Err(format!("Migrate program failed: {err}").into());
-        }
-    }
-
-    Ok(config
-        .output_format
-        .formatted_string(&CliUpgradeableProgramMigrated {
-            program_id: program_pubkey.to_string(),
         }))
 }
 
@@ -4591,46 +4417,6 @@ mod tests {
                     additional_bytes
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
-            }
-        );
-    }
-
-    #[test]
-    fn test_cli_parse_migrate_program() {
-        let test_commands = get_clap_app("test", "desc", "version");
-
-        let default_keypair = Keypair::new();
-        let keypair_file = make_tmp_path("keypair_file");
-        write_keypair_file(&default_keypair, &keypair_file).unwrap();
-        let default_signer = DefaultSigner::new("", &keypair_file);
-
-        let program_pubkey = Pubkey::new_unique();
-        let authority_keypair = Keypair::new();
-        let authority_keypair_file = make_tmp_path("authority_keypair_file");
-        write_keypair_file(&authority_keypair, &authority_keypair_file).unwrap();
-
-        let test_command = test_commands.clone().get_matches_from(vec![
-            "test",
-            "program",
-            "migrate",
-            &program_pubkey.to_string(),
-            "--authority",
-            &authority_keypair_file.to_string(),
-            "--with-compute-unit-price",
-            "1",
-        ]);
-        assert_eq!(
-            parse_command(&test_command, &default_signer, &mut None).unwrap(),
-            CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::MigrateProgram {
-                    program_pubkey,
-                    authority_signer_index: 1,
-                    compute_unit_price: Some(1),
-                }),
-                signers: vec![
-                    Box::new(read_keypair_file(&keypair_file).unwrap()),
-                    Box::new(read_keypair_file(&authority_keypair_file).unwrap()),
-                ],
             }
         );
     }

@@ -8,7 +8,6 @@
 /net-utils/ @anza-xyz/networking
 /program-runtime/ @anza-xyz/svm
 /programs/bpf_loader/ @anza-xyz/svm
-/programs/loader-v4/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
 /svm-callback/ @anza-xyz/svm
 /svm-conformance/ @anza-xyz/svm

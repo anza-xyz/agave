@@ -11,7 +11,7 @@ use {
         genesis_utils::{
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
-        loader_utils::load_program_of_loader_v4,
+        loader_utils::load_upgradeable_program_and_advance_slot,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_signer::Signer,
@@ -74,7 +74,7 @@ fn test_syscall_get_epoch_stake() {
     let mut bank_client = BankClient::new_shared(bank);
 
     let authority_keypair = Keypair::new();
-    let (bank, program_id) = load_program_of_loader_v4(
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
         &mut bank_client,
         &bank_forks,
         &mint_keypair,

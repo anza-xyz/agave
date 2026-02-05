@@ -24,7 +24,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget, loader_v4},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget},
     solana_svm::transaction_processor::TransactionBatchProcessor,
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
@@ -272,7 +272,6 @@ pub fn deploy_program_with_upgrade_authority(
 pub fn register_builtins(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
-    with_loader_v4: bool,
 ) {
     const DEPLOYMENT_SLOT: u64 = 0;
     // We must register LoaderV3 as a loadable account, otherwise programs won't execute.
@@ -312,20 +311,6 @@ pub fn register_builtins(
             solana_bpf_loader_program::Entrypoint::vm,
         ),
     );
-
-    if with_loader_v4 {
-        let loader_v4_name = "solana_loader_v4_program";
-        mock_bank.add_builtin(
-            batch_processor,
-            loader_v4::id(),
-            loader_v4_name,
-            ProgramCacheEntry::new_builtin(
-                DEPLOYMENT_SLOT,
-                loader_v4_name.len(),
-                solana_loader_v4_program::Entrypoint::vm,
-            ),
-        );
-    }
 
     // In order to perform a transference of native tokens using the system instruction,
     // the system program builtin must be registered.

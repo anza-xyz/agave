@@ -19,9 +19,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
@@ -778,165 +776,9 @@ fn process_loader_upgradeable_instruction(
             common_extend_program(invoke_context, additional_bytes, true)?;
         }
         UpgradeableLoaderInstruction::Migrate => {
-            if !invoke_context.get_feature_set().enable_loader_v4 {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
-            instruction_context.check_number_of_instruction_accounts(3)?;
-            let programdata_address = *instruction_context.get_key_of_instruction_account(0)?;
-            let program_address = *instruction_context.get_key_of_instruction_account(1)?;
-            let provided_authority_address =
-                *instruction_context.get_key_of_instruction_account(2)?;
-            let clock_slot = invoke_context
-                .get_sysvar_cache()
-                .get_clock()
-                .map(|clock| clock.slot)?;
-
-            // Verify ProgramData account
-            let programdata = instruction_context.try_borrow_instruction_account(0)?;
-            if !programdata.is_writable() {
-                ic_logger_msg!(log_collector, "ProgramData account not writeable");
-                return Err(InstructionError::InvalidArgument);
-            }
-            let (program_len, upgrade_authority_address) =
-                if let Ok(UpgradeableLoaderState::ProgramData {
-                    slot,
-                    upgrade_authority_address,
-                }) = programdata.get_state()
-                {
-                    if clock_slot == slot {
-                        ic_logger_msg!(log_collector, "Program was deployed in this block already");
-                        return Err(InstructionError::InvalidArgument);
-                    }
-                    (
-                        programdata
-                            .get_data()
-                            .len()
-                            .saturating_sub(UpgradeableLoaderState::size_of_programdata_metadata()),
-                        upgrade_authority_address,
-                    )
-                } else {
-                    (0, None)
-                };
-            let programdata_funds = programdata.get_lamports();
-            drop(programdata);
-
-            // Verify authority signature
-            if !migration_authority::check_id(&provided_authority_address)
-                && provided_authority_address
-                    != upgrade_authority_address.unwrap_or(program_address)
-            {
-                ic_logger_msg!(log_collector, "Incorrect migration authority provided");
-                return Err(InstructionError::IncorrectAuthority);
-            }
-            if !instruction_context.is_instruction_account_signer(2)? {
-                ic_logger_msg!(log_collector, "Migration authority did not sign");
-                return Err(InstructionError::MissingRequiredSignature);
-            }
-
-            // Verify Program account
-            let mut program = instruction_context.try_borrow_instruction_account(1)?;
-            if !program.is_writable() {
-                ic_logger_msg!(log_collector, "Program account not writeable");
-                return Err(InstructionError::InvalidArgument);
-            }
-            if program.get_owner() != program_id {
-                ic_logger_msg!(log_collector, "Program account not owned by loader");
-                return Err(InstructionError::IncorrectProgramId);
-            }
-            if let UpgradeableLoaderState::Program {
-                programdata_address: stored_programdata_address,
-            } = program.get_state()?
-            {
-                if programdata_address != stored_programdata_address {
-                    ic_logger_msg!(log_collector, "Program and ProgramData account mismatch");
-                    return Err(InstructionError::InvalidArgument);
-                }
-            } else {
-                ic_logger_msg!(log_collector, "Invalid Program account");
-                return Err(InstructionError::InvalidAccountData);
-            }
-            program.set_data_from_slice(&[])?;
-            program.checked_add_lamports(programdata_funds)?;
-            program.set_owner(&loader_v4::id().to_bytes())?;
-            drop(program);
-
-            let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
-            programdata.set_lamports(0)?;
-            drop(programdata);
-
-            if program_len == 0 {
-                invoke_context
-                    .program_cache_for_tx_batch
-                    .store_modified_entry(
-                        program_address,
-                        Arc::new(ProgramCacheEntry::new_tombstone(
-                            clock_slot,
-                            ProgramCacheEntryOwner::LoaderV4,
-                            ProgramCacheEntryType::Closed,
-                        )),
-                    );
-            } else {
-                invoke_context.native_invoke(
-                    solana_loader_v4_interface::instruction::set_program_length(
-                        &program_address,
-                        &provided_authority_address,
-                        program_len as u32,
-                        &program_address,
-                    ),
-                    &[],
-                )?;
-
-                invoke_context.native_invoke(
-                    solana_loader_v4_interface::instruction::copy(
-                        &program_address,
-                        &provided_authority_address,
-                        &programdata_address,
-                        0,
-                        0,
-                        program_len as u32,
-                    ),
-                    &[],
-                )?;
-
-                invoke_context.native_invoke(
-                    solana_loader_v4_interface::instruction::deploy(
-                        &program_address,
-                        &provided_authority_address,
-                    ),
-                    &[],
-                )?;
-
-                if let Some(upgrade_authority_address) = upgrade_authority_address {
-                    if migration_authority::check_id(&provided_authority_address) {
-                        invoke_context.native_invoke(
-                            solana_loader_v4_interface::instruction::transfer_authority(
-                                &program_address,
-                                &provided_authority_address,
-                                &upgrade_authority_address,
-                            ),
-                            &[],
-                        )?;
-                    }
-                } else {
-                    invoke_context.native_invoke(
-                        solana_loader_v4_interface::instruction::finalize(
-                            &program_address,
-                            &provided_authority_address,
-                            &program_address,
-                        ),
-                        &[],
-                    )?;
-                }
-            }
-
-            let transaction_context = &invoke_context.transaction_context;
-            let instruction_context = transaction_context.get_current_instruction_context()?;
-            let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
-            programdata.set_data_from_slice(&[])?;
-            drop(programdata);
-
-            ic_logger_msg!(log_collector, "Migrated program {:?}", &program_address);
+            // Loader V4 has been removed.
+            // This variant will be removed from the next interface release.
+            return Err(InstructionError::InvalidInstructionData);
         }
     }
 
@@ -1154,8 +996,8 @@ mod test_utils {
     #[cfg(feature = "svm-internal")]
     use {
         super::*, agave_syscalls::create_program_runtime_environment_v1,
-        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::deploy::load_program_from_bytes, solana_sdk_ids::loader_v4,
+        solana_account::ReadableAccount,
+        solana_program_runtime::deploy::load_program_from_bytes,
     };
 
     #[cfg(feature = "svm-internal")]
@@ -1163,7 +1005,6 @@ mod test_utils {
         bpf_loader::check_id(id)
             || bpf_loader_deprecated::check_id(id)
             || bpf_loader_upgradeable::check_id(id)
-            || loader_v4::check_id(id)
     }
 
     #[cfg(feature = "svm-internal")]
@@ -1188,11 +1029,6 @@ mod test_utils {
 
             let owner = account.owner();
             if check_loader_id(owner) {
-                let programdata_data_offset = if loader_v4::check_id(owner) {
-                    LoaderV4State::program_data_offset()
-                } else {
-                    0
-                };
                 let pubkey = invoke_context
                     .transaction_context
                     .get_key_of_account_at_index(index)
@@ -1202,10 +1038,7 @@ mod test_utils {
                     None,
                     #[cfg(feature = "metrics")]
                     &mut load_program_metrics,
-                    account
-                        .data()
-                        .get(programdata_data_offset.min(account.data().len())..)
-                        .unwrap(),
+                    account.data(),
                     owner,
                     account.data().len(),
                     0,

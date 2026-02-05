@@ -83,8 +83,7 @@ pub fn fill_from_accounts(
 
         if program_cache.find(&acc.0).is_none() {
             // load_program_with_pubkey expects the owner to be one of the bpf loader
-            if !solana_sdk_ids::loader_v4::check_id(&acc.1.owner)
-                && !solana_sdk_ids::bpf_loader_deprecated::check_id(&acc.1.owner)
+            if !solana_sdk_ids::bpf_loader_deprecated::check_id(&acc.1.owner)
                 && !solana_sdk_ids::bpf_loader::check_id(&acc.1.owner)
                 && !solana_sdk_ids::bpf_loader_upgradeable::check_id(&acc.1.owner)
             {

@@ -150,6 +150,9 @@ static RESERVED_ACCOUNTS: std::sync::LazyLock<Vec<ReservedAccount>> =
             ReservedAccount::new_active(config::id()),
             ReservedAccount::new_active(ed25519_program::id()),
             ReservedAccount::new_active(feature::id()),
+            // "Loader V4" must remain a reserved account key, since it cannot
+            // be removed without breaking consensus.
+            // We will use this address eventually.
             ReservedAccount::new_active(loader_v4::id()),
             ReservedAccount::new_active(secp256k1_program::id()),
             ReservedAccount::new_pending(

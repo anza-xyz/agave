@@ -112,6 +112,9 @@ const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (bpf_loader_upgradeable::id(), BuiltinCost::NotMigrating),
     (bpf_loader_deprecated::id(), BuiltinCost::NotMigrating),
     (bpf_loader::id(), BuiltinCost::NotMigrating),
+    // We're going to need a feature gate to "fake migrate" Loader V4 to BPF,
+    // whenever we deploy the program on-chain. The builtin shouldn't have been
+    // added here without a feature gate.
     (loader_v4::id(), BuiltinCost::NotMigrating),
     (secp256k1_program::id(), BuiltinCost::NotMigrating),
     (ed25519_program::id(), BuiltinCost::NotMigrating),

@@ -110,7 +110,6 @@ impl FeatureSet {
             account_data_direct_mapping: self.is_active(&account_data_direct_mapping::id()),
             enable_bpf_loader_set_authority_checked_ix: self
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
-            enable_loader_v4: self.is_active(&enable_loader_v4::id()),
             deplete_cu_meter_on_vm_failure: self.is_active(&deplete_cu_meter_on_vm_failure::id()),
             abort_on_invalid_curve: self.is_active(&abort_on_invalid_curve::id()),
             blake3_syscall_enabled: self.is_active(&blake3_syscall_enabled::id()),
@@ -841,10 +840,6 @@ pub mod timely_vote_credits {
 
 pub mod remaining_compute_units_syscall_enabled {
     solana_pubkey::declare_id!("5TuppMutoyzhUSfuYdhgzD47F92GL1g89KpCZQKqedxP");
-}
-
-pub mod enable_loader_v4 {
-    solana_pubkey::declare_id!("2aQJYqER2aKyb3cZw22v4SL2xMX7vwXBRWfvS4pTrtED");
 }
 
 pub mod require_rent_exempt_split_destination {
@@ -1895,7 +1890,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             remaining_compute_units_syscall_enabled::id(),
             "enable the remaining_compute_units syscall",
         ),
-        (enable_loader_v4::id(), "SIMD-0167: Enable Loader-v4"),
         (
             require_rent_exempt_split_destination::id(),
             "Require stake split destination account to be rent exempt",

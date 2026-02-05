@@ -6344,7 +6344,6 @@ dependencies = [
  "solana-clock",
  "solana-instruction",
  "solana-loader-v3-interface",
- "solana-loader-v4-interface",
  "solana-packet 4.0.0",
  "solana-program-entrypoint",
  "solana-program-runtime",
@@ -6385,7 +6384,6 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-hash 3.1.0",
- "solana-loader-v4-program",
  "solana-program-runtime",
  "solana-pubkey 4.0.0",
  "solana-sdk-ids",
@@ -6404,7 +6402,6 @@ dependencies = [
  "log",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
- "solana-loader-v4-program",
  "solana-pubkey 4.0.0",
  "solana-sdk-ids",
  "solana-system-program",
@@ -7570,43 +7567,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-loader-v4-interface"
-version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4c948b33ff81fa89699911b207059e493defdba9647eaf18f23abdf3674e0fb"
-dependencies = [
- "serde",
- "serde_bytes",
- "serde_derive",
- "solana-instruction",
- "solana-pubkey 3.0.0",
- "solana-sdk-ids",
- "solana-system-interface 2.0.0",
-]
-
-[[package]]
-name = "solana-loader-v4-program"
-version = "4.0.0-alpha.0"
-dependencies = [
- "log",
- "solana-account",
- "solana-bincode",
- "solana-bpf-loader-program",
- "solana-instruction",
- "solana-loader-v3-interface",
- "solana-loader-v4-interface",
- "solana-packet 4.0.0",
- "solana-program-runtime",
- "solana-pubkey 4.0.0",
- "solana-sbpf",
- "solana-sdk-ids",
- "solana-svm-log-collector",
- "solana-svm-measure",
- "solana-svm-type-overrides",
- "solana-transaction-context",
-]
-
-[[package]]
 name = "solana-measure"
 version = "4.0.0-alpha.0"
 
@@ -8469,7 +8429,6 @@ dependencies = [
  "solana-lattice-hash",
  "solana-leader-schedule",
  "solana-loader-v3-interface",
- "solana-loader-v4-interface",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -8589,7 +8548,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-loader-v4-interface",
  "solana-measure",
  "solana-message",
  "solana-program",
@@ -9709,8 +9667,6 @@ dependencies = [
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-loader-v3-interface",
- "solana-loader-v4-interface",
- "solana-loader-v4-program",
  "solana-message",
  "solana-nonce",
  "solana-nonce-account",
@@ -9787,7 +9743,6 @@ dependencies = [
  "solana-instruction",
  "solana-instruction-error",
  "solana-last-restart-slot",
- "solana-loader-v4-interface",
  "solana-message",
  "solana-precompile-error",
  "solana-program-runtime",
