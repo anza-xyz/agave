@@ -2287,16 +2287,13 @@ pub struct Sockets {
     // Socket sending out local repair requests,
     // and receiving repair responses from the cluster.
     pub repair: UdpSocket,                  // udp read/write
-    pub repair_quic: UdpSocket,             // quic read/write
     pub retransmit_sockets: Vec<UdpSocket>, // udp write only
     // Socket receiving remote repair requests from the cluster,
     // and sending back repair responses.
-    pub serve_repair: UdpSocket,      // udp read/write
-    pub serve_repair_quic: UdpSocket, // quic read/write
+    pub serve_repair: UdpSocket, // udp read/write
     // Socket sending out local RepairProtocol::AncestorHashes,
     // and receiving AncestorHashesResponse from the cluster.
     pub ancestor_hashes_requests: UdpSocket, // udp read/write
-    pub ancestor_hashes_requests_quic: UdpSocket, // quic read/write
     pub tpu_quic: Vec<UdpSocket>,            // quic read only
     pub tpu_forwards_quic: Vec<UdpSocket>,   // quic read only
     pub tpu_vote_quic: Vec<UdpSocket>,       // quic read only
