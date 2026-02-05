@@ -3,18 +3,12 @@
 use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     agave_feature_set::FeatureSet,
-    bytes::Bytes,
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
-    itertools::Itertools,
     solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::shred::{self, ShredFetchStats, should_discard_shred},
-    solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{
-        BytesPacket, BytesPacketBatch, PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef,
-    },
+    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::{
@@ -22,7 +16,7 @@ use {
         streamer::{self, ChannelSend, PacketBatchReceiver, StreamerReceiveStats},
     },
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::UdpSocket,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -237,7 +231,6 @@ impl ShredFetchStage {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         sockets: Vec<Arc<UdpSocket>>,
-        repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
         sender: EvictingSender<PacketBatch>,
         shred_version: u16,
@@ -289,41 +282,6 @@ impl ShredFetchStage {
         tvu_threads.extend(repair_receiver);
         tvu_threads.push(tvu_filter);
         tvu_threads.push(repair_handler);
-        // Repair shreds fetched over QUIC protocol.
-        {
-            let (packet_sender, packet_receiver) = unbounded();
-            tvu_threads.extend([
-                Builder::new()
-                    .name("solTvuRecvRpr".to_string())
-                    .spawn(|| {
-                        receive_quic_datagrams(
-                            repair_response_quic_receiver,
-                            PacketFlags::REPAIR,
-                            packet_sender,
-                            exit,
-                        )
-                    })
-                    .unwrap(),
-                Builder::new()
-                    .name("solTvuFetchRpr".to_string())
-                    .spawn(move || {
-                        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-                        Self::modify_packets(
-                            packet_receiver,
-                            None,
-                            sender,
-                            &sharable_banks,
-                            shred_version,
-                            "shred_fetch_repair_quic",
-                            PacketFlags::REPAIR,
-                            // No ping packets but need to verify repair nonce.
-                            Some(&repair_context),
-                            turbine_disabled,
-                        )
-                    })
-                    .unwrap(),
-            ]);
-        }
         Self {
             thread_hdls: tvu_threads,
         }
@@ -357,42 +315,6 @@ fn verify_repair_nonce(
     outstanding_repair_requests
         .register_response(nonce, shred, now, |_| ())
         .is_some()
-}
-
-pub(crate) fn receive_quic_datagrams(
-    quic_datagrams_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
-    flags: PacketFlags,
-    sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
-) {
-    const RECV_TIMEOUT: Duration = Duration::from_secs(1);
-    const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
-    while !exit.load(Ordering::Relaxed) {
-        let entry = match quic_datagrams_receiver.recv_timeout(RECV_TIMEOUT) {
-            Ok(entry) => entry,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => return,
-        };
-        let deadline = Instant::now() + PACKET_COALESCE_DURATION;
-        let entries = std::iter::once(entry).chain(
-            std::iter::repeat_with(|| quic_datagrams_receiver.recv_deadline(deadline).ok())
-                .while_some(),
-        );
-        let packet_batch: BytesPacketBatch = entries
-            .filter(|(_, _, bytes)| bytes.len() <= PACKET_DATA_SIZE)
-            .map(|(_pubkey, addr, bytes)| {
-                let mut meta = Meta::default();
-                meta.size = bytes.len();
-                meta.addr = addr.ip();
-                meta.port = addr.port();
-                meta.flags = flags;
-                BytesPacket::new(bytes, meta)
-            })
-            .collect();
-        if !packet_batch.is_empty() && sender.send(packet_batch.into()).is_err() {
-            return; // The receiver end of the channel is disconnected.
-        }
-    }
 }
 
 // Returns true if the feature is effective for the shred slot.

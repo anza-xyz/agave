@@ -285,16 +285,10 @@ impl Node {
         let (_, repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("repair bind");
-        let (_, repair_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("repair_quic bind");
 
         let (serve_repair_port, serve_repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("serve_repair");
-        let (serve_repair_quic_port, serve_repair_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("serve_repair_quic");
 
         let (broadcast_port, mut broadcast) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -317,9 +311,6 @@ impl Node {
         let (_, ancestor_hashes_requests) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("ancestor_hashes_requests bind");
-        let (_, ancestor_hashes_requests_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("ancestor_hashes_requests QUIC bind should succeed");
 
         let (alpenglow_port, alpenglow) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
@@ -414,8 +405,6 @@ impl Node {
         info.set_serve_repair(UDP, (advertised_ip, serve_repair_port))
             .unwrap();
         info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
-        info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
-            .unwrap();
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
@@ -425,13 +414,10 @@ impl Node {
             tpu_vote: tpu_vote_sockets,
             broadcast,
             repair,
-            repair_quic,
             retransmit_sockets,
             serve_repair,
-            serve_repair_quic,
             ip_echo: ip_echo_sockets.into_iter().next(),
             ancestor_hashes_requests,
-            ancestor_hashes_requests_quic,
             tpu_quic,
             tpu_forwards_quic,
             tpu_vote_quic,
