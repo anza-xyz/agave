@@ -1310,7 +1310,11 @@ impl JsonRpcRequestProcessor {
                 .highest_super_majority_root()
         {
             self.check_blockstore_writes_complete(slot)?;
-            let result = self
+            // Retry get_rooted_block briefly when the slot is finalized but the block is not yet
+            // in the blockstore (fixes getSlot(finalized) -> getBlock(slot) race, see issue #10134).
+            const GET_BLOCK_FINALIZED_RETRIES: u32 = 3;
+            const GET_BLOCK_FINALIZED_RETRY_DELAY_MS: u64 = 50;
+            let mut result = self
                 .runtime
                 .spawn_blocking({
                     let blockstore = Arc::clone(&self.blockstore);
@@ -1318,6 +1322,20 @@ impl JsonRpcRequestProcessor {
                 })
                 .await
                 .expect("Failed to spawn blocking task");
+            for _ in 0..GET_BLOCK_FINALIZED_RETRIES {
+                if result.is_ok() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(GET_BLOCK_FINALIZED_RETRY_DELAY_MS)).await;
+                result = self
+                    .runtime
+                    .spawn_blocking({
+                        let blockstore = Arc::clone(&self.blockstore);
+                        move || blockstore.get_rooted_block(slot, true)
+                    })
+                    .await
+                    .expect("Failed to spawn blocking task");
+            }
             self.check_blockstore_root(&result, slot)?;
             let encode_block = |confirmed_block: ConfirmedBlock| async move {
                 let mut encoded_block = self
