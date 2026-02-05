@@ -515,6 +515,62 @@ mod test {
     }
 
     #[test]
+    fn test_post_exec_size_shrunk_does_not_require_balance_adjustment() {
+        let pre_rent = Rent::default();
+        let post_rent = Rent {
+            lamports_per_byte_year: 10_000,
+            ..Rent::default()
+        };
+
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+        let key4 = Keypair::new();
+
+        let pre_len: usize = 256;
+        let post_len: usize = 32; // smaller size, but rent increased after creation
+        let pre_balance = pre_rent.minimum_balance(pre_len);
+        let post_min = post_rent.minimum_balance(post_len);
+        assert!(post_min > pre_balance);
+
+        let sanitized_message = sanitized_msg_for(key1.pubkey(), key2.pubkey(), key4.pubkey());
+
+        let tx_accounts_pre = accounts_key2_first(
+            key1.pubkey(),
+            key2.pubkey(),
+            key3.pubkey(),
+            AccountSharedData::new(pre_balance, pre_len, &Pubkey::default()),
+        );
+        let context_pre = TransactionContext::new(tx_accounts_pre, pre_rent.clone(), 20, 20, 1);
+        let pre = TransactionAccountStateInfo::new_pre_exec(
+            &context_pre,
+            &sanitized_message,
+            &pre_rent,
+            true,
+        );
+
+        // post: size decreased; rent increased => should still not require top-up
+        let tx_accounts_post = accounts_key2_first(
+            key1.pubkey(),
+            key2.pubkey(),
+            key3.pubkey(),
+            AccountSharedData::new(pre_balance, post_len, &Pubkey::default()),
+        );
+        let context_post = TransactionContext::new(tx_accounts_post, post_rent.clone(), 20, 20, 1);
+        let post = TransactionAccountStateInfo::new_post_exec(
+            &context_post,
+            &sanitized_message,
+            &pre,
+            &post_rent,
+            true,
+        );
+
+        assert_eq!(post[0], Some(RentState::RentExempt));
+        let res = verify_changes(&pre, &post, &context_post);
+        assert!(res.is_ok());
+    }
+
+    #[test]
     fn test_post_exec_owner_changed_requires_full_min() {
         let rent = Rent::default();
         let key1 = Keypair::new();

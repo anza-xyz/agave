@@ -102,23 +102,32 @@ pub fn check_static_account_rent_state_transition(
     post_exec_balance: u64,
     data_size: usize,
     rent: &Rent,
+    relax_post_exec_min_balance_check: bool,
 ) -> bool {
-    let pre_state = if pre_exec_balance == 0 {
-        RentState::Uninitialized
-    } else {
-        RentState::RentExempt
-    };
     let rent_min_balance = rent.minimum_balance(data_size);
-    let post_state = match (post_exec_balance, &pre_state) {
-        (0, _) => RentState::Uninitialized,
-        (post_balance, _) if post_balance >= rent_min_balance => RentState::RentExempt,
-        (post_balance, RentState::RentExempt) if post_balance >= pre_exec_balance => {
+    let (pre_state, post_state) = if relax_post_exec_min_balance_check {
+        let pre_state = if pre_exec_balance == 0 {
+            RentState::Uninitialized
+        } else {
             RentState::RentExempt
-        }
-        (post_balance, _) => RentState::RentPaying {
-            data_size,
-            lamports: post_balance,
-        },
+        };
+        let post_state = match (post_exec_balance, &pre_state) {
+            (0, _) => RentState::Uninitialized,
+            (post_balance, _) if post_balance >= rent_min_balance => RentState::RentExempt,
+            (post_balance, RentState::RentExempt) if post_balance >= pre_exec_balance => {
+                RentState::RentExempt
+            }
+            (post_balance, _) => RentState::RentPaying {
+                data_size,
+                lamports: post_balance,
+            },
+        };
+        (pre_state, post_state)
+    } else {
+        (
+            get_account_rent_state(pre_exec_balance, data_size, rent_min_balance),
+            get_account_rent_state(post_exec_balance, data_size, rent_min_balance),
+        )
     };
     transition_allowed(&pre_state, &post_state)
 }

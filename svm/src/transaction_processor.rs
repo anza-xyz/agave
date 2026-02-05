@@ -1010,7 +1010,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
         let mut status = process_result
-            .and_then(|_info| {
+            .and_then(|info| {
                 let post_account_state_info = TransactionAccountStateInfo::new_post_exec(
                     &transaction_context,
                     tx,
@@ -1023,7 +1023,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &post_account_state_info,
                     &transaction_context,
                 )
-                .map(|_| ())
+                .map(|_| info)
             })
             .map_err(|err| {
                 match err {
@@ -1067,7 +1067,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         {
             status = Err(TransactionError::UnbalancedTransaction);
         }
-        let status = status.as_ref().map(|_| ()).map_err(|err| err.clone());
+        let status = status.map(|_| ());
 
         loaded_transaction.accounts = accounts;
         execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;

@@ -9,9 +9,7 @@ use {
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_svm::rent_calculator::{
-        check_static_account_rent_state_transition, get_account_rent_state, transition_allowed,
-    },
+    solana_svm::rent_calculator::check_static_account_rent_state_transition,
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
     thiserror::Error,
@@ -156,48 +154,25 @@ impl Bank {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
 
+        // save the pre-balance before depositing the fee for subsequent rent state transition check
         let pre_balance = account.lamports();
-        let recipient_pre_rent_state = get_account_rent_state(
-            pre_balance,
-            account.data().len(),
-            self.rent_collector()
-                .rent
-                .minimum_balance(account.data().len()),
-        );
 
         let distribution = account.checked_add_lamports(fees);
         if distribution.is_err() {
             return Err(DepositFeeError::LamportOverflow);
         }
 
-        // rent state transition must be checked in case the account receiving the distribution
-        // doesn't exist yet.
-        if self
-            .feature_set
-            .is_active(&feature_set::relax_post_exec_min_balance_check::id())
-        {
-            if !check_static_account_rent_state_transition(
-                pre_balance,
-                account.lamports(),
-                account.data().len(),
-                &self.rent_collector().rent,
-            ) {
-                return Err(DepositFeeError::InvalidRentPayingAccount);
-            }
-        } else {
-            let recipient_post_rent_state = get_account_rent_state(
-                account.lamports(),
-                account.data().len(),
-                self.rent_collector()
-                    .rent
-                    .minimum_balance(account.data().len()),
-            );
-
-            let rent_state_transition_allowed =
-                transition_allowed(&recipient_pre_rent_state, &recipient_post_rent_state);
-            if !rent_state_transition_allowed {
-                return Err(DepositFeeError::InvalidRentPayingAccount);
-            }
+        // rent state transition must be checked because the balance change of the account can change
+        // the rent state of the account, potentially leading to an invalid transition.
+        if !check_static_account_rent_state_transition(
+            pre_balance,
+            account.lamports(),
+            account.data().len(),
+            &self.rent_collector().rent,
+            self.feature_set
+                .is_active(&feature_set::relax_post_exec_min_balance_check::id()),
+        ) {
+            return Err(DepositFeeError::InvalidRentPayingAccount);
         }
 
         self.store_account(pubkey, &account);
