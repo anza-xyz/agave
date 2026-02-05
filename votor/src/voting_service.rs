@@ -228,7 +228,7 @@ impl VotingService {
                     staked_validators_cache,
                 );
             }
-            BLSOp::PushVoteRefresh { message, slot } => {
+            BLSOp::RefreshVote { message, slot } => {
                 Self::broadcast_consensus_message(
                     slot,
                     cluster_info,
