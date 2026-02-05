@@ -154,7 +154,7 @@ command_step() {
     timeout_in_minutes: $3
     artifact_paths: "log-*.txt"
     agents:
-      queue: "${4:-solana}"
+      queue: "${4:-default}"
 EOF
 }
 
@@ -180,12 +180,12 @@ wait_step() {
 }
 
 all_test_steps() {
-  command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 check
-  command_step dcou-1-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/3" 20 check
-  command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 check
-  command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 check
-  command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
-  command_step frozen-abi "ci/docker-run-default-image.sh ci/test-abi.sh" 15 check
+  command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 default
+  command_step dcou-1-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/3" 20 default
+  command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 default
+  command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 default
+  command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 default
+  command_step frozen-abi "ci/docker-run-default-image.sh ci/test-abi.sh" 15 default
   wait_step
 
   # Full test suite
@@ -227,7 +227,7 @@ all_test_steps() {
     name: "stable-sbf"
     timeout_in_minutes: 35
     agents:
-      queue: "solana"
+      queue: "default"
 EOF
   else
     annotate --style info \
@@ -264,7 +264,7 @@ EOF
 }
 
 pull_or_push_steps() {
-  command_step sanity "ci/test-sanity.sh" 5 check
+  command_step sanity "ci/test-sanity.sh" 5 default
   wait_step
 
   # Check for any .sh file changes
@@ -272,7 +272,7 @@ pull_or_push_steps() {
               .sh$ \
               ^.buildkite/hooks \
       ; then
-    command_step shellcheck "ci/shellcheck.sh" 5 check
+    command_step shellcheck "ci/shellcheck.sh" 5 default
     wait_step
   fi
 
