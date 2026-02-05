@@ -548,7 +548,7 @@ async fn setup_connection<Q, C>(
         match connecting_result {
             Ok(new_connection) => {
                 debug!("Got a connection {from:?}");
-                if !rate_limiter.is_allowed(&from.ip()) {
+                /*if !rate_limiter.is_allowed(&from.ip()) {
                     debug!("Reject connection from {from:?} -- rate limiting exceeded");
                     stats
                         .connection_rate_limited_per_ipaddr
@@ -573,7 +573,7 @@ async fn setup_connection<Q, C>(
                         CONNECTION_CLOSE_REASON_DISALLOWED,
                     );
                     return;
-                }
+                }*/
 
                 stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
 

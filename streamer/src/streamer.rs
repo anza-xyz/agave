@@ -490,7 +490,6 @@ fn recv_send(
     Ok(())
 }
 
-/*
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
 ) -> Result<(Vec<PacketBatch>, usize, Duration)> {
@@ -512,8 +511,9 @@ pub fn recv_packet_batches(
         num_packets
     );
     Ok((packet_batches, num_packets, recv_duration))
-}*/
+}
 
+/*
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
 ) -> Result<(Vec<PacketBatch>, usize, Duration)> {
@@ -521,7 +521,7 @@ pub fn recv_packet_batches(
     let recv_start = Instant::now();
 
     let mut num_packets = 0;
-    let mut packet_batches = Vec::new();
+    let mut packet_batches = Vec::with_capacity(200);
     let mut num_attempts = 0;
 
     while num_attempts < MAX_RECV_ATTEMPTS {
@@ -554,6 +554,7 @@ pub fn recv_packet_batches(
     );
     Ok((packet_batches, num_packets, recv_duration))
 }
+*/
 
 pub fn responder_atomic(
     name: &'static str,

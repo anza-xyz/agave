@@ -35,7 +35,7 @@ use {
 };
 
 // allow multiple connections for NAT and any open/close overlap
-pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 64;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
