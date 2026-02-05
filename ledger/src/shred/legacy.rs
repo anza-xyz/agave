@@ -67,6 +67,10 @@ impl<'a> Shred<'a> for ShredData {
         if payload.len() < Self::SIZE_OF_HEADERS {
             return Err(Error::InvalidPayloadSize(payload.len()));
         }
+
+        // BytesMut::resize is only vulnerable for values near usize::MAX. This
+        // usage is much smaller and const
+        #[allow(clippy::disallowed_methods)]
         payload.resize(Self::SIZE_OF_PAYLOAD, 0u8);
         let shred = Self {
             common_header,
