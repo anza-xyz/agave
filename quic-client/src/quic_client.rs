@@ -17,7 +17,10 @@ use {
         sync::{atomic::Ordering, Arc, Condvar, Mutex, MutexGuard},
         time::Duration,
     },
-    tokio::{runtime::Runtime, time::timeout},
+    tokio::{
+        runtime::{Handle, Runtime},
+        time::timeout,
+    },
 };
 
 pub const MAX_OUTSTANDING_TASK: u64 = 2000;
@@ -184,5 +187,11 @@ impl ClientConnection for QuicClientConnection {
 pub(crate) fn close_quic_connection(connection: Arc<QuicClient>) {
     // Close the connection and release resources
     trace!("Closing QUIC connection to {}", connection.server_addr());
-    RUNTIME.block_on(connection.close());
+    if Handle::try_current().is_ok() {
+        let _handle = RUNTIME.spawn(async move {
+            connection.close().await;
+        });
+    } else {
+        RUNTIME.block_on(connection.close());
+    }
 }
