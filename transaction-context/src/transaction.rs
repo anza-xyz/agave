@@ -105,7 +105,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
-            instruction_trace: vec![InstructionFrame::default()],
+            instruction_trace: Vec::with_capacity(instruction_trace_capacity),
             return_data_bytes: Vec::new(),
             transaction_frame,
             top_level_instruction_index: 0,
@@ -167,11 +167,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Returns the instruction trace length.
-    ///
-    /// Not counting the last empty instruction which is always pre-reserved for the next instruction.
-    /// See also `get_next_instruction_context()`.
     pub fn get_instruction_trace_length(&self) -> usize {
-        self.instruction_trace.len().saturating_sub(1)
+        self.instruction_trace.len()
     }
 
     /// Gets a view on an instruction by its index in the trace
@@ -279,13 +276,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
-        let trace_len = self.instruction_trace.len();
-        let instruction_index = trace_len.saturating_sub(1);
-
-        let instruction = self
-            .instruction_trace
-            .last_mut()
-            .ok_or(InstructionError::CallDepth)?;
+        let instruction_index = self.instruction_trace.len();
+        let mut instruction = InstructionFrame::default();
 
         // If we have a parent index, then we are dealing with a CPI.
         if let Some(caller_index) = caller_index {
@@ -315,6 +307,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.instruction_accounts
             .push(instruction_accounts.into_boxed_slice());
         self.instruction_data.push(instruction_data);
+        self.instruction_trace.push(instruction);
         Ok(())
     }
 
@@ -344,7 +337,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         )
     }
 
-    /// Pushes the next instruction
+    /// Pushes the next instruction, provided that the instruction has been previously configured
+    /// with `configure_next_instruction`.
     pub fn push(&mut self) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_stack_height();
         if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
@@ -357,11 +351,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .ok_or(InstructionError::CallDepth)?;
             instruction.nesting_level = nesting_level as u16;
         }
-        let index_in_trace = self.get_instruction_trace_length();
+        let index_in_trace = self.get_instruction_trace_length().saturating_sub(1);
+        // We must ignore the last added entry when checking the trace capacity, so we subtract one.
         if index_in_trace >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
-        self.instruction_trace.push(InstructionFrame::default());
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
@@ -522,9 +516,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
     /// Take ownership of the instruction trace
     pub fn take_instruction_trace(&mut self) -> InstructionTrace<'_> {
-        // The last frame is a placeholder for the next instruction to be executed, so it
-        // is empty.
-        self.instruction_trace.pop();
         (
             std::mem::take(&mut self.instruction_trace),
             std::mem::take(&mut self.instruction_accounts),
@@ -585,7 +576,7 @@ mod tests {
     #[test]
     fn test_instructions_sysvar_store_index_checked() {
         let build_transaction_context = |account: AccountSharedData| {
-            TransactionContext::new(
+            let mut tx_context = TransactionContext::new(
                 vec![
                     (Pubkey::new_unique(), AccountSharedData::default()),
                     (instructions::id(), account),
@@ -594,7 +585,16 @@ mod tests {
                 /* max_instruction_stack_depth */ 2,
                 /* max_instruction_trace_length */ 2,
                 /* number_of_top_level_instructions */ 1,
-            )
+            );
+
+            tx_context
+                .configure_next_instruction_for_tests(
+                    0,
+                    vec![InstructionAccount::new(0, false, false)],
+                    vec![],
+                )
+                .unwrap();
+            tx_context
         };
 
         let correct_space = 2;

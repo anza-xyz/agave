@@ -237,15 +237,11 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     /// Push a stack frame onto the invocation stack
     pub fn push(&mut self) -> Result<(), InstructionError> {
-        let instruction_context = self
-            .transaction_context
-            .get_instruction_context_at_index_in_trace(
-                self.transaction_context.get_instruction_trace_length(),
-            )?;
-        let program_id = instruction_context
-            .get_program_key()
-            .map_err(|_| InstructionError::UnsupportedProgramId)?;
         if self.transaction_context.get_instruction_stack_height() != 0 {
+            let instruction_context = self.transaction_context.get_next_instruction_context()?;
+            let program_id = instruction_context
+                .get_program_key()
+                .map_err(|_| InstructionError::UnsupportedProgramId)?;
             let contains =
                 (0..self.transaction_context.get_instruction_stack_height()).any(|level| {
                     self.transaction_context
@@ -1177,7 +1173,6 @@ mod tests {
             MAX_INSTRUCTIONS,
         );
         for _ in 0..MAX_INSTRUCTIONS {
-            transaction_context.push().unwrap();
             transaction_context
                 .configure_next_instruction_for_tests(
                     0,
@@ -1185,8 +1180,18 @@ mod tests {
                     vec![],
                 )
                 .unwrap();
+            transaction_context.push().unwrap();
             transaction_context.pop().unwrap();
         }
+
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![],
+            )
+            .unwrap();
+
         assert_eq!(
             transaction_context.push(),
             Err(InstructionError::MaxInstructionTraceLengthExceeded)
