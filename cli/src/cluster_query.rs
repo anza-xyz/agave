@@ -259,6 +259,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
             SubCommand::with_name("ping")
                 .about("Submit transactions sequentially")
                 .setting(AppSettings::Hidden)
+                .before_help("DEPRECATED: this command is deprecated and will be removed in a future version")
                 .arg(
                     Arg::with_name("interval")
                         .short("i")
@@ -561,6 +562,7 @@ pub fn parse_cluster_ping(
     let blockhash = value_of(matches, BLOCKHASH_ARG.name);
     let print_timestamp = matches.is_present("print_timestamp");
     let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+    eprintln!("{}", style("DEPRECATED: this command is deprecated and will be removed in a future version").yellow().bold());
     Ok(CliCommandInfo {
         command: CliCommand::Ping {
             interval,
