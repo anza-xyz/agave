@@ -216,10 +216,6 @@ impl Tvu {
         log_messages_bytes_limit: Option<usize>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         banking_tracer: Arc<BankingTracer>,
-        repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
-        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
@@ -384,8 +380,6 @@ impl Tvu {
                 verified_voter_slots_receiver,
                 dumped_slots_receiver,
                 popular_pruned_forks_sender,
-                ancestor_hashes_request_quic_sender,
-                ancestor_hashes_response_quic_receiver,
                 ancestor_hashes_replay_update_receiver,
             );
             let window_service_channels = WindowServiceChannels::new(

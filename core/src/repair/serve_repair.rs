@@ -9,7 +9,6 @@ use {
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
-            quic_endpoint::RemoteRequest,
             repair_handler::RepairHandler,
             repair_service::{OutstandingShredRepairs, RepairStats, REPAIR_MS},
             request_response::RequestResponse,
@@ -44,7 +43,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
+        packet::{BytesPacket, Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     },
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_runtime::bank_forks::SharableBanks,
@@ -270,7 +269,7 @@ const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + 
 const REPAIR_REQUEST_MIN_BYTES: usize = REPAIR_REQUEST_PONG_SERIALIZED_BYTES;
 
 fn discard_malformed_repair_requests(
-    requests: &mut Vec<RemoteRequest>,
+    requests: &mut Vec<BytesPacket>,
     stats: &mut ServeRepairStats,
 ) -> usize {
     let num_requests = requests.len();
@@ -359,7 +358,6 @@ pub(crate) struct RepairPeers {
 struct Node {
     pubkey: Pubkey,
     serve_repair: SocketAddr,
-    serve_repair_quic: SocketAddr,
 }
 
 impl RepairPeers {
@@ -374,7 +372,6 @@ impl RepairPeers {
                 let node = Node {
                     pubkey: *peer.pubkey(),
                     serve_repair: peer.serve_repair(Protocol::UDP)?,
-                    serve_repair_quic: peer.serve_repair(Protocol::QUIC)?,
                 };
                 Some((node, weight))
             })
@@ -399,7 +396,6 @@ impl RepairPeers {
 struct RepairRequestWithMeta {
     request: RepairProtocol,
     from_addr: SocketAddr,
-    protocol: Protocol,
     stake: u64,
     whitelisted: bool,
 }
@@ -559,7 +555,7 @@ impl ServeRepair {
     }
 
     fn decode_request(
-        remote_request: RemoteRequest,
+        remote_request: BytesPacket,
         epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
@@ -568,19 +564,11 @@ impl ServeRepair {
         let Ok(request) = deserialize_request::<RepairProtocol>(&remote_request) else {
             return Err(Error::from(RepairVerifyError::Malformed));
         };
-        let from_addr = remote_request.remote_address;
+        let from_addr = remote_request.meta().socket_addr();
         if !ContactInfo::is_valid_address(&from_addr, socket_addr_space) {
             return Err(Error::from(RepairVerifyError::Malformed));
         }
-        Self::verify_signed_packet(my_id, &remote_request.bytes, &request)?;
-        if let Some(remote_pubkey) = remote_request.remote_pubkey {
-            if Some(&remote_pubkey) != request.sender() {
-                error!(
-                    "remote pubkey {remote_pubkey} != request sender {:?}",
-                    request.sender()
-                );
-            }
-        }
+        Self::verify_signed_packet(my_id, &remote_request.buffer(), &request)?;
         if request.sender() == Some(my_id) {
             error!("self repair: from_addr={from_addr} my_id={my_id} request={request:?}");
             return Err(Error::from(RepairVerifyError::SelfRepair));
@@ -598,7 +586,6 @@ impl ServeRepair {
         Ok(RepairRequestWithMeta {
             request,
             from_addr,
-            protocol: remote_request.protocol(),
             stake,
             whitelisted,
         })
@@ -631,7 +618,7 @@ impl ServeRepair {
     }
 
     fn decode_requests(
-        requests: Vec<RemoteRequest>,
+        requests: Vec<BytesPacket>,
         epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
@@ -668,14 +655,17 @@ impl ServeRepair {
         &mut self,
         ping_cache: &mut PingCache,
         recycler: &PacketBatchRecycler,
-        requests_receiver: &Receiver<RemoteRequest>,
+        requests_receiver: &Receiver<PacketBatch>,
         response_sender: &PacketBatchSender,
-        repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
     ) -> std::result::Result<(), RecvTimeoutError> {
         const TIMEOUT: Duration = Duration::from_secs(1);
-        let mut requests = vec![requests_receiver.recv_timeout(TIMEOUT)?];
+        let mut requests: Vec<_>;
+        for packet in requests_receiver.recv_timeout(TIMEOUT)?.into_iter() {
+            requests.push(packet.to_bytes_packet());
+        }
+
         const MAX_REQUESTS_PER_ITERATION: usize = 1024;
         let mut total_requests = requests.len();
 
@@ -694,10 +684,10 @@ impl ServeRepair {
         let mut dropped_requests = 0;
         let mut well_formed_requests = discard_malformed_repair_requests(&mut requests, stats);
         loop {
-            let mut more: Vec<_> = requests_receiver.try_iter().collect();
-            if more.is_empty() {
+            let Ok(mut more) = requests_receiver.try_recv() else {
                 break;
-            }
+            };
+            let more: Vec<_> = more.into_iter().map(|p| p.to_bytes_packet()).collect();
             total_requests += more.len();
             if well_formed_requests > max_buffered_packets {
                 // Already exceeded max. Don't waste time discarding
@@ -707,7 +697,7 @@ impl ServeRepair {
             let retained = discard_malformed_repair_requests(&mut more, stats);
             well_formed_requests += retained;
             if retained > 0 && well_formed_requests <= max_buffered_packets {
-                requests.extend(more);
+                requests.extend(more.into_iter().map(|p| p.to_bytes_packet()));
             } else {
                 dropped_requests += more.len();
             }
@@ -744,7 +734,6 @@ impl ServeRepair {
             recycler,
             decoded_requests,
             response_sender,
-            repair_response_quic_sender,
             stats,
             data_budget,
         );
@@ -843,9 +832,8 @@ impl ServeRepair {
 
     pub(crate) fn listen(
         mut self,
-        requests_receiver: Receiver<RemoteRequest>,
+        requests_receiver: Receiver<PacketBatch>,
         response_sender: PacketBatchSender,
-        repair_response_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         const INTERVAL_MS: u64 = 1000;
@@ -876,7 +864,6 @@ impl ServeRepair {
                         &recycler,
                         &requests_receiver,
                         &response_sender,
-                        &repair_response_quic_sender,
                         &mut stats,
                         &data_budget,
                     );
@@ -1009,7 +996,6 @@ impl ServeRepair {
         recycler: &PacketBatchRecycler,
         requests: Vec<RepairRequestWithMeta>,
         packet_batch_sender: &PacketBatchSender,
-        repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
     ) {
@@ -1019,7 +1005,6 @@ impl ServeRepair {
         for RepairRequestWithMeta {
             request,
             from_addr,
-            protocol,
             stake,
             whitelisted: _,
         } in requests.into_iter()
@@ -1028,17 +1013,14 @@ impl ServeRepair {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
-            // Bypass ping/pong check for requests coming from QUIC endpoint.
-            if !matches!(&request, RepairProtocol::Pong(_)) && protocol == Protocol::UDP {
-                let (check, ping_pkt) =
-                    Self::check_ping_cache(ping_cache, &request, &from_addr, &identity_keypair);
-                if let Some(ping_pkt) = ping_pkt {
-                    pending_pings.push(ping_pkt);
-                }
-                if !check {
-                    stats.ping_cache_check_failed += 1;
-                    continue;
-                }
+            let (check, ping_pkt) =
+                Self::check_ping_cache(ping_cache, &request, &from_addr, &identity_keypair);
+            if let Some(ping_pkt) = ping_pkt {
+                pending_pings.push(ping_pkt);
+            }
+            if !check {
+                stats.ping_cache_check_failed += 1;
+                continue;
             }
             stats.processed += 1;
             let Some(rsp) = self.handle_repair(recycler, &from_addr, request, stats, ping_cache)
@@ -1047,14 +1029,7 @@ impl ServeRepair {
             };
             let num_response_packets = rsp.len();
             let num_response_bytes = rsp.iter().map(|p| p.meta().size).sum();
-            if data_budget.take(num_response_bytes)
-                && send_response(
-                    rsp,
-                    protocol,
-                    packet_batch_sender,
-                    repair_response_quic_sender,
-                )
-            {
+            if data_budget.take(num_response_bytes) && packet_batch_sender.send(rsp).is_ok() {
                 stats.total_response_packets += num_response_packets;
                 match stake > 0 {
                     true => stats.total_response_bytes_staked += num_response_bytes,
@@ -1104,8 +1079,6 @@ impl ServeRepair {
         repair_validators: &Option<HashSet<Pubkey>>,
         outstanding_requests: &mut OutstandingShredRepairs,
         identity_keypair: &Keypair,
-        repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
-        repair_protocol: Protocol,
     ) -> Result<Option<(SocketAddr, Vec<u8>)>> {
         // find a peer that appears to be accepting replication and has the desired slot, as indicated
         // by a valid tvu port location
@@ -1137,15 +1110,7 @@ impl ServeRepair {
             peer.pubkey,
             repair_request
         );
-        match repair_protocol {
-            Protocol::UDP => Ok(Some((peer.serve_repair, out))),
-            Protocol::QUIC => {
-                repair_request_quic_sender
-                    .blocking_send((peer.serve_repair_quic, Bytes::from(out)))
-                    .map_err(|_| Error::SendError)?;
-                Ok(None)
-            }
-        }
+        Ok(Some((peer.serve_repair, out)))
     }
 
     pub(crate) fn repair_request_ancestor_hashes_sample_peers(
@@ -1337,25 +1302,6 @@ where
         .with_fixint_encoding()
         .reject_trailing_bytes()
         .deserialize(&request.bytes)
-}
-
-// Returns true on success.
-fn send_response(
-    packets: PacketBatch,
-    protocol: Protocol,
-    packet_batch_sender: &PacketBatchSender,
-    repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
-) -> bool {
-    match protocol {
-        Protocol::UDP => packet_batch_sender.send(packets).is_ok(),
-        Protocol::QUIC => packets
-            .iter()
-            .filter_map(|packet| {
-                let bytes = Bytes::from(Vec::from(packet.data(..)?));
-                Some((packet.meta().socket_addr(), bytes))
-            })
-            .all(|packet| repair_response_quic_sender.blocking_send(packet).is_ok()),
-    }
 }
 
 #[cfg(test)]
@@ -1897,7 +1843,6 @@ mod tests {
 
     #[test]
     fn window_index_request() {
-        use Protocol::{QUIC, UDP};
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -1910,7 +1855,6 @@ mod tests {
         );
         let identity_keypair = cluster_info.keypair();
         let mut outstanding_requests = OutstandingShredRepairs::default();
-        let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
         let rv = serve_repair.repair_request(
             &cluster_slots,
             ShredRepairType::Shred(0, 0),
@@ -1919,8 +1863,6 @@ mod tests {
             &None,
             &mut outstanding_requests,
             &identity_keypair,
-            &repair_request_quic_sender,
-            Protocol::UDP, // repair_protocol
         );
         assert_matches!(rv, Err(Error::ClusterInfo(ClusterInfoError::NoPeers)));
 
@@ -1935,8 +1877,6 @@ mod tests {
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr).unwrap();
-        nxt.set_serve_repair(QUIC, (Ipv4Addr::LOCALHOST, 1237))
-            .unwrap();
         cluster_info.insert_info(nxt.clone());
         let rv = serve_repair
             .repair_request(
@@ -1947,8 +1887,6 @@ mod tests {
                 &None,
                 &mut outstanding_requests,
                 &identity_keypair,
-                &repair_request_quic_sender,
-                Protocol::UDP, // repair_protocol
             )
             .unwrap()
             .unwrap();
@@ -1967,8 +1905,6 @@ mod tests {
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr2).unwrap();
-        nxt.set_serve_repair(QUIC, (Ipv4Addr::LOCALHOST, 1237))
-            .unwrap();
         cluster_info.insert_info(nxt);
         let mut one = false;
         let mut two = false;
@@ -1983,8 +1919,6 @@ mod tests {
                     &None,
                     &mut outstanding_requests,
                     &identity_keypair,
-                    &repair_request_quic_sender,
-                    Protocol::UDP, // repair_protocol
                 )
                 .unwrap()
                 .unwrap();
@@ -2198,7 +2132,6 @@ mod tests {
         let cluster_slots = ClusterSlots::default_for_tests();
         let cluster_info = Arc::new(new_test_cluster_info());
         let me = cluster_info.my_contact_info();
-        let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
         // Insert two peers on the network
         let contact_info2 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
         let contact_info3 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
@@ -2229,8 +2162,6 @@ mod tests {
                     &known_validators,
                     &mut OutstandingShredRepairs::default(),
                     &identity_keypair,
-                    &repair_request_quic_sender,
-                    Protocol::UDP, // repair_protocol
                 ),
                 Err(Error::ClusterInfo(ClusterInfoError::NoPeers))
             );
@@ -2251,8 +2182,6 @@ mod tests {
                 &known_validators,
                 &mut OutstandingShredRepairs::default(),
                 &identity_keypair,
-                &repair_request_quic_sender,
-                Protocol::UDP, // repair_protocol
             ),
             Ok(Some(_))
         );
@@ -2276,8 +2205,6 @@ mod tests {
                 &None,
                 &mut OutstandingShredRepairs::default(),
                 &identity_keypair,
-                &repair_request_quic_sender,
-                Protocol::UDP, // repair_protocol
             ),
             Ok(Some(_))
         );

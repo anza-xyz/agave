@@ -141,8 +141,6 @@ impl AncestorRepairRequestsStats {
 }
 
 pub struct AncestorHashesChannels {
-    pub ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-    pub ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
     pub ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
 }
 
@@ -175,25 +173,9 @@ impl AncestorHashesService {
         );
 
         let AncestorHashesChannels {
-            ancestor_hashes_request_quic_sender,
-            ancestor_hashes_response_quic_receiver,
             ancestor_hashes_replay_update_receiver,
         } = ancestor_hashes_channels;
 
-        let t_receiver_quic = {
-            let exit = exit.clone();
-            Builder::new()
-                .name(String::from("solAncHashQuic"))
-                .spawn(|| {
-                    receive_quic_datagrams(
-                        ancestor_hashes_response_quic_receiver,
-                        PacketFlags::REPAIR,
-                        response_sender,
-                        exit,
-                    )
-                })
-                .unwrap()
-        };
         let ancestor_hashes_request_statuses: Arc<DashMap<Slot, AncestorRequestStatus>> =
             Arc::new(DashMap::new());
         let (retryable_slots_sender, retryable_slots_receiver) = unbounded();
@@ -224,12 +206,7 @@ impl AncestorHashesService {
             retryable_slots_receiver,
         );
         Self {
-            thread_hdls: vec![
-                t_receiver,
-                t_receiver_quic,
-                t_ancestor_hashes_responses,
-                t_ancestor_requests,
-            ],
+            thread_hdls: vec![t_receiver, t_ancestor_hashes_responses, t_ancestor_requests],
         }
     }
 

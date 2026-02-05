@@ -383,7 +383,6 @@ impl Default for RepairSlotRange {
 }
 
 struct RepairChannels {
-    repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
     verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
     dumped_slots_receiver: DumpedSlotsReceiver,
     popular_pruned_forks_sender: PopularPrunedForksSender,
@@ -396,24 +395,18 @@ pub struct RepairServiceChannels {
 
 impl RepairServiceChannels {
     pub fn new(
-        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
         dumped_slots_receiver: DumpedSlotsReceiver,
         popular_pruned_forks_sender: PopularPrunedForksSender,
-        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        ancestor_hashes_response_quic_receiver: CrossbeamReceiver<(Pubkey, SocketAddr, Bytes)>,
         ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
     ) -> Self {
         Self {
             repair_channels: RepairChannels {
-                repair_request_quic_sender,
                 verified_voter_slots_receiver,
                 dumped_slots_receiver,
                 popular_pruned_forks_sender,
             },
             ancestors_hashes_channels: AncestorHashesChannels {
-                ancestor_hashes_request_quic_sender,
-                ancestor_hashes_response_quic_receiver,
                 ancestor_hashes_replay_update_receiver,
             },
         }
@@ -625,12 +618,10 @@ impl RepairService {
     fn build_and_send_repair_batch(
         serve_repair: &mut ServeRepair,
         peers_cache: &mut LruCache<u64, RepairPeers>,
-        repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         repairs: Vec<ShredRepairType>,
         repair_info: &RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         repair_socket: &UdpSocket,
-        repair_protocol: Protocol,
         repair_metrics: &mut RepairMetrics,
     ) {
         let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
@@ -649,8 +640,6 @@ impl RepairService {
                             &repair_info.repair_validators,
                             &mut outstanding_requests,
                             &identity_keypair,
-                            repair_request_quic_sender,
-                            repair_protocol,
                         )
                         .ok()??;
                     Some((req, to))
@@ -689,7 +678,6 @@ impl RepairService {
         repair_socket: &UdpSocket,
     ) {
         let RepairChannels {
-            repair_request_quic_sender,
             verified_voter_slots_receiver,
             dumped_slots_receiver,
             popular_pruned_forks_sender,
@@ -735,12 +723,10 @@ impl RepairService {
         Self::build_and_send_repair_batch(
             serve_repair,
             peers_cache,
-            repair_request_quic_sender,
             repairs,
             repair_info,
             outstanding_requests,
             repair_socket,
-            serve_repair::get_repair_protocol(root_bank.cluster_type()),
             repair_metrics,
         );
     }
