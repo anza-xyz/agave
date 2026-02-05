@@ -6612,7 +6612,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     //    created.
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey1, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::PoolWithThreshold,
+        UpdateIndexThreadSelection::Inline,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
@@ -6630,7 +6630,7 @@ fn test_new_zero_lamport_accounts_skipped() {
             ]
             .as_slice(),
         ),
-        UpdateIndexThreadSelection::PoolWithThreshold,
+        UpdateIndexThreadSelection::Inline,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(!accounts_db
@@ -6655,7 +6655,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     //    Verify pubkey2 remains in the index and gets added to the slot cache.
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey2, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::PoolWithThreshold,
+        UpdateIndexThreadSelection::Inline,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey2));
     assert!(accounts_db
@@ -6682,7 +6682,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     let slot = slot + 1;
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey1, &account)].as_slice()),
-        UpdateIndexThreadSelection::PoolWithThreshold,
+        UpdateIndexThreadSelection::Inline,
     );
     assert!(accounts_db.accounts_index.contains(&pubkey1));
 
@@ -6690,7 +6690,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     // a zero-lamport AccountInfo after flushing.
     accounts_db.store_accounts_unfrozen(
         (slot, [(&pubkey3, &zero_account)].as_slice()),
-        UpdateIndexThreadSelection::PoolWithThreshold,
+        UpdateIndexThreadSelection::Inline,
     );
     accounts_db.add_root_and_flush_write_cache(slot);
 
@@ -6757,7 +6757,7 @@ fn test_write_accounts_to_cache_scenarios(
             let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
-                UpdateIndexThreadSelection::PoolWithThreshold,
+                UpdateIndexThreadSelection::Inline,
             );
         }
         InitialState::WithoutLamports => {
@@ -6766,12 +6766,12 @@ fn test_write_accounts_to_cache_scenarios(
             // Store a non-zero account first to create the index entry
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account)].as_slice()),
-                UpdateIndexThreadSelection::PoolWithThreshold,
+                UpdateIndexThreadSelection::Inline,
             );
             // Overwrite with a zero-lamport account to simulate ephemeral setup
             db.store_accounts_unfrozen(
                 (slot, [(&key, &account_zero)].as_slice()),
-                UpdateIndexThreadSelection::PoolWithThreshold,
+                UpdateIndexThreadSelection::Inline,
             );
         }
     }
@@ -6784,10 +6784,7 @@ fn test_write_accounts_to_cache_scenarios(
         .collect();
     let batch: Vec<_> = accounts.iter().map(|account| (&key, account)).collect();
 
-    db.store_accounts_unfrozen(
-        (slot, batch.as_slice()),
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
+    db.store_accounts_unfrozen((slot, batch.as_slice()), UpdateIndexThreadSelection::Inline);
 
     // Verify results
     let loaded = db.load_without_fixed_root(&ancestors, &key);

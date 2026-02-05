@@ -38,7 +38,7 @@ use {
         account_storage_entry::AccountStorageEntry,
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
-            AccountsStats, CacheAccountsStoreStats, CleanAccountsStats, FlushStats,
+            AccountsStats, CacheAccountStoreStats, CleanAccountsStats, FlushStats,
             ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
             StoreAccountsTiming,
         },
@@ -5791,18 +5791,17 @@ impl AccountsDb {
 
     // Stores accounts in the write cache. If an account is zero-lamport and not present in the
     // index, there is no need to store it in the write cache as it will not effect the accounts
-    // hash. The function returns a vector of booleans indicating whether each account was stored,
-    // and the number of accounts that were skipped.
+    // hash. The function returns a BitVec indicating whether each account was stored in the cache.
     // Ordering of account is important as duplicate pubkeys are possible. The last account in
     // accounts_and_meta_to_store for each pubkey is stored in the write cache
     fn write_accounts_to_cache<'a, 'b>(
         &self,
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
-    ) -> (BitVec, CacheAccountsStoreStats) {
+    ) -> (BitVec, CacheAccountStoreStats) {
         let len = accounts_and_meta_to_store.len();
         let mut pubkey_set = HashSet::with_capacity_and_hasher(len, PubkeyHasherBuilder::default());
-        let mut cache_account_store_stats = CacheAccountsStoreStats::default();
+        let mut cache_account_store_stats = CacheAccountStoreStats::default();
         let mut store_account = BitVec::new_fill(false, len as u64);
 
         (0..len).rev().for_each(|index| {
