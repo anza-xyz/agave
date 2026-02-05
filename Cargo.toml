@@ -10,7 +10,6 @@ members = [
     "banks-interface",
     "banks-server",
     "bench-streamer",
-    "bench-vote",
     "bloom",
     "bls12-381",
     "bucket_map",

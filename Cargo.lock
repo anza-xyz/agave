@@ -7302,31 +7302,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-bench-vote"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "bincode",
- "clap 2.33.3",
- "crossbeam-channel",
- "solana-clap-utils",
- "solana-client",
- "solana-connection-cache",
- "solana-hash 3.1.0",
- "solana-keypair",
- "solana-message",
- "solana-net-utils",
- "solana-pubkey 4.0.0",
- "solana-signer",
- "solana-streamer",
- "solana-transaction",
- "solana-version",
- "solana-vote-program",
- "tikv-jemallocator",
- "tokio-util 0.7.18",
-]
-
-[[package]]
 name = "solana-big-mod-exp"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
