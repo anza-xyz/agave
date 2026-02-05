@@ -9070,7 +9070,7 @@ name = "solana-sbf-rust-rand"
 version = "4.0.0-alpha.0"
 dependencies = [
  "getrandom 0.2.10",
- "rand 0.8.5",
+ "rand 0.9.2",
  "solana-account-info",
  "solana-msg",
  "solana-program-entrypoint",
