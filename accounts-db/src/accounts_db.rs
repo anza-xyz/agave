@@ -5438,7 +5438,11 @@ impl AccountsDb {
     }
 
     fn remove_dead_slots_metadata<'a>(&'a self, dead_slots_iter: impl Iterator<Item = &'a Slot>) {
-        self.clean_dead_slots_from_accounts_index(dead_slots_iter);
+        let accounts_index_root_stats = self.accounts_index.clean_dead_slots(dead_slots_iter);
+
+        self.clean_accounts_stats
+            .latest_accounts_index_roots_stats
+            .update(&accounts_index_root_stats);
     }
 
     /// lookup each pubkey in 'pubkeys' and unref it in the accounts index
@@ -5508,33 +5512,6 @@ impl AccountsDb {
                 .or_default()
                 .insert(slot);
         }
-    }
-
-    fn clean_dead_slots_from_accounts_index<'a>(
-        &'a self,
-        dead_slots_iter: impl Iterator<Item = &'a Slot>,
-    ) {
-        let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
-        let mut measure = Measure::start("clean_dead_slot");
-        let mut rooted_cleaned_count = 0;
-        let mut unrooted_cleaned_count = 0;
-        dead_slots_iter.for_each(|slot| {
-            if self.accounts_index.clean_dead_slot(*slot) {
-                rooted_cleaned_count += 1;
-            } else {
-                unrooted_cleaned_count += 1;
-            }
-        });
-        measure.stop();
-        accounts_index_root_stats.clean_dead_slot_us += measure.as_us();
-        self.accounts_index
-            .update_roots_stats(&mut accounts_index_root_stats);
-        accounts_index_root_stats.rooted_cleaned_count += rooted_cleaned_count;
-        accounts_index_root_stats.unrooted_cleaned_count += unrooted_cleaned_count;
-
-        self.clean_accounts_stats
-            .latest_accounts_index_roots_stats
-            .update(&accounts_index_root_stats);
     }
 
     /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
