@@ -200,10 +200,7 @@ pull_request_rules:
     conditions:
       - or:
         - files~=^programs/address-lookup-table/src/.*\.rs$
-        - files~=^programs/bpf_loader/src/.*\.rs$
-        - files~=^programs/compute_budget/src/.*\.rs$
         - files~=^programs/config/src/.*\.rs$
-        - files~=^programs/loader-v4/src/.*\.rs$
         - files~=^programs/stake/src/.*\.rs$
         - files~=^programs/system/src/.*\.rs$
         - files~=^programs/vote/src/.*\.rs$
