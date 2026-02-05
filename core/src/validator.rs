@@ -510,18 +510,16 @@ impl ValidatorConfig {
         }
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn enable_default_rpc_block_subscribe(&mut self) {
-        let pubsub_config = PubSubConfig {
+        self.pubsub_config = PubSubConfig {
             enable_block_subscription: true,
-            ..PubSubConfig::default()
+            ..PubSubConfig::default_for_tests()
         };
-        let rpc_config = JsonRpcConfig {
+        self.rpc_config = JsonRpcConfig {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         };
-
-        self.pubsub_config = pubsub_config;
-        self.rpc_config = rpc_config;
     }
 }
 
