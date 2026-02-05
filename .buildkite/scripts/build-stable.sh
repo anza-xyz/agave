@@ -6,7 +6,7 @@ here=$(dirname "$0")
 # shellcheck source=.buildkite/scripts/common.sh
 source "$here"/common.sh
 
-agent="${1-solana}"
+agent="${1-default}"
 
 parallelism=5
 partitions=()

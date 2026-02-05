@@ -3,7 +3,7 @@ use {
     super::*,
     crate::{
         accounts_file::AccountsFileProvider,
-        accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
+        accounts_index::{test_utils::*, AccountSecondaryIndexesIncludeExclude},
         append_vec::{test_utils::TempFile, AppendVec},
         storable_accounts::AccountForStorage,
     },
@@ -58,6 +58,13 @@ where
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback(self.1[index].1.into())
+    }
+    fn account_for_geyser<Ret>(
+        &self,
+        _index: usize,
+        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        unimplemented!();
     }
     fn pubkey(&self, index: usize) -> &Pubkey {
         self.1[index].0
@@ -2055,11 +2062,6 @@ fn test_hash_stored_account() {
         "Account-based hashing must be consistent with StoredAccountInfo-based one."
     );
 }
-
-// something we can get a ref to
-
-pub static EPOCH_SCHEDULE: std::sync::LazyLock<EpochSchedule> =
-    std::sync::LazyLock::new(EpochSchedule::default);
 
 #[test]
 fn test_verify_bank_capitalization() {

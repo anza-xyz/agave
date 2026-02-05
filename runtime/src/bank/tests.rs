@@ -142,31 +142,20 @@ use {
     test_case::test_case,
 };
 
-impl VoteReward {
+impl RewardCommission {
     pub fn new_random() -> Self {
         let mut rng = rand::rng();
 
-        let validator_pubkey = solana_pubkey::new_rand();
-        let validator_stake_lamports = rng.random_range(1..200);
-        let validator_voting_keypair = Keypair::new();
+        let commission_balance = rng.random_range(1..200);
         let commission_bps: u16 = rng.random_range(100..2_000);
 
-        let validator_vote_account = vote_state::create_v4_account_with_authorized(
-            &validator_pubkey,
-            &validator_voting_keypair.pubkey(),
-            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-            &validator_voting_keypair.pubkey(),
-            commission_bps,
-            &validator_voting_keypair.pubkey(),
-            0,
-            &validator_voting_keypair.pubkey(),
-            validator_stake_lamports,
-        );
+        let mut commission_account = AccountSharedData::default();
+        commission_account.set_lamports(commission_balance);
 
         Self {
-            vote_account: validator_vote_account,
+            commission_account,
             commission_bps,
-            vote_rewards: rng.random_range(1..200),
+            commission_lamports: rng.random_range(1..200),
         }
     }
 }
@@ -11408,56 +11397,56 @@ fn test_system_instruction_unsigned_transaction() {
 }
 
 #[test]
-fn test_calc_vote_accounts_to_store_empty() {
-    let vote_account_rewards = HashMap::default();
-    let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
+fn test_calculate_commission_accounts_empty() {
+    let reward_commissions = HashMap::default();
+    let result = Bank::calculate_commission_accounts(reward_commissions);
     assert!(result.accounts_with_rewards.is_empty());
 }
 
 #[test]
-fn test_calc_vote_accounts_to_store_overflow() {
-    let mut vote_account_rewards = HashMap::default();
+fn test_calculate_commission_accounts_overflow() {
+    let mut reward_commissions = HashMap::default();
     let pubkey = solana_pubkey::new_rand();
-    let mut vote_account = AccountSharedData::default();
-    vote_account.set_lamports(u64::MAX);
-    vote_account_rewards.insert(
+    let mut commission_account = AccountSharedData::default();
+    commission_account.set_lamports(u64::MAX);
+    reward_commissions.insert(
         pubkey,
-        VoteReward {
-            vote_account,
+        RewardCommission {
+            commission_account,
             commission_bps: 0,
-            vote_rewards: 1, // enough to overflow
+            commission_lamports: 1, // enough to overflow
         },
     );
-    let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
+    let result = Bank::calculate_commission_accounts(reward_commissions);
     assert!(result.accounts_with_rewards.is_empty());
 }
 
 #[test]
-fn test_calc_vote_accounts_to_store_normal() {
+fn test_calculate_commission_accounts_normal() {
     let pubkey = solana_pubkey::new_rand();
     for commission_bps in [0, 100] {
-        for vote_rewards in 0..2 {
-            let mut vote_account_rewards = HashMap::default();
-            let mut vote_account = AccountSharedData::default();
-            vote_account.set_lamports(1);
-            vote_account_rewards.insert(
+        for commission_lamports in 0..2 {
+            let mut reward_commissions = HashMap::default();
+            let mut commission_account = AccountSharedData::default();
+            commission_account.set_lamports(1);
+            reward_commissions.insert(
                 pubkey,
-                VoteReward {
-                    vote_account: vote_account.clone(),
+                RewardCommission {
+                    commission_account: commission_account.clone(),
                     commission_bps,
-                    vote_rewards,
+                    commission_lamports,
                 },
             );
-            let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
+            let result = Bank::calculate_commission_accounts(reward_commissions);
             assert_eq!(result.accounts_with_rewards.len(), 1);
             let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
-            _ = vote_account.checked_add_lamports(vote_rewards);
-            assert!(accounts_equal(account, &vote_account));
+            _ = commission_account.checked_add_lamports(commission_lamports);
+            assert!(accounts_equal(account, &commission_account));
 
             let expected_reward_info = RewardInfo {
                 reward_type: RewardType::Voting,
-                lamports: vote_rewards as i64,
-                post_balance: vote_account.lamports(),
+                lamports: commission_lamports as i64,
+                post_balance: commission_account.lamports(),
                 commission_bps: Some(commission_bps),
             };
             assert_eq!(*rewards, expected_reward_info);
@@ -12585,4 +12574,166 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
             message
         )
         .is_err());
+}
+
+#[test]
+fn test_temporary_account_execute_and_commit() {
+    // Create 2 transactions that we will execute and commit in a single batch.
+    // Transaction 1: fund account B from account A
+    // Transaction 2: use account B to pay fees for transaction (draining B)
+    // In this scenario, account B is a temporary account and should not exist
+    // after the batch has executed.
+
+    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.activate_feature(&feature_set::relax_intrabatch_account_locks::ID);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
+    let temp_account_keypair = Keypair::new();
+    let temp_account_pubkey = temp_account_keypair.pubkey();
+    let payer_keypair = Keypair::new();
+    let payer_pubkey = payer_keypair.pubkey();
+    let initial_payer_balance = 10 * LAMPORTS_PER_SOL;
+
+    bank.store_account(
+        &payer_pubkey,
+        &AccountSharedData::new(initial_payer_balance, 0, &system_program::id()),
+    );
+    let temp_account_rent = bank.get_minimum_balance_for_rent_exemption(0);
+    let fee_amount = fee_calculator.lamports_per_signature;
+    let transfer_amount = temp_account_rent + 10_000;
+    let tx1 = {
+        let instruction = system_instruction::create_account(
+            &payer_pubkey,
+            &temp_account_pubkey,
+            transfer_amount,
+            0,
+            &system_program::id(),
+        );
+        let message = Message::new(&[instruction], Some(&payer_pubkey));
+        Transaction::new(
+            &[&payer_keypair, &temp_account_keypair],
+            message,
+            bank.last_blockhash(),
+        )
+    };
+    let tx1 = RuntimeTransaction::from_transaction_for_tests(tx1);
+    let tx2 = {
+        let instruction = system_instruction::transfer(
+            &temp_account_pubkey,
+            &Pubkey::new_unique(),
+            transfer_amount.checked_sub(fee_amount).unwrap(), // drain temp account
+        );
+        let message = Message::new(&[instruction], Some(&temp_account_pubkey));
+        Transaction::new(&[&temp_account_keypair], message, bank.last_blockhash())
+    };
+    let tx2 = RuntimeTransaction::from_transaction_for_tests(tx2);
+    let txs = vec![tx1, tx2];
+    let batch = bank.prepare_sanitized_batch(&txs);
+
+    let (commit_results, _) = bank.load_execute_and_commit_transactions(
+        &batch,
+        MAX_PROCESSING_AGE,
+        ExecutionRecordingConfig::default(),
+        &mut ExecuteTimings::default(),
+        None,
+    );
+
+    assert_eq!(commit_results.len(), 2);
+    assert!(commit_results[0].is_ok());
+    assert!(commit_results[1].is_ok());
+
+    // Verify temporary account no longer exists (i.e. zero lamports)
+    assert_eq!(bank.get_balance(&temp_account_pubkey), 0);
+}
+
+#[test]
+fn test_temporary_account_recreated_execute_and_commit() {
+    // Create 3 transactions that we will execute and commit in a single batch.
+    // Transaction 1: fund account B from account A
+    // Transaction 2: use account B to pay fees for transaction (draining B)
+    // Transaction 3: fund account B from account A again
+    // In this scenario, account B is a temporary account and is removed, but
+    // re-created in the final transaction and should be present in final state.
+
+    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.activate_feature(&feature_set::relax_intrabatch_account_locks::ID);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
+    let temp_account_keypair = Keypair::new();
+    let temp_account_pubkey = temp_account_keypair.pubkey();
+    let payer_keypair = Keypair::new();
+    let payer_pubkey = payer_keypair.pubkey();
+    let initial_payer_balance = 10 * LAMPORTS_PER_SOL;
+
+    bank.store_account(
+        &payer_pubkey,
+        &AccountSharedData::new(initial_payer_balance, 0, &system_program::id()),
+    );
+    let temp_account_rent = bank.get_minimum_balance_for_rent_exemption(0);
+    let fee_amount = fee_calculator.lamports_per_signature;
+    let transfer_amount = temp_account_rent + 10_000;
+    let tx1 = {
+        let instruction = system_instruction::create_account(
+            &payer_pubkey,
+            &temp_account_pubkey,
+            transfer_amount,
+            0,
+            &system_program::id(),
+        );
+        let message = Message::new(&[instruction], Some(&payer_pubkey));
+        Transaction::new(
+            &[&payer_keypair, &temp_account_keypair],
+            message,
+            bank.last_blockhash(),
+        )
+    };
+    let tx1 = RuntimeTransaction::from_transaction_for_tests(tx1);
+    let tx2 = {
+        let instruction = system_instruction::transfer(
+            &temp_account_pubkey,
+            &Pubkey::new_unique(),
+            transfer_amount.checked_sub(fee_amount).unwrap(), // drain temp account
+        );
+        let message = Message::new(&[instruction], Some(&temp_account_pubkey));
+        Transaction::new(&[&temp_account_keypair], message, bank.last_blockhash())
+    };
+    let tx2 = RuntimeTransaction::from_transaction_for_tests(tx2);
+    let tx3 = {
+        let instruction = system_instruction::create_account(
+            &payer_pubkey,
+            &temp_account_pubkey,
+            transfer_amount - 1, // fund temp account again with different amount
+            0,
+            &system_program::id(),
+        );
+        let message = Message::new(&[instruction], Some(&payer_pubkey));
+        Transaction::new(
+            &[&payer_keypair, &temp_account_keypair],
+            message,
+            bank.last_blockhash(),
+        )
+    };
+    let tx3 = RuntimeTransaction::from_transaction_for_tests(tx3);
+    let txs = vec![tx1, tx2, tx3];
+    let batch = bank.prepare_sanitized_batch(&txs);
+
+    let (commit_results, _) = bank.load_execute_and_commit_transactions(
+        &batch,
+        MAX_PROCESSING_AGE,
+        ExecutionRecordingConfig::default(),
+        &mut ExecuteTimings::default(),
+        None,
+    );
+
+    assert_eq!(commit_results.len(), 3);
+    assert!(commit_results[0].is_ok());
+    assert!(commit_results[1].is_ok());
+    assert!(commit_results[2].is_ok());
+
+    // Verify account exists with correct balance
+    assert_eq!(bank.get_balance(&temp_account_pubkey), transfer_amount - 1);
 }

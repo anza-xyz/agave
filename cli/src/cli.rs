@@ -870,16 +870,16 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         println_name_value("Commitment:", &config.commitment.commitment.to_string());
     }
 
-    let rpc_client = if config.rpc_client.is_none() {
+    let rpc_client = if let Some(rpc_client) = config.rpc_client.as_ref() {
+        // Primarily for testing
+        rpc_client.clone()
+    } else {
         Arc::new(RpcClient::new_with_timeouts_and_commitment(
             config.json_rpc_url.to_string(),
             config.rpc_timeout,
             config.commitment,
             config.confirm_transaction_initial_timeout,
         ))
-    } else {
-        // Primarily for testing
-        config.rpc_client.as_ref().unwrap().clone()
     };
 
     match &config.command {

@@ -43,6 +43,7 @@ use {
     thiserror::Error,
 };
 pub use {
+    bucket_map_holder::{DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT},
     iter::ITER_BATCH_SIZE,
     secondary::{
         AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude, IndexKey,
@@ -229,14 +230,25 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 }
 
 /// specification of how much memory the in-mem portion of account index can hold
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
     /// evict from in-mem when usage exceeds threshold in bytes
-    Threshold(u64),
+    Threshold(IndexLimitThreshold),
+}
+
+/// Configuration for threshold-based accounts index limit
+#[derive(Debug, Clone)]
+pub struct IndexLimitThreshold {
+    /// The memory limit, in bytes, for the entire accounts index.
+    pub num_bytes: u64,
+    /// Number of entries below an in-mem index bin's usable capacity at which to begin evicting.
+    pub num_entries_overhead: usize,
+    /// Number of entries to evict, once we've hit the high watermark.
+    pub num_entries_to_evict: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1740,7 +1752,31 @@ pub(crate) enum Startup {
 }
 
 #[cfg(test)]
-pub mod tests {
+pub(crate) mod test_utils {
+    use {
+        super::{secondary::AccountSecondaryIndexes, AccountIndex},
+        std::collections::HashSet,
+    };
+    pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {
+        let mut account_indexes = HashSet::new();
+        account_indexes.insert(AccountIndex::SplTokenMint);
+        AccountSecondaryIndexes {
+            indexes: account_indexes,
+            keys: None,
+        }
+    }
+    pub fn spl_token_owner_index_enabled() -> AccountSecondaryIndexes {
+        let mut account_indexes = HashSet::new();
+        account_indexes.insert(AccountIndex::SplTokenOwner);
+        AccountSecondaryIndexes {
+            indexes: account_indexes,
+            keys: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
     use {
         super::{bucket_map_holder::BucketMapHolder, *},
         crate::accounts_index::account_map_entry::AccountMapEntryMeta,
@@ -1754,26 +1790,10 @@ pub mod tests {
         test_case::test_matrix,
     };
 
-    pub enum SecondaryIndexTypes<'a> {
+    enum SecondaryIndexTypes<'a> {
+        // We don't access the inner value, but we do use it for type checking during cmopilation.
+        #[allow(dead_code)]
         RwLock(&'a SecondaryIndex<RwLockSecondaryIndexEntry>),
-    }
-
-    pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {
-        let mut account_indexes = HashSet::new();
-        account_indexes.insert(AccountIndex::SplTokenMint);
-        AccountSecondaryIndexes {
-            indexes: account_indexes,
-            keys: None,
-        }
-    }
-
-    pub fn spl_token_owner_index_enabled() -> AccountSecondaryIndexes {
-        let mut account_indexes = HashSet::new();
-        account_indexes.insert(AccountIndex::SplTokenOwner);
-        AccountSecondaryIndexes {
-            indexes: account_indexes,
-            keys: None,
-        }
     }
 
     fn create_spl_token_mint_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
@@ -1783,7 +1803,7 @@ pub mod tests {
             let _type_check = SecondaryIndexTypes::RwLock(&index.spl_token_mint_index);
         }
 
-        (0, PUBKEY_BYTES, spl_token_mint_index_enabled())
+        (0, PUBKEY_BYTES, test_utils::spl_token_mint_index_enabled())
     }
 
     fn create_spl_token_owner_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
@@ -1796,7 +1816,7 @@ pub mod tests {
         (
             SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
             SPL_TOKEN_ACCOUNT_OWNER_OFFSET + PUBKEY_BYTES,
-            spl_token_owner_index_enabled(),
+            test_utils::spl_token_owner_index_enabled(),
         )
     }
 
@@ -3929,10 +3949,6 @@ pub mod tests {
                 reclaim_method,
             );
             assert!(gc.is_empty());
-        }
-
-        pub fn clear_roots(&self) {
-            self.roots_tracker.write().unwrap().alive_roots.clear()
         }
     }
 

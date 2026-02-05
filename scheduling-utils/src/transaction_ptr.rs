@@ -100,12 +100,12 @@ pub struct TransactionPtrBatch<'a, M = ()> {
 }
 
 impl<'a, M> TransactionPtrBatch<'a, M> {
-    const TX_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
-    const TX_CORE_END: usize = Self::TX_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TX_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
+    pub const TX_CORE_END: usize = Self::TX_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
 
-    const TX_META_START: usize = Self::TX_CORE_END.next_multiple_of(align_of::<M>());
-    const TX_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
-    const TX_META_END: usize = Self::TX_META_START + Self::TX_META_SIZE;
+    pub const TX_META_START: usize = Self::TX_CORE_END.next_multiple_of(align_of::<M>());
+    pub const TX_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TX_META_END: usize = Self::TX_META_START + Self::TX_META_SIZE;
 
     #[allow(dead_code, reason = "Invariant assertion")]
     const TX_BATCH_SIZE_ASSERT: () = assert!(Self::TX_META_END <= 4096);

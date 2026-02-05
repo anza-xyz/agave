@@ -959,7 +959,14 @@ impl ServeRepair {
         let mut rng = rand::rng();
         let (check, ping) = request
             .sender()
-            .map(|_| ping_cache.check(&mut rng, identity_keypair, Instant::now(), *from_addr))
+            .map(|&sender| {
+                ping_cache.check(
+                    &mut rng,
+                    identity_keypair,
+                    Instant::now(),
+                    (sender, *from_addr),
+                )
+            })
             .unwrap_or_default();
         let ping_pkt = if let Some(ping) = ping {
             match request {

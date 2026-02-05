@@ -39,7 +39,7 @@ use {
         bank::{
             metrics::*,
             partitioned_epoch_rewards::{
-                CachedVoteAccounts, EpochRewardStatus, VoteRewardsAccounts,
+                CachedVoteAccounts, EpochRewardStatus, RewardCommissionAccounts,
             },
         },
         bank_forks::BankForks,
@@ -48,7 +48,6 @@ use {
         },
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
-        leader_schedule_utils::leader_schedule_from_vote_accounts,
         rent_collector::RentCollector,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
@@ -120,7 +119,6 @@ use {
     solana_inflation::Inflation,
     solana_keypair::Keypair,
     solana_lattice_hash::lt_hash::LtHash,
-    solana_leader_schedule::SlotLeader,
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
     solana_packet::PACKET_DATA_SIZE,
@@ -939,13 +937,13 @@ pub struct Bank {
 }
 
 #[derive(Debug)]
-struct VoteReward {
-    vote_account: AccountSharedData,
+struct RewardCommission {
+    commission_account: AccountSharedData,
     commission_bps: u16,
-    vote_rewards: u64,
+    commission_lamports: u64,
 }
 
-type VoteRewards = HashMap<Pubkey, VoteReward, PubkeyHasherBuilder>;
+type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1826,7 +1824,6 @@ impl Bank {
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
         fields: BankFieldsToDeserialize,
-        leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
@@ -1865,32 +1862,6 @@ impl Bank {
             !epoch_stakes.is_empty(),
             "should be populated (from fields.versioned_epoch_stakes)"
         );
-
-        // Compute and validate the slot leader from epoch stakes
-        let slot_leader: SlotLeader;
-        #[cfg(not(feature = "dev-context-only-utils"))]
-        {
-            slot_leader = Self::slot_leader_from_epoch_stakes(
-                fields.slot,
-                &fields.epoch_schedule,
-                &epoch_stakes,
-            );
-        }
-        #[cfg(feature = "dev-context-only-utils")]
-        {
-            slot_leader = leader_for_tests.unwrap_or_else(|| {
-                Self::slot_leader_from_epoch_stakes(
-                    fields.slot,
-                    &fields.epoch_schedule,
-                    &epoch_stakes,
-                )
-            });
-        }
-        assert_eq!(
-            fields.leader_id, slot_leader.id,
-            "snapshot leader_id does not match computed slot leader"
-        );
-
         let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
             rc: bank_rc,
@@ -2015,24 +1986,6 @@ impl Bank {
             ),
         );
         bank
-    }
-
-    /// Compute the slot leader from epoch stakes during snapshot restoration.
-    fn slot_leader_from_epoch_stakes(
-        slot: Slot,
-        epoch_schedule: &EpochSchedule,
-        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
-    ) -> SlotLeader {
-        let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
-        let epoch_vote_accounts = epoch_stakes
-            .get(&epoch)
-            .expect("epoch stakes should contain current epoch")
-            .stakes()
-            .vote_accounts();
-        let leader_schedule =
-            leader_schedule_from_vote_accounts(epoch, epoch_schedule, epoch_vote_accounts.as_ref())
-                .expect("leader schedule should be computable from epoch stakes");
-        leader_schedule.get_slot_leader_at_index(slot_index as usize)
     }
 
     /// Return subset of bank fields representing serializable state
@@ -2467,55 +2420,57 @@ impl Bank {
         }
     }
 
-    /// Convert computed VoteRewards to VoteRewardsAccounts for storing.
+    /// Convert computed RewardCommissions to RewardCommissionAccounts for storing.
     ///
-    /// This function processes vote rewards and consolidates them into a single
-    /// structure containing the pubkey, reward info, and updated account data
-    /// for each vote account. The resulting structure is optimized for storage
-    /// by combining previously separate rewards and accounts vectors into a
-    /// single accounts_with_rewards vector.
-    fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
-        let mut result = VoteRewardsAccounts {
-            accounts_with_rewards: Vec::with_capacity(vote_account_rewards.len()),
-            total_vote_rewards_lamports: 0,
+    /// This function processes reward commissions and consolidates them into a
+    /// single structure containing the pubkey, reward info, and updated account
+    /// data for each commission account. The resulting structure is optimized
+    /// for storage by combining previously separate rewards and accounts
+    /// vectors into a single accounts_with_rewards vector.
+    fn calculate_commission_accounts(
+        reward_commissions: RewardCommissions,
+    ) -> RewardCommissionAccounts {
+        let mut result = RewardCommissionAccounts {
+            accounts_with_rewards: Vec::with_capacity(reward_commissions.len()),
+            total_reward_commission_lamports: 0,
         };
         for (
-            vote_pubkey,
-            VoteReward {
-                mut vote_account,
+            commission_pubkey,
+            RewardCommission {
+                mut commission_account,
                 commission_bps,
-                vote_rewards,
+                commission_lamports,
             },
-        ) in vote_account_rewards
+        ) in reward_commissions
         {
-            if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
-                debug!("reward redemption failed for {vote_pubkey}: {err:?}");
+            if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
+                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
                 continue;
             }
 
             result.accounts_with_rewards.push((
-                vote_pubkey,
+                commission_pubkey,
                 RewardInfo {
                     reward_type: RewardType::Voting,
-                    lamports: vote_rewards as i64,
-                    post_balance: vote_account.lamports(),
+                    lamports: commission_lamports as i64,
+                    post_balance: commission_account.lamports(),
                     commission_bps: Some(commission_bps),
                 },
-                vote_account,
+                commission_account,
             ));
-            result.total_vote_rewards_lamports += vote_rewards;
+            result.total_reward_commission_lamports += commission_lamports;
         }
         result
     }
 
-    fn update_vote_rewards(&self, vote_rewards: &VoteRewardsAccounts) {
+    fn update_reward_commissions(&self, reward_commission_accounts: &RewardCommissionAccounts) {
         let mut rewards = self.rewards.write().unwrap();
-        rewards.reserve(vote_rewards.accounts_with_rewards.len());
-        vote_rewards
+        rewards.reserve(reward_commission_accounts.accounts_with_rewards.len());
+        reward_commission_accounts
             .accounts_with_rewards
             .iter()
-            .for_each(|(vote_pubkey, vote_reward, _)| {
-                rewards.push((*vote_pubkey, *vote_reward));
+            .for_each(|(commission_pubkey, reward_commission, _)| {
+                rewards.push((*commission_pubkey, *reward_commission));
             });
     }
 

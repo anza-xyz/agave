@@ -33,6 +33,8 @@ pub enum KeyUpdaterType {
     Bls,
     /// BLS all-to-all connection cache key updater
     BlsConnectionCache,
+    /// For QUIC voting
+    VoteClient,
 }
 
 /// Responsible for managing the updaters for identity key change
