@@ -299,7 +299,7 @@ fn insert_vote_and_create_bls_message(
             saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
         })
     } else {
-        Ok(BLSOp::PushVoteRefresh {
+        Ok(BLSOp::RefreshVote {
             message: Arc::new(message),
             slot: vote.slot(),
         })
