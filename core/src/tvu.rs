@@ -48,7 +48,7 @@ use {
     solana_ledger::{
         blockstore::Blockstore, blockstore_cleanup_service::BlockstoreCleanupService,
         blockstore_processor::TransactionStatusSender, entry_notifier_service::EntryNotifierSender,
-        leader_schedule_cache::LeaderScheduleCache,
+        leader_schedule_cache::LeaderScheduleCache, shred::filter::TurbineMode,
     },
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
@@ -205,7 +205,7 @@ impl Tvu {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         exit: Arc<AtomicBool>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        turbine_disabled: Arc<AtomicBool>,
+        turbine_mode: TurbineMode,
         transaction_status_sender: Option<TransactionStatusSender>,
         entry_notification_sender: Option<EntryNotifierSender>,
         vote_tracker: Arc<VoteTracker>,
@@ -346,7 +346,7 @@ impl Tvu {
             bank_forks.clone(),
             cluster_info.clone(),
             outstanding_repair_requests.clone(),
-            turbine_disabled,
+            turbine_mode,
             exit.clone(),
         );
 
@@ -817,7 +817,7 @@ pub mod tests {
             &leader_schedule_cache,
             exit.clone(),
             block_commitment_cache,
-            Arc::<AtomicBool>::default(),
+            TurbineMode::default(),
             None, // transaction_status_sender
             None, // entry_notification_sender
             Arc::<VoteTracker>::default(),

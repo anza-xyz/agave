@@ -17,10 +17,78 @@ use {
     solana_runtime::bank::Bank,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
-        sync::Arc,
+        sync::{
+            Arc,
+            atomic::{AtomicU8, Ordering},
+        },
         time::{Duration, Instant},
     },
 };
+
+/// Controls turbine and repair behavior for testing network partitions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TurbineModeKind {
+    /// Normal operation - turbine and repair both enabled.
+    #[default]
+    Enabled = 0,
+    /// Turbine disabled but repair still works.
+    TurbineDisabled = 1,
+    /// Both turbine and repair disabled.
+    TurbineAndRepairDisabled = 2,
+}
+
+impl TurbineModeKind {
+    fn should_discard_packet(self, is_repair: bool) -> bool {
+        match self {
+            Self::Enabled => false,
+            Self::TurbineDisabled => !is_repair,
+            Self::TurbineAndRepairDisabled => true,
+        }
+    }
+}
+
+impl From<u8> for TurbineModeKind {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Enabled,
+            1 => Self::TurbineDisabled,
+            2 => Self::TurbineAndRepairDisabled,
+            _ => Self::Enabled,
+        }
+    }
+}
+
+impl From<TurbineModeKind> for u8 {
+    fn from(mode: TurbineModeKind) -> Self {
+        mode as u8
+    }
+}
+
+/// Thread-safe wrapper around [`TurbineModeKind`] for dynamically controlling
+/// turbine and repair behavior at runtime.
+#[derive(Clone, Debug)]
+pub struct TurbineMode(Arc<AtomicU8>);
+
+impl TurbineMode {
+    pub fn new(kind: TurbineModeKind) -> Self {
+        Self(Arc::new(AtomicU8::new(kind as u8)))
+    }
+
+    pub fn get(&self) -> TurbineModeKind {
+        TurbineModeKind::from(self.0.load(Ordering::Relaxed))
+    }
+
+    pub fn set(&self, kind: TurbineModeKind) {
+        self.0.store(kind as u8, Ordering::Relaxed);
+    }
+}
+
+impl Default for TurbineMode {
+    fn default() -> Self {
+        Self::new(TurbineModeKind::default())
+    }
+}
 
 pub struct ShredFilterContext {
     last_updated: Instant,
@@ -32,6 +100,12 @@ pub struct ShredFilterContext {
 
     // Static from startup, filter out shreds of invalid version
     shred_version: u16,
+
+    // Filter on turbine / repair packets
+    turbine_mode: Option<TurbineMode>,
+    // Cache of above filter so that we don't have to incur an
+    // atomic load for each packet. This is recached during `maybe_update`
+    cached_turbine_mode: TurbineModeKind,
 
     // Whether to discard shreds that are not end of FEC set
     // but specify DATA_COMPLETE
@@ -48,11 +122,26 @@ pub struct ShredFilterContext {
 
 impl ShredFilterContext {
     pub fn new(root_bank: Arc<Bank>, shred_version: u16) -> Self {
-        Self::new_with_custom_shred_limits(
+        Self::new_with_custom_shred_limits_and_turbine_mode(
             root_bank,
             shred_version,
             MAX_DATA_SHREDS_PER_SLOT as u32,
             MAX_CODE_SHREDS_PER_SLOT as u32,
+            None,
+        )
+    }
+
+    pub fn new_with_turbine_mode(
+        root_bank: Arc<Bank>,
+        shred_version: u16,
+        turbine_mode: TurbineMode,
+    ) -> Self {
+        Self::new_with_custom_shred_limits_and_turbine_mode(
+            root_bank,
+            shred_version,
+            MAX_DATA_SHREDS_PER_SLOT as u32,
+            MAX_CODE_SHREDS_PER_SLOT as u32,
+            Some(turbine_mode),
         )
     }
 
@@ -62,11 +151,31 @@ impl ShredFilterContext {
         max_data_shreds_per_slot: u32,
         max_code_shreds_per_slot: u32,
     ) -> Self {
+        Self::new_with_custom_shred_limits_and_turbine_mode(
+            root_bank,
+            shred_version,
+            max_data_shreds_per_slot,
+            max_code_shreds_per_slot,
+            None,
+        )
+    }
+
+    fn new_with_custom_shred_limits_and_turbine_mode(
+        root_bank: Arc<Bank>,
+        shred_version: u16,
+        max_data_shreds_per_slot: u32,
+        max_code_shreds_per_slot: u32,
+        turbine_mode: Option<TurbineMode>,
+    ) -> Self {
         let root = root_bank.slot();
         let max_slot = max_shred_slot(root, root_bank.get_slots_in_epoch(root_bank.epoch()));
         let discard_unexpected_data_complete_shreds_feature_slot = root_bank
             .feature_set
             .activated_slot(&discard_unexpected_data_complete_shreds::id());
+        let cached_turbine_mode = turbine_mode
+            .as_ref()
+            .map(TurbineMode::get)
+            .unwrap_or_default();
 
         Self {
             last_updated: Instant::now(),
@@ -74,6 +183,8 @@ impl ShredFilterContext {
             max_slot,
             epoch_schedule: root_bank.epoch_schedule().clone(),
             shred_version,
+            turbine_mode,
+            cached_turbine_mode,
             discard_unexpected_data_complete_shreds_feature_slot,
             max_data_shreds_per_slot,
             max_code_shreds_per_slot,
@@ -85,6 +196,10 @@ impl ShredFilterContext {
     /// This is done to amortize the cost over multiple shreds, and delay in updating is completely
     /// acceptable as max shred / feature flag filtering has tolerance on the order of an epoch.
     pub fn maybe_update(&mut self, root_bank: Arc<Bank>) {
+        if let Some(turbine_mode) = self.turbine_mode.as_ref() {
+            self.cached_turbine_mode = turbine_mode.get();
+        }
+
         if self.last_updated.elapsed().as_nanos() > root_bank.ns_per_slot {
             self.last_updated = Instant::now();
             self.root = root_bank.slot();
@@ -111,6 +226,13 @@ impl ShredFilterContext {
     where
         P: Into<PacketRef<'a>>,
     {
+        let packet = packet.into();
+        if self
+            .cached_turbine_mode
+            .should_discard_packet(packet.meta().repair())
+        {
+            return true;
+        }
         let Some(shred) = layout::get_shred(packet) else {
             self.stats.index_overrun += 1;
             return true;
@@ -434,11 +556,12 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         solana_leader_schedule::SlotLeader,
-        solana_perf::packet::Packet,
+        solana_perf::packet::{Packet, PacketFlags},
         solana_runtime::bank::Bank,
         std::{
             io::{Cursor, Seek, SeekFrom, Write},
             sync::Arc,
+            time::Duration,
         },
         test_case::test_case,
     };
@@ -611,6 +734,46 @@ mod tests {
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_out_of_bounds, 1);
         }
+    }
+
+    #[test]
+    fn test_should_discard_packet_with_turbine_mode() {
+        agave_logger::setup();
+        let mut rng = rand::rng();
+        let root_bank = new_test_bank(0, false);
+        let shreds = make_merkle_shreds_for_tests(
+            &mut rng,
+            42,
+            1200 * 5, // data_size
+            false,    // is_last_in_slot
+        )
+        .unwrap();
+        let shred = Shred::from(shreds[0].clone());
+        let shred_version = shred.common_header().version;
+        let turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
+        let mut packet = Packet::default();
+        shred.copy_to_packet(&mut packet);
+
+        let mut shred_filter_context = ShredFilterContext::new_with_turbine_mode(
+            root_bank.clone(),
+            shred_version,
+            turbine_mode.clone(),
+        );
+        assert!(shred_filter_context.should_discard_packet(&packet));
+
+        packet.meta_mut().flags.insert(PacketFlags::REPAIR);
+        assert!(!shred_filter_context.should_discard_packet(&packet));
+
+        turbine_mode.set(TurbineModeKind::TurbineAndRepairDisabled);
+        shred_filter_context.last_updated = Instant::now() - Duration::from_secs(1);
+        shred_filter_context.maybe_update(root_bank.clone());
+        assert!(shred_filter_context.should_discard_packet(&packet));
+
+        packet.meta_mut().flags.remove(PacketFlags::REPAIR);
+        turbine_mode.set(TurbineModeKind::Enabled);
+        shred_filter_context.last_updated = Instant::now() - Duration::from_secs(1);
+        shred_filter_context.maybe_update(root_bank.clone());
+        assert!(!shred_filter_context.should_discard_packet(&packet));
     }
 
     #[test]
