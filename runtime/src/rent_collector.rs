@@ -50,7 +50,8 @@ impl RentCollector {
 
     pub(crate) fn deprecate_rent_exemption_threshold(&mut self) {
         let new_rent = Rent {
-            lamports_per_byte_year: (self.rent.lamports_per_byte_year as f64 * self.rent.exemption_threshold) as u64,
+            lamports_per_byte_year: (self.rent.lamports_per_byte_year as f64
+                * self.rent.exemption_threshold) as u64,
             exemption_threshold: 1.0,
             burn_percent: DEFAULT_BURN_PERCENT,
         };
