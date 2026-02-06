@@ -218,7 +218,7 @@ solana-fee = { workspace = true }
 solana-fee-calculator = "3.0.0"
 solana-fee-structure = "3.0.0"
 solana-genesis-config = "3.0.0"
-solana-hash = "3.1.0"
+solana-hash = "4.0.1"
 solana-instruction = { workspace = true }
 solana-keypair = "3.0.0"
 solana-ledger = { workspace = true }
