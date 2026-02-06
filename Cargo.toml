@@ -631,7 +631,7 @@ wasm-bindgen = "0.2"
 winapi = "0.3.8"
 wincode = { version = "0.2.5", features = ["derive", "solana-short-vec"] }
 winreg = "0.55"
-x509-parser = "0.18.0"
+x509-parser = "0.18.1"
 zstd = "0.13.3"
 
 [profile.release-with-debug]
