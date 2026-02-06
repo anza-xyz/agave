@@ -46,7 +46,15 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         let entry = &self.1[index];
-        callback((&self.1[index].stake_pubkey, &entry.stake_account).into())
+        callback((&entry.stake_pubkey, &entry.stake_account).into())
+    }
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        let entry = &self.1[index];
+        callback(&entry.stake_pubkey, &entry.stake_account)
     }
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.1[index].is_zero_lamport()

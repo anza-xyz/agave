@@ -507,18 +507,16 @@ impl ValidatorConfig {
         }
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn enable_default_rpc_block_subscribe(&mut self) {
-        let pubsub_config = PubSubConfig {
+        self.pubsub_config = PubSubConfig {
             enable_block_subscription: true,
-            ..PubSubConfig::default()
+            ..PubSubConfig::default_for_tests()
         };
-        let rpc_config = JsonRpcConfig {
+        self.rpc_config = JsonRpcConfig {
             enable_rpc_transaction_history: true,
             ..JsonRpcConfig::default_for_test()
         };
-
-        self.pubsub_config = pubsub_config;
-        self.rpc_config = rpc_config;
     }
 }
 
@@ -1451,11 +1449,13 @@ impl Validator {
         );
         let serve_repair = {
             let bank_forks_r = bank_forks.read().unwrap();
+            let leader_state = poh_recorder.read().unwrap().shared_leader_state();
             config.repair_handler_type.create_serve_repair(
                 blockstore.clone(),
                 cluster_info.clone(),
                 bank_forks_r.sharable_banks(),
                 config.repair_whitelist.clone(),
+                leader_state,
                 bank_forks_r.migration_status(),
             )
         };

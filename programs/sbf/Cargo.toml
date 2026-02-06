@@ -85,7 +85,7 @@ edition = "2021"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("custom-panic", "custom-heap"))',
+    'cfg(feature, values("custom-panic", "custom-heap", "sbpf-v3"))',
     'cfg(target_feature, values("dynamic-frames"))',
 ]
 
@@ -181,7 +181,8 @@ thiserror = "2.0"
 sbf_c = []
 sbf_rust = []
 sbf_sanity_list = []
-dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list"]
+sbpf-v3 = []
+dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list", "sbpf-v3"]
 # This was needed for ci
 frozen-abi = []
 

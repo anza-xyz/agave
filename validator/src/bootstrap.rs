@@ -1026,13 +1026,12 @@ fn retain_peer_snapshot_hashes_that_match_known_snapshot_hashes(
         known_snapshot_hashes
             .get(&peer_snapshot_hash.snapshot_hash.full)
             .map(|known_incremental_hashes| {
-                if peer_snapshot_hash.snapshot_hash.incr.is_none() {
+                if let Some(incr) = peer_snapshot_hash.snapshot_hash.incr.as_ref() {
+                    known_incremental_hashes.contains(incr)
+                } else {
                     // If the peer's full snapshot hashes match, but doesn't have any
                     // incremental snapshots, that's fine; keep 'em!
                     true
-                } else {
-                    known_incremental_hashes
-                        .contains(peer_snapshot_hash.snapshot_hash.incr.as_ref().unwrap())
                 }
             })
             .unwrap_or(false)

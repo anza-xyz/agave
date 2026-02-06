@@ -287,7 +287,7 @@ impl VoteStateHandle for VoteStateV3 {
         if bls_pubkey.is_some() {
             // We should not be able to reach here because we only call this function
             // when both Vote State V4 and BLS features are enabled.
-            // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
+            // See `is_vote_authorize_with_bls_enabled` in vote_processor.rs.
             return Err(InstructionError::InvalidAccountData);
         }
 
@@ -972,7 +972,7 @@ impl VoteStateHandler {
             VoteStateTargetVersion::V3 => {
                 // We should not be able to reach here because we only call this function
                 // when both Vote State V4 and BLS features are enabled.
-                // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
+                // See `is_vote_authorize_with_bls_enabled` in vote_processor.rs.
                 Err(InstructionError::InvalidInstructionData)
             }
             VoteStateTargetVersion::V4 => {
