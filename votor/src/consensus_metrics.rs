@@ -1,7 +1,7 @@
 use {
+    crate::welford_stats::WelfordStats,
     agave_votor_messages::vote::Vote,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
-    histogram::Histogram,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_metrics::datapoint_info,
@@ -46,37 +46,14 @@ pub enum ConsensusMetricsEvent {
 pub type ConsensusMetricsEventSender = Sender<(Instant, Vec<ConsensusMetricsEvent>)>;
 pub type ConsensusMetricsEventReceiver = Receiver<(Instant, Vec<ConsensusMetricsEvent>)>;
 
-/// Returns a [`Histogram`] configured for the use cases for this module.
-///
-/// Keeps the default precision and reduces the max value to 10s to get finer grained resolution.
-fn build_histogram() -> Histogram {
-    Histogram::configure()
-        .max_value(10_000_000)
-        .build()
-        .unwrap()
-}
-
 /// Tracks all [`Vote`] metrics for a given node.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct NodeVoteMetrics {
-    notar: Histogram,
-    notar_fallback: Histogram,
-    skip: Histogram,
-    skip_fallback: Histogram,
-    final_: Histogram,
-}
-
-impl Default for NodeVoteMetrics {
-    fn default() -> Self {
-        let histogram = build_histogram();
-        Self {
-            notar: histogram.clone(),
-            notar_fallback: histogram.clone(),
-            skip: histogram.clone(),
-            skip_fallback: histogram.clone(),
-            final_: histogram,
-        }
-    }
+    notar: WelfordStats,
+    notar_fallback: WelfordStats,
+    skip: WelfordStats,
+    skip_fallback: WelfordStats,
+    final_: WelfordStats,
 }
 
 impl NodeVoteMetrics {
@@ -93,21 +70,13 @@ impl NodeVoteMetrics {
                 return;
             }
         };
-        let res = match vote {
-            Vote::Notarize(_) => self.notar.increment(elapsed),
-            Vote::NotarizeFallback(_) => self.notar_fallback.increment(elapsed),
-            Vote::Skip(_) => self.skip.increment(elapsed),
-            Vote::SkipFallback(_) => self.skip_fallback.increment(elapsed),
-            Vote::Finalize(_) => self.final_.increment(elapsed),
-            Vote::Genesis(_) => Ok(()), // Only for migration, tracked elsewhere
-        };
-        match res {
-            Ok(()) => (),
-            Err(err) => {
-                warn!(
-                    "recording duration {elapsed} for vote {vote:?}: recording failed with {err}"
-                );
-            }
+        match vote {
+            Vote::Notarize(_) => self.notar.add_sample(elapsed),
+            Vote::NotarizeFallback(_) => self.notar_fallback.add_sample(elapsed),
+            Vote::Skip(_) => self.skip.add_sample(elapsed),
+            Vote::SkipFallback(_) => self.skip_fallback.add_sample(elapsed),
+            Vote::Finalize(_) => self.final_.add_sample(elapsed),
+            Vote::Genesis(_) => (), // Only for migration, tracked elsewhere
         }
     }
 }
@@ -133,7 +102,7 @@ struct EpochMetrics {
     node_metrics: BTreeMap<Pubkey, NodeVoteMetrics>,
 
     /// Used to track when this node received blocks from different leaders in the network.
-    leader_metrics: BTreeMap<Pubkey, Histogram>,
+    leader_metrics: BTreeMap<Pubkey, WelfordStats>,
 
     /// Counts number of times metrics recording failed.
     metrics_recording_failed: usize,
@@ -260,19 +229,11 @@ impl ConsensusMetrics {
                 return;
             }
         };
-        let histogram = epoch_metrics
+        epoch_metrics
             .leader_metrics
             .entry(leader)
-            .or_insert_with(build_histogram);
-        match histogram.increment(elapsed) {
-            Ok(()) => (),
-            Err(err) => {
-                warn!(
-                    "recording duration {elapsed} for block hash for slot {slot}: recording \
-                     failed with {err}"
-                );
-            }
-        }
+            .or_default()
+            .add_sample(elapsed);
     }
 
     /// Records when a given slot started.
@@ -314,42 +275,42 @@ impl ConsensusMetrics {
             datapoint_info!("consensus_vote_metrics",
                 "address" => addr,
                 ("epoch", epoch, i64),
-                ("notar_vote_count", metrics.notar.entries(), i64),
-                ("notar_vote_us_mean", metrics.notar.mean().ok(), Option<i64>),
-                ("notar_vote_us_stddev", metrics.notar.stddev(), Option<i64>),
-                ("notar_vote_us_maximum", metrics.notar.maximum().ok(), Option<i64>),
+                ("notar_vote_count", metrics.notar.count(), i64),
+                ("notar_vote_us_mean", metrics.notar.mean::<i64>(), Option<i64>),
+                ("notar_vote_us_stddev", metrics.notar.stddev::<i64>(), Option<i64>),
+                ("notar_vote_us_maximum", metrics.notar.maximum::<i64>(), Option<i64>),
 
-                ("notar_fallback_vote_count", metrics.notar_fallback.entries(), i64),
-                ("notar_fallback_vote_us_mean", metrics.notar_fallback.mean().ok(), Option<i64>),
-                ("notar_fallback_vote_us_stddev", metrics.notar_fallback.stddev(), Option<i64>),
-                ("notar_fallback_vote_us_maximum", metrics.notar_fallback.maximum().ok(), Option<i64>),
+                ("notar_fallback_vote_count", metrics.notar_fallback.count(), i64),
+                ("notar_fallback_vote_us_mean", metrics.notar_fallback.mean::<i64>(), Option<i64>),
+                ("notar_fallback_vote_us_stddev", metrics.notar_fallback.stddev::<i64>(), Option<i64>),
+                ("notar_fallback_vote_us_maximum", metrics.notar_fallback.maximum::<i64>(), Option<i64>),
 
-                ("skip_vote_count", metrics.skip.entries(), i64),
-                ("skip_vote_us_mean", metrics.skip.mean().ok(), Option<i64>),
-                ("skip_vote_us_stddev", metrics.skip.stddev(), Option<i64>),
-                ("skip_vote_us_maximum", metrics.skip.maximum().ok(), Option<i64>),
+                ("skip_vote_count", metrics.skip.count(), i64),
+                ("skip_vote_us_mean", metrics.skip.mean::<i64>(), Option<i64>),
+                ("skip_vote_us_stddev", metrics.skip.stddev::<i64>(), Option<i64>),
+                ("skip_vote_us_maximum", metrics.skip.maximum::<i64>(), Option<i64>),
 
-                ("skip_fallback_vote_count", metrics.skip_fallback.entries(), i64),
-                ("skip_fallback_vote_us_mean", metrics.skip_fallback.mean().ok(), Option<i64>),
-                ("skip_fallback_vote_us_stddev", metrics.skip_fallback.stddev(), Option<i64>),
-                ("skip_fallback_vote_us_maximum", metrics.skip_fallback.maximum().ok(), Option<i64>),
+                ("skip_fallback_vote_count", metrics.skip_fallback.count(), i64),
+                ("skip_fallback_vote_us_mean", metrics.skip_fallback.mean::<i64>(), Option<i64>),
+                ("skip_fallback_vote_us_stddev", metrics.skip_fallback.stddev::<i64>(), Option<i64>),
+                ("skip_fallback_vote_us_maximum", metrics.skip_fallback.maximum::<i64>(), Option<i64>),
 
-                ("finalize_vote_count", metrics.final_.entries(), i64),
-                ("finalize_vote_us_mean", metrics.final_.mean().ok(), Option<i64>),
-                ("finalize_vote_us_stddev", metrics.final_.stddev(), Option<i64>),
-                ("finalize_vote_us_maximum", metrics.final_.maximum().ok(), Option<i64>),
+                ("finalize_vote_count", metrics.final_.count(), i64),
+                ("finalize_vote_us_mean", metrics.final_.mean::<i64>(), Option<i64>),
+                ("finalize_vote_us_stddev", metrics.final_.stddev::<i64>(), Option<i64>),
+                ("finalize_vote_us_maximum", metrics.final_.maximum::<i64>(), Option<i64>),
             );
         }
 
-        for (addr, histogram) in &epoch_metrics.leader_metrics {
+        for (addr, stats) in &epoch_metrics.leader_metrics {
             let addr = addr.to_string();
             datapoint_info!("consensus_block_hash_seen_metrics",
                 "address" => addr,
                 ("epoch", epoch, i64),
-                ("block_hash_seen_count", histogram.entries(), i64),
-                ("block_hash_seen_us_mean", histogram.mean().ok(), Option<i64>),
-                ("block_hash_seen_us_stddev", histogram.stddev(), Option<i64>),
-                ("block_hash_seen_us_maximum", histogram.maximum().ok(), Option<i64>),
+                ("block_hash_seen_count", stats.count(), i64),
+                ("block_hash_seen_us_mean", stats.mean::<i64>(), Option<i64>),
+                ("block_hash_seen_us_stddev", stats.stddev::<i64>(), Option<i64>),
+                ("block_hash_seen_us_maximum", stats.maximum::<i64>(), Option<i64>),
             );
         }
 
@@ -416,8 +377,8 @@ mod tests {
         metrics.record_vote(pubkey, &Vote::Skip(SkipVote { slot: 42 }), Instant::now());
 
         let node = &metrics.epoch_metrics[&0].node_metrics[&pubkey];
-        assert_eq!(node.skip.entries(), 1);
-        assert!(node.skip.mean().unwrap() > 0);
+        assert_eq!(node.skip.count(), 1);
+        assert!(node.skip.mean::<i64>().unwrap() > 0);
     }
 
     #[test]
@@ -503,9 +464,6 @@ mod tests {
         metrics.record_start_of_slot(42, Instant::now());
         metrics.record_block_hash_seen(leader, 42, Instant::now());
 
-        assert_eq!(
-            metrics.epoch_metrics[&0].leader_metrics[&leader].entries(),
-            1
-        );
+        assert_eq!(metrics.epoch_metrics[&0].leader_metrics[&leader].count(), 1);
     }
 }

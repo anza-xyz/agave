@@ -7979,8 +7979,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &tower_storage,
             vote_info,
-            &Arc::new(connection_cache),
-            &None,
+            Arc::new(connection_cache),
         );
 
         let mut cursor = Cursor::default();
@@ -8078,8 +8077,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &tower_storage,
             vote_info,
-            &Arc::new(connection_cache),
-            &None,
+            Arc::new(connection_cache),
         );
 
         let votes = cluster_info.get_votes(&mut cursor);
@@ -8207,8 +8205,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &tower_storage,
             vote_info,
-            &Arc::new(connection_cache),
-            &None,
+            Arc::new(connection_cache),
         );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
@@ -8350,8 +8347,7 @@ pub(crate) mod tests {
             poh_recorder,
             tower_storage,
             vote_info,
-            &Arc::new(connection_cache),
-            &None,
+            Arc::new(connection_cache),
         );
 
         let votes = cluster_info.get_votes(cursor);

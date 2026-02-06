@@ -10,7 +10,6 @@ members = [
     "banks-interface",
     "banks-server",
     "bench-streamer",
-    "bench-vote",
     "bloom",
     "bls12-381",
     "bucket_map",
@@ -213,7 +212,7 @@ agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", fe
 agave-xdp = { path = "xdp", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 ahash = "0.8.12"
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 aquamarine = "0.6.0"
 arbitrary = "1.4.2"
 arc-swap = "1.8.1"
@@ -257,7 +256,7 @@ console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.35"
 core_affinity = "0.8.3"
-criterion = "0.8.1"
+criterion = "0.8.2"
 criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
@@ -350,7 +349,7 @@ pretty-hex = "0.4.1"
 pretty_assertions = "1.4.1"
 prio-graph = "0.3.0"
 proc-macro2 = "1.0.106"
-proptest = "1.9"
+proptest = "1.10"
 prost = "0.11.9"
 prost-build = "0.11.9"
 prost-types = "0.11.9"
@@ -461,7 +460,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=4.0.0-alpha.0", fea
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hard-forks = "3.0.0"
-solana-hash = "3.1.0"
+solana-hash = "4.0.1"
 solana-inflation = "3.0.0"
 solana-instruction = "3.1.0"
 solana-instruction-error = "2.1.0"

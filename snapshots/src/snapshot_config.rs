@@ -48,9 +48,6 @@ pub struct SnapshotConfig {
     /// Maximum number of incremental snapshot archives to retain
     /// NOTE: Incremental snapshots will only be kept for the latest full snapshot
     pub maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
-
-    // Thread niceness adjustment for snapshot packager service
-    pub packager_thread_niceness_adj: i8,
 }
 
 impl Default for SnapshotConfig {
@@ -73,7 +70,6 @@ impl Default for SnapshotConfig {
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             maximum_incremental_snapshot_archives_to_retain:
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            packager_thread_niceness_adj: 0,
         }
     }
 }

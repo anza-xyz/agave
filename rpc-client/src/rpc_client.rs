@@ -3021,19 +3021,6 @@ impl RpcClient {
         )
     }
 
-    #[deprecated(
-        note = "Use `get_ui_account_with_config()` instead. This function will be removed in a \
-                future version of `solana_rpc_client`."
-    )]
-    pub fn get_account_with_config(
-        &self,
-        pubkey: &Pubkey,
-        config: RpcAccountInfoConfig,
-    ) -> RpcResult<Option<Account>> {
-        #[allow(deprecated)]
-        self.invoke((self.rpc_client.as_ref()).get_account_with_config(pubkey, config))
-    }
-
     /// Returns all information associated with the account of the provided pubkey.
     ///
     /// If the account does not exist, this method returns `Ok(None)`.
@@ -3194,19 +3181,6 @@ impl RpcClient {
             (self.rpc_client.as_ref())
                 .get_multiple_accounts_with_commitment(pubkeys, commitment_config),
         )
-    }
-
-    #[deprecated(
-        note = "Use `get_multiple_ui_accounts_with_config()` instead. This function will be \
-                removed in a future version of `solana_rpc_client`."
-    )]
-    pub fn get_multiple_accounts_with_config(
-        &self,
-        pubkeys: &[Pubkey],
-        config: RpcAccountInfoConfig,
-    ) -> RpcResult<Vec<Option<Account>>> {
-        #[allow(deprecated)]
-        self.invoke((self.rpc_client.as_ref()).get_multiple_accounts_with_config(pubkeys, config))
     }
 
     /// Returns the account information for a list of pubkeys.
@@ -3401,19 +3375,6 @@ impl RpcClient {
     /// ```
     pub fn get_program_accounts(&self, pubkey: &Pubkey) -> ClientResult<Vec<(Pubkey, Account)>> {
         self.invoke((self.rpc_client.as_ref()).get_program_accounts(pubkey))
-    }
-
-    #[deprecated(
-        note = "Use `get_program_ui_accounts_with_config()` instead. This function will be \
-                removed in a future version of `solana_rpc_client`."
-    )]
-    pub fn get_program_accounts_with_config(
-        &self,
-        pubkey: &Pubkey,
-        config: RpcProgramAccountsConfig,
-    ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        #[allow(deprecated)]
-        self.invoke((self.rpc_client.as_ref()).get_program_accounts_with_config(pubkey, config))
     }
 
     /// Returns all accounts owned by the provided program pubkey.
@@ -4098,7 +4059,7 @@ mod tests {
             pubkey: pubkey.to_string(),
             account: encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None),
         };
-        let expected_result = vec![(pubkey, account.clone())];
+        let expected_result = vec![(pubkey, keyed_account.account.clone())];
         // Test: without context
         {
             let mocks: Mocks = [(
@@ -4109,9 +4070,8 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let result = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4145,9 +4105,8 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let result = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4168,11 +4127,11 @@ mod tests {
         // Test: Mock with duplicate requests
         {
             let expected_result = vec![
-                (pubkey, account.clone()),
-                (pubkey, account.clone()),
-                (pubkey, account.clone()),
-                (pubkey, account.clone()),
-                (pubkey, account.clone()),
+                (pubkey, keyed_account.account.clone()),
+                (pubkey, keyed_account.account.clone()),
+                (pubkey, keyed_account.account.clone()),
+                (pubkey, keyed_account.account.clone()),
+                (pubkey, keyed_account.account.clone()),
             ];
 
             let mut mocks: MocksMap = [
@@ -4231,9 +4190,8 @@ mod tests {
             );
 
             let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let mut result1 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4251,9 +4209,8 @@ mod tests {
 
             assert_eq!(result1.len(), 1);
 
-            #[allow(deprecated)]
             let result2 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4271,9 +4228,8 @@ mod tests {
 
             assert_eq!(result2.len(), 1);
 
-            #[allow(deprecated)]
             let result_3 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4291,9 +4247,8 @@ mod tests {
 
             assert_eq!(result_3.len(), 3);
 
-            #[allow(deprecated)]
             let result_4 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
