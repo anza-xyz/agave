@@ -596,11 +596,11 @@ impl Tvu {
         self.cluster_slots_service.join()?;
         self.fetch_stage.join()?;
         self.shred_sigverify.join()?;
-        if self.blockstore_cleanup_service.is_some() {
-            self.blockstore_cleanup_service.unwrap().join()?;
+        if let Some(cleanup_service) = self.blockstore_cleanup_service {
+            cleanup_service.join()?;
         }
-        if self.replay_stage.is_some() {
-            self.replay_stage.unwrap().join()?;
+        if let Some(replay_stage) = self.replay_stage {
+            replay_stage.join()?;
         }
         self.cost_update_service.join()?;
         self.voting_service.join()?;

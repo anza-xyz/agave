@@ -84,7 +84,7 @@ where
                 InstructionError::InvalidInstructionData
             })?;
         proof_data.verify_proof().map_err(|err| {
-            ic_msg!(invoke_context, "proof_verification failed: {:?}", err);
+            ic_msg!(invoke_context, "proof verification failed: {:?}", err);
             InstructionError::InvalidInstructionData
         })?;
 

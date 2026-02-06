@@ -327,7 +327,7 @@ mod tests {
     use {
         super::*,
         crate::cost_model::CostModel,
-        agave_feature_set::FeatureSet,
+        agave_feature_set::{bls_pubkey_management_in_vote_account, FeatureSet},
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -336,7 +336,7 @@ mod tests {
         solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::TowerSync,
-        test_case::test_case,
+        test_case::test_matrix,
     };
 
     fn get_example_transaction() -> VersionedTransaction {
@@ -355,15 +355,26 @@ mod tests {
         VersionedTransaction::from(transaction)
     }
 
-    #[test_case(false; "using static cost for simple vote")]
-    #[test_case(true; "not using static cost for simple vote")]
-    fn test_vote_transaction_cost(stop_use_static_simple_vote_tx_cost: bool) {
+    #[test_matrix(
+        [false, true],
+        [false, true]
+    )]
+    fn test_vote_transaction_cost(
+        stop_use_static_simple_vote_tx_cost: bool,
+        simd_0387_enabled: bool,
+    ) {
+        // SIMD-0387 requires `stop_use_static_simple_vote_tx_cost`.
+        if simd_0387_enabled && !stop_use_static_simple_vote_tx_cost {
+            return;
+        }
+
         agave_logger::setup();
 
         use {
             crate::block_cost_limits::INSTRUCTION_DATA_BYTES_COST,
             solana_compute_budget::compute_budget_limits::{
-                MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             },
         };
 
@@ -379,9 +390,18 @@ mod tests {
         )
         .unwrap();
 
+        let mut feature_set = FeatureSet::all_enabled();
+        if !stop_use_static_simple_vote_tx_cost {
+            feature_set.deactivate(&agave_feature_set::stop_use_static_simple_vote_tx_cost::id());
+        }
+        if !simd_0387_enabled {
+            feature_set.deactivate(&bls_pubkey_management_in_vote_account::id());
+        }
+
         // Verify actual cost matches expected.
-        let (feature_set, expected_cost) = if stop_use_static_simple_vote_tx_cost {
-            let feature_set = FeatureSet::all_enabled();
+        let expected_cost = if !stop_use_static_simple_vote_tx_cost {
+            SIMPLE_VOTE_USAGE_COST
+        } else {
             // when feature `stop-use-static-simple-vote-tx-cost` is enabled, vote transaction
             // cost is calculated based on its UsageCostDetails too:
             //
@@ -391,8 +411,14 @@ mod tests {
             let write_lock_cost = 2 * block_cost_limits::WRITE_LOCK_UNITS;
             let data_bytes_cost =
                 vote_transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16);
-            // it's estimated execution cost is default builtin cost
-            let programs_execution_cost = MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT as u64;
+            // Estimated execution cost depends on whether the Vote program is
+            // tracked in cost modeling as a builtin.
+            let programs_execution_cost = if simd_0387_enabled {
+                // SIMD-0387: Vote program removed from builtin cost modeling.
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64
+            } else {
+                MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT as u64
+            };
             // and it has default loaded_account_data_size
             let loaded_accounts_data_size_cost =
                 CostModel::calculate_loaded_accounts_data_size_cost(
@@ -408,11 +434,7 @@ mod tests {
                 loaded_accounts_data_size_cost,
                 allocated_accounts_data_size: 0,
             };
-            (feature_set, vote_program_usage_details.sum())
-        } else {
-            let mut feature_set = FeatureSet::all_enabled();
-            feature_set.deactivate(&agave_feature_set::stop_use_static_simple_vote_tx_cost::id());
-            (feature_set, SIMPLE_VOTE_USAGE_COST)
+            vote_program_usage_details.sum()
         };
 
         let vote_cost = CostModel::calculate_cost(&vote_transaction, &feature_set);
@@ -439,17 +461,38 @@ mod tests {
         let signature_cost = 1440;
         let write_lock_cost = 600;
         let data_bytes_cost = 19;
-        let programs_execution_cost = 3000;
         let loaded_accounts_data_size_cost = 16384;
-        let expected_non_vote_cost = signature_cost
-            + write_lock_cost
-            + data_bytes_cost
-            + programs_execution_cost
-            + loaded_accounts_data_size_cost;
 
-        // Verify actual cost matches expected.
-        let non_vote_cost =
-            CostModel::calculate_cost(&non_vote_transaction, &FeatureSet::all_enabled());
-        assert_eq!(expected_non_vote_cost, non_vote_cost.sum());
+        let compute_expected_non_vote_cost = |programs_execution_cost: u64| {
+            signature_cost
+                + write_lock_cost
+                + data_bytes_cost
+                + programs_execution_cost
+                + loaded_accounts_data_size_cost
+        };
+
+        // SIMD-0387 inactive.
+        // Vote program uses builtin cost modeling (3,000 CUs).
+        {
+            let mut feature_set = FeatureSet::all_enabled();
+            feature_set.deactivate(&bls_pubkey_management_in_vote_account::id());
+
+            let expected_non_vote_cost = compute_expected_non_vote_cost(3_000);
+
+            let non_vote_cost = CostModel::calculate_cost(&non_vote_transaction, &feature_set);
+            assert_eq!(expected_non_vote_cost, non_vote_cost.sum());
+        }
+
+        // SIMD-0387 active.
+        // Vote program removed from builtin cost modeling.
+        // Uses the default non-builtin cost (200,000 CUs).
+        {
+            let feature_set = FeatureSet::all_enabled();
+
+            let expected_non_vote_cost = compute_expected_non_vote_cost(200_000);
+
+            let non_vote_cost = CostModel::calculate_cost(&non_vote_transaction, &feature_set);
+            assert_eq!(expected_non_vote_cost, non_vote_cost.sum());
+        }
     }
 }

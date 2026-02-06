@@ -37,10 +37,10 @@ bitvec = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
-histogram = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
+num-traits = { workspace = true }
 parking_lot = { workspace = true }
 qualifier_attr = { workspace = true }
 rayon = { workspace = true }
@@ -83,7 +83,7 @@ solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-votor = { path = ".", features = ["dev-context-only-utils"] }
+agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 rand = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }

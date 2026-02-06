@@ -254,9 +254,6 @@ impl EventHandler {
                         slot,
                     });
                 }
-                consensus_metrics_events.push(ConsensusMetricsEvent::MaybeNewEpoch {
-                    epoch: bank.epoch(),
-                });
                 vctx.consensus_metrics_sender
                     .send((now, consensus_metrics_events))
                     .map_err(|_| SendError(()))?;
@@ -428,6 +425,12 @@ impl EventHandler {
                         &mut votes,
                     )?;
                 }
+                vctx.consensus_metrics_sender
+                    .send((
+                        Instant::now(),
+                        vec![ConsensusMetricsEvent::SlotFinalized { slot: block.0 }],
+                    ))
+                    .map_err(|_| SendError(()))?;
             }
 
             // We have not observed a finalization certificate in a while, refresh our votes

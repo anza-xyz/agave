@@ -1503,7 +1503,7 @@ mod tests {
         super::*,
         crate::accounts_index::{
             bucket_map_holder::ThresholdEntriesPerBin, AccountsIndexConfig, IndexLimit,
-            ACCOUNTS_INDEX_CONFIG_FOR_TESTING, BINS_FOR_TESTING,
+            IndexLimitThreshold, ACCOUNTS_INDEX_CONFIG_FOR_TESTING, BINS_FOR_TESTING,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -2565,13 +2565,19 @@ mod tests {
     #[test]
     fn test_write_startup_info() {
         let num_bins = 1;
+        let num_entries_overhead = 300;
+        let num_entries_to_evict = 200;
         let config = AccountsIndexConfig {
             bins: Some(num_bins),
             index_limit: {
                 // Ensure we use an IndexLimit that (1) enables the disk index,
                 // and (2) is a valid threshold, as per the logic in BucketMapHolder::new().
                 // We will override the threshold afterwards, so the actual value doesn't matter.
-                IndexLimit::Threshold(25_000_000_000)
+                IndexLimit::Threshold(IndexLimitThreshold {
+                    num_bytes: 25_000_000_000,
+                    num_entries_overhead,
+                    num_entries_to_evict,
+                })
             },
             ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
         };
@@ -2579,9 +2585,9 @@ mod tests {
 
         // Override the threshold values to make testing faster.
         let low_water_mark = 100;
-        let high_water_mark = low_water_mark + 200;
+        let high_water_mark = low_water_mark + num_entries_to_evict;
         holder.threshold_entries_per_bin = Some(ThresholdEntriesPerBin {
-            _target_entries: high_water_mark + 300,
+            _target_entries: high_water_mark + num_entries_overhead,
             high_water_mark,
             low_water_mark,
         });
