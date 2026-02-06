@@ -246,27 +246,20 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
     let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
 
     let mut c = 0;
-    let mut total_shrink_time = 0;
     let mut total_verify_time = 0;
 
     bencher.iter(|| {
-        let batches = batches0.clone();
-        let (pre_shrink_time_us, _pre_shrink_total, batches) =
-            SigVerifyStage::maybe_shrink_batches(batches);
-
         let mut verify_time = Measure::start("sigverify_batch_time");
-        let _batches = verifier.verify_batches(batches, num_valid_packets);
+        let _batches = verifier.verify_batches(batches0.clone(), num_valid_packets);
         verify_time.stop();
 
         c += 1;
-        total_shrink_time += pre_shrink_time_us;
         total_verify_time += verify_time.as_us();
     });
 
     error!(
-        "bsv, {}, {}, {}",
+        "bsv, {}, {}",
         discard_factor,
-        (total_shrink_time as f64) / (c as f64),
         (total_verify_time as f64) / (c as f64),
     );
 }
