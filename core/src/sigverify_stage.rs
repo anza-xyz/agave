@@ -43,8 +43,11 @@ pub struct SigVerifyStage {
 
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
-    fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
+    fn verify_and_send_packets(
+        &mut self,
+        batches: Vec<PacketBatch>,
+        valid_packets: usize,
+    ) -> Result<usize, Self::SendType>;
 }
 
 #[derive(Clone)]
@@ -166,17 +169,13 @@ impl SigVerifierStats {
 
 impl SigVerifier for DisabledSigVerifier {
     type SendType = ();
-    fn verify_batches(
-        &self,
+    fn verify_and_send_packets(
+        &mut self,
         mut batches: Vec<PacketBatch>,
         _valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Result<usize, Self::SendType> {
         sigverify::ed25519_verify_disabled(&self.thread_pool, &mut batches);
-        batches
-    }
-
-    fn send_packets(&mut self, _packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType> {
-        Ok(())
+        Ok(count_valid_packets(&batches))
     }
 }
 
@@ -242,11 +241,8 @@ impl SigVerifyStage {
         let num_packets_to_verify = num_unique;
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        let batches = verifier.verify_batches(batches, num_packets_to_verify);
-        let num_valid_packets = count_valid_packets(&batches);
+        let num_valid_packets = verifier.verify_and_send_packets(batches, num_packets_to_verify)?;
         verify_time.stop();
-
-        verifier.send_packets(batches)?;
 
         debug!(
             "@{:?} verifier: done. batches: {} total verify time: {:?} verified: {} v/s {}",
