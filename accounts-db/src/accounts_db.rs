@@ -6546,8 +6546,10 @@ impl AccountsDb {
                     total_duplicate_slot_keys.fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
                     let unique_keys =
                         HashSet::<Pubkey>::from_iter(slot_keys.iter().map(|(_, key)| *key));
-                    for (slot, key) in slot_keys {
-                        self.uncleaned_pubkeys.entry(slot).or_default().push(key);
+                    if self.mark_obsolete_accounts == MarkObsoleteAccounts::Disabled {
+                        for (slot, key) in slot_keys {
+                            self.uncleaned_pubkeys.entry(slot).or_default().push(key);
+                        }
                     }
                     let unique_pubkeys_by_bin_inner = unique_keys.into_iter().collect::<Vec<_>>();
                     total_num_unique_duplicate_keys
