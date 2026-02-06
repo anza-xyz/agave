@@ -472,8 +472,6 @@ dependencies = [
  "solana-validator-exit",
  "solana-version",
  "solana-vote-program",
- "spl-generic-token",
- "spl-token-2022-interface",
  "symlink",
  "tempfile",
  "test-case",
