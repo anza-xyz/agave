@@ -6281,20 +6281,23 @@ impl AccountsDb {
         // for later cleaning. If there is just a single item, there is no cleaning to
         // be done on that pubkey. Use only those pubkeys with multiple updates.
         if !zero_lamport_pubkeys.is_empty() {
-            let old = self
-                .uncleaned_pubkeys
-                .insert(slot, zero_lamport_pubkeys.clone());
+            // If obsolete accounts are enabled, add them as single ref accounts here
+            // to avoid having to revisit them later
+            // This is safe with obsolete accounts as all zero lamport accounts will be single ref
+            // or obsolete by the end of index generation
+            let uncleaned_to_insert = if self.mark_obsolete_accounts
+                == MarkObsoleteAccounts::Enabled
+            {
+                storage.batch_insert_zero_lamport_single_ref_account_offsets(&zero_lamport_offsets);
+                mem::take(&mut zero_lamport_pubkeys)
+            } else {
+                zero_lamport_pubkeys.clone()
+            };
+
+            let old = self.uncleaned_pubkeys.insert(slot, uncleaned_to_insert);
             assert!(old.is_none());
         }
 
-        // If obsolete accounts are enabled, add them as single ref accounts here
-        // to avoid having to revisit them later
-        // This is safe with obsolete accounts as all zero lamport accounts will be single ref
-        // or obsolete by the end of index generation
-        if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-            storage.batch_insert_zero_lamport_single_ref_account_offsets(&zero_lamport_offsets);
-            zero_lamport_pubkeys = Vec::new();
-        }
         SlotIndexGenerationInfo {
             insert_time_us,
             num_accounts: insert_info.count as u64,
