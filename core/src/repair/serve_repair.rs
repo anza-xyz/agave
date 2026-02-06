@@ -40,12 +40,9 @@ use {
     solana_hash::{HASH_BYTES, Hash},
     solana_keypair::{Keypair, signable::Signable},
     solana_ledger::shred::{self, Nonce, SIZE_OF_NONCE, ShredFetchStats},
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
-    solana_perf::{
-        data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
-    },
+    solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_runtime::bank_forks::SharableBanks,
@@ -703,7 +700,7 @@ impl ServeRepair {
         response_sender: &PacketBatchSender,
         repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
-        data_budget: &DataBudget,
+        data_budget: &TokenBucket,
     ) -> std::result::Result<(), RecvTimeoutError> {
         /// How much more expensive it is to serve bytes if we are a leader
         const LEADER_BYTE_COST_MULTIPLIER: usize = 10;
@@ -768,7 +765,7 @@ impl ServeRepair {
             // Estimate how much data budget we have left, 2x margin to prioritize staked,
             // apply byte cost multiplier here so we can operate in bytes inside decode_requests
             let effective_data_budget_estimate =
-                data_budget.get().saturating_mul(2) / byte_cost_multiplier;
+                (data_budget.current_tokens() as usize).saturating_mul(2) / byte_cost_multiplier;
             // staked requests (as those get filtered after sigverify)
             let whitelist = self.repair_whitelist.read().unwrap();
             Self::decode_requests(
@@ -907,9 +904,7 @@ impl ServeRepair {
         repair_response_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        const INTERVAL_MS: u64 = 1000;
-        const MAX_BYTES_PER_SECOND: usize = 12_000_000;
-        const MAX_BYTES_PER_INTERVAL: usize = MAX_BYTES_PER_SECOND * INTERVAL_MS as usize / 1000;
+        const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
 
         // rate limit delay should be greater than the repair request iteration delay
         assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
@@ -928,7 +923,11 @@ impl ServeRepair {
             .spawn(move || {
                 let mut last_print = Instant::now();
                 let mut stats = ServeRepairStats::default();
-                let data_budget = DataBudget::new(MAX_BYTES_PER_INTERVAL);
+                let data_budget = TokenBucket::new(
+                    MAX_BYTES_PER_SECOND,
+                    MAX_BYTES_PER_SECOND,
+                    MAX_BYTES_PER_SECOND as f64,
+                );
                 while !exit.load(Ordering::Relaxed) {
                     let result = self.run_listen(
                         &mut ping_cache,
@@ -950,7 +949,6 @@ impl ServeRepair {
                         self.report_reset_stats(&mut stats);
                         last_print = Instant::now();
                     }
-                    data_budget.update(INTERVAL_MS, |_bytes| MAX_BYTES_PER_INTERVAL);
                 }
             })
             .unwrap()
@@ -1070,7 +1068,7 @@ impl ServeRepair {
         packet_batch_sender: &PacketBatchSender,
         repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
-        data_budget: &DataBudget,
+        data_budget: &TokenBucket,
         byte_cost_multiplier: usize,
     ) {
         let identity_keypair = self.cluster_info.keypair();
@@ -1087,7 +1085,10 @@ impl ServeRepair {
             // we deliberately consume early assuming that request succeeds,
             // if it does we will refund the unused tokens
             let max_response_cost = request.max_response_bytes() * byte_cost_multiplier;
-            if !data_budget.take(max_response_cost) {
+            if data_budget
+                .consume_tokens(max_response_cost as u64)
+                .is_err()
+            {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
@@ -1099,6 +1100,8 @@ impl ServeRepair {
                     pending_pings.push(ping_pkt);
                 }
                 if !check {
+                    // return all borrowed tokens
+                    data_budget.add_tokens(max_response_cost as u64);
                     stats.ping_cache_check_failed += 1;
                     continue;
                 }
@@ -1110,9 +1113,10 @@ impl ServeRepair {
             };
             let num_response_packets = rsp.len();
             let num_response_bytes: usize = rsp.iter().map(|p| p.meta().size).sum();
-            // refund unused bytes if we can only serve the request partially
-            data_budget
-                .put(max_response_cost.saturating_sub(num_response_bytes * byte_cost_multiplier));
+            // refund unused tokens if we can only serve the request partially
+            let actually_used_cost = num_response_bytes * byte_cost_multiplier;
+            debug_assert!(max_response_cost >= actually_used_cost);
+            data_budget.add_tokens(max_response_cost.saturating_sub(actually_used_cost) as u64);
             if send_response(
                 rsp,
                 protocol,
