@@ -89,7 +89,7 @@ use {
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
-        thread::{self, sleep},
+        thread,
         time::{Duration, Instant},
     },
     tempfile::TempDir,
@@ -3742,7 +3742,7 @@ impl AccountsDb {
         #[cfg(test)]
         {
             // Give some time for cache flushing to occur here for unit tests
-            sleep(Duration::from_millis(self.load_delay));
+            thread::sleep(Duration::from_millis(self.load_delay));
         }
 
         // Failsafe for potential race conditions with other subsystems
@@ -4908,7 +4908,7 @@ impl AccountsDb {
                 #[cfg(test)]
                 {
                     // Give some time for cache flushing to occur here for unit tests
-                    sleep(Duration::from_millis(self.load_delay));
+                    thread::sleep(Duration::from_millis(self.load_delay));
                 }
                 // Since we added the slot to `slots_under_contention` AND this slot
                 // still exists in the cache, we know the slot cannot be removed
@@ -6391,7 +6391,6 @@ impl AccountsDb {
                             let mut state = IndexGenerationThreadState::default();
                             let mut reader = append_vec::new_scan_accounts_reader();
                             for next_item in storages_orderer.iter() {
-                                self.maybe_throttle_index_generation();
                                 let storage = next_item.storage;
                                 let slot_info =
                                     self.generate_index_for_slot(&mut reader, &mut state, storage);
@@ -6744,32 +6743,6 @@ impl AccountsDb {
             })
             .sum();
         stats
-    }
-
-    /// Startup processes can consume large amounts of memory while inserting accounts into the index as fast as possible.
-    /// Calling this can slow down the insertion process to allow flushing to disk to keep pace.
-    fn maybe_throttle_index_generation(&self) {
-        // Only throttle if we are generating on-disk index. Throttling is not needed for in-mem index.
-        if !self.accounts_index.is_disk_index_enabled() {
-            return;
-        }
-        // This number is chosen to keep the initial ram usage sufficiently small
-        // The process of generating the index is governed entirely by how fast the disk index can be populated.
-        // 10M accounts is sufficiently small that it will never have memory usage. It seems sufficiently large that it will provide sufficient performance.
-        // Performance is measured by total time to generate the index.
-        // Just estimating - 150M accounts can easily be held in memory in the accounts index on a 256G machine. 2-300M are also likely 'fine' during startup.
-        // 550M was straining a 384G machine at startup.
-        // This is a tunable parameter that just needs to be small enough to keep the generation threads from overwhelming RAM and oom at startup.
-        const LIMIT: usize = 10_000_000;
-        while self
-            .accounts_index
-            .get_startup_remaining_items_to_flush_estimate()
-            > LIMIT
-        {
-            // 10 ms is long enough to allow some flushing to occur before insertion is resumed.
-            // callers of this are typically run in parallel, so many threads will be sleeping at different starting intervals, waiting to resume insertion.
-            sleep(Duration::from_millis(10));
-        }
     }
 
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on

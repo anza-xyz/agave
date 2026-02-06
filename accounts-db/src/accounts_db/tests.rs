@@ -20,7 +20,7 @@ use {
         ops::Range,
         str::FromStr,
         sync::{atomic::AtomicBool, RwLock},
-        thread::{self, Builder, JoinHandle},
+        thread::{self, sleep, Builder, JoinHandle},
     },
     test_case::{test_case, test_matrix},
 };
