@@ -56,12 +56,18 @@ impl SigVerifier for BenchSigVerifier {
         &mut self,
         mut batches: Vec<PacketBatch>,
         valid_packets: usize,
-    ) -> Result<usize, SigVerifyServiceError<Self::SendType>> {
+        total_valid_packets: Arc<AtomicUsize>,
+        total_verify_time_us: Arc<AtomicUsize>,
+    ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
+        let mut verify_time = Measure::start("sigverify_batch_time");
         sigverify::ed25519_verify(&mut batches, false, valid_packets);
+        verify_time.stop();
         let num_valid_packets = sigverify::count_valid_packets(&batches);
+        total_valid_packets.fetch_add(num_valid_packets, Ordering::Relaxed);
+        total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
         self.completed
             .fetch_add(num_valid_packets, Ordering::Relaxed);
-        Ok(num_valid_packets)
+        Ok(())
     }
 }
 
