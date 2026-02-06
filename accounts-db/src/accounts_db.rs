@@ -6546,6 +6546,8 @@ impl AccountsDb {
                     total_duplicate_slot_keys.fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
                     let unique_keys =
                         HashSet::<Pubkey>::from_iter(slot_keys.iter().map(|(_, key)| *key));
+                    // With obsolete accounts enabled, duplicate pubkeys will be removed as part of
+                    // index generation and do not need to be revisited by clean later
                     if self.mark_obsolete_accounts == MarkObsoleteAccounts::Disabled {
                         for (slot, key) in slot_keys {
                             self.uncleaned_pubkeys.entry(slot).or_default().push(key);
