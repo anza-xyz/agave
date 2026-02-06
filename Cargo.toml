@@ -368,7 +368,7 @@ rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.12.3"
 reqwest = { version = "0.12.28", default-features = false }
-reqwest-middleware = "0.4.2"
+reqwest-middleware = "0.5.1"
 rolling-file = "0.2.0"
 rpassword = "7.4"
 rts-alloc = { version = "2.0.0" }
