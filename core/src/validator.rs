@@ -421,6 +421,8 @@ pub struct ValidatorConfig {
     pub delay_leader_block_for_pending_fork: bool,
     pub voting_service_test_override: Option<VotingServiceOverride>,
     pub repair_handler_type: RepairHandlerType,
+    // Thread niceness adjustment for snapshot packager service
+    pub snapshot_packager_niceness_adj: i8,
 }
 
 impl ValidatorConfig {
@@ -504,6 +506,7 @@ impl ValidatorConfig {
             delay_leader_block_for_pending_fork: false,
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
+            snapshot_packager_niceness_adj: 0,
         }
     }
 
@@ -1031,6 +1034,7 @@ impl Validator {
             cluster_info.clone(),
             snapshot_controller.clone(),
             enable_gossip_push,
+            config.snapshot_packager_niceness_adj,
         );
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller: snapshot_controller.clone(),
