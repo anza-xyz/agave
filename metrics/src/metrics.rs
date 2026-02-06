@@ -122,10 +122,12 @@ pub fn serialize_points(points: &Vec<DataPoint>, host_id: &str) -> String {
             let _ = write!(line, ",{name}={value}");
         }
 
-        let mut first = true;
-        for (name, value) in point.fields.iter() {
-            let _ = write!(line, "{}{}={}", if first { ' ' } else { ',' }, name, value);
-            first = false;
+        let mut fields = point.fields.iter();
+        if let Some((name, value)) = fields.next() {
+            let _ = write!(line, " {name}={value}");
+            for (name, value) in fields {
+                let _ = write!(line, ",{name}={value}");
+            }
         }
         let timestamp = point.timestamp.duration_since(UNIX_EPOCH);
         let nanos = timestamp.unwrap().as_nanos();
