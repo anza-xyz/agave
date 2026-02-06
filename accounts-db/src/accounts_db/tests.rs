@@ -188,13 +188,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     let storage = db.get_storage_for_slot(slot0).unwrap();
     let mut reader = append_vec::new_scan_accounts_reader();
     let mut state = IndexGenerationThreadState::default();
-    db.generate_index_for_slot(
-        &mut reader,
-        &mut state,
-        &storage,
-        storage.slot(),
-        storage.id(),
-    );
+    db.generate_index_for_slot(&mut reader, &mut state, &storage);
 }
 
 define_accounts_db_test!(
@@ -4854,7 +4848,7 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let mut reader = append_vec::new_scan_accounts_reader();
     let mut state = IndexGenerationThreadState::default();
-    accounts.generate_index_for_slot(&mut reader, &mut state, &storage, slot0, 0);
+    accounts.generate_index_for_slot(&mut reader, &mut state, &storage);
     assert_eq!(state.storage_info.len(), 1);
     for (slot, value) in state.storage_info {
         let expected_stored_size =
@@ -4878,7 +4872,7 @@ define_accounts_db_test!(
         let storage = accounts.create_and_insert_store(0, 1, "test");
         let mut reader = append_vec::new_scan_accounts_reader();
         let mut state = IndexGenerationThreadState::default();
-        accounts.generate_index_for_slot(&mut reader, &mut state, &storage, 0, 0);
+        accounts.generate_index_for_slot(&mut reader, &mut state, &storage);
         assert!(state.storage_info.is_empty());
     }
 );
@@ -4915,7 +4909,7 @@ define_accounts_db_test!(
 
         let mut reader = append_vec::new_scan_accounts_reader();
         let mut state = IndexGenerationThreadState::default();
-        accounts.generate_index_for_slot(&mut reader, &mut state, &storage, 0, 0);
+        accounts.generate_index_for_slot(&mut reader, &mut state, &storage);
         assert_eq!(state.storage_info.len(), 1);
         for (slot, value) in state.storage_info {
             let expected_stored_size =
@@ -4983,7 +4977,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
 
     let mut reader = append_vec::new_scan_accounts_reader();
     let mut state = IndexGenerationThreadState::default();
-    let info = accounts.generate_index_for_slot(&mut reader, &mut state, &storage, 0, 0);
+    let info = accounts.generate_index_for_slot(&mut reader, &mut state, &storage);
     assert_eq!(
         info.num_obsolete_accounts_skipped,
         num_accounts_to_mark_obsolete as u64

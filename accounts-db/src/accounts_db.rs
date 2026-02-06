@@ -6151,9 +6151,10 @@ impl AccountsDb {
         reader: &mut impl RequiredLenBufFileRead<'a>,
         thread_state: &mut IndexGenerationThreadState,
         storage: &'a AccountStorageEntry,
-        slot: Slot,
-        store_id: AccountsFileId,
     ) -> SlotIndexGenerationInfo {
+        let slot = storage.slot();
+        let store_id = storage.id();
+
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
         let mut zero_lamport_pubkeys = vec![];
@@ -6392,15 +6393,8 @@ impl AccountsDb {
                             for next_item in storages_orderer.iter() {
                                 self.maybe_throttle_index_generation();
                                 let storage = next_item.storage;
-                                let store_id = storage.id();
-                                let slot = storage.slot();
-                                let slot_info = self.generate_index_for_slot(
-                                    &mut reader,
-                                    &mut state,
-                                    storage,
-                                    slot,
-                                    store_id,
-                                );
+                                let slot_info =
+                                    self.generate_index_for_slot(&mut reader, &mut state, storage);
                                 thread_accum.insert_us += slot_info.insert_time_us;
                                 thread_accum.num_accounts += slot_info.num_accounts;
                                 thread_accum.accounts_data_len += slot_info.accounts_data_len;
@@ -6410,7 +6404,7 @@ impl AccountsDb {
                                 if slot_info.all_accounts_are_zero_lamports {
                                     thread_accum.all_accounts_are_zero_lamports_slots += 1;
                                     thread_accum.all_zeros_slots.push((
-                                        slot,
+                                        storage.slot(),
                                         Arc::clone(&storages[next_item.original_index]),
                                     ));
                                 }
