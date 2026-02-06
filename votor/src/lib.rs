@@ -14,7 +14,7 @@ extern crate log;
 pub mod commitment;
 pub mod common;
 pub mod consensus_metrics;
-mod consensus_pool;
+pub mod consensus_pool;
 mod consensus_pool_service;
 pub mod event;
 mod event_handler;
