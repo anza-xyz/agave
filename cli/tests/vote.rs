@@ -57,7 +57,7 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         authorized_withdrawer: config.signers[0].pubkey(),
         commission: Some(0),
         use_v2_instruction: false,
-        bls_keypair: None,
+
         inflation_rewards_commission_bps: None,
         inflation_rewards_collector: None,
         block_revenue_commission_bps: None,
@@ -304,7 +304,7 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         authorized_withdrawer: offline_keypair.pubkey(),
         commission: Some(0),
         use_v2_instruction: false,
-        bls_keypair: None,
+
         inflation_rewards_commission_bps: None,
         inflation_rewards_collector: None,
         block_revenue_commission_bps: None,

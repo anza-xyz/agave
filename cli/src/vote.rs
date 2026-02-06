@@ -119,19 +119,6 @@ impl VoteSubCommands for App<'_, '_> {
                         ),
                 )
                 .arg(
-                    Arg::with_name("bls_keypair")
-                        .long("bls-keypair")
-                        .value_name("BLS_KEYPAIR_FILE")
-                        .takes_value(true)
-                        .validator(is_bls_keypair)
-                        .help(
-                            "Path to a BLS keypair file for proof of possession. If not provided, \
-                             a BLS keypair will be derived from the vote keypair. Only valid with \
-                             VoteInitV2 (--use-v2-instruction or when SIMD-0387 feature is \
-                             active).",
-                        ),
-                )
-                .arg(
                     Arg::with_name("inflation_rewards_commission_bps")
                         .long("inflation-rewards-commission-bps")
                         .value_name("BASIS_POINTS")
@@ -553,7 +540,6 @@ pub fn parse_create_vote_account(
 
     // VoteInitV2 args (SIMD-0387).
     let use_v2_instruction = matches.is_present("use_v2_instruction");
-    let bls_keypair = bls_keypair_of(matches, "bls_keypair");
     let inflation_rewards_commission_bps: Option<u16> =
         value_of(matches, "inflation_rewards_commission_bps");
     let inflation_rewards_collector =
@@ -567,7 +553,6 @@ pub fn parse_create_vote_account(
     // --commission is only allowed with VoteInitV2 when no VoteInitV2-specific
     // arguments have been provided, including --use-v2-instruction.
     let has_v2_args = use_v2_instruction
-        || bls_keypair.is_some()
         || inflation_rewards_commission_bps.is_some()
         || inflation_rewards_collector.is_some()
         || block_revenue_commission_bps.is_some()
@@ -576,7 +561,7 @@ pub fn parse_create_vote_account(
     if commission.is_some() && has_v2_args {
         return Err(CliError::BadParameter(
             "--commission cannot be used with --use-v2-instruction or VoteInitV2 arguments \
-             (--bls-keypair, --inflation-rewards-commission-bps, --inflation-rewards-collector, \
+             (--inflation-rewards-commission-bps, --inflation-rewards-collector, \
              --block-revenue-commission-bps, --block-revenue-collector). For VoteInitV2, use \
              --inflation-rewards-commission-bps instead."
                 .to_owned(),
@@ -616,7 +601,6 @@ pub fn parse_create_vote_account(
             authorized_withdrawer,
             commission,
             use_v2_instruction,
-            bls_keypair,
             inflation_rewards_commission_bps,
             inflation_rewards_collector,
             block_revenue_commission_bps,
@@ -917,7 +901,6 @@ pub async fn process_create_vote_account(
     commission: Option<u8>,
     // VoteInitV2 args (SIMD-0387).
     use_v2_instruction: bool,
-    bls_keypair: Option<&BLSKeypair>,
     inflation_rewards_commission_bps: Option<u16>,
     inflation_rewards_collector: Option<&Pubkey>,
     block_revenue_commission_bps: Option<u16>,
@@ -971,15 +954,14 @@ pub async fn process_create_vote_account(
 
     // Validate that VoteInitV2-only args aren't provided when using
     // VoteInit (v1).
-    let has_v2_args = bls_keypair.is_some()
-        || inflation_rewards_commission_bps.is_some()
+    let has_v2_args = inflation_rewards_commission_bps.is_some()
         || inflation_rewards_collector.is_some()
         || block_revenue_commission_bps.is_some()
         || block_revenue_collector.is_some();
 
     if !use_v2 && has_v2_args {
         return Err(CliError::BadParameter(
-            "VoteInitV2 arguments (--bls-keypair, --inflation-rewards-commission-bps, \
+            "VoteInitV2 arguments (--inflation-rewards-commission-bps, \
              --inflation-rewards-collector, --block-revenue-commission-bps, \
              --block-revenue-collector) require --use-v2-instruction flag or SIMD-0387 feature to \
              be active."
@@ -1003,17 +985,15 @@ pub async fn process_create_vote_account(
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
 
-    // Generate BLS keypair and proof of possession for VoteInitV2.
+    // Derive BLS keypair from the identity keypair and generate proof of
+    // possession for VoteInitV2.
     let bls_data = if use_v2 {
-        let (bls_pubkey, bls_proof_of_possession) = if let Some(bls_keypair) = bls_keypair {
-            create_bls_proof_of_possession(&vote_account_address, bls_keypair)
-        } else {
-            let derived_bls_keypair =
-                BLSKeypair::derive_from_signer(vote_account, BLS_KEYPAIR_DERIVE_SEED).map_err(
-                    |e| CliError::BadParameter(format!("Failed to derive BLS keypair: {e}")),
-                )?;
-            create_bls_proof_of_possession(&vote_account_address, &derived_bls_keypair)
-        };
+        let derived_bls_keypair =
+            BLSKeypair::derive_from_signer(identity_account, BLS_KEYPAIR_DERIVE_SEED).map_err(
+                |e| CliError::BadParameter(format!("Failed to derive BLS keypair: {e}")),
+            )?;
+        let (bls_pubkey, bls_proof_of_possession) =
+            create_bls_proof_of_possession(&vote_account_address, &derived_bls_keypair);
         Some((bls_pubkey, bls_proof_of_possession))
     } else {
         None
@@ -2127,7 +2107,7 @@ mod tests {
                     authorized_withdrawer,
                     commission: Some(10),
                     use_v2_instruction: false,
-                    bls_keypair: None,
+
                     inflation_rewards_commission_bps: None,
                     inflation_rewards_collector: None,
                     block_revenue_commission_bps: None,
@@ -2167,7 +2147,7 @@ mod tests {
                     authorized_withdrawer,
                     commission: None, // No --commission; uses default at runtime.
                     use_v2_instruction: false,
-                    bls_keypair: None,
+
                     inflation_rewards_commission_bps: None,
                     inflation_rewards_collector: None,
                     block_revenue_commission_bps: None,
@@ -2214,7 +2194,7 @@ mod tests {
                     authorized_withdrawer,
                     commission: Some(10), // Explicitly set.
                     use_v2_instruction: false,
-                    bls_keypair: None,
+
                     inflation_rewards_commission_bps: None,
                     inflation_rewards_collector: None,
                     block_revenue_commission_bps: None,
@@ -2270,7 +2250,7 @@ mod tests {
                     authorized_withdrawer,
                     commission: Some(10),
                     use_v2_instruction: false,
-                    bls_keypair: None,
+
                     inflation_rewards_commission_bps: None,
                     inflation_rewards_collector: None,
                     block_revenue_commission_bps: None,
@@ -2322,7 +2302,7 @@ mod tests {
                     authorized_withdrawer,
                     commission: None, // No --commission specified.
                     use_v2_instruction: false,
-                    bls_keypair: None,
+
                     inflation_rewards_commission_bps: None,
                     inflation_rewards_collector: None,
                     block_revenue_commission_bps: None,
@@ -2367,7 +2347,7 @@ mod tests {
                     authorized_withdrawer: identity_keypair.pubkey(),
                     commission: None, // No --commission specified.
                     use_v2_instruction: false,
-                    bls_keypair: None,
+
                     inflation_rewards_commission_bps: None,
                     inflation_rewards_collector: None,
                     block_revenue_commission_bps: None,
@@ -2397,10 +2377,6 @@ mod tests {
         let block_revenue_collector = Keypair::new().pubkey();
 
         // Test with VoteInitV2 and all optional arguments specified.
-        let (bls_keypair_file, _tmp_file) = make_tmp_file();
-        let bls_keypair = BLSKeypair::new();
-        bls_keypair.write_json_file(&bls_keypair_file).unwrap();
-
         let test_create_vote_account_v2 = test_commands.clone().get_matches_from(vec![
             "test",
             "create-vote-account",
@@ -2410,8 +2386,6 @@ mod tests {
             "--use-v2-instruction",
             "--authorized-voter",
             &authed.to_string(),
-            "--bls-keypair",
-            &bls_keypair_file,
             "--inflation-rewards-commission-bps",
             "500",
             "--inflation-rewards-collector",
@@ -2432,7 +2406,6 @@ mod tests {
                     authorized_withdrawer,
                     commission: None,
                     use_v2_instruction: true,
-                    bls_keypair: Some(bls_keypair),
                     inflation_rewards_commission_bps: Some(500),
                     inflation_rewards_collector: Some(inflation_rewards_collector),
                     block_revenue_commission_bps: Some(1000),
@@ -2486,7 +2459,7 @@ mod tests {
                     authorized_withdrawer,
                     commission: None,
                     use_v2_instruction: true,
-                    bls_keypair: None,
+
                     inflation_rewards_commission_bps: None,
                     inflation_rewards_collector: None,
                     block_revenue_commission_bps: None,
