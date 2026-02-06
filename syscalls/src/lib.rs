@@ -1550,7 +1550,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    _ => Ok(1),
+                    _ => Err(SyscallError::InvalidAttribute.into()),
                 }
             }
 
@@ -1663,7 +1663,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    _ => Ok(1),
+                    _ => Err(SyscallError::InvalidAttribute.into()),
                 }
             }
 
