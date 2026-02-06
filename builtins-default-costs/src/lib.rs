@@ -1,18 +1,11 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::field_qualifiers;
 use {
+    agave_feature_set::bls_pubkey_management_in_vote_account,
     ahash::AHashMap,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
@@ -99,12 +92,21 @@ static_assertions::const_assert_eq!(
     TOTAL_COUNT_BUILTINS
 );
 
-/// MIGRATING_BUILTINS_COSTS is empty as no builtins are presently being migrated.
-/// We leave it and the related scaffolding in place for future planned migrations.
-pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[];
+pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
+    // The Vote program is NOT migrating to on-chain BPF.
+    // However, SIMD-0387 states that the Vote program will be removed from
+    // builtin program cost modeling, so we use the same mechanism to evict
+    // it from the list.
+    (
+        vote::id(),
+        BuiltinCost::Migrating(MigratingBuiltinCost {
+            core_bpf_migration_feature: bls_pubkey_management_in_vote_account::id(),
+            position: 0,
+        }),
+    ),
+];
 
 const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
-    (vote::id(), BuiltinCost::NotMigrating),
     (system_program::id(), BuiltinCost::NotMigrating),
     (compute_budget::id(), BuiltinCost::NotMigrating),
     (bpf_loader_upgradeable::id(), BuiltinCost::NotMigrating),

@@ -495,7 +495,14 @@ mod tests {
     }
 
     fn build_simple_transaction(mint_keypair: &Keypair) -> WritableKeysTransaction {
-        WritableKeysTransaction(vec![mint_keypair.pubkey()])
+        WritableKeysTransaction::new(vec![mint_keypair.pubkey()])
+    }
+
+    fn build_simple_vote_transaction(mint_keypair: &Keypair) -> WritableKeysTransaction {
+        WritableKeysTransaction {
+            writable_keys: vec![mint_keypair.pubkey()],
+            is_simple_vote: true,
+        }
     }
 
     fn simple_usage_cost_details(
@@ -526,7 +533,15 @@ mod tests {
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
     ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::SimpleVote { transaction }
+        TransactionCost::Transaction(UsageCostDetails {
+            transaction,
+            signature_cost: 1,
+            write_lock_cost: 2,
+            data_bytes_cost: 0,
+            programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
+            loaded_accounts_data_size_cost: 8,
+            allocated_accounts_data_size: 0,
+        })
     }
 
     #[test]
@@ -559,7 +574,7 @@ mod tests {
     #[test]
     fn test_cost_tracker_ok_add_one_vote() {
         let mint_keypair = test_setup();
-        let tx = build_simple_transaction(&mint_keypair);
+        let tx = build_simple_vote_transaction(&mint_keypair);
         let tx_cost = simple_vote_transaction_cost(&tx);
         let cost = tx_cost.sum();
 
@@ -704,10 +719,10 @@ mod tests {
         let mint_keypair = test_setup();
         // build two mocking vote transactions with diff accounts
         let second_account = Keypair::new();
-        let tx1 = build_simple_transaction(&mint_keypair);
+        let tx1 = build_simple_vote_transaction(&mint_keypair);
         let tx_cost1 = simple_vote_transaction_cost(&tx1);
         let cost1 = tx_cost1.sum();
-        let tx2 = build_simple_transaction(&second_account);
+        let tx2 = build_simple_vote_transaction(&second_account);
         let tx_cost2 = simple_vote_transaction_cost(&tx2);
         let cost2 = tx_cost2.sum();
 
@@ -811,7 +826,7 @@ mod tests {
         // | acct3 | $cost |
         // and block_cost = $cost
         {
-            let transaction = WritableKeysTransaction(vec![acct1, acct2, acct3]);
+            let transaction = WritableKeysTransaction::new(vec![acct1, acct2, acct3]);
             let tx_cost = simple_transaction_cost(&transaction, cost);
             assert!(testee.try_add(&tx_cost).is_ok());
             let (_costliest_account, costliest_account_cost) = testee.find_costliest_account();
@@ -826,7 +841,7 @@ mod tests {
         // | acct3 | $cost |
         // and block_cost = $cost * 2
         {
-            let transaction = WritableKeysTransaction(vec![acct2]);
+            let transaction = WritableKeysTransaction::new(vec![acct2]);
             let tx_cost = simple_transaction_cost(&transaction, cost);
             assert!(testee.try_add(&tx_cost).is_ok());
             let (costliest_account, costliest_account_cost) = testee.find_costliest_account();
@@ -843,7 +858,7 @@ mod tests {
         // | acct3 | $cost |
         // and block_cost = $cost * 2
         {
-            let transaction = WritableKeysTransaction(vec![acct1, acct2]);
+            let transaction = WritableKeysTransaction::new(vec![acct1, acct2]);
             let tx_cost = simple_transaction_cost(&transaction, cost);
             assert!(testee.try_add(&tx_cost).is_err());
             let (costliest_account, costliest_account_cost) = testee.find_costliest_account();
@@ -864,7 +879,7 @@ mod tests {
         let block_max = account_max * 3; // for three accts
 
         let mut testee = CostTracker::new(account_max, block_max, block_max);
-        let transaction = WritableKeysTransaction(vec![acct1, acct2, acct3]);
+        let transaction = WritableKeysTransaction::new(vec![acct1, acct2, acct3]);
         let tx_cost = simple_transaction_cost(&transaction, cost);
         let mut expected_block_cost = tx_cost.sum();
         let expected_tx_count = 1;
@@ -914,7 +929,7 @@ mod tests {
         let estimated_programs_execution_cost = 100;
         let estimated_loaded_accounts_data_size_cost = 200;
         let number_writeble_accounts = 3;
-        let transaction = WritableKeysTransaction(
+        let transaction = WritableKeysTransaction::new(
             std::iter::repeat_with(Pubkey::new_unique)
                 .take(number_writeble_accounts)
                 .collect(),
@@ -981,7 +996,7 @@ mod tests {
         let mut cost_tracker = CostTracker::default();
 
         let cost = 100u64;
-        let transaction = WritableKeysTransaction(vec![Pubkey::new_unique()]);
+        let transaction = WritableKeysTransaction::new(vec![Pubkey::new_unique()]);
         let tx_cost = simple_transaction_cost(&transaction, cost);
         cost_tracker.add_transaction_cost(&tx_cost);
         // assert cost_tracker is reverted to default
@@ -1004,7 +1019,7 @@ mod tests {
     fn test_get_cost_by_writable_accounts_post_analysis() {
         let mut cost_tracker = CostTracker::default();
         let cost = 100u64;
-        let transaction = WritableKeysTransaction(vec![Pubkey::new_unique()]);
+        let transaction = WritableKeysTransaction::new(vec![Pubkey::new_unique()]);
         let tx_cost = simple_transaction_cost(&transaction, cost);
         cost_tracker.add_transaction_cost(&tx_cost);
         let cost_by_writable_accounts = cost_tracker.get_cost_by_writable_accounts();

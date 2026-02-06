@@ -6,6 +6,8 @@ use {
         *,
     },
     crate::cluster_nodes::ClusterNodesCache,
+    agave_votor::event::VotorEventSender,
+    agave_votor_messages::migration::MigrationStatus,
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -37,6 +39,8 @@ pub struct StandardBroadcastRun {
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
+    migration_status: Arc<MigrationStatus>,
+    votor_event_sender: VotorEventSender,
 }
 
 #[derive(Debug)]
@@ -45,7 +49,11 @@ enum BroadcastError {
 }
 
 impl StandardBroadcastRun {
-    pub(super) fn new(shred_version: u16) -> Self {
+    pub(super) fn new(
+        shred_version: u16,
+        migration_status: Arc<MigrationStatus>,
+        votor_event_sender: VotorEventSender,
+    ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -67,6 +75,8 @@ impl StandardBroadcastRun {
             num_batches: 0,
             cluster_nodes_cache,
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
+            migration_status,
+            votor_event_sender,
         }
     }
 
@@ -319,6 +329,15 @@ impl StandardBroadcastRun {
         if last_tick_height == bank.max_tick_height() {
             self.report_and_reset_stats(false);
             self.completed = true;
+
+            // Populate the block id and send for voting
+            // The block id is the merkle root of the last FEC set which is now the chained merkle root
+            broadcast_utils::set_block_id_and_send(
+                &self.migration_status,
+                &self.votor_event_sender,
+                bank,
+                self.chained_merkle_root,
+            )?;
         }
 
         Ok(())
@@ -471,6 +490,7 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
+        crossbeam_channel::unbounded,
         rand::Rng,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
@@ -535,7 +555,9 @@ mod test {
     #[test]
     fn test_interrupted_slot_last_shred() {
         let keypair = Arc::new(Keypair::new());
-        let mut run = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         assert!(run.completed);
 
         // Set up the slot to be interrupted
@@ -582,7 +604,9 @@ mod test {
         };
 
         // Step 1: Make an incomplete transmission for slot 0
-        let mut standard_broadcast_run = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -708,8 +732,10 @@ mod test {
             setup(num_shreds_per_slot);
         let (bsend, brecv) = unbounded();
         let (ssend, _srecv) = unbounded();
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
         let mut last_tick_height = 0;
-        let mut standard_broadcast_run = StandardBroadcastRun::new(0);
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
             last_tick_height += (ticks.len() - 1) as u64;
@@ -768,7 +794,9 @@ mod test {
             last_tick_height: ticks.len() as u64,
         };
 
-        let mut standard_broadcast_run = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -786,7 +814,9 @@ mod test {
     fn entries_to_shreds_max() {
         agave_logger::setup();
         let keypair = Keypair::new();
-        let mut bs = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut bs =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         bs.slot = 1;
         bs.parent = 0;
         let entries = create_ticks(10_000, 1, solana_hash::Hash::default());

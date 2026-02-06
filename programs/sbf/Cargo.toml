@@ -85,7 +85,7 @@ edition = "2021"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("custom-panic", "custom-heap"))',
+    'cfg(feature, values("custom-panic", "custom-heap", "sbpf-v3"))',
     'cfg(target_feature, values("dynamic-frames"))',
 ]
 
@@ -154,7 +154,7 @@ solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version =
 solana-sbf-rust-r2-instruction-data-pointer = { path = "rust/r2_instruction_data_pointer", version = "=4.0.0-alpha.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.0.0-alpha.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.0.0-alpha.0" }
-solana-sbpf = "=0.14.1"
+solana-sbpf = "=0.14.2"
 solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.1.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
@@ -181,7 +181,8 @@ thiserror = "2.0"
 sbf_c = []
 sbf_rust = []
 sbf_sanity_list = []
-dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list"]
+sbpf-v3 = []
+dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list", "sbpf-v3"]
 # This was needed for ci
 frozen-abi = []
 

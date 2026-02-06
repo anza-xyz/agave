@@ -58,6 +58,8 @@ pub trait VoteStateHandle {
 
     fn set_inflation_rewards_commission_bps(&mut self, commission_bps: u16);
 
+    fn set_block_revenue_commission_bps(&mut self, commission_bps: u16);
+
     fn node_pubkey(&self) -> &Pubkey;
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
@@ -65,6 +67,10 @@ pub trait VoteStateHandle {
     fn set_inflation_rewards_collector(&mut self, collector: Pubkey);
 
     fn set_block_revenue_collector(&mut self, collector: Pubkey);
+
+    fn pending_delegator_rewards(&self) -> u64;
+
+    fn add_pending_delegator_rewards(&mut self, amount: u64) -> Result<(), InstructionError>;
 
     fn votes(&self) -> &VecDeque<LandedVote>;
 
@@ -281,7 +287,7 @@ impl VoteStateHandle for VoteStateV3 {
         if bls_pubkey.is_some() {
             // We should not be able to reach here because we only call this function
             // when both Vote State V4 and BLS features are enabled.
-            // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
+            // See `is_vote_authorize_with_bls_enabled` in vote_processor.rs.
             return Err(InstructionError::InvalidAccountData);
         }
 
@@ -361,6 +367,11 @@ impl VoteStateHandle for VoteStateV3 {
         // SIMD-0185: the activation of VoteStateV4.
     }
 
+    fn set_block_revenue_commission_bps(&mut self, _commission_bps: u16) {
+        // No-op. We can never reach this callsite, since SIMD-0123 depends on
+        // SIMD-0185: the activation of VoteStateV4.
+    }
+
     fn node_pubkey(&self) -> &Pubkey {
         &self.node_pubkey
     }
@@ -375,6 +386,17 @@ impl VoteStateHandle for VoteStateV3 {
 
     fn set_block_revenue_collector(&mut self, _collector: Pubkey) {
         // No-op for v3: field does not exist.
+    }
+
+    fn pending_delegator_rewards(&self) -> u64 {
+        // V3 doesn't have this field.
+        0
+    }
+
+    fn add_pending_delegator_rewards(&mut self, _amount: u64) -> Result<(), InstructionError> {
+        // No-op. We can never reach this callsite, since SIMD-0123 depends on
+        // SIMD-0185: the activation of VoteStateV4.
+        Ok(())
     }
 
     fn votes(&self) -> &VecDeque<LandedVote> {
@@ -540,6 +562,10 @@ impl VoteStateHandle for VoteStateV4 {
         self.inflation_rewards_commission_bps = commission_bps;
     }
 
+    fn set_block_revenue_commission_bps(&mut self, commission_bps: u16) {
+        self.block_revenue_commission_bps = commission_bps;
+    }
+
     fn node_pubkey(&self) -> &Pubkey {
         &self.node_pubkey
     }
@@ -554,6 +580,18 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_block_revenue_collector(&mut self, collector: Pubkey) {
         self.block_revenue_collector = collector;
+    }
+
+    fn pending_delegator_rewards(&self) -> u64 {
+        self.pending_delegator_rewards
+    }
+
+    fn add_pending_delegator_rewards(&mut self, amount: u64) -> Result<(), InstructionError> {
+        self.pending_delegator_rewards = self
+            .pending_delegator_rewards
+            .checked_add(amount)
+            .ok_or(InstructionError::ArithmeticOverflow)?;
+        Ok(())
     }
 
     fn votes(&self) -> &VecDeque<LandedVote> {
@@ -747,6 +785,13 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
+    fn set_block_revenue_commission_bps(&mut self, commission_bps: u16) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.set_block_revenue_commission_bps(commission_bps),
+            TargetVoteState::V4(v4) => v4.set_block_revenue_commission_bps(commission_bps),
+        }
+    }
+
     fn node_pubkey(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.node_pubkey(),
@@ -772,6 +817,20 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_block_revenue_collector(collector),
             TargetVoteState::V4(v4) => v4.set_block_revenue_collector(collector),
+        }
+    }
+
+    fn pending_delegator_rewards(&self) -> u64 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.pending_delegator_rewards(),
+            TargetVoteState::V4(v4) => v4.pending_delegator_rewards(),
+        }
+    }
+
+    fn add_pending_delegator_rewards(&mut self, amount: u64) -> Result<(), InstructionError> {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.add_pending_delegator_rewards(amount),
+            TargetVoteState::V4(v4) => v4.add_pending_delegator_rewards(amount),
         }
     }
 
@@ -913,7 +972,7 @@ impl VoteStateHandler {
             VoteStateTargetVersion::V3 => {
                 // We should not be able to reach here because we only call this function
                 // when both Vote State V4 and BLS features are enabled.
-                // See `is_bls_pubkey_feature_enabled` in vote_processor.rs.
+                // See `is_vote_authorize_with_bls_enabled` in vote_processor.rs.
                 Err(InstructionError::InvalidInstructionData)
             }
             VoteStateTargetVersion::V4 => {
@@ -1075,7 +1134,7 @@ mod tests {
         solana_rent::Rent,
         solana_sdk_ids::native_loader,
         solana_transaction_context::{
-            instruction_accounts::InstructionAccount, TransactionContext,
+            instruction_accounts::InstructionAccount, transaction::TransactionContext,
         },
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,

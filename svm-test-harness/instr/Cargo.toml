@@ -14,17 +14,19 @@ publish = false
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
 fuzz = [
+    "dep:agave-feature-set",
+    "dep:agave-precompiles",
     "dep:prost",
     "solana-pubkey/default",
     "solana-svm-test-harness-fixture/fuzz",
 ]
 
 [dependencies]
-agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
-agave-precompiles = { workspace = true }
+agave-feature-set = { workspace = true, optional = true }
+agave-precompiles = { workspace = true, optional = true }
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
+env_logger = { workspace = true }
 prost = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-builtins = { workspace = true }
@@ -34,6 +36,7 @@ solana-epoch-schedule = { workspace = true, features = ["sysvar"] }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-last-restart-slot = { workspace = true, features = ["sysvar"] }
+solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -42,6 +45,7 @@ solana-rent = { workspace = true, features = ["sysvar"] }
 solana-sdk-ids = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-test-harness-fixture = { workspace = true }
 solana-svm-timings = { workspace = true }

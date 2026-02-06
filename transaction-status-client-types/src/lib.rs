@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! Core types for solana-transaction-status
 use {
     crate::option_serializer::OptionSerializer,
@@ -29,7 +21,7 @@ use {
     solana_reward_info::RewardType,
     solana_signature::Signature,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
-    solana_transaction_context::TransactionReturnData,
+    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult},
     thiserror::Error,
 };
@@ -750,12 +742,14 @@ impl TransactionStatus {
         match &self.confirmation_status {
             Some(status) => status.clone(),
             None => {
-                if self.confirmations.is_none() {
-                    TransactionConfirmationStatus::Finalized
-                } else if self.confirmations.unwrap() > 0 {
-                    TransactionConfirmationStatus::Confirmed
+                if let Some(confirmations) = self.confirmations {
+                    if confirmations > 0 {
+                        TransactionConfirmationStatus::Confirmed
+                    } else {
+                        TransactionConfirmationStatus::Processed
+                    }
                 } else {
-                    TransactionConfirmationStatus::Processed
+                    TransactionConfirmationStatus::Finalized
                 }
             }
         }

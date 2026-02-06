@@ -1107,7 +1107,7 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::*,
         crate::{

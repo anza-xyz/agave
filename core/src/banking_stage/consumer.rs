@@ -1443,6 +1443,8 @@ mod tests {
             &ReservedAccountKeys::empty_key_set(),
             bank.feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::id()),
+            bank.feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::id()),
         )
         .unwrap();
         let batch_transactions_inner = [&sanitized_tx]

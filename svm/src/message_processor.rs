@@ -114,7 +114,7 @@ mod tests {
         solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
-        solana_transaction_context::TransactionContext,
+        solana_transaction_context::transaction::TransactionContext,
         std::{collections::HashSet, sync::Arc},
     };
 

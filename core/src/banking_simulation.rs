@@ -481,7 +481,8 @@ impl SimulatorLoop {
                 let new_leader = self
                     .leader_schedule_cache
                     .slot_leader_at(new_slot, None)
-                    .unwrap();
+                    .unwrap()
+                    .id;
                 if new_leader != self.simulated_leader {
                     logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader);
                     break;
@@ -717,7 +718,8 @@ impl BankingSimulator {
 
         let simulated_leader = leader_schedule_cache
             .slot_leader_at(self.first_simulated_slot, None)
-            .unwrap();
+            .unwrap()
+            .id;
         info!(
             "Simulated leader and slot: {}, {}",
             simulated_leader, self.first_simulated_slot,
@@ -733,7 +735,9 @@ impl BankingSimulator {
         {
             info!("purging slots {}, {}", self.first_simulated_slot, end_slot);
             blockstore.purge_from_next_slots(self.first_simulated_slot, end_slot);
-            blockstore.purge_slots(self.first_simulated_slot, end_slot, PurgeType::Exact);
+            blockstore
+                .purge_slots(self.first_simulated_slot, end_slot, PurgeType::Exact)
+                .unwrap();
             info!("done: purging");
         } else {
             info!("skipping purging...");
@@ -814,6 +818,7 @@ impl BankingSimulator {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let (completed_block_sender, _completed_block_receiver) = unbounded();
         let shred_version = compute_shred_version(
             &genesis_config.hash(),
             Some(&bank_forks.read().unwrap().root_bank().hard_forks()),
@@ -846,6 +851,7 @@ impl BankingSimulator {
             bank_forks.clone(),
             shred_version,
             None,
+            completed_block_sender,
         );
 
         info!("Start banking stage!...");

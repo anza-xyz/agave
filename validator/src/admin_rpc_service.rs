@@ -1618,6 +1618,7 @@ mod tests {
                 SocketAddrSpace::Unspecified,
                 ValidatorTpuConfig::new_for_tests(),
                 post_init.clone(),
+                None,
             )
             .expect("assume successful validator start");
             assert_eq!(
@@ -1638,7 +1639,9 @@ mod tests {
                     KeyUpdaterType::TpuForwards,
                     KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
-                    KeyUpdaterType::RpcService
+                    KeyUpdaterType::RpcService,
+                    KeyUpdaterType::Bls,
+                    KeyUpdaterType::BlsConnectionCache,
                 ])
             );
             let mut io = MetaIoHandler::default();

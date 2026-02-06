@@ -14,6 +14,7 @@ publish = false
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
 fuzz = [
+    "dep:agave-feature-set",
     "dep:bincode",
     "dep:prost",
     "dep:prost-build",
@@ -22,7 +23,7 @@ fuzz = [
 ]
 
 [dependencies]
-agave-feature-set = { workspace = true }
+agave-feature-set = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
@@ -30,6 +31,7 @@ solana-account = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-pubkey = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 thiserror = { workspace = true }
 
 [build-dependencies]

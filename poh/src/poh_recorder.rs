@@ -644,6 +644,7 @@ impl PohRecorder {
     pub fn leader_after_n_slots(&self, slots: u64) -> Option<Pubkey> {
         self.leader_schedule_cache
             .slot_leader_at(self.current_poh_slot() + slots, None)
+            .map(|leader| leader.id)
     }
 
     /// Return the leader and slot pair after `slots_in_the_future` slots.
@@ -654,7 +655,7 @@ impl PohRecorder {
         let target_slot = self.current_poh_slot().checked_add(slots_in_the_future)?;
         self.leader_schedule_cache
             .slot_leader_at(target_slot, None)
-            .map(|leader| (leader, target_slot))
+            .map(|leader| (leader.id, target_slot))
     }
 
     pub fn shared_leader_state(&self) -> SharedLeaderState {
@@ -811,7 +812,7 @@ impl PohRecorder {
 
             // If the leader for this slot is not me, then it's the previous
             // leader's last slot.
-            if leader_for_slot != *my_pubkey {
+            if leader_for_slot.id != *my_pubkey {
                 // Check if the last slot PoH reset onto was the previous leader's last slot.
                 return slot == self.start_slot();
             }
@@ -1116,12 +1117,12 @@ mod tests {
         super::*,
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_TICKS_PER_SLOT,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::Blockstore,
             blockstore_meta::SlotMeta,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
-            leader_schedule::SlotLeader,
         },
         solana_perf::test_tx::test_tx,
         solana_sha256_hasher::hash,
@@ -1804,10 +1805,10 @@ mod tests {
         slot_leaders.extend(std::iter::repeat_n(leader_c, consecutive_leader_slots));
         slot_leaders.extend(std::iter::repeat_n(leader_d, consecutive_leader_slots));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
-        let fixed_schedule = solana_ledger::leader_schedule::FixedSchedule {
-            leader_schedule: Arc::new(
-                solana_ledger::leader_schedule::LeaderSchedule::new_from_schedule(slot_leaders),
-            ),
+        let fixed_schedule = solana_leader_schedule::FixedSchedule {
+            leader_schedule: Arc::new(solana_leader_schedule::LeaderSchedule::new_from_schedule(
+                slot_leaders,
+            )),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 

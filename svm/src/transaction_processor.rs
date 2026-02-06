@@ -52,7 +52,7 @@ use {
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_svm_type_overrides::sync::{Arc, RwLock, RwLockReadGuard, atomic::Ordering},
-    solana_transaction_context::{ExecutionRecord, TransactionContext},
+    solana_transaction_context::transaction::{ExecutionRecord, TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{
         collections::{HashMap, HashSet},
@@ -1212,7 +1212,7 @@ mod tests {
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        solana_transaction_context::TransactionContext,
+        solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
         std::collections::HashMap,
         test_case::test_case,

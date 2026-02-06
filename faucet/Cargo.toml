@@ -19,6 +19,7 @@ name = "solana_faucet"
 [[bin]]
 name = "solana-faucet"
 path = "src/bin/faucet.rs"
+required-features = ["agave-unstable-api"]
 
 [features]
 agave-unstable-api = []

@@ -28,7 +28,7 @@ your validator and the rest of the cluster.
 ## Create Stake Keypair
 
 If you haven’t already done so, create a staking keypair. If you have completed
-this step, you should see the “validator-stake-keypair.json” in your Solana
+this step, you should see the "validator-stake-keypair.json" in your Solana
 runtime directory.
 
 ```bash
@@ -99,7 +99,7 @@ account.
 This is a normal transaction so the standard transaction fee will apply. The
 transaction fee range is defined by the genesis block. The actual fee will
 fluctuate based on transaction load. You can determine the current fee via the
-[RPC API “getRecentBlockhash”](https://solana.com/docs/rpc/deprecated/getrecentblockhash) before submitting
+[RPC API "getRecentBlockhash"](https://solana.com/docs/rpc/deprecated/getrecentblockhash) before submitting
 a transaction.
 
 Learn more about
@@ -140,7 +140,7 @@ Helpful JSON-RPC methods:
 - `getLeaderSchedule` At any given moment, the network expects only one
   validator to produce ledger entries. The
   [validator currently selected to produce ledger entries](../../consensus/leader-rotation.md#leader-rotation)
-  is called the “leader”. This will return the complete leader schedule \(on a
+  is called the "leader". This will return the complete leader schedule \(on a
   slot-by-slot basis\) for currently activated stake, the identity pubkey will
   show up 1 or more times here.
 

@@ -39,7 +39,7 @@ use {
         bank::{
             metrics::*,
             partitioned_epoch_rewards::{
-                CachedVoteAccounts, EpochRewardStatus, VoteRewardsAccounts,
+                CachedVoteAccounts, EpochRewardStatus, RewardCommissionAccounts,
             },
         },
         bank_forks::BankForks,
@@ -171,7 +171,7 @@ use {
         Transaction, TransactionVerificationMode,
     },
     solana_transaction_context::{
-        transaction_accounts::KeyedAccountSharedData, TransactionReturnData,
+        transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
@@ -225,6 +225,10 @@ pub(crate) mod tests;
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
+
+/// This will be guaranteed through the VAT rules,
+/// only the top 2000 validators by stake will be present in vote account structures.
+pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
@@ -933,13 +937,13 @@ pub struct Bank {
 }
 
 #[derive(Debug)]
-struct VoteReward {
-    vote_account: AccountSharedData,
+struct RewardCommission {
+    commission_account: AccountSharedData,
     commission_bps: u16,
-    vote_rewards: u64,
+    commission_lamports: u64,
 }
 
-type VoteRewards = HashMap<Pubkey, VoteReward, PubkeyHasherBuilder>;
+type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -967,8 +971,6 @@ struct EpochInflationRewards {
     /// the epoch and its stake is equal to the network capitalization i.e.
     /// the total supply.
     validator_rewards_lamports: u64,
-    /// How long a single epoch lasts in years.
-    epoch_duration_in_years: f64,
     /// The current inflation rate for the validators.
     validator_rate: f64,
     /// The current inflation rate for the foundation.
@@ -2413,61 +2415,62 @@ impl Bank {
 
         EpochInflationRewards {
             validator_rewards_lamports,
-            epoch_duration_in_years,
             validator_rate,
             foundation_rate,
         }
     }
 
-    /// Convert computed VoteRewards to VoteRewardsAccounts for storing.
+    /// Convert computed RewardCommissions to RewardCommissionAccounts for storing.
     ///
-    /// This function processes vote rewards and consolidates them into a single
-    /// structure containing the pubkey, reward info, and updated account data
-    /// for each vote account. The resulting structure is optimized for storage
-    /// by combining previously separate rewards and accounts vectors into a
-    /// single accounts_with_rewards vector.
-    fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
-        let mut result = VoteRewardsAccounts {
-            accounts_with_rewards: Vec::with_capacity(vote_account_rewards.len()),
-            total_vote_rewards_lamports: 0,
+    /// This function processes reward commissions and consolidates them into a
+    /// single structure containing the pubkey, reward info, and updated account
+    /// data for each commission account. The resulting structure is optimized
+    /// for storage by combining previously separate rewards and accounts
+    /// vectors into a single accounts_with_rewards vector.
+    fn calculate_commission_accounts(
+        reward_commissions: RewardCommissions,
+    ) -> RewardCommissionAccounts {
+        let mut result = RewardCommissionAccounts {
+            accounts_with_rewards: Vec::with_capacity(reward_commissions.len()),
+            total_reward_commission_lamports: 0,
         };
         for (
-            vote_pubkey,
-            VoteReward {
-                mut vote_account,
+            commission_pubkey,
+            RewardCommission {
+                mut commission_account,
                 commission_bps,
-                vote_rewards,
+                commission_lamports,
             },
-        ) in vote_account_rewards
+        ) in reward_commissions
         {
-            if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
-                debug!("reward redemption failed for {vote_pubkey}: {err:?}");
+            if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
+                debug!("reward redemption failed for {commission_pubkey}: {err:?}");
                 continue;
             }
 
             result.accounts_with_rewards.push((
-                vote_pubkey,
+                commission_pubkey,
                 RewardInfo {
                     reward_type: RewardType::Voting,
-                    lamports: vote_rewards as i64,
-                    post_balance: vote_account.lamports(),
+                    lamports: commission_lamports as i64,
+                    post_balance: commission_account.lamports(),
                     commission_bps: Some(commission_bps),
                 },
-                vote_account,
+                commission_account,
             ));
-            result.total_vote_rewards_lamports += vote_rewards;
+            result.total_reward_commission_lamports += commission_lamports;
         }
         result
     }
 
-    fn update_vote_rewards(&self, vote_rewards: &VoteRewardsAccounts) {
+    fn update_reward_commissions(&self, reward_commission_accounts: &RewardCommissionAccounts) {
         let mut rewards = self.rewards.write().unwrap();
-        rewards.reserve(vote_rewards.accounts_with_rewards.len());
-        vote_rewards
+        rewards.reserve(reward_commission_accounts.accounts_with_rewards.len());
+        reward_commission_accounts
             .accounts_with_rewards
             .iter()
-            .for_each(|(vote_pubkey, vote_reward, _)| {
-                rewards.push((*vote_pubkey, *vote_reward));
+            .for_each(|(commission_pubkey, reward_commission, _)| {
+                rewards.push((*commission_pubkey, *reward_commission));
             });
     }
 
@@ -3029,6 +3032,9 @@ impl Bank {
         let enable_static_instruction_limit = self
             .feature_set
             .is_active(&agave_feature_set::static_instruction_limit::id());
+        let enable_instruction_account_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::limit_instruction_accounts::id());
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -3039,6 +3045,7 @@ impl Bank {
                     self,
                     self.get_reserved_account_keys(),
                     enable_static_instruction_limit,
+                    enable_instruction_account_limit,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4807,6 +4814,10 @@ impl Bank {
         let enable_static_instruction_limit = self
             .feature_set
             .is_active(&agave_feature_set::static_instruction_limit::id());
+        let enable_instruction_account_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::limit_instruction_accounts::id());
+
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -4834,6 +4845,7 @@ impl Bank {
                 self,
                 self.get_reserved_account_keys(),
                 enable_static_instruction_limit,
+                enable_instruction_account_limit,
             )
         }?;
 
@@ -5399,6 +5411,40 @@ impl Bank {
         {
             self.rent_collector.deprecate_rent_exemption_threshold();
             self.update_rent();
+        }
+
+        // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated
+        // (SIMD-0194), so rent.lamports_per_byte_year can be set directly. These gates are
+        // expected to activate in order; if multiple activate in one epoch, the lowest
+        // activated lamports_per_byte value will be used. If features are activated out of
+        // order, the most recently activated value will be used.
+        let rent_feature_gates = [
+            (
+                feature_set::set_lamports_per_byte_to_6333::id(),
+                feature_set::set_lamports_per_byte_to_6333::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_5080::id(),
+                feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_2575::id(),
+                feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_1322::id(),
+                feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE,
+            ),
+            (
+                feature_set::set_lamports_per_byte_to_696::id(),
+                feature_set::set_lamports_per_byte_to_696::LAMPORTS_PER_BYTE,
+            ),
+        ];
+        for (feature_id, lamports_per_byte_year) in rent_feature_gates {
+            if new_feature_activations.contains(&feature_id) {
+                self.rent_collector.rent.lamports_per_byte_year = lamports_per_byte_year;
+                self.update_rent();
+            }
         }
 
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {

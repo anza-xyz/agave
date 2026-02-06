@@ -71,7 +71,6 @@ impl GossipService {
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,
-            None,
             false,
         );
         let (consume_sender, listen_receiver) =

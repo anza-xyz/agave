@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![allow(rustdoc::private_intra_doc_links)]
 //! The task (transaction) scheduling code for the unified scheduler
 //!
@@ -995,19 +987,13 @@ impl UsageQueueInner {
                     (Some(PriorityUsage::Readonly(current_tasks)), RequestedUsage::Writable) => {
                         // First, we need to determine whether the write-requesting new_task could
                         // reblock current read-only tasks _very efficiently while bounded under
-                        // the worst case_, to prevent large number of low priority tasks from
-                        // consuming undue amount of cpu cycles for nothing.
-
-                        // Use extract_if once stablized to remove Vec creation and the repeating
-                        // remove()s...
-                        let task_indexes = current_tasks
-                            .range(new_task.task_id()..)
-                            .filter_map(|(&task_id, task)| {
-                                task.try_reblock(token).then_some(task_id)
-                            })
-                            .collect::<Vec<OrderedTaskId>>();
-                        for task_id in task_indexes.into_iter() {
-                            let reblocked_task = current_tasks.remove(&task_id).unwrap();
+                        // the worst case_, to prevent large number of incoming low priority tasks
+                        // from consuming undue amount of cpu cycles for nothing.
+                        let reblocked_tasks = current_tasks
+                            .extract_if(new_task.task_id().., |_task_id, task| {
+                                task.try_reblock(token)
+                            });
+                        for (_task_id, reblocked_task) in reblocked_tasks {
                             blocked_usages_from_tasks
                                 .insert_usage_from_task((RequestedUsage::Readonly, reblocked_task));
                         }
@@ -1019,10 +1005,10 @@ impl UsageQueueInner {
                             // In this case, new_task will still be inserted as the
                             // highest-priority blocked writable task, nevertheless any of readonly
                             // tasks are reblocked above. That's because all of such tasks should
-                            // be of lower-priority than new_task by the very `range()` lookup
+                            // be of lower-priority than new_task by the very `extract_if()` lookup
                             // above. So, the write-always-follows-read critical invariant is still
                             // intact. So is the assertion in current-and-requested-readonly
-                            // match arm.
+                            // match arm just above.
                             Err(())
                         }
                     }

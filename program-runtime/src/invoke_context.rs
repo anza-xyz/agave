@@ -32,8 +32,8 @@ use {
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
-        IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, TransactionContext,
-        instruction::InstructionContext, instruction_accounts::InstructionAccount,
+        IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, instruction::InstructionContext,
+        instruction_accounts::InstructionAccount, transaction::TransactionContext,
         transaction_accounts::KeyedAccountSharedData,
     },
     std::{
@@ -203,6 +203,9 @@ pub struct InvokeContext<'a, 'ix_data> {
     pub syscall_context: Vec<Option<SyscallContext>>,
     /// Pairs of index in TX instruction trace and VM register trace
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
+    /// Debug port to use for this executing transaction.
+    #[cfg(feature = "sbpf-debugger")]
+    pub debug_port: Option<u16>,
 }
 
 impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
@@ -227,6 +230,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             register_traces: Vec::new(),
+            #[cfg(feature = "sbpf-debugger")]
+            debug_port: None,
         }
     }
 
@@ -849,9 +854,8 @@ macro_rules! with_mock_invoke_context {
         $transaction_context:ident,
         $transaction_accounts:expr $(,)?
     ) => {
-        use $crate::with_mock_invoke_context_with_feature_set;
         let feature_set = &solana_svm_feature_set::SVMFeatureSet::default();
-        with_mock_invoke_context_with_feature_set!(
+        $crate::with_mock_invoke_context_with_feature_set!(
             $invoke_context,
             $transaction_context,
             feature_set,

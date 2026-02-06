@@ -393,7 +393,7 @@ pub(crate) mod tests {
     }
 
     fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<SharedBytes> {
-        SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
+        SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false, true)
             .unwrap()
     }
 

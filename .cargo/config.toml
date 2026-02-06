@@ -2,5 +2,11 @@
 # When building for linux, target the minimal supported CPU
 rustflags = ["-Ctarget-cpu=x86-64-v2"]
 
+[target.aarch64-apple-darwin]
+rustflags = ["-Clinker-plugin-lto=no"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-Clinker-plugin-lto=no"]
+
 [alias]
 xtask = "run --manifest-path ci/xtask/Cargo.toml --bin xtask --"

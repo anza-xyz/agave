@@ -30,6 +30,46 @@ Release channels have their own copy of this changelog:
   * `--dev-halt-at-slot`
   * `--monitor` (`exit` subcommand)
   * `--wait-for-exit` (`exit` subcommand)
+  * `--tpu-disable-quic`
+  * `--tpu-enable-udp`
+* Removed support for ingestion of transactions via UDP. QUIC is now the only option.
+* All monorepo crates falling outside the
+[backward compatibility policy](https://docs.anza.xyz/backwards-compatibility) are now part
+of the Agave Unstable API and their symbols have been made private. Enable the
+`agave-unstable-api` crate feature to acknowledge use of an interface that may break
+without warning.
+* Linux Capability handling has been hardened wrt requirements for configuring XDP (#9133)
+  * It is now an explicit _*error*_ + exit(1) if the process has not been permitted a
+    capability required by the current configuration
+  * A warning is logged if the process has been permitted capabilities not required by
+    any configuration supported by the binary
+  * All permitted capabilities not required by the current configuration are now dropped
+    at startup. This includes all validator subcommands which never require capabilities
+  * Operations which require capabilities are now performed on the main thread and
+    capabilities dropped before any other threads are spawned, with two exceptions
+    1. One thread retains cap_net_admin in order to reinitialize its netlink socket upon error
+    2. If any niceness flags are passed, all threads retain cap_sys_nice, which has been
+      the case since those feature were originally added
+  * Updated instructions for permitting Linux Capabilities for the validator process are
+    as follow. Either of these two options is supported. Choose whichever best fits your
+    operational procedures
+    * Add the following to the `[Service]` section of you Systemd service file
+
+        ```
+        # Permit Linux Capabilities required to configure XDP
+        AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON
+
+        # Disallow inheritance of any Linux Capabilities not required by any configuration
+        CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON
+        ```
+    _*-- OR --*_
+    * set xattr capabilities directly on the binary file. note that this step must  be
+      repeated every time that the binary file is replaced
+
+        ```
+        sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p /path/to/agave-validator
+        ```
+
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 * The `--enable-accounts-disk-index` flag is now deprecated. Use `--accounts-index-limit` instead. To retain the same behavior, use `--accounts-index-limit minimal`.
@@ -37,6 +77,10 @@ Release channels have their own copy of this changelog:
 * `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
 * Added `--accounts-index-limit` to specify the memory limit of the accounts index.
 ### CLI
+#### Breaking
+* Removed deprecated arguments
+  * `--use-quic`
+  * `--use-udp`
 #### Deprecations
 * The `ping` command is deprecated and will be removed in v4.1.
 #### Changes
@@ -48,7 +92,9 @@ Release channels have their own copy of this changelog:
 ### Geyser
 #### Changes
 * Account update notifications have their fields populated from the account values post transaction execution. This means notifications for closed accounts (accounts with a balance of zero lamports) will no longer have their `owner`/`data`/etc manually zeroed out. Note that if the on-chain program *does* zero out any fields itself, those will remain zeroed out in the notification.
-
+### Test Validator
+#### Changes
+* Now shows TPU QUIC address instead of TPU UDP in the dashboard.
 
 ## 3.1.0
 ### RPC

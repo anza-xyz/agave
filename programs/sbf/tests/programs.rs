@@ -7,6 +7,8 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
+#[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
+use solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status};
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
@@ -26,10 +28,7 @@ use {
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
-    solana_loader_v4_interface::{
-        instruction as loader_v4_instruction,
-        state::{LoaderV4State, LoaderV4Status},
-    },
+    solana_loader_v4_interface::instruction as loader_v4_instruction,
     solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -56,6 +55,7 @@ use {
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_processor::ExecutionRecordingConfig,
     },
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
@@ -82,19 +82,17 @@ use {
 };
 
 #[cfg(feature = "sbf_rust")]
-fn default_program_cache(
-    feature_set: &FeatureSet,
-) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
-    harness::program_cache::new_with_builtins(feature_set, /* slot */ 0)
+fn default_program_cache() -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+    harness::program_cache::new_with_builtins(/* slot */ 0)
 }
 
 fn default_program_cache_with_program(
     program_id: &Pubkey,
     program_elf: &[u8],
-    feature_set: &FeatureSet,
+    feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
-    let mut program_cache = default_program_cache(feature_set);
+    let mut program_cache = default_program_cache();
     harness::program_cache::add_program(
         &mut program_cache,
         program_id,
@@ -280,7 +278,7 @@ fn test_program_sbf_sanity() {
         let program_elf = harness::file::load_program_elf(program.0);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -346,8 +344,10 @@ fn test_program_sbf_loader_deprecated() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.deactivate(&agave_feature_set::disable_deploy_of_alloc_free_syscall::id());
+        let feature_set = SVMFeatureSet {
+            disable_deploy_of_alloc_free_syscall: false,
+            ..SVMFeatureSet::all_enabled()
+        };
 
         let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
@@ -357,7 +357,7 @@ fn test_program_sbf_loader_deprecated() {
             (pubkey, Account::default()),
         ];
 
-        let mut program_cache = default_program_cache(&feature_set);
+        let mut program_cache = default_program_cache();
         harness::program_cache::add_program(
             &mut program_cache,
             &program_id,
@@ -386,7 +386,9 @@ fn test_program_sbf_loader_deprecated() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
+// In SBPFv3, we don't have a verification step for undefined syscalls, and we don't do dynamic
+// symbol resolution, so this test would pass.
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     agave_logger::setup();
 
@@ -402,7 +404,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     let program_id = Pubkey::new_unique();
     let authority_pubkey = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     // Create a retracted program account with LoaderV4State header + ELF bytes.
@@ -433,7 +435,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
         (authority_pubkey, Account::default()),
     ];
 
-    let mut program_cache = default_program_cache(&feature_set);
+    let mut program_cache = default_program_cache();
     let sysvar_cache = default_sysvar_cache();
 
     // Build the deploy instruction
@@ -477,7 +479,7 @@ fn test_program_sbf_duplicate_accounts() {
 
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
         let compute_budget = ComputeBudget::new_with_defaults(false, false);
         let mut program_cache = default_program_cache_with_program(
             &program_id,
@@ -507,7 +509,7 @@ fn test_program_sbf_duplicate_accounts() {
             ];
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
             let context = InstrContext {
-                feature_set: feature_set.clone(),
+                feature_set,
                 accounts,
                 instruction,
             };
@@ -560,7 +562,7 @@ fn test_program_sbf_duplicate_accounts() {
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts,
             instruction,
         };
@@ -592,7 +594,7 @@ fn test_program_sbf_error_handling() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
 
         let pubkey1 = Pubkey::new_unique();
 
@@ -613,7 +615,7 @@ fn test_program_sbf_error_handling() {
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas);
 
             let context = InstrContext {
-                feature_set: feature_set.clone(),
+                feature_set,
                 accounts: accounts.clone(),
                 instruction,
             };
@@ -687,7 +689,7 @@ fn test_return_data_and_log_data_syscall() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
         let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
         let pubkey = Pubkey::new_unique();
@@ -1463,7 +1465,7 @@ fn test_program_sbf_program_id_spoofing() {
     let malicious_swap_pubkey = Pubkey::new_unique();
     let malicious_system_pubkey = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let from_pubkey = Pubkey::new_unique();
@@ -1479,7 +1481,7 @@ fn test_program_sbf_program_id_spoofing() {
         (to_pubkey, Account::new(0, 0, &system_program::id())),
     ];
 
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &malicious_swap_pubkey,
@@ -1538,7 +1540,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
     let caller_pubkey = Pubkey::new_unique();
     let caller2_pubkey = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let accounts = vec![
@@ -1546,7 +1548,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
         (caller2_pubkey, Account::new(0, 0, &loader_v4::id())),
     ];
 
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &caller_pubkey,
@@ -1592,7 +1594,7 @@ fn test_program_sbf_ro_modify() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_ro_modify");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let test_pubkey = Pubkey::new_unique();
@@ -1619,7 +1621,7 @@ fn test_program_sbf_ro_modify() {
             Instruction::new_with_bytes(program_id, &[instr_data], account_metas.clone());
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: accounts.clone(),
             instruction,
         };
@@ -1643,7 +1645,7 @@ fn test_program_sbf_call_depth() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_call_depth");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let mut program_cache = default_program_cache_with_program(
@@ -1658,7 +1660,7 @@ fn test_program_sbf_call_depth() {
         let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: vec![],
             instruction,
         };
@@ -1681,7 +1683,7 @@ fn test_program_sbf_compute_budget() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_noop");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let mut compute_budget = ComputeBudget::new_with_defaults(false, false);
     compute_budget.compute_unit_limit = 0;
 
@@ -1740,7 +1742,7 @@ fn assert_instruction_count() {
     {
         programs.extend_from_slice(&[
             ("solana_sbf_rust_128bit", 784),
-            ("solana_sbf_rust_alloc", 4934),
+            ("solana_sbf_rust_alloc", 4940),
             ("solana_sbf_rust_custom_heap", 343),
             ("solana_sbf_rust_dep_crate", 22),
             ("solana_sbf_rust_iter", 1514),
@@ -1750,13 +1752,13 @@ fn assert_instruction_count() {
             ("solana_sbf_rust_noop", 342),
             ("solana_sbf_rust_param_passing", 108),
             ("solana_sbf_rust_rand", 315),
-            ("solana_sbf_rust_sanity", 14223),
+            ("solana_sbf_rust_sanity", 14228),
             ("solana_sbf_rust_secp256k1_recover", 88615),
             ("solana_sbf_rust_sha", 21998),
         ]);
     }
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
     let sysvar_cache = default_sysvar_cache();
 
@@ -1783,7 +1785,7 @@ fn assert_instruction_count() {
         let instruction = Instruction::new_with_bytes(program_id, &[], instruction_accounts);
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts,
             instruction,
         };
@@ -1881,7 +1883,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
         harness::file::load_program_elf("solana_sbf_rust_r2_instruction_data_pointer");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let mut program_cache = default_program_cache_with_program(
@@ -2429,11 +2431,13 @@ fn test_program_sbf_disguised_as_sbf_loader() {
         let program_elf = harness::file::load_program_elf(program);
         let program_id = Pubkey::new_unique();
 
-        let mut feature_set = FeatureSet::all_enabled();
-        feature_set.deactivate(&agave_feature_set::remove_bpf_loader_incorrect_program_id::id());
+        let feature_set = SVMFeatureSet {
+            remove_bpf_loader_incorrect_program_id: false,
+            ..SVMFeatureSet::all_enabled()
+        };
         let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-        let mut program_cache = default_program_cache(&feature_set);
+        let mut program_cache = default_program_cache();
         harness::program_cache::add_program(
             &mut program_cache,
             &program_id,
@@ -2469,10 +2473,10 @@ fn test_program_reads_from_program_account() {
     let program_elf = harness::file::load_program_elf("read_program");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &program_id,
@@ -2529,9 +2533,9 @@ fn test_program_sbf_c_dup() {
     let program_elf = harness::file::load_program_elf("ser");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
-    let mut program_cache = harness::program_cache::new_with_builtins(&feature_set, 0);
+    let mut program_cache = harness::program_cache::new_with_builtins(0);
     harness::program_cache::add_program(
         &mut program_cache,
         &program_id,
@@ -2773,7 +2777,7 @@ fn test_program_sbf_ro_account_modify() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_ro_account_modify");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false, false);
 
     let mut program_cache = default_program_cache_with_program(
@@ -2796,7 +2800,7 @@ fn test_program_sbf_ro_account_modify() {
         let instruction = Instruction::new_with_bytes(program_id, &[case], account_metas.clone());
 
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: accounts.clone(),
             instruction,
         };
@@ -4734,7 +4738,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
     let program_elf = harness::file::load_program_elf("solana_sbf_rust_divide_by_zero");
     let program_id = Pubkey::new_unique();
 
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = {
         let mut budget = ComputeBudget::new_with_defaults(false, false);
         budget.compute_unit_limit = 10_000u64;

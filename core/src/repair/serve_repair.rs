@@ -16,6 +16,7 @@ use {
             result::{Error, RepairVerifyError, Result},
         },
     },
+    agave_votor_messages::migration::MigrationStatus,
     bincode::{serialize, Options},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -45,6 +46,7 @@ use {
         data_budget::DataBudget,
         packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     },
+    solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_runtime::bank_forks::SharableBanks,
     solana_signature::{Signature, SIGNATURE_BYTES},
@@ -345,6 +347,8 @@ pub struct ServeRepair {
     sharable_banks: SharableBanks,
     repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     repair_handler: Box<dyn RepairHandler + Send + Sync>,
+    leader_state: Option<SharedLeaderState>,
+    migration_status: Arc<MigrationStatus>,
 }
 
 // Cache entry for repair peers for a slot.
@@ -408,12 +412,33 @@ impl ServeRepair {
         sharable_banks: SharableBanks,
         repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
         repair_handler: Box<dyn RepairHandler + Send + Sync>,
+        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             cluster_info,
             sharable_banks,
             repair_whitelist,
             repair_handler,
+            leader_state: None,
+            migration_status,
+        }
+    }
+
+    pub fn new_with_leader_state(
+        cluster_info: Arc<ClusterInfo>,
+        sharable_banks: SharableBanks,
+        repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
+        repair_handler: Box<dyn RepairHandler + Send + Sync>,
+        leader_state: SharedLeaderState,
+        migration_status: Arc<MigrationStatus>,
+    ) -> Self {
+        Self {
+            cluster_info,
+            sharable_banks,
+            repair_whitelist,
+            repair_handler,
+            leader_state: Some(leader_state),
+            migration_status,
         }
     }
 
@@ -426,11 +451,13 @@ impl ServeRepair {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let repair_handler = Box::new(StandardRepairHandler::new(blockstore));
+        let bank_forks_r = bank_forks.read().unwrap();
         Self::new(
             cluster_info,
-            bank_forks.read().unwrap().sharable_banks(),
+            bank_forks_r.sharable_banks(),
             repair_whitelist,
             repair_handler,
+            bank_forks_r.migration_status(),
         )
     }
 
@@ -506,11 +533,18 @@ impl ServeRepair {
                     slot,
                 } => {
                     stats.ancestor_hashes += 1;
-                    (
-                        self.repair_handler
-                            .run_ancestor_hashes(recycler, from_addr, *slot, *nonce),
-                        "AncestorHashes",
-                    )
+                    if self
+                        .migration_status
+                        .should_respond_to_ancestor_hashes_requests(*slot)
+                    {
+                        (
+                            self.repair_handler
+                                .run_ancestor_hashes(recycler, from_addr, *slot, *nonce),
+                            "AncestorHashes",
+                        )
+                    } else {
+                        (None, "AncestorHashes")
+                    }
                 }
                 RepairProtocol::Pong(pong) => {
                     stats.pong += 1;
@@ -661,6 +695,8 @@ impl ServeRepair {
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
     ) -> std::result::Result<(), RecvTimeoutError> {
+        /// How much more expensive it is to serve bytes if we are a leader
+        const LEADER_BYTE_COST_MULTIPLIER: usize = 10;
         const TIMEOUT: Duration = Duration::from_secs(1);
         let mut requests = vec![requests_receiver.recv_timeout(TIMEOUT)?];
         const MAX_REQUESTS_PER_ITERATION: usize = 1024;
@@ -725,6 +761,19 @@ impl ServeRepair {
             decoded_requests.truncate(MAX_REQUESTS_PER_ITERATION);
         }
 
+        // Check if we are currently a leader, so we can limit the service rate
+        // If information is not available, assume we are not a leader.
+        let is_leader = self
+            .leader_state
+            .as_ref()
+            .map(|ls| ls.load().working_bank().is_some())
+            .unwrap_or(false);
+        // assign extra cost to served bytes if we are a leader
+        let byte_cost_multiplier = if is_leader {
+            LEADER_BYTE_COST_MULTIPLIER
+        } else {
+            1
+        };
         let handle_requests_start = Instant::now();
         self.handle_requests(
             ping_cache,
@@ -734,6 +783,7 @@ impl ServeRepair {
             repair_response_quic_sender,
             stats,
             data_budget,
+            byte_cost_multiplier,
         );
         stats.handle_requests_time_us += handle_requests_start.elapsed().as_micros() as u64;
 
@@ -946,7 +996,14 @@ impl ServeRepair {
         let mut rng = rand::rng();
         let (check, ping) = request
             .sender()
-            .map(|_| ping_cache.check(&mut rng, identity_keypair, Instant::now(), *from_addr))
+            .map(|&sender| {
+                ping_cache.check(
+                    &mut rng,
+                    identity_keypair,
+                    Instant::now(),
+                    (sender, *from_addr),
+                )
+            })
             .unwrap_or_default();
         let ping_pkt = if let Some(ping) = ping {
             match request {
@@ -992,6 +1049,7 @@ impl ServeRepair {
         repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
+        byte_cost_multiplier: usize,
     ) {
         let identity_keypair = self.cluster_info.keypair();
         let mut pending_pings = Vec::default();
@@ -1004,7 +1062,7 @@ impl ServeRepair {
             whitelisted: _,
         } in requests.into_iter()
         {
-            if !data_budget.check(request.max_response_bytes()) {
+            if !data_budget.check(request.max_response_bytes() * byte_cost_multiplier) {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
@@ -1026,8 +1084,8 @@ impl ServeRepair {
                 continue;
             };
             let num_response_packets = rsp.len();
-            let num_response_bytes = rsp.iter().map(|p| p.meta().size).sum();
-            if data_budget.take(num_response_bytes)
+            let num_response_bytes: usize = rsp.iter().map(|p| p.meta().size).sum();
+            if data_budget.take(num_response_bytes * byte_cost_multiplier)
                 && send_response(
                     rsp,
                     protocol,

@@ -680,7 +680,7 @@ mod tests {
         solana_system_transaction::transfer,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::{
-            TransactionContext, transaction_accounts::KeyedAccountSharedData,
+            transaction::TransactionContext, transaction_accounts::KeyedAccountSharedData,
         },
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{
@@ -690,6 +690,13 @@ mod tests {
             sync::Arc,
         },
     };
+
+    fn setup_test_logger() {
+        let _ = env_logger::Builder::from_env(env_logger::Env::new().default_filter_or("error"))
+            .format_timestamp_nanos()
+            .is_test(true)
+            .try_init();
+    }
 
     #[derive(Clone)]
     struct TestCallbacks {
@@ -1062,7 +1069,7 @@ mod tests {
 
     #[test]
     fn test_instructions() {
-        agave_logger::setup();
+        setup_test_logger();
         let instructions_key = solana_sdk_ids::sysvar::instructions::id();
         let keypair = Keypair::new();
         let instructions = vec![CompiledInstruction::new(1, &(), vec![0, 1])];
@@ -1086,7 +1093,7 @@ mod tests {
 
     #[test]
     fn test_overrides() {
-        agave_logger::setup();
+        setup_test_logger();
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
         let account = AccountSharedData::new(42, 0, &Pubkey::default());

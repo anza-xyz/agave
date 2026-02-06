@@ -698,6 +698,9 @@ pub fn signer_from_source_with_config(
                 .into())
             }
         }
+        SignerSourceKind::Base58Keypair(keypair_str) => {
+            Ok(Box::new(Keypair::from_base58_string(keypair_str)))
+        }
     }
 }
 
@@ -829,6 +832,11 @@ pub fn resolve_signer_from_source(
             }
         }
         SignerSourceKind::Pubkey(pubkey) => Ok(Some(pubkey.to_string())),
+        SignerSourceKind::Base58Keypair(keypair_str) => Ok(Some(
+            Keypair::from_base58_string(keypair_str)
+                .pubkey()
+                .to_string(),
+        )),
     }
 }
 
@@ -1085,6 +1093,10 @@ fn encodable_key_from_source<K: EncodableKey + SeedDerivable>(
         SignerSourceKind::Stdin => {
             let mut stdin = std::io::stdin();
             Ok(K::read(&mut stdin)?)
+        }
+        SignerSourceKind::Base58Keypair(keypair_str) => {
+            let keypair = Keypair::from_base58_string(keypair_str);
+            Ok(K::from_seed(keypair.secret_bytes())?)
         }
         _ => Err(std::io::Error::other(format!(
             "signer of type `{kind:?}` does not support Keypair output"
@@ -1455,5 +1467,64 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signer.pubkey(), pubkey);
+    }
+
+    #[test]
+    fn test_signer_from_source_base58_keypair() {
+        let keypair = Keypair::new();
+        let keypair_base58 = keypair.to_base58_string();
+
+        let source = SignerSource {
+            kind: SignerSourceKind::Base58Keypair(keypair_base58),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        let clap_app = Command::new("test_base58_keypair");
+        let matches = clap_app.get_matches_from(Vec::<&str>::new());
+
+        let signer = signer_from_source(&matches, &source, "test_keypair", &mut None).unwrap();
+
+        assert_eq!(signer.pubkey(), keypair.pubkey());
+    }
+
+    #[test]
+    fn test_keypair_from_source_base58_keypair() {
+        let original_keypair = Keypair::new();
+        let keypair_base58 = original_keypair.to_base58_string();
+
+        let source = SignerSource {
+            kind: SignerSourceKind::Base58Keypair(keypair_base58),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        // Test that keypair_from_source correctly handles base58 keypair
+        let recovered_keypair: Keypair =
+            encodable_key_from_source(&source, "test_keypair", false).unwrap();
+
+        // Verify the recovered keypair matches the original
+        assert_eq!(recovered_keypair.pubkey(), original_keypair.pubkey());
+        assert_eq!(
+            recovered_keypair.to_base58_string(),
+            original_keypair.to_base58_string()
+        );
+    }
+
+    #[test]
+    fn test_keypair_from_source_base58_keypair_roundtrip() {
+        // Test that we can convert keypair -> base58 -> keypair and get the same result
+        let keypair1 = Keypair::new();
+        let base58_str = keypair1.to_base58_string();
+
+        let source = SignerSource {
+            kind: SignerSourceKind::Base58Keypair(base58_str.clone()),
+            derivation_path: None,
+            legacy: false,
+        };
+        let keypair2: Keypair = encodable_key_from_source(&source, "test", false).unwrap();
+
+        // Convert back to base58 and compare
+        assert_eq!(keypair2.to_base58_string(), base58_str);
     }
 }

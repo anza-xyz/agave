@@ -142,7 +142,6 @@ fn main() -> Result<()> {
                 stats.clone(),
                 None, // coalesce
                 true,
-                None,
                 false,
             );
 

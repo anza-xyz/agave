@@ -7,7 +7,7 @@ use {
     solana_clock::Slot,
     std::{
         fmt::Debug,
-        ops::Deref,
+        ops::{Deref, DerefMut},
         sync::{
             atomic::{AtomicBool, Ordering},
             RwLock, RwLockReadGuard, RwLockWriteGuard,
@@ -207,6 +207,12 @@ impl<T> Deref for SlotListWriteGuard<'_, T> {
 
     fn deref(&self) -> &Self::Target {
         self.0.as_slice()
+    }
+}
+
+impl<T> DerefMut for SlotListWriteGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut_slice()
     }
 }
 

@@ -22,7 +22,7 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
         time::Instant,
@@ -99,7 +99,6 @@ pub struct BankForks {
     root: Arc<AtomicSlot>,
     working_slot: Slot,
     sharable_banks: SharableBanks,
-    in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
     dumped_slot_subscribers: Vec<DumpedSlotSubscription>,
@@ -159,7 +158,6 @@ impl BankForks {
             },
             banks,
             descendants,
-            in_vote_only_mode: Arc::new(AtomicBool::new(false)),
             highest_slot_at_startup: 0,
             scheduler_pool: None,
             dumped_slot_subscribers: vec![],
@@ -185,10 +183,6 @@ impl BankForks {
 
     pub fn banks(&self) -> &HashMap<Slot, BankWithScheduler> {
         &self.banks
-    }
-
-    pub fn get_vote_only_mode_signal(&self) -> Arc<AtomicBool> {
-        self.in_vote_only_mode.clone()
     }
 
     pub fn migration_status(&self) -> Arc<MigrationStatus> {
@@ -473,6 +467,13 @@ impl BankForks {
                  {root}"
             );
             root_bank.clear_epoch_rewards_cache();
+
+            // If we have rooted a block in the new epoch since Alpenglow has been activated, advance MigrationStatus
+            if self.migration_status.is_alpenglow_enabled()
+                && !self.migration_status.is_full_alpenglow_epoch()
+            {
+                self.migration_status.alpenglow_rooted_new_epoch(new_epoch);
+            }
         }
         let root_tx_count = root_bank
             .parents()

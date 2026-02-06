@@ -807,7 +807,7 @@ pub fn service_runtime(
     // negatively impact performance.
     let rpc_threads = 1.max(rpc_threads);
     let rpc_blocking_threads = 1.max(rpc_blocking_threads);
-    let runtime = Arc::new(
+    Arc::new(
         TokioBuilder::new_multi_thread()
             .worker_threads(rpc_threads)
             .max_blocking_threads(rpc_blocking_threads)
@@ -816,8 +816,7 @@ pub fn service_runtime(
             .enable_all()
             .build()
             .expect("Runtime"),
-    );
-    runtime
+    )
 }
 
 #[cfg(test)]
@@ -833,7 +832,7 @@ mod tests {
         },
         solana_rpc_client_api::config::RpcContextConfig,
         solana_runtime::bank::Bank,
-        solana_send_transaction_service::test_utils::CreateClient,
+        solana_send_transaction_service::test_utils::create_client_for_tests,
         solana_signer::Signer,
         std::{
             io::Write,
@@ -878,8 +877,8 @@ mod tests {
             ..send_transaction_service::Config::default()
         };
 
-        let client = TpuClientNextClient::create_client(
-            Some(runtime.handle().clone()),
+        let client = create_client_for_tests(
+            runtime.handle().clone(),
             tpu_address,
             send_transaction_service_config.tpu_peers.clone(),
             send_transaction_service_config.leader_forward_count,

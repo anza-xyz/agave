@@ -20,12 +20,12 @@ steps:
     command: "ci/docker-run-default-image.sh ci/test-sanity.sh"
     timeout_in_minutes: 5
     agents:
-      queue: "check"
+      queue: "default"
   - name: "checks"
     command: "ci/docker-run-default-image.sh ci/test-checks.sh"
     timeout_in_minutes: 30
     agents:
-      queue: "check"
+      queue: "default"
 EOF
 
 else

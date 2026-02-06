@@ -403,6 +403,9 @@ impl Index<usize> for AccountStoragesOrderer<'_> {
 /// - Is **shared** between threads via references (`&self`), not moved.
 /// - Allows safe, parallel consumption where each item is yielded at most once.
 /// - Does **not** implement `Iterator` because it must take `&self` instead of `&mut self`.
+///
+/// Once `AccountStoragesConcurrentConsumer` is created, it is however possible to get `Iterator`
+/// instances using `iter` (they wrap a reference to the consumer, which must outlive them).
 pub struct AccountStoragesConcurrentConsumer<'a> {
     orderer: AccountStoragesOrderer<'a>,
     current_position: AtomicUsize,
@@ -432,6 +435,21 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
         } else {
             None
         }
+    }
+
+    /// Returns an iterator over the items. Returned iterator holds & reference to the consumer.
+    pub fn iter(&'a self) -> impl Iterator<Item = NextItem<'a>> {
+        struct Iter<'i> {
+            consumer: &'i AccountStoragesConcurrentConsumer<'i>,
+        }
+        impl<'i> Iterator for Iter<'i> {
+            type Item = NextItem<'i>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                self.consumer.next()
+            }
+        }
+        Iter { consumer: self }
     }
 }
 
