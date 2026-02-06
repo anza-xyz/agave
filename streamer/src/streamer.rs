@@ -481,6 +481,7 @@ fn recv_send(
 
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
+    soft_receive_limit: usize,
 ) -> Result<(Vec<PacketBatch>, usize, Duration)> {
     let recv_start = Instant::now();
     let timer = Duration::new(1, 0);
@@ -488,7 +489,11 @@ pub fn recv_packet_batches(
     trace!("got packets");
     let mut num_packets = packet_batch.len();
     let mut packet_batches = vec![packet_batch];
-    while let Ok(packet_batch) = recvr.try_recv() {
+
+    while num_packets < soft_receive_limit {
+        let Ok(packet_batch) = recvr.try_recv() else {
+            break;
+        };
         trace!("got more packets");
         num_packets += packet_batch.len();
         packet_batches.push(packet_batch);
