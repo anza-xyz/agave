@@ -33,32 +33,16 @@ pub(crate) fn load_program_from_bytes(
     account_size: usize,
     deployment_slot: Slot,
     program_runtime_environment: ProgramRuntimeEnvironment,
-    reloading: bool,
 ) -> std::result::Result<ProgramCacheEntry, Box<dyn std::error::Error>> {
-    if reloading {
-        // Safety: this is safe because the program is being reloaded in the cache.
-        unsafe {
-            ProgramCacheEntry::reload(
-                loader_key,
-                program_runtime_environment,
-                deployment_slot,
-                deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
-                programdata,
-                account_size,
-                load_program_metrics,
-            )
-        }
-    } else {
-        ProgramCacheEntry::new(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
-            programdata,
-            account_size,
-            load_program_metrics,
-        )
-    }
+    ProgramCacheEntry::new(
+        loader_key,
+        program_runtime_environment,
+        deployment_slot,
+        deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+        programdata,
+        account_size,
+        load_program_metrics,
+    )
 }
 
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
@@ -126,7 +110,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     pubkey: &Pubkey,
     current_slot: Slot,
     execute_timings: &mut ExecuteTimings,
-    reload: bool,
 ) -> Option<(Arc<ProgramCacheEntry>, Slot)> {
     let mut load_program_metrics = LoadProgramMetrics {
         program_id: pubkey.to_string(),
@@ -146,7 +129,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             program_account.data().len(),
             0,
             environments.program_runtime_v1.clone(),
-            reload,
         )
         .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV1)),
 
@@ -157,7 +139,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             program_account.data().len(),
             0,
             environments.program_runtime_v1.clone(),
-            reload,
         )
         .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV2)),
 
@@ -180,7 +161,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                         .saturating_add(programdata_account.data().len()),
                     deployment_slot,
                     environments.program_runtime_v1.clone(),
-                    reload,
                 )
             })
             .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV3)),
@@ -198,7 +178,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                         program_account.data().len(),
                         deployment_slot,
                         environments.program_runtime_v1.clone(),
-                        reload,
                     )
                 })
                 .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV4))
@@ -494,19 +473,6 @@ mod tests {
             size,
             slot,
             environment.clone(),
-            false,
-        );
-
-        assert!(result.is_ok());
-
-        let result = load_program_from_bytes(
-            &mut metrics,
-            &buffer,
-            &loader,
-            size,
-            slot,
-            environment,
-            true,
         );
 
         assert!(result.is_ok());
@@ -524,7 +490,6 @@ mod tests {
             &key,
             500,
             &mut ExecuteTimings::default(),
-            false,
         );
         assert!(result.is_none());
     }
@@ -547,7 +512,6 @@ mod tests {
             &key,
             0, // Slot 0
             &mut ExecuteTimings::default(),
-            false,
         );
 
         let loaded_program = ProgramCacheEntry::new_tombstone(
@@ -581,7 +545,6 @@ mod tests {
             &key,
             200,
             &mut ExecuteTimings::default(),
-            false,
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
             0,
@@ -608,7 +571,6 @@ mod tests {
             &key,
             200,
             &mut ExecuteTimings::default(),
-            false,
         );
 
         let environments = ProgramRuntimeEnvironments::default();
@@ -619,7 +581,6 @@ mod tests {
             account_data.data().len(),
             0,
             environments.program_runtime_v1.clone(),
-            false,
         );
 
         assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
@@ -662,7 +623,6 @@ mod tests {
             &key1,
             0,
             &mut ExecuteTimings::default(),
-            false,
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
             0,
@@ -699,7 +659,6 @@ mod tests {
             &key1,
             200,
             &mut ExecuteTimings::default(),
-            false,
         );
 
         let data = account_data.data();
@@ -714,7 +673,6 @@ mod tests {
             account_data.data().len(),
             0,
             environments.program_runtime_v1.clone(),
-            false,
         );
         assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
     }
@@ -749,7 +707,6 @@ mod tests {
             &key,
             0,
             &mut ExecuteTimings::default(),
-            false,
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
             0,
@@ -782,7 +739,6 @@ mod tests {
             &key,
             200,
             &mut ExecuteTimings::default(),
-            false,
         );
 
         let data = account_data.data()[LoaderV4State::program_data_offset()..].to_vec();
@@ -800,7 +756,6 @@ mod tests {
             account_data.data().len(),
             0,
             environments.program_runtime_v1.clone(),
-            false,
         );
         assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
     }
@@ -832,7 +787,6 @@ mod tests {
                 &key,
                 200,
                 &mut ExecuteTimings::default(),
-                false,
             )
             .unwrap();
             assert_ne!(

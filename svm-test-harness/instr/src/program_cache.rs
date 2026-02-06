@@ -107,7 +107,6 @@ pub fn fill_from_accounts(
                     &acc.0,
                     slot,
                     &mut ExecuteTimings::default(),
-                    false,
                 )
             {
                 program_cache.replenish(acc.0, loaded_program);

@@ -1546,7 +1546,6 @@ impl Bank {
                     &key,
                     self.slot,
                     &mut ExecuteTimings::default(),
-                    false,
                 ) {
                     recompiled.tx_usage_counter.fetch_add(
                         program_to_recompile
@@ -6110,7 +6109,6 @@ impl Bank {
     pub fn load_program(
         &self,
         pubkey: &Pubkey,
-        reload: bool,
         effective_epoch: Epoch,
     ) -> Option<Arc<ProgramCacheEntry>> {
         let environments = self
@@ -6122,7 +6120,6 @@ impl Bank {
             pubkey,
             self.slot(),
             &mut ExecuteTimings::default(), // Called by ledger-tool, metrics not accumulated.
-            reload,
         )
         .map(|(loaded_program, _last_modification_slot)| loaded_program)
     }
