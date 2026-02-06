@@ -1226,7 +1226,7 @@ impl AccountsDb {
             reclaims.iter(),
             None,
             pubkeys_removed_from_accounts_index,
-            HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
+            &self.clean_accounts_stats.purge_stats,
             MarkAccountsObsolete::No,
         ));
         self.clean_accounts_stats
@@ -2032,7 +2032,7 @@ impl AccountsDb {
                 reclaims.iter(),
                 None,
                 &pubkeys_removed_from_accounts_index,
-                HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
+                &self.clean_accounts_stats.purge_stats,
                 MarkAccountsObsolete::No,
             );
         }
@@ -2219,7 +2219,7 @@ impl AccountsDb {
         reclaims: I,
         expected_single_dead_slot: Option<Slot>,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
-        handle_reclaims: HandleReclaims<'a>,
+        purge_stats: &PurgeStats,
         mark_accounts_obsolete: MarkAccountsObsolete,
     ) -> ReclaimResult
     where
@@ -2229,7 +2229,6 @@ impl AccountsDb {
         let (dead_slots, reclaimed_offsets) =
             self.remove_dead_accounts(reclaims, expected_single_dead_slot, mark_accounts_obsolete);
         reclaim_result.1 = reclaimed_offsets;
-        let HandleReclaims::ProcessDeadSlots(purge_stats) = handle_reclaims;
         if let Some(expected_single_dead_slot) = expected_single_dead_slot {
             assert!(dead_slots.len() <= 1);
             if dead_slots.len() == 1 {
@@ -4360,7 +4359,7 @@ impl AccountsDb {
                 reclaims.iter(),
                 expected_dead_slot,
                 &pubkeys_removed_from_accounts_index,
-                HandleReclaims::ProcessDeadSlots(purge_stats),
+                purge_stats,
                 MarkAccountsObsolete::No,
             );
         }
@@ -5752,7 +5751,7 @@ impl AccountsDb {
                 reclaims.iter().flatten(),
                 None,
                 &HashSet::default(),
-                HandleReclaims::ProcessDeadSlots(&purge_stats),
+                &purge_stats,
                 MarkAccountsObsolete::Yes(slot),
             );
             handle_reclaims_time.stop();
@@ -6732,7 +6731,7 @@ impl AccountsDb {
                         reclaims.iter(),
                         None,
                         &HashSet::new(),
-                        HandleReclaims::ProcessDeadSlots(&stats),
+                        &stats,
                         MarkAccountsObsolete::Yes(slot_marked_obsolete),
                     );
                 }
@@ -6994,11 +6993,6 @@ impl AccountsDb {
             );
         }
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-enum HandleReclaims<'a> {
-    ProcessDeadSlots(&'a PurgeStats),
 }
 
 /// Specify whether obsolete accounts should be marked or not during reclaims
