@@ -20,7 +20,7 @@ use {
         repair::repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
         shred_fetch_stage::{ShredFetchStage, SHRED_FETCH_CHANNEL_SIZE},
-        voting_service::VotingService,
+        voting_service::{VoteTransportClient, VotingService},
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::{WindowService, WindowServiceChannels},
     },
@@ -515,12 +515,13 @@ impl Tvu {
             migration_status,
         };
 
+        let vote_client: Arc<dyn VoteTransportClient> = vote_connection_cache.clone();
         let voting_service = VotingService::new(
             voting_receiver,
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
-            vote_connection_cache.clone(),
+            vote_client,
         );
 
         let bls_voting_service = BLSVotingService::new(
