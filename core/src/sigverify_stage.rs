@@ -333,9 +333,6 @@ impl SigVerifyStage {
         let num_valid_packets = count_valid_packets(&batches);
         verify_time.stop();
 
-        // Post-shrink packet batches if many packets are discarded from sigverify
-        let (post_shrink_time_us, post_shrink_total, batches) = Self::maybe_shrink_batches(batches);
-
         verifier.send_packets(batches)?;
 
         debug!(
@@ -372,11 +369,11 @@ impl SigVerifyStage {
         stats.total_discard_random_time_us += discard_random_time.as_us() as usize;
         stats.total_discard_random += num_discarded_randomly;
         stats.total_excess_fail += excess_fail;
-        stats.total_shrinks += pre_shrink_total + post_shrink_total;
+        stats.total_shrinks += pre_shrink_total;
         stats.total_dedup_time_us += dedup_time.as_us() as usize;
         stats.total_discard_time_us += discard_time.as_us() as usize;
         stats.total_verify_time_us += verify_time.as_us() as usize;
-        stats.total_shrink_time_us += (pre_shrink_time_us + post_shrink_time_us) as usize;
+        stats.total_shrink_time_us += pre_shrink_time_us as usize;
 
         Ok(())
     }
