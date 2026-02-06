@@ -10,16 +10,13 @@ use {
         distr::{Distribution, Uniform},
         rng, Rng,
     },
-    solana_core::{
-        banking_trace::BankingTracer,
-        sigverify::TransactionSigVerifier,
-        sigverify_stage::{SigVerifier, SigVerifyStage},
-    },
+    solana_core::sigverify_stage::{SigVerifier, SigVerifyServiceError, SigVerifyStage},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_perf::{
         packet::{to_packet_batches, PacketBatch},
+        sigverify,
         test_tx::test_tx,
     },
     solana_signer::Signer,
@@ -27,7 +24,11 @@ use {
     std::{
         borrow::Cow,
         hint::black_box,
-        time::{Duration, Instant},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        time::Instant,
     },
 };
 
@@ -40,6 +41,27 @@ where
 {
     fn run(&self, harness: &mut Bencher) {
         (self.0)(harness)
+    }
+}
+
+#[derive(Clone)]
+struct BenchSigVerifier {
+    completed: Arc<AtomicUsize>,
+}
+
+impl SigVerifier for BenchSigVerifier {
+    type SendType = ();
+
+    fn verify_and_send_packets(
+        &mut self,
+        mut batches: Vec<PacketBatch>,
+        valid_packets: usize,
+    ) -> Result<usize, SigVerifyServiceError<Self::SendType>> {
+        sigverify::ed25519_verify(&mut batches, false, valid_packets);
+        let num_valid_packets = sigverify::count_valid_packets(&batches);
+        self.completed
+            .fetch_add(num_valid_packets, Ordering::Relaxed);
+        Ok(num_valid_packets)
     }
 }
 
@@ -164,9 +186,14 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     agave_logger::setup();
     trace!("start");
     let (packet_s, packet_r) = unbounded();
-    let (verified_s, verified_r) = BankingTracer::channel_for_test();
-    let verifier = TransactionSigVerifier::new(verified_s, None);
+    let completed = Arc::new(AtomicUsize::new(0));
+    let verifier = BenchSigVerifier {
+        completed: completed.clone(),
+    };
     let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerBench", "bench");
+    let packet_s = packet_s;
+    let packet_s_for_bench = packet_s.clone();
+    let completed_for_bench = completed.clone();
 
     bencher.iter(move || {
         let now = Instant::now();
@@ -177,26 +204,24 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
             batches.len()
         );
 
+        let start = completed_for_bench.load(Ordering::Relaxed);
         let mut sent_len = 0;
         for batch in batches.into_iter() {
             sent_len += batch.len();
-            packet_s.send(batch).unwrap();
+            packet_s_for_bench.send(batch).unwrap();
         }
-        let mut received = 0;
         let expected = if use_same_tx { 1 } else { sent_len };
         trace!("sent: {sent_len}, expected: {expected}");
-        loop {
-            if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
-                received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-                black_box(verifieds);
-                if received >= expected {
-                    break;
-                }
-            }
+        while completed_for_bench.load(Ordering::Relaxed) < start + expected {
+            std::hint::spin_loop();
         }
-        trace!("received: {received}");
+        trace!(
+            "received: {}",
+            completed_for_bench.load(Ordering::Relaxed) - start
+        );
     });
     // This will wait for all packets to make it through sigverify.
+    drop(packet_s);
     stage.join().unwrap();
 }
 
@@ -238,8 +263,6 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
 
 fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32) {
     let (batches0, num_valid_packets) = prepare_batches(discard_factor);
-    let (verified_s, _verified_r) = BankingTracer::channel_for_test();
-    let verifier = TransactionSigVerifier::new(verified_s, None);
 
     let mut c = 0;
     let mut total_shrink_time = 0;
@@ -247,12 +270,13 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
 
     bencher.iter(|| {
         let batches = batches0.clone();
-        let (pre_shrink_time_us, _pre_shrink_total, batches) =
+        let (pre_shrink_time_us, _pre_shrink_total, mut batches) =
             SigVerifyStage::maybe_shrink_batches(batches);
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        let _batches = verifier.verify_batches(batches, num_valid_packets);
+        sigverify::ed25519_verify(&mut batches, false, num_valid_packets);
         verify_time.stop();
+        black_box(sigverify::count_valid_packets(&batches));
 
         c += 1;
         total_shrink_time += pre_shrink_time_us;

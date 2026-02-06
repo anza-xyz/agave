@@ -46,11 +46,15 @@ impl TransactionSigVerifier {
 impl SigVerifier for TransactionSigVerifier {
     type SendType = BankingPacketBatch;
 
-    fn send_packets(
+    fn verify_and_send_packets(
         &mut self,
-        packet_batches: Vec<PacketBatch>,
-    ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
-        let banking_packet_batch = BankingPacketBatch::new(packet_batches);
+        mut batches: Vec<PacketBatch>,
+        valid_packets: usize,
+    ) -> Result<usize, SigVerifyServiceError<Self::SendType>> {
+        sigverify::ed25519_verify(&mut batches, self.reject_non_vote, valid_packets);
+        let num_valid_packets = sigverify::count_valid_packets(&batches);
+
+        let banking_packet_batch = BankingPacketBatch::new(batches);
         if let Some(forward_stage_sender) = &self.forward_stage_sender {
             self.banking_stage_sender
                 .send(banking_packet_batch.clone())?;
@@ -63,15 +67,6 @@ impl SigVerifier for TransactionSigVerifier {
             self.banking_stage_sender.send(banking_packet_batch)?;
         }
 
-        Ok(())
-    }
-
-    fn verify_batches(
-        &self,
-        mut batches: Vec<PacketBatch>,
-        valid_packets: usize,
-    ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify(&mut batches, self.reject_non_vote, valid_packets);
-        batches
+        Ok(num_valid_packets)
     }
 }
