@@ -276,7 +276,6 @@ pub(crate) mod external {
             let mut last_empty_time = Instant::now();
             let mut sleep_duration = STARTING_SLEEP_DURATION;
 
-            // reusable buffers
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
 
@@ -341,6 +340,8 @@ pub(crate) mod external {
             if message.flags & pack_message_flags::EXECUTE != 0 {
                 self.execute_batch(message, should_drain_executes)
             } else {
+                parsing_results.clear();
+                parsed_transactions.clear();
                 self.check_batch(message, parsing_results, parsed_transactions)
                     .map(|()| false)
             }
@@ -499,8 +500,6 @@ pub(crate) mod external {
             )
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
 
-            parsing_results.clear();
-            parsed_transactions.clear();
             // SAFETY: responses_ptr is sufficiently sized and aligned.
             let response_slice = unsafe {
                 Self::parse_transactions_and_populate_initial_check_responses(
@@ -790,7 +789,6 @@ pub(crate) mod external {
             let enable_instruction_accounts_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::limit_instruction_accounts::ID);
-
             for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
                 match SanitizedTransactionView::try_new_sanitized(
