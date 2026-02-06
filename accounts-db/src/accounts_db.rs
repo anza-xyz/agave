@@ -6219,10 +6219,11 @@ impl AccountsDb {
             .insert_new_if_missing_into_primary_index(slot, &mut thread_state.keyed_account_infos));
 
         if insert_info.count > 0 {
-            // second, collect into the shared DashMap once we've figured out all the info per store_id
-            let mut info = StorageSizeAndCount::default();
-            info.stored_size += stored_size_alive;
-            info.count += insert_info.count;
+            // push summary info for store_id into thread state (all threads build a piece of full list)
+            let info = StorageSizeAndCount {
+                stored_size: stored_size_alive,
+                count: insert_info.count,
+            };
 
             // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
             // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
@@ -6888,7 +6889,7 @@ impl AccountsDb {
     ) {
         // store count and size for each storage
         let mut storage_size_storages_time = Measure::start("storage_size_storages");
-        let stored_sizes_and_counts: HashMap<_, _, BuildNoHashHasher<AccountsFileId>> =
+        let stored_sizes_and_counts: IntMap<_, _> =
             stored_sizes_and_counts.into_iter().flatten().collect();
         for (_slot, store) in self.storage.iter() {
             let id = store.id();
