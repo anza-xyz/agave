@@ -212,7 +212,7 @@ agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", fe
 agave-xdp = { path = "xdp", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 ahash = "0.8.12"
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 aquamarine = "0.6.0"
 arbitrary = "1.4.2"
 arc-swap = "1.8.1"
@@ -460,7 +460,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=4.0.0-alpha.0", fea
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hard-forks = "3.0.0"
-solana-hash = "3.1.0"
+solana-hash = "4.0.1"
 solana-inflation = "3.0.0"
 solana-instruction = "3.1.0"
 solana-instruction-error = "2.1.0"
@@ -631,7 +631,7 @@ wasm-bindgen = "0.2"
 winapi = "0.3.8"
 wincode = { version = "0.2.5", features = ["derive", "solana-short-vec"] }
 winreg = "0.55"
-x509-parser = "0.18.0"
+x509-parser = "0.18.1"
 zstd = "0.13.3"
 
 [profile.release-with-debug]

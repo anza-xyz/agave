@@ -24,7 +24,7 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
-    solana_metrics::datapoint_warn,
+    solana_metrics::{datapoint_info, datapoint_warn},
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -927,11 +927,20 @@ impl AdminRpcImpl {
                 }
             }
 
-            solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
+            let old_identity = post_init.cluster_info.id();
+            let new_identity = identity_keypair.pubkey();
+            solana_metrics::set_host_id(new_identity.to_string());
+            // Emit the datapoint after updating metrics to emit the new pubkey
+            datapoint_info!(
+                "validator-set_identity",
+                ("old_id", old_identity.to_string(), String),
+                ("new_id", new_identity.to_string(), String),
+                ("version", solana_version::version!(), String),
+            );
             post_init
                 .cluster_info
                 .set_keypair(Arc::new(identity_keypair));
-            warn!("Identity set to {}", post_init.cluster_info.id());
+            warn!("Identity set to {new_identity}");
             Ok(())
         })
     }
