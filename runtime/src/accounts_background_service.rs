@@ -547,7 +547,6 @@ impl AccountsBackgroundService {
                                 bank.rc.accounts.accounts_db.clean_accounts(
                                     Some(max_clean_slot_inclusive),
                                     false,
-                                    bank.epoch_schedule(),
                                 );
                                 last_cleaned_slot = max_clean_slot_inclusive;
                                 previous_clean_time = Instant::now();

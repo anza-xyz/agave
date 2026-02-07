@@ -4948,7 +4948,6 @@ impl Bank {
                 self.rc.accounts.accounts_db.clean_accounts(
                     Some(latest_full_snapshot_slot),
                     true,
-                    self.epoch_schedule(),
                 );
                 info!("Cleaning... Done.");
             } else {
@@ -4962,7 +4961,6 @@ impl Bank {
                 info!("Shrinking...");
                 self.rc.accounts.accounts_db.shrink_all_slots(
                     true,
-                    self.epoch_schedule(),
                     // we cannot allow the snapshot slot to be shrunk
                     Some(self.slot()),
                 );
@@ -5252,7 +5250,6 @@ impl Bank {
         self.rc.accounts.accounts_db.clean_accounts(
             Some(highest_slot_to_clean),
             false,
-            self.epoch_schedule(),
         );
     }
 
