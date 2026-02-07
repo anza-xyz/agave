@@ -7028,10 +7028,10 @@ mod tests {
         )
         .unwrap();
 
-        let bls12_381_g2_validate_cost = invoke_context
+        let bls12_381_g1_validate_cost = invoke_context
             .get_execution_cost()
-            .bls12_381_g2_validate_cost;
-        invoke_context.mock_set_remaining(2 * bls12_381_g2_validate_cost);
+            .bls12_381_g1_validate_cost;
+        invoke_context.mock_set_remaining(2 * bls12_381_g1_validate_cost);
 
         let result = SyscallCurvePointValidation::rust(
             &mut invoke_context,
