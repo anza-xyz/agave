@@ -1179,10 +1179,9 @@ impl AccountsDb {
         pubkey: &Pubkey,
         max_clean_root_inclusive: Option<Slot>,
         ancient_account_cleans: &AtomicU64,
-        epoch_schedule: &EpochSchedule,
+        oldest_non_ancient_slot: Slot,
         pubkeys_removed_from_accounts_index: &Mutex<PubkeysRemovedFromAccountsIndex>,
     ) -> ReclaimsSlotList<AccountInfo> {
-        let one_epoch_old = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut clean_rooted = Measure::start("clean_old_root-ms");
         let mut reclaims = ReclaimsSlotList::new();
         let removed_from_index = self.accounts_index.clean_rooted_entries(
@@ -1200,7 +1199,7 @@ impl AccountsDb {
             // figure out how many ancient accounts have been reclaimed
             let old_reclaims = reclaims
                 .iter()
-                .filter_map(|(slot, _)| (slot < &one_epoch_old).then_some(1))
+                .filter_map(|(slot, _)| (slot < &oldest_non_ancient_slot).then_some(1))
                 .sum();
             ancient_account_cleans.fetch_add(old_reclaims, Ordering::Relaxed);
         }
@@ -1506,9 +1505,8 @@ impl AccountsDb {
         max_clean_root_inclusive: Option<Slot>,
         is_startup: bool,
         timings: &mut CleanKeyTimings,
-        epoch_schedule: &EpochSchedule,
+        oldest_non_ancient_slot: Slot,
     ) -> CleaningCandidates {
-        let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_root_inclusive = self.accounts_index.max_root_inclusive();
         let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
@@ -1734,6 +1732,8 @@ impl AccountsDb {
         is_startup: bool,
         epoch_schedule: &EpochSchedule,
     ) {
+
+        let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         if self.exhaustively_verify_refcounts {
             //at startup use all cores to verify refcounts
             if is_startup {
@@ -1764,7 +1764,7 @@ impl AccountsDb {
             max_clean_root_inclusive,
             is_startup,
             &mut key_timings,
-            epoch_schedule,
+            oldest_non_ancient_slot,
         );
         measure_construct_candidates.stop();
         drop(active_guard);
@@ -1868,7 +1868,7 @@ impl AccountsDb {
                             candidate_pubkey,
                             max_clean_root_inclusive,
                             &ancient_account_cleans,
-                            epoch_schedule,
+                            oldest_non_ancient_slot,
                             &pubkeys_removed_from_accounts_index,
                         );
                         if !reclaims_new.is_empty() {
