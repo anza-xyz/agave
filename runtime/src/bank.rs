@@ -4945,10 +4945,10 @@ impl Bank {
                 // perform an accounts hash calculation *up to that slot*.  If we cleaned *past*
                 // that slot, then accounts could be removed from older storages, which would
                 // change the accounts hash.
-                self.rc.accounts.accounts_db.clean_accounts(
-                    Some(latest_full_snapshot_slot),
-                    true,
-                );
+                self.rc
+                    .accounts
+                    .accounts_db
+                    .clean_accounts(Some(latest_full_snapshot_slot), true);
                 info!("Cleaning... Done.");
             } else {
                 info!("Cleaning... Skipped.");
@@ -5247,10 +5247,10 @@ impl Bank {
         // So when we're snapshotting, the highest slot to clean is lowered by one.
         let highest_slot_to_clean = self.slot().saturating_sub(1);
 
-        self.rc.accounts.accounts_db.clean_accounts(
-            Some(highest_slot_to_clean),
-            false,
-        );
+        self.rc
+            .accounts
+            .accounts_db
+            .clean_accounts(Some(highest_slot_to_clean), false);
     }
 
     pub fn print_accounts_stats(&self) {

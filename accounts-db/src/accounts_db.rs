@@ -1708,11 +1708,7 @@ impl AccountsDb {
     // collection
     // Only remove those accounts where the entire rooted history of the account
     // can be purged because there are no live append vecs in the ancestors
-    pub fn clean_accounts(
-        &self,
-        max_clean_root_inclusive: Option<Slot>,
-        is_startup: bool,
-    ) {
+    pub fn clean_accounts(&self, max_clean_root_inclusive: Option<Slot>, is_startup: bool) {
         if self.exhaustively_verify_refcounts {
             //at startup use all cores to verify refcounts
             if is_startup {
