@@ -13,9 +13,6 @@ edition = { workspace = true }
 name = "cargo-test-sbf"
 path = "src/main.rs"
 
-[features]
-agave-unstable-api = []
-
 [dependencies]
 agave-logger = { workspace = true }
 cargo_metadata = { workspace = true }

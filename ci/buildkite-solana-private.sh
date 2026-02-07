@@ -164,7 +164,6 @@ all_test_steps() {
              ^ci/test-local-cluster.sh \
              ^core/build.rs \
              ^fetch-perf-libs.sh \
-             ^platform-tools-sdk/ \
              ^programs/ \
       ; then
     cat >> "$output_file" <<"EOF"

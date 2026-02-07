@@ -455,9 +455,6 @@ fn main() {
         ..Config::default()
     };
 
-    if let Ok(cargo_build_sbf) = env::var("CARGO_BUILD_SBF") {
-        config.cargo_build_sbf = PathBuf::from(cargo_build_sbf);
-    }
     if let Ok(cargo_build_sbf) = env::var("CARGO") {
         config.cargo = PathBuf::from(cargo_build_sbf);
     }

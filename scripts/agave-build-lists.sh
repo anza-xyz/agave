@@ -12,8 +12,6 @@
 
 # shellcheck disable=SC2034
 AGAVE_BINS_DEV=(
-  cargo-build-sbf
-  cargo-test-sbf
   solana-test-validator
 )
 
