@@ -1325,14 +1325,8 @@ async fn send_messages(
     }
 
     if !write_messages.is_empty() {
-        let connection_cache = {
-            #[cfg(feature = "dev-context-only-utils")]
-            let cache =
-                ConnectionCache::new_quic_for_tests("connection_cache_cli_program_v4_quic", 1);
-            #[cfg(not(feature = "dev-context-only-utils"))]
-            let cache = ConnectionCache::new_quic("connection_cache_cli_program_v4_quic", 1);
-            cache
-        };
+        let connection_cache =
+            ConnectionCache::new_quic("connection_cache_cli_program_v4_quic", 1);
 
         let transaction_errors = match connection_cache {
             ConnectionCache::Udp(cache) => {
