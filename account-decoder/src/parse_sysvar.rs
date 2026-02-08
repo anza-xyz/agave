@@ -2,8 +2,7 @@
 use solana_sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
     crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
-        StringAmount, UiFeeCalculator,
+        core::{ParsableAccount, ParseAccountError, StringAmount, UiFeeCalculator},
     },
     bincode::deserialize,
     bv::BitVec,

@@ -1,3 +1,8 @@
+pub use crate::core::{
+    ParseAccountError, ParsableAccount, StringAmount, StringDecimals, UiFeeCalculator,
+};
+#[cfg(feature = "token")]
+pub use crate::core::SplTokenAdditionalDataV2;
 pub use solana_account_decoder_client_types::ParsedAccount;
 use {
     crate::{
@@ -7,18 +12,13 @@ use {
         parse_token::parse_token_v3, parse_vote::parse_vote,
     },
     inflector::Inflector,
-    serde::{Deserialize, Serialize},
     solana_clock::UnixTimestamp,
-    solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         address_lookup_table, bpf_loader_upgradeable, config, stake, system_program, sysvar, vote,
     },
-    spl_token_2022_interface::extension::{
-        interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
-    },
+    spl_token_2022_interface::extension::interest_bearing_mint::InterestBearingConfig,
     std::collections::HashMap,
-    thiserror::Error,
 };
 
 pub static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableAccount>> =
@@ -45,38 +45,6 @@ pub static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableAcc
         m
     });
 
-#[derive(Error, Debug)]
-pub enum ParseAccountError {
-    #[error("{0:?} account not parsable")]
-    AccountNotParsable(ParsableAccount),
-
-    #[error("Program not parsable")]
-    ProgramNotParsable,
-
-    #[error("Additional data required to parse: {0}")]
-    AdditionalDataMissing(String),
-
-    #[error("Instruction error")]
-    InstructionError(#[from] InstructionError),
-
-    #[error("Serde json error")]
-    SerdeJsonError(#[from] serde_json::error::Error),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ParsableAccount {
-    AddressLookupTable,
-    BpfUpgradeableLoader,
-    Config,
-    Nonce,
-    SplToken,
-    SplToken2022,
-    Stake,
-    Sysvar,
-    Vote,
-}
-
 #[derive(Clone, Copy, Default)]
 pub struct AccountAdditionalDataV3 {
     pub spl_token_additional_data: Option<SplTokenAdditionalDataV2>,
@@ -97,28 +65,12 @@ impl SplTokenAdditionalData {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct SplTokenAdditionalDataV2 {
-    pub decimals: u8,
-    pub interest_bearing_config: Option<(InterestBearingConfig, UnixTimestamp)>,
-    pub scaled_ui_amount_config: Option<(ScaledUiAmountConfig, UnixTimestamp)>,
-}
-
 impl From<SplTokenAdditionalData> for SplTokenAdditionalDataV2 {
     fn from(v: SplTokenAdditionalData) -> Self {
         Self {
             decimals: v.decimals,
             interest_bearing_config: v.interest_bearing_config,
             scaled_ui_amount_config: None,
-        }
-    }
-}
-
-impl SplTokenAdditionalDataV2 {
-    pub fn with_decimals(decimals: u8) -> Self {
-        Self {
-            decimals,
-            ..Default::default()
         }
     }
 }
@@ -156,7 +108,7 @@ pub fn parse_account_data_v3(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod test {
     use {
         super::*,

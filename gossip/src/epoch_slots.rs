@@ -213,6 +213,14 @@ impl Sanitize for CompressedSlots {
     }
 }
 
+#[cfg(feature = "frozen-abi")]
+impl ::solana_frozen_abi::abi_example::TransparentAsHelper for Uncompressed {}
+
+#[cfg(feature = "frozen-abi")]
+impl ::solana_frozen_abi::abi_example::EvenAsOpaque for Uncompressed {
+    const TYPE_NAME_MATCHER: &'static str = "bv::bit_vec::inner::Inner";
+}
+
 impl Default for CompressedSlots {
     fn default() -> Self {
         CompressedSlots::new(0)

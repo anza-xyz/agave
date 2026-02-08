@@ -1,18 +1,21 @@
 use {
     crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError, SplTokenAdditionalDataV2},
-        parse_token_extension::parse_extension,
+        core::{ParsableAccount, ParseAccountError, SplTokenAdditionalDataV2},
     },
     solana_program_option::COption,
     solana_program_pack::Pack,
     solana_pubkey::Pubkey,
     spl_token_2022_interface::{
-        extension::{BaseStateWithExtensions, StateWithExtensions},
+        extension::{BaseState, StateWithExtensions},
         generic_token_account::GenericTokenAccount,
         state::{Account, AccountState, Mint, Multisig},
     },
     std::str::FromStr,
 };
+#[cfg(feature = "token-extension")]
+use crate::parse_token_extension::parse_extension;
+#[cfg(feature = "token-extension")]
+use spl_token_2022_interface::extension::BaseStateWithExtensions;
 pub use {
     solana_account_decoder_client_types::token::{
         real_number_string, real_number_string_trimmed, TokenAccountType, UiAccountState, UiMint,
@@ -31,11 +34,7 @@ pub fn parse_token_v3(
                 "no mint_decimals provided to parse spl-token account".to_string(),
             )
         })?;
-        let extension_types = account.get_extension_types().unwrap_or_default();
-        let ui_extensions = extension_types
-            .iter()
-            .map(|extension_type| parse_extension::<Account>(extension_type, &account))
-            .collect();
+        let ui_extensions = collect_extensions(&account);
         return Ok(TokenAccountType::Account(UiTokenAccount {
             mint: account.base.mint.to_string(),
             owner: account.base.owner.to_string(),
@@ -68,11 +67,7 @@ pub fn parse_token_v3(
         }));
     }
     if let Ok(mint) = StateWithExtensions::<Mint>::unpack(data) {
-        let extension_types = mint.get_extension_types().unwrap_or_default();
-        let ui_extensions = extension_types
-            .iter()
-            .map(|extension_type| parse_extension::<Mint>(extension_type, &mint))
-            .collect();
+        let ui_extensions = collect_extensions(&mint);
         return Ok(TokenAccountType::Mint(UiMint {
             mint_authority: match mint.base.mint_authority {
                 COption::Some(pubkey) => Some(pubkey.to_string()),
@@ -112,6 +107,25 @@ pub fn parse_token_v3(
             ParsableAccount::SplToken,
         ))
     }
+}
+
+#[cfg(feature = "token-extension")]
+fn collect_extensions<S: BaseState + Pack>(
+    account: &StateWithExtensions<S>,
+) -> Vec<solana_account_decoder_client_types::token::UiExtension> {
+    account
+        .get_extension_types()
+        .unwrap_or_default()
+        .iter()
+        .map(|extension_type| parse_extension::<S>(extension_type, account))
+        .collect()
+}
+
+#[cfg(not(feature = "token-extension"))]
+fn collect_extensions<S: BaseState + Pack>(
+    _account: &StateWithExtensions<S>,
+) -> Vec<solana_account_decoder_client_types::token::UiExtension> {
+    Vec::new()
 }
 
 pub fn convert_account_state(state: AccountState) -> UiAccountState {
@@ -173,14 +187,9 @@ pub fn get_token_account_mint(data: &[u8]) -> Option<Pubkey> {
 mod test {
     use {
         super::*,
-        crate::parse_token_extension::{UiMemoTransfer, UiMintCloseAuthority},
-        solana_account_decoder_client_types::token::UiExtension,
-        spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::extension::{
-            immutable_owner::ImmutableOwner, interest_bearing_mint::InterestBearingConfig,
-            memo_transfer::MemoTransfer, mint_close_authority::MintCloseAuthority,
-            scaled_ui_amount::ScaledUiAmountConfig, BaseStateWithExtensionsMut, ExtensionType,
-            StateWithExtensionsMut,
+            interest_bearing_mint::InterestBearingConfig,
+            scaled_ui_amount::ScaledUiAmountConfig,
         },
     };
 
@@ -479,6 +488,21 @@ mod test {
         );
         assert_eq!(token_amount.ui_amount, None);
     }
+}
+
+#[cfg(all(test, feature = "token-extension"))]
+mod test_extensions {
+    use {
+        super::*,
+        crate::parse_token_extension::{UiMemoTransfer, UiMintCloseAuthority},
+        solana_account_decoder_client_types::token::UiExtension,
+        spl_pod::optional_keys::OptionalNonZeroPubkey,
+        spl_token_2022_interface::extension::{
+            immutable_owner::ImmutableOwner, memo_transfer::MemoTransfer,
+            mint_close_authority::MintCloseAuthority, BaseStateWithExtensionsMut, ExtensionType,
+            StateWithExtensionsMut,
+        },
+    };
 
     #[test]
     fn test_parse_token_account_with_extensions() {

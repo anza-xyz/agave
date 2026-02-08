@@ -1,6 +1,6 @@
 use {
     crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
+        core::{ParsableAccount, ParseAccountError},
         validator_info,
     },
     bincode::deserialize,
@@ -94,7 +94,7 @@ pub struct UiConfig<T> {
     pub config_data: T,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod test {
     use {
         super::*,

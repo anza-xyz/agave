@@ -1,36 +1,49 @@
-#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
+pub mod core;
+pub use core::*;
+
+#[cfg(feature = "full")]
 pub mod parse_account_data;
+#[cfg(feature = "address-lookup-table")]
 pub mod parse_address_lookup_table;
+#[cfg(feature = "bpf-loader")]
 pub mod parse_bpf_loader;
+#[cfg(feature = "config")]
 #[allow(deprecated)]
 pub mod parse_config;
+#[cfg(feature = "nonce")]
 pub mod parse_nonce;
+#[cfg(feature = "stake")]
 pub mod parse_stake;
+#[cfg(feature = "sysvar")]
 pub mod parse_sysvar;
+#[cfg(feature = "token")]
 pub mod parse_token;
+#[cfg(feature = "token-extension")]
 pub mod parse_token_extension;
+#[cfg(feature = "vote")]
 pub mod parse_vote;
+#[cfg(feature = "config")]
 pub mod validator_info;
 
 pub use solana_account_decoder_client_types::{
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
+
+#[cfg(feature = "full")]
 use {
     crate::parse_account_data::{parse_account_data_v3, AccountAdditionalDataV3},
     base64::{prelude::BASE64_STANDARD, Engine},
-    serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
-    solana_fee_calculator::FeeCalculator,
     solana_pubkey::Pubkey,
     std::io::Write,
 };
 
-pub type StringAmount = String;
-pub type StringDecimals = String;
+#[cfg(feature = "full")]
 pub const MAX_BASE58_BYTES: usize = 128;
 
+#[cfg(feature = "full")]
 fn encode_bs58<T: ReadableAccount>(
     account: &T,
     data_slice_config: Option<UiDataSliceConfig>,
@@ -43,6 +56,7 @@ fn encode_bs58<T: ReadableAccount>(
     }
 }
 
+#[cfg(feature = "full")]
 pub fn encode_ui_account<T: ReadableAccount>(
     pubkey: &Pubkey,
     account: &T,
@@ -100,28 +114,7 @@ pub fn encode_ui_account<T: ReadableAccount>(
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct UiFeeCalculator {
-    pub lamports_per_signature: StringAmount,
-}
-
-impl From<FeeCalculator> for UiFeeCalculator {
-    fn from(fee_calculator: FeeCalculator) -> Self {
-        Self {
-            lamports_per_signature: fee_calculator.lamports_per_signature.to_string(),
-        }
-    }
-}
-
-impl Default for UiFeeCalculator {
-    fn default() -> Self {
-        Self {
-            lamports_per_signature: "0".to_string(),
-        }
-    }
-}
-
+#[cfg(feature = "full")]
 fn slice_data(data: &[u8], data_slice_config: Option<UiDataSliceConfig>) -> &[u8] {
     if let Some(UiDataSliceConfig { offset, length }) = data_slice_config {
         if offset >= data.len() {
@@ -136,7 +129,7 @@ fn slice_data(data: &[u8], data_slice_config: Option<UiDataSliceConfig>) -> &[u8
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod test {
     use {
         super::*,
