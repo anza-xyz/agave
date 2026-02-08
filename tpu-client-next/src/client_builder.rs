@@ -48,6 +48,7 @@ use {
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
+        workers_cache::ConnectionWorkerCache,
     },
     solana_keypair::Keypair,
     std::{future::Future, net::UdpSocket, num::NonZeroUsize, pin::Pin, sync::Arc},
@@ -85,6 +86,7 @@ pub struct ClientBuilder {
     sender_channel_size: usize,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
+    workers_cache: Option<Box<dyn FnOnce(NonZeroUsize) -> Box<dyn ConnectionWorkerCache> + Send>>,
     broadcaster: Box<dyn WorkersBroadcaster>,
     report_fn: Option<ReportFn>,
     cancel_scheduler: CancellationToken,
@@ -105,6 +107,7 @@ impl ClientBuilder {
             worker_channel_size: 2,
             sender_channel_size: 64,
             max_reconnect_attempts: 2,
+            workers_cache: None,
             broadcaster: Box::new(NonblockingBroadcaster),
             report_fn: None,
             cancel_scheduler: CancellationToken::new(),
@@ -188,6 +191,20 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the cache implementation used to store connection workers.
+    ///
+    /// The configured [`Self::max_cache_size`] is passed to this factory.
+    pub fn workers_cache<C>(
+        mut self,
+        workers_cache: impl FnOnce(NonZeroUsize) -> C + Send + 'static,
+    ) -> Self
+    where
+        C: ConnectionWorkerCache + 'static,
+    {
+        self.workers_cache = Some(Box::new(move |capacity| Box::new(workers_cache(capacity))));
+        self
+    }
+
     /// Set the broadcaster used by the scheduler.
     pub fn broadcaster(mut self, broadcaster: impl WorkersBroadcaster + 'static) -> Self {
         self.broadcaster = Box::new(broadcaster);
@@ -218,6 +235,7 @@ impl ClientBuilder {
             skip_check_transaction_age: self.skip_check_transaction_age,
             worker_channel_size: self.worker_channel_size,
             max_reconnect_attempts: self.max_reconnect_attempts,
+            workers_cache: self.workers_cache,
             // We open connection to one more leader in advance, which time-wise means ~1.6s
             leaders_fanout: Fanout {
                 connect: self.leader_send_fanout.saturating_add(1),
