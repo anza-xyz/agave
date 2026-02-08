@@ -77,6 +77,14 @@ pub enum Error {
     UnusedIpAddr(IpAddr),
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi),
+    frozen_abi(
+        api_digest = "EYA2sCathvAkbhxS6Ppn85ibKaYSarfBFhHMgxYCiatZ",
+        abi_digest = "JDSA4bw1tVfyidY4aMkzdCemM7eFXRWcbUNrke4nrcN3"
+    )
+)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ContactInfo {
     pubkey: Pubkey,
@@ -666,6 +674,27 @@ impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
             addrs: Vec::<IpAddr>::example(),
             sockets: Vec::<SocketEntry>::example(),
             extensions: vec![],
+            cache: EMPTY_SOCKET_ADDR_CACHE,
+        }
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<ContactInfo>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> ContactInfo {
+        let version =
+            <solana_version::Version as solana_frozen_abi::abi_example::AbiExample>::example();
+        ContactInfo {
+            pubkey: Pubkey::new_from_array(rng.random()),
+            wallclock: rng.random(),
+            outset: rng.random(),
+            shred_version: rng.random(),
+            version,
+            addrs: Vec::default(),
+            sockets: Vec::default(),
+            extensions: Vec::default(),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
     }
