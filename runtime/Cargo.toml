@@ -100,7 +100,7 @@ solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bls-signatures = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
+solana-bpf-loader-program = { workspace = true, features = ["metrics"] }
 solana-bucket-map = { workspace = true }
 solana-builtins = { workspace = true }
 solana-client-traits = { workspace = true }
