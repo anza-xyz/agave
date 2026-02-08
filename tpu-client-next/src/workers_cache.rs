@@ -20,6 +20,13 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+/// [`WorkersCacheStrategy`] Strategy for caching connection workers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkersCacheStrategy {
+    Lru,
+    Ringbuf,
+}
+
 /// [`WorkerInfo`] holds information about a worker responsible for sending
 /// transaction batches.
 pub struct WorkerInfo {
@@ -138,7 +145,13 @@ pub enum WorkersCacheError {
 }
 
 impl WorkersCache {
-    pub fn new(capacity: usize, cancel: CancellationToken) -> Self {
+    pub fn new(
+        capacity: usize,
+        cancel: CancellationToken,
+        _worker_cache_strategy: WorkersCacheStrategy,
+    ) -> Self {
+        // TODO: worker_cache_stragegy?
+
         Self {
             workers: LruCache::new(capacity),
             cancel,
@@ -461,7 +474,7 @@ mod tests {
         let endpoint = create_test_endpoint();
 
         let cancel = CancellationToken::new();
-        let mut cache = WorkersCache::new(10, cancel.clone());
+        let mut cache = WorkersCache::new(10, cancel.clone(), crate::WorkersCacheStrategy::Lru);
 
         let port_range = unique_port_range_for_tests(2);
         let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);

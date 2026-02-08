@@ -18,7 +18,7 @@ use {
     },
     solana_tpu_client_next::{
         ClientBuilder, ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
-        SendTransactionStats,
+        SendTransactionStats, WorkersCacheStrategy,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
@@ -64,6 +64,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
         // the speed of fastest leader.
         worker_channel_size: 100,
         max_reconnect_attempts: 4,
+        worker_cache_strategy: WorkersCacheStrategy::Lru,
         leaders_fanout: Fanout {
             send: 1,
             connect: 1,
