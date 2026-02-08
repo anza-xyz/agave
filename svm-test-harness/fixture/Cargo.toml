@@ -14,24 +14,37 @@ publish = false
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
 fuzz = [
-    "dep:agave-feature-set",
-    "dep:bincode",
+    "dep:agave-precompiles",
     "dep:prost",
     "dep:prost-build",
     "dep:protosol",
+    "dep:solana-address-lookup-table-interface",
+    "dep:solana-message",
+    "dep:solana-signature",
+    "dep:solana-svm-transaction",
     "solana-pubkey/default",
 ]
 
 [dependencies]
-agave-feature-set = { workspace = true, optional = true }
-bincode = { workspace = true, optional = true }
+agave-feature-set = { workspace = true }
+agave-precompiles = { workspace = true, optional = true }
+bincode = { workspace = true }
 prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
 solana-account = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true, optional = true, features = ["bincode", "bytemuck"] }
+solana-fee-structure = { workspace = true }
+solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
+solana-message = { workspace = true, optional = true }
 solana-pubkey = { workspace = true }
+solana-signature = { workspace = true, optional = true }
+solana-stable-layout = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-svm-transaction = { workspace = true, optional = true }
+solana-transaction = { workspace = true, features = ["blake3"] }
+solana-transaction-error = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 
 [build-dependencies]
