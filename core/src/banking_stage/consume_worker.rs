@@ -470,9 +470,6 @@ pub(crate) mod external {
             parsing_results: &mut Vec<Result<(), TransactionViewError>>,
             parsed_transactions: &mut Vec<TxView>,
         ) -> Result<(), ExternalConsumeWorkerError> {
-            parsing_results.clear();
-            parsed_transactions.clear();
-
             let BankPair {
                 root_bank,
                 working_bank,
@@ -784,6 +781,9 @@ pub(crate) mod external {
             parsing_results: &mut Vec<Result<(), TransactionViewError>>,
             parsed_transactions: &mut Vec<TxView>,
         ) -> &'a mut [CheckResponse] {
+            parsing_results.clear();
+            parsed_transactions.clear();
+
             let enable_static_instruction_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
