@@ -1,4 +1,4 @@
-pub use solana_connection_cache::connection_cache::Protocol;
+pub use solana_connection_cache::connection_cache::{Protocol, DEFAULT_MAX_CONNECTIONS};
 use {
     solana_connection_cache::{
         client_connection::ClientConnection,
@@ -93,6 +93,25 @@ impl ConnectionCache {
         cert_info: Option<(&Keypair, IpAddr)>,
         stake_info: Option<(&Arc<RwLock<StakedNodes>>, &Pubkey)>,
     ) -> Self {
+        Self::new_with_client_options_and_max_connections(
+            name,
+            connection_pool_size,
+            DEFAULT_MAX_CONNECTIONS,
+            client_socket,
+            cert_info,
+            stake_info,
+        )
+    }
+
+    /// Create a quic connection_cache with configurable max connections
+    pub fn new_with_client_options_and_max_connections(
+        name: &'static str,
+        connection_pool_size: usize,
+        max_connections: usize,
+        client_socket: Option<UdpSocket>,
+        cert_info: Option<(&Keypair, IpAddr)>,
+        stake_info: Option<(&Arc<RwLock<StakedNodes>>, &Pubkey)>,
+    ) -> Self {
         // The minimum pool size is 1.
         let connection_pool_size = 1.max(connection_pool_size);
         let mut config = QuicConfig::new().unwrap();
@@ -106,8 +125,13 @@ impl ConnectionCache {
             config.set_staked_nodes(stake_info.0, stake_info.1);
         }
         let connection_manager = QuicConnectionManager::new_with_connection_config(config);
-        let cache =
-            BackendConnectionCache::new(name, connection_manager, connection_pool_size).unwrap();
+        let cache = BackendConnectionCache::new_with_max_connections(
+            name,
+            connection_manager,
+            connection_pool_size,
+            max_connections,
+        )
+        .unwrap();
         Self::Quic(Arc::new(cache))
     }
 

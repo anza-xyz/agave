@@ -19,8 +19,8 @@ use {
     thiserror::Error,
 };
 
-// Should be non-zero
-const MAX_CONNECTIONS: usize = 1024;
+/// Default maximum number of connections to cache
+pub const DEFAULT_MAX_CONNECTIONS: usize = 1024;
 
 /// Default connection pool size per remote address
 pub const DEFAULT_CONNECTION_POOL_SIZE: usize = 2;
@@ -53,6 +53,7 @@ pub struct ConnectionCache<
     stats: Arc<ConnectionCacheStats>,
     last_stats: AtomicInterval,
     connection_pool_size: usize,
+    max_connections: usize,
     connection_config: Arc<T>,
     sender: Sender<(usize, SocketAddr)>,
 }
@@ -68,10 +69,25 @@ where
         connection_manager: M,
         connection_pool_size: usize,
     ) -> Result<Self, ClientError> {
+        Self::new_with_max_connections(
+            name,
+            connection_manager,
+            connection_pool_size,
+            DEFAULT_MAX_CONNECTIONS,
+        )
+    }
+
+    pub fn new_with_max_connections(
+        name: &'static str,
+        connection_manager: M,
+        connection_pool_size: usize,
+        max_connections: usize,
+    ) -> Result<Self, ClientError> {
         let config = connection_manager.new_connection_config();
         Ok(Self::new_with_config(
             name,
             connection_pool_size,
+            max_connections,
             config,
             connection_manager,
         ))
@@ -80,13 +96,18 @@ where
     pub fn new_with_config(
         name: &'static str,
         connection_pool_size: usize,
+        max_connections: usize,
         connection_config: C,
         connection_manager: M,
     ) -> Self {
-        info!("Creating ConnectionCache {name}, pool size: {connection_pool_size}");
+        let max_connections = 1.max(max_connections); // The minimum is 1.
+        info!(
+            "Creating ConnectionCache {name}, pool size: {connection_pool_size}, max connections: \
+             {max_connections}"
+        );
         let (sender, receiver) = crossbeam_channel::unbounded();
 
-        let map = Arc::new(RwLock::new(IndexMap::with_capacity(MAX_CONNECTIONS)));
+        let map = Arc::new(RwLock::new(IndexMap::with_capacity(max_connections)));
         let config = Arc::new(connection_config);
         let connection_manager = Arc::new(connection_manager);
         let connection_pool_size = 1.max(connection_pool_size); // The minimum pool size is 1.
@@ -102,6 +123,7 @@ where
             connection_manager,
             last_stats: AtomicInterval::default(),
             connection_pool_size,
+            max_connections,
             connection_config: config,
             sender,
         }
@@ -172,6 +194,7 @@ where
                     &mut map,
                     addr,
                     self.connection_pool_size,
+                    self.max_connections,
                     None,
                 )
             } else {
@@ -187,6 +210,7 @@ where
                 &mut map,
                 addr,
                 self.connection_pool_size,
+                self.max_connections,
                 Some(&self.sender),
             );
         }
@@ -209,6 +233,7 @@ where
         map: &mut std::sync::RwLockWriteGuard<'_, IndexMap<SocketAddr, P>>,
         addr: &SocketAddr,
         connection_pool_size: usize,
+        max_connections: usize,
         async_connection_sender: Option<&Sender<(usize, SocketAddr)>>,
     ) -> (bool, u64, u64) {
         // evict a connection if the cache is reaching upper bounds
@@ -216,9 +241,9 @@ where
         let mut get_connection_cache_eviction_measure =
             Measure::start("get_connection_cache_eviction_measure");
         let existing_index = map.get_index_of(addr);
-        while map.len() >= MAX_CONNECTIONS {
+        while map.len() >= max_connections {
             let mut rng = rng();
-            let n = rng.random_range(0..MAX_CONNECTIONS);
+            let n = rng.random_range(0..max_connections);
             if let Some(index) = existing_index {
                 if n == index {
                     continue;
@@ -302,6 +327,7 @@ where
                                 &mut map,
                                 addr,
                                 self.connection_pool_size,
+                                self.max_connections,
                                 Some(&self.sender),
                             );
                         }
@@ -707,7 +733,7 @@ mod tests {
             DEFAULT_CONNECTION_POOL_SIZE,
         )
         .unwrap();
-        let addrs = (0..MAX_CONNECTIONS)
+        let addrs = (0..DEFAULT_MAX_CONNECTIONS)
             .map(|_| {
                 let addr = get_addr(&mut rng);
                 connection_cache.get_connection(&addr);
@@ -716,7 +742,7 @@ mod tests {
             .collect::<Vec<_>>();
         {
             let map = connection_cache.map.read().unwrap();
-            assert!(map.len() == MAX_CONNECTIONS);
+            assert!(map.len() == DEFAULT_MAX_CONNECTIONS);
             addrs.iter().for_each(|addr| {
                 let conn = &map.get(addr).expect("Address not found").get(0).unwrap();
                 let conn = conn.new_blocking_connection(*addr, connection_cache.stats.clone());
@@ -737,7 +763,7 @@ mod tests {
         let port = addr.port();
         let addr_with_quic_port = SocketAddr::new(addr.ip(), port);
         let map = connection_cache.map.read().unwrap();
-        assert!(map.len() == MAX_CONNECTIONS);
+        assert!(map.len() == DEFAULT_MAX_CONNECTIONS);
         let _conn = map.get(&addr_with_quic_port).expect("Address not found");
     }
 
