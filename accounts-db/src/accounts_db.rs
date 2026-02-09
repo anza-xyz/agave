@@ -86,7 +86,7 @@ use {
         ops::RangeBounds,
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
         thread::{self, sleep},
@@ -798,8 +798,6 @@ struct CleanKeyTimings {
     delta_key_count: u64,
     dirty_pubkeys_count: u64,
     oldest_dirty_slot: Slot,
-    /// number of ancient append vecs that were scanned because they were dirty when clean started
-    dirty_ancient_stores: usize,
 }
 
 pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<PathBuf>)> {
@@ -1178,11 +1176,8 @@ impl AccountsDb {
         &self,
         pubkey: &Pubkey,
         max_clean_root_inclusive: Option<Slot>,
-        ancient_account_cleans: &AtomicU64,
-        epoch_schedule: &EpochSchedule,
         pubkeys_removed_from_accounts_index: &Mutex<PubkeysRemovedFromAccountsIndex>,
     ) -> ReclaimsSlotList<AccountInfo> {
-        let one_epoch_old = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut clean_rooted = Measure::start("clean_old_root-ms");
         let mut reclaims = ReclaimsSlotList::new();
         let removed_from_index = self.accounts_index.clean_rooted_entries(
@@ -1195,14 +1190,6 @@ impl AccountsDb {
                 .lock()
                 .unwrap()
                 .insert(*pubkey);
-        }
-        if !reclaims.is_empty() {
-            // figure out how many ancient accounts have been reclaimed
-            let old_reclaims = reclaims
-                .iter()
-                .filter_map(|(slot, _)| (slot < &one_epoch_old).then_some(1))
-                .sum();
-            ancient_account_cleans.fetch_add(old_reclaims, Ordering::Relaxed);
         }
         clean_rooted.stop();
         self.clean_accounts_stats
@@ -1506,9 +1493,7 @@ impl AccountsDb {
         max_clean_root_inclusive: Option<Slot>,
         is_startup: bool,
         timings: &mut CleanKeyTimings,
-        epoch_schedule: &EpochSchedule,
     ) -> CleaningCandidates {
-        let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_root_inclusive = self.accounts_index.max_root_inclusive();
         let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
@@ -1541,7 +1526,6 @@ impl AccountsDb {
                 .might_contain_zero_lamport_entry |= is_zero_lamport;
         };
 
-        let dirty_ancient_stores = AtomicUsize::default();
         let mut dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
             let oldest_dirty_slots: Vec<u64> = dirty_stores
@@ -1549,9 +1533,6 @@ impl AccountsDb {
                 .map(|dirty_store_chunk| {
                     let mut oldest_dirty_slot = max_slot_inclusive.saturating_add(1);
                     dirty_store_chunk.iter().for_each(|(slot, store)| {
-                        if *slot < oldest_non_ancient_slot {
-                            dirty_ancient_stores.fetch_add(1, Ordering::Relaxed);
-                        }
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
 
                         store
@@ -1588,7 +1569,6 @@ impl AccountsDb {
         );
         dirty_store_processing_time.stop();
         timings.dirty_store_processing_us += dirty_store_processing_time.as_us();
-        timings.dirty_ancient_stores = dirty_ancient_stores.load(Ordering::Relaxed);
 
         let mut collect_delta_keys = Measure::start("key_create");
         self.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(max_slot_inclusive, &candidates);
@@ -1728,12 +1708,7 @@ impl AccountsDb {
     // collection
     // Only remove those accounts where the entire rooted history of the account
     // can be purged because there are no live append vecs in the ancestors
-    pub fn clean_accounts(
-        &self,
-        max_clean_root_inclusive: Option<Slot>,
-        is_startup: bool,
-        epoch_schedule: &EpochSchedule,
-    ) {
+    pub fn clean_accounts(&self, max_clean_root_inclusive: Option<Slot>, is_startup: bool) {
         if self.exhaustively_verify_refcounts {
             //at startup use all cores to verify refcounts
             if is_startup {
@@ -1747,7 +1722,6 @@ impl AccountsDb {
 
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
 
-        let ancient_account_cleans = AtomicU64::default();
         let purges_old_accounts_count = AtomicU64::default();
 
         let mut measure_all = Measure::start("clean_accounts");
@@ -1764,7 +1738,6 @@ impl AccountsDb {
             max_clean_root_inclusive,
             is_startup,
             &mut key_timings,
-            epoch_schedule,
         );
         measure_construct_candidates.stop();
         drop(active_guard);
@@ -1867,8 +1840,6 @@ impl AccountsDb {
                         let reclaims_new = self.collect_reclaims(
                             candidate_pubkey,
                             max_clean_root_inclusive,
-                            &ancient_account_cleans,
-                            epoch_schedule,
                             &pubkeys_removed_from_accounts_index,
                         );
                         if !reclaims_new.is_empty() {
@@ -2059,11 +2030,6 @@ impl AccountsDb {
                 i64
             ),
             (
-                "dirty_ancient_stores",
-                key_timings.dirty_ancient_stores,
-                i64
-            ),
-            (
                 "dirty_store_processing_us",
                 key_timings.dirty_store_processing_us,
                 i64
@@ -2168,11 +2134,6 @@ impl AccountsDb {
                 self.accounts_index
                     .max_distance_to_min_scan_slot
                     .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "ancient_account_cleans",
-                ancient_account_cleans.load(Ordering::Relaxed),
                 i64
             ),
             (
@@ -3356,7 +3317,6 @@ impl AccountsDb {
     pub fn shrink_all_slots(
         &self,
         is_startup: bool,
-        epoch_schedule: &EpochSchedule,
         newest_slot_skip_shrink_inclusive: Option<Slot>,
     ) {
         let _guard = self.active_stats.activate(ActiveStatItem::Shrink);
@@ -3380,7 +3340,7 @@ impl AccountsDb {
         let maybe_clean = || {
             if self.dirty_stores.len() > DIRTY_STORES_CLEANING_THRESHOLD {
                 let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
-                self.clean_accounts(latest_full_snapshot_slot, is_startup, epoch_schedule);
+                self.clean_accounts(latest_full_snapshot_slot, is_startup);
             }
         };
 
@@ -7085,7 +7045,7 @@ impl AccountsDb {
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
     pub fn clean_accounts_for_tests(&self) {
-        self.clean_accounts(None, false, &EpochSchedule::default())
+        self.clean_accounts(None, false)
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {

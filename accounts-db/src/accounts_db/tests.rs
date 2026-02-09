@@ -1755,7 +1755,7 @@ fn test_clean_max_slot_zero_lamport_account(mark_obsolete_accounts: MarkObsolete
         // updates in later slots in slot 1
         assert_eq!(accounts.alive_account_count_in_slot(0), 1);
         assert_eq!(accounts.alive_account_count_in_slot(1), 1);
-        accounts.clean_accounts(Some(0), false, &EpochSchedule::default());
+        accounts.clean_accounts(Some(0), false);
         assert_eq!(accounts.alive_account_count_in_slot(0), 1);
     }
 
@@ -1763,7 +1763,7 @@ fn test_clean_max_slot_zero_lamport_account(mark_obsolete_accounts: MarkObsolete
     assert!(accounts.accounts_index.contains_with(&pubkey, None, None));
 
     // Now the account can be cleaned up
-    accounts.clean_accounts(Some(1), false, &EpochSchedule::default());
+    accounts.clean_accounts(Some(1), false);
     assert_eq!(accounts.alive_account_count_in_slot(0), 0);
     assert_eq!(accounts.alive_account_count_in_slot(1), 0);
 
@@ -2353,7 +2353,7 @@ fn test_shrink_all_slots_none() {
             accounts.shrink_candidate_slots(&epoch_schedule);
         }
 
-        accounts.shrink_all_slots(*startup, &EpochSchedule::default(), None);
+        accounts.shrink_all_slots(*startup, None);
     }
 }
 
@@ -2409,7 +2409,7 @@ fn test_shrink_candidate_slots() {
     );
 
     // Now, do full-shrink.
-    accounts.shrink_all_slots(false, &EpochSchedule::default(), None);
+    accounts.shrink_all_slots(false, None);
     assert_eq!(
         pubkey_count_after_shrink,
         accounts.all_account_count_in_accounts_file(shrink_slot)
@@ -2967,7 +2967,7 @@ fn test_zero_lamport_new_root_not_cleaned() {
     db.add_root_and_flush_write_cache(1);
 
     // Only clean zero lamport accounts up to slot 0
-    db.clean_accounts(Some(0), false, &EpochSchedule::default());
+    db.clean_accounts(Some(0), false);
 
     // Should still be able to find zero lamport account in slot 1
     assert_eq!(
@@ -4080,7 +4080,7 @@ fn test_shrink_unref() {
     db.flush_rooted_accounts_cache_without_clean();
 
     // Clean to remove outdated entry from slot 0
-    db.clean_accounts(Some(1), false, &EpochSchedule::default());
+    db.clean_accounts(Some(1), false);
 
     // Shrink Slot 0
     {
@@ -4098,7 +4098,7 @@ fn test_shrink_unref() {
 
     // Should be one store before clean for slot 0
     db.get_and_assert_single_storage(0);
-    db.clean_accounts(Some(2), false, &EpochSchedule::default());
+    db.clean_accounts(Some(2), false);
 
     // No stores should exist for slot 0 after clean
     assert_no_storages_at_slot(&db, 0);
@@ -4112,7 +4112,6 @@ fn test_shrink_unref() {
 #[test]
 fn test_clean_drop_dead_zero_lamport_single_ref_accounts() {
     let accounts_db = AccountsDb::new_single_for_tests();
-    let epoch_schedule = EpochSchedule::default();
     let key1 = Pubkey::new_unique();
 
     let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
@@ -4131,7 +4130,7 @@ fn test_clean_drop_dead_zero_lamport_single_ref_accounts() {
     accounts_db.flush_accounts_cache(true, None);
 
     // run clean
-    accounts_db.clean_accounts(Some(1), false, &epoch_schedule);
+    accounts_db.clean_accounts(Some(1), false);
 
     // After clean, both slot0 and slot1 should be marked dead and dropped
     // from the store map.
@@ -4161,7 +4160,7 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
 
     // Clean should mark slot 0 dead and drop it. During the dropping, it
     // will find that slot 1 has a single ref zero accounts and mark it.
-    db.clean_accounts(Some(1), false, &EpochSchedule::default());
+    db.clean_accounts(Some(1), false);
 
     // Assert that after clean, slot 0 is dropped.
     assert!(db.storage.get_slot_storage_entry(0).is_none());
@@ -4203,7 +4202,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     db.flush_rooted_accounts_cache_without_clean();
 
     // Clean to remove outdated entry from slot 0
-    db.clean_accounts(Some(1), false, &EpochSchedule::default());
+    db.clean_accounts(Some(1), false);
 
     // Shrink Slot 0
     {
@@ -4235,7 +4234,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
 
     // Should be one store before clean for slot 1
     db.get_and_assert_single_storage(1);
-    db.clean_accounts(Some(2), false, &EpochSchedule::default());
+    db.clean_accounts(Some(2), false);
 
     // No stores should exist for slot 0. If obsolete accounts are enabled, slot 0 stores are
     // cleaned when slot 2 is flushed. If obsolete accounts are disabled, slot 0 stores are
@@ -5127,15 +5126,15 @@ define_accounts_db_test!(
         accounts_db.assert_ref_count(&pubkey, 3);
 
         accounts_db.set_latest_full_snapshot_slot(slot2);
-        accounts_db.clean_accounts(Some(slot2), false, &EpochSchedule::default());
+        accounts_db.clean_accounts(Some(slot2), false);
         accounts_db.assert_ref_count(&pubkey, 2);
 
         accounts_db.set_latest_full_snapshot_slot(slot2);
-        accounts_db.clean_accounts(None, false, &EpochSchedule::default());
+        accounts_db.clean_accounts(None, false);
         accounts_db.assert_ref_count(&pubkey, 1);
 
         accounts_db.set_latest_full_snapshot_slot(slot3);
-        accounts_db.clean_accounts(None, false, &EpochSchedule::default());
+        accounts_db.clean_accounts(None, false);
         accounts_db.assert_ref_count(&pubkey, 0);
     }
 );
