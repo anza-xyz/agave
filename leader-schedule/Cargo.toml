@@ -18,6 +18,7 @@ name = "solana_leader_schedule"
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 
 [dependencies]
 agave-random = { workspace = true }
