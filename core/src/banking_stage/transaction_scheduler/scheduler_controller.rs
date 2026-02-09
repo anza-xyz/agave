@@ -503,6 +503,8 @@ mod tests {
     // such that our tests can be more easily set up and run.
     struct TestFrame<Tx> {
         bank: Arc<Bank>,
+        #[allow(dead_code)]
+        bank_forks: Arc<RwLock<BankForks>>,
         mint_keypair: Keypair,
         banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
         shared_leader_state: SharedLeaderState,
@@ -549,6 +551,7 @@ mod tests {
 
         let test_frame = TestFrame {
             bank,
+            bank_forks: bank_forks.clone(),
             mint_keypair,
             shared_leader_state,
             banking_packet_sender,
