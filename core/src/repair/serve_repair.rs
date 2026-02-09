@@ -179,6 +179,7 @@ struct ServeRepairStats {
     total_requests: usize,
     dropped_requests_outbound_bandwidth: usize,
     dropped_requests_load_shed: usize,
+    dropped_requests_load_shed_sigverify: usize,
     dropped_requests_low_stake: usize,
     whitelisted_requests: usize,
     total_dropped_response_packets: usize,
@@ -666,7 +667,7 @@ impl ServeRepair {
         const MIN_RESPONSE_SIZE: usize = PACKET_DATA_SIZE + SIZE_OF_NONCE;
         let decode_request = |request| {
             if remaining_budget_estimate < MIN_RESPONSE_SIZE {
-                stats.dropped_requests_load_shed += 1;
+                stats.dropped_requests_load_shed_sigverify += 1;
                 return None;
             }
             let result = Self::decode_request(
@@ -823,6 +824,11 @@ impl ServeRepair {
             (
                 "dropped_requests_load_shed",
                 stats.dropped_requests_load_shed,
+                i64
+            ),
+            (
+                "dropped_requests_load_shed_sigverify",
+                stats.dropped_requests_load_shed_sigverify,
                 i64
             ),
             (
