@@ -153,7 +153,6 @@ use {
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::VoteStateV4,
-    solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
         borrow::Cow,
         cmp,
@@ -178,11 +177,6 @@ use {
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
-// Right now since we reuse the wait for supermajority code, the
-// following threshold should always greater than or equal to
-// WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT.
-const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
-    WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT;
 
 #[derive(Clone, EnumCount, EnumIter, EnumString, VariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
@@ -411,8 +405,6 @@ pub struct ValidatorConfig {
     pub enable_scheduler_bindings: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
-    pub wen_restart_proto_path: Option<PathBuf>,
-    pub wen_restart_coordinator: Option<Pubkey>,
     pub unified_scheduler_handler_threads: Option<usize>,
     pub ip_echo_server_threads: NonZeroUsize,
     pub rayon_global_threads: NonZeroUsize,
@@ -495,8 +487,6 @@ impl ValidatorConfig {
             enable_scheduler_bindings: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
-            wen_restart_proto_path: None,
-            wen_restart_coordinator: None,
             unified_scheduler_handler_threads: None,
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             rayon_global_threads: max_thread_count,
@@ -1594,12 +1584,6 @@ impl Validator {
             exit.clone(),
         );
 
-        let in_wen_restart = config.wen_restart_proto_path.is_some() && !waited_for_supermajority;
-        let wen_restart_repair_slots = if in_wen_restart {
-            Some(Arc::new(RwLock::new(Vec::new())))
-        } else {
-            None
-        };
         let tower = match process_blockstore.process_to_create_tower() {
             Ok(tower) => {
                 info!("Tower state: {tower:?}");
@@ -1615,7 +1599,6 @@ impl Validator {
             VoteHistory::restore(config.vote_history_storage.as_ref(), &cluster_info.id())
                 .unwrap_or(VoteHistory::new(cluster_info.id(), 0));
         migration_status.log_phase();
-        let last_vote = tower.last_vote();
 
         let outstanding_repair_requests =
             Arc::<RwLock<repair::repair_service::OutstandingShredRepairs>>::default();
@@ -1706,7 +1689,6 @@ impl Validator {
             ancestor_hashes_response_quic_receiver,
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
-            wen_restart_repair_slots.clone(),
             slot_status_notifier,
             vote_connection_cache,
             AlpenglowInitializationState {
@@ -1723,26 +1705,6 @@ impl Validator {
             },
         )
         .map_err(ValidatorError::Other)?;
-
-        if in_wen_restart {
-            info!("Waiting for wen_restart to finish");
-            wait_for_wen_restart(WenRestartConfig {
-                wen_restart_path: config.wen_restart_proto_path.clone().unwrap(),
-                wen_restart_coordinator: config.wen_restart_coordinator.unwrap(),
-                last_vote,
-                blockstore: blockstore.clone(),
-                cluster_info: cluster_info.clone(),
-                bank_forks: bank_forks.clone(),
-                wen_restart_repair_slots: wen_restart_repair_slots.clone(),
-                wait_for_supermajority_threshold_percent:
-                    WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
-                snapshot_controller: Some(snapshot_controller.clone()),
-                abs_status: accounts_background_service.status().clone(),
-                genesis_config_hash: genesis_config.hash(),
-                exit: exit.clone(),
-            })?;
-            return Err(ValidatorError::WenRestartFinished.into());
-        }
 
         let tpu_forwaring_client_config = {
             let runtime_handle = tpu_client_next_runtime
@@ -2784,9 +2746,6 @@ pub enum ValidatorError {
 
     #[error(transparent)]
     TraceError(#[from] TraceError),
-
-    #[error("Wen Restart finished, please continue with --wait-for-supermajority")]
-    WenRestartFinished,
 }
 
 // Return if the validator waited on other nodes to start. In this case

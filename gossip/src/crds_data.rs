@@ -5,7 +5,6 @@ use {
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
         legacy_contact_info::LegacyContactInfo,
-        restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
@@ -63,8 +62,6 @@ pub enum CrdsData {
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
-    RestartLastVotedForkSlots(RestartLastVotedForkSlots),
-    RestartHeaviestFork(RestartHeaviestFork),
 }
 
 impl Sanitize for CrdsData {
@@ -103,8 +100,6 @@ impl Sanitize for CrdsData {
             }
             CrdsData::SnapshotHashes(val) => val.sanitize(),
             CrdsData::ContactInfo(node) => node.sanitize(),
-            CrdsData::RestartLastVotedForkSlots(slots) => slots.sanitize(),
-            CrdsData::RestartHeaviestFork(fork) => fork.sanitize(),
         }
     }
 }
@@ -118,7 +113,7 @@ pub(crate) fn new_rand_timestamp<R: Rng>(rng: &mut R) -> u64 {
 impl CrdsData {
     /// New random CrdsData for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> CrdsData {
-        let kind = rng.random_range(0..8);
+        let kind = rng.random_range(0..6);
         // TODO: Implement other kinds of CrdsData here.
         // TODO: Assign ranges to each arm proportional to their frequency in
         // the mainnet crds table.
@@ -129,10 +124,6 @@ impl CrdsData {
             2 => CrdsData::LegacySnapshotHashes(LegacySnapshotHashes::new_rand(rng, pubkey)),
             3 => CrdsData::AccountsHashes(AccountsHashes::new_rand(rng, pubkey)),
             4 => CrdsData::Vote(rng.random_range(0..MAX_VOTES), Vote::new_rand(rng, pubkey)),
-            5 => CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
-                rng, pubkey,
-            )),
-            6 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
             _ => CrdsData::EpochSlots(
                 rng.random_range(0..MAX_EPOCH_SLOTS),
                 EpochSlots::new_rand(rng, pubkey),
@@ -154,8 +145,6 @@ impl CrdsData {
             CrdsData::DuplicateShred(_, shred) => shred.wallclock,
             CrdsData::SnapshotHashes(hash) => hash.wallclock,
             CrdsData::ContactInfo(node) => node.wallclock(),
-            CrdsData::RestartLastVotedForkSlots(slots) => slots.wallclock,
-            CrdsData::RestartHeaviestFork(fork) => fork.wallclock,
         }
     }
 
@@ -173,8 +162,6 @@ impl CrdsData {
             CrdsData::DuplicateShred(_, shred) => shred.from,
             CrdsData::SnapshotHashes(hash) => hash.from,
             CrdsData::ContactInfo(node) => *node.pubkey(),
-            CrdsData::RestartLastVotedForkSlots(slots) => slots.from,
-            CrdsData::RestartHeaviestFork(fork) => fork.from,
         }
     }
 
@@ -195,8 +182,6 @@ impl CrdsData {
             Self::DuplicateShred(..) => false,
             Self::SnapshotHashes(_) => false,
             Self::ContactInfo(_) => false,
-            Self::RestartLastVotedForkSlots(_) => false,
-            Self::RestartHeaviestFork(_) => false,
         }
     }
 }

@@ -98,7 +98,7 @@ pub struct Tvu {
     retransmit_stage: RetransmitStage,
     window_service: WindowService,
     cluster_slots_service: ClusterSlotsService,
-    replay_stage: Option<ReplayStage>,
+    replay_stage: ReplayStage,
     blockstore_cleanup_service: Option<BlockstoreCleanupService>,
     cost_update_service: CostUpdateService,
     voting_service: VotingService,
@@ -222,12 +222,10 @@ impl Tvu {
         ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
-        wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
     ) -> Result<Self, String> {
-        let in_wen_restart = wen_restart_repair_slots.is_some();
         let migration_status = bank_forks.read().unwrap().migration_status();
 
         let TvuSockets {
@@ -377,7 +375,6 @@ impl Tvu {
                 repair_whitelist: tvu_config.repair_whitelist,
                 cluster_info: cluster_info.clone(),
                 cluster_slots: cluster_slots.clone(),
-                wen_restart_repair_slots,
             };
             let repair_service_channels = RepairServiceChannels::new(
                 repair_request_quic_sender,
@@ -544,15 +541,7 @@ impl Tvu {
 
         let drop_bank_service = DropBankService::new(drop_bank_receiver);
 
-        let replay_stage = if in_wen_restart {
-            None
-        } else {
-            Some(ReplayStage::new(
-                replay_stage_config,
-                replay_senders,
-                replay_receivers,
-            )?)
-        };
+        let replay_stage = ReplayStage::new(replay_stage_config, replay_senders, replay_receivers)?;
 
         let blockstore_cleanup_service = tvu_config.max_ledger_shreds.map(|max_ledger_shreds| {
             BlockstoreCleanupService::new(blockstore.clone(), max_ledger_shreds, exit.clone())
@@ -599,9 +588,7 @@ impl Tvu {
         if let Some(cleanup_service) = self.blockstore_cleanup_service {
             cleanup_service.join()?;
         }
-        if let Some(replay_stage) = self.replay_stage {
-            replay_stage.join()?;
-        }
+        self.replay_stage.join()?;
         self.cost_update_service.join()?;
         self.voting_service.join()?;
         self.bls_voting_service.join()?;
@@ -676,7 +663,9 @@ pub mod tests {
         },
     };
 
-    fn test_tvu_exit(enable_wen_restart: bool) {
+    #[test]
+    #[serial]
+    fn test_tvu_exit() {
         agave_logger::setup();
         let leader = Node::new_localhost();
         let target1_keypair = Keypair::new();
@@ -727,11 +716,6 @@ pub mod tests {
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
-        let wen_restart_repair_slots = if enable_wen_restart {
-            Some(Arc::new(RwLock::new(vec![])))
-        } else {
-            None
-        };
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
             ConnectionCache::new_quic_for_tests(
                 "connection_cache_vote_quic",
@@ -823,7 +807,6 @@ pub mod tests {
             ancestor_hashes_response_quic_receiver,
             outstanding_repair_requests,
             cluster_slots,
-            wen_restart_repair_slots,
             None, // slot_status_notifier
             Arc::new(connection_cache),
             AlpenglowInitializationState {
@@ -840,25 +823,8 @@ pub mod tests {
             },
         )
         .expect("assume success");
-        if enable_wen_restart {
-            assert!(tvu.replay_stage.is_none())
-        } else {
-            assert!(tvu.replay_stage.is_some())
-        }
         exit.store(true, Ordering::Relaxed);
         tvu.join().unwrap();
         poh_service.join().unwrap();
-    }
-
-    #[test]
-    #[serial]
-    fn test_tvu_exit_no_wen_restart() {
-        test_tvu_exit(false);
-    }
-
-    #[test]
-    #[serial]
-    fn test_tvu_exit_with_wen_restart() {
-        test_tvu_exit(true);
     }
 }

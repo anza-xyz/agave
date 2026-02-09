@@ -132,7 +132,6 @@ members = [
     "votor",
     "votor-messages",
     "watchtower",
-    "wen-restart",
     "xdp",
     "xdp-ebpf",
 ]
@@ -577,7 +576,6 @@ solana-version = { path = "version", version = "=4.0.0-alpha.0", features = ["ag
 solana-vote = { path = "vote", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote-interface = "5.0.0"
 solana-vote-program = { path = "programs/vote", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
-solana-wen-restart = { path = "wen-restart", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-zk-sdk = "5.0.0"
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

@@ -43,7 +43,7 @@ use {
         tpu::MAX_VOTES_PER_SECOND,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            SchedulerPacing, Validator, ValidatorConfig, ValidatorError, ValidatorStartProgress,
+            SchedulerPacing, Validator, ValidatorConfig, ValidatorStartProgress,
             ValidatorTpuConfig,
         },
     },
@@ -840,8 +840,6 @@ pub fn execute(
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
-        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
-        wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         turbine_disabled: Arc::<AtomicBool>::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
@@ -993,10 +991,6 @@ pub fn execute(
         .collect::<Vec<_>>();
 
     if restricted_repair_only_mode {
-        if validator_config.wen_restart_proto_path.is_some() {
-            Err("--restricted-repair-only-mode is not compatible with --wen_restart".to_string())?;
-        }
-
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -1127,7 +1121,7 @@ pub fn execute(
         },
     };
 
-    let validator = match Validator::new_with_exit(
+    let validator = Validator::new_with_exit(
         node,
         identity_keypair,
         &ledger_path,
@@ -1149,24 +1143,8 @@ pub fn execute(
         admin_service_post_init,
         maybe_xdp_retransmit_builder,
         exit,
-    ) {
-        Ok(validator) => Ok(validator),
-        Err(err) => {
-            if matches!(
-                err.downcast_ref(),
-                Some(&ValidatorError::WenRestartFinished)
-            ) {
-                // 200 is a special error code, see
-                // https://github.com/solana-foundation/solana-improvement-documents/pull/46
-                error!(
-                    "Please remove --wen_restart and use --wait_for_supermajority as instructed \
-                     above"
-                );
-                std::process::exit(200);
-            }
-            Err(format!("{err:?}"))
-        }
-    }?;
+    )
+    .map_err(|err| format!("{err:?}"))?;
 
     if let Some(filename) = init_complete_file {
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;

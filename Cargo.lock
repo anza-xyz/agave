@@ -8193,7 +8193,6 @@ dependencies = [
  "solana-version",
  "solana-vote",
  "solana-vote-program",
- "solana-wen-restart",
  "spl-memo-interface",
  "static_assertions",
  "strum",
@@ -11830,44 +11829,6 @@ dependencies = [
  "solana-vote-program",
  "test-case",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "solana-wen-restart"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "agave-snapshots",
- "agave-votor-messages",
- "anyhow",
- "assert_matches",
- "crossbeam-channel",
- "log",
- "prost",
- "prost-build",
- "prost-types",
- "protobuf-src",
- "rand 0.9.2",
- "rayon",
- "serial_test",
- "solana-clock",
- "solana-entry",
- "solana-genesis-utils",
- "solana-gossip",
- "solana-hash 4.1.0",
- "solana-keypair",
- "solana-ledger",
- "solana-net-utils",
- "solana-pubkey 4.0.0",
- "solana-runtime",
- "solana-shred-version",
- "solana-signer",
- "solana-svm-timings",
- "solana-time-utils",
- "solana-vote",
- "solana-vote-interface",
- "solana-vote-program",
- "tempfile",
 ]
 
 [[package]]

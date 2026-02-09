@@ -189,7 +189,6 @@ fn run_insert<F>(
     completed_data_sets_sender: Option<&CompletedDataSetsSender>,
     retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
     reed_solomon_cache: &ReedSolomonCache,
-    accept_repairs_only: bool,
 ) -> Result<()>
 where
     F: Fn(PossibleDuplicateShred),
@@ -202,9 +201,6 @@ where
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
     ws_metrics.run_insert_count += 1;
     let handle_shred = |(shred, repair): (shred::Payload, bool)| {
-        if accept_repairs_only && !repair {
-            return None;
-        }
         if repair {
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
         }
@@ -284,10 +280,6 @@ impl WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
 
-        // In wen_restart, we discard all shreds from Turbine and keep only those from repair to
-        // avoid new shreds make validator OOM before wen_restart is over.
-        let accept_repairs_only = repair_info.wen_restart_repair_slots.is_some();
-
         let WindowServiceChannels {
             verified_receiver,
             retransmit_sender,
@@ -325,7 +317,6 @@ impl WindowService {
             duplicate_sender,
             completed_data_sets_sender,
             retransmit_sender,
-            accept_repairs_only,
         );
 
         WindowService {
@@ -374,7 +365,6 @@ impl WindowService {
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: EvictingSender<Vec<shred::Payload>>,
-        accept_repairs_only: bool,
     ) -> JoinHandle<()> {
         let handle_error = || {
             inc_new_counter_error!("solana-window-insert-error", 1, 1);
@@ -410,7 +400,6 @@ impl WindowService {
                         completed_data_sets_sender.as_ref(),
                         &retransmit_sender,
                         &reed_solomon_cache,
-                        accept_repairs_only,
                     ) {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e, &handle_error) {
