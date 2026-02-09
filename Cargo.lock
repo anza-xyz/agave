@@ -7704,7 +7704,6 @@ dependencies = [
  "solana-system-interface 3.0.0",
  "solana-sysvar",
  "solana-test-validator",
- "solana-tps-client",
  "solana-tpu-client",
  "solana-transaction",
  "solana-transaction-error",
@@ -7718,6 +7717,23 @@ dependencies = [
  "test-case",
  "thiserror 2.0.18",
  "tiny-bip39",
+ "tokio",
+]
+
+[[package]]
+name = "solana-cli-bin"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-logger",
+ "clap 2.33.3",
+ "console 0.16.2",
+ "solana-clap-utils",
+ "solana-cli",
+ "solana-cli-config",
+ "solana-cli-output",
+ "solana-remote-wallet",
+ "solana-rpc-client-api",
+ "solana-version",
  "tokio",
 ]
 

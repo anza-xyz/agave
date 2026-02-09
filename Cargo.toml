@@ -18,6 +18,7 @@ members = [
     "clap-utils",
     "clap-v3-utils",
     "cli",
+    "cli-bin",
     "cli-config",
     "cli-output",
     "client",

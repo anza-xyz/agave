@@ -1,0 +1,34 @@
+[package]
+name = "solana-cli-bin"
+documentation = "https://docs.rs/solana-cli-bin"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[[bin]]
+name = "solana"
+path = "src/main.rs"
+
+[features]
+default = ["remote-wallet-hidraw"]
+dev-context-only-utils = ["solana-cli/dev-context-only-utils"]
+remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
+remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
+
+[dependencies]
+agave-logger = { workspace = true }
+clap = { workspace = true }
+console = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-cli = { workspace = true }
+solana-cli-config = { workspace = true }
+solana-cli-output = { workspace = true }
+solana-remote-wallet = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+solana-version = { workspace = true }
+tokio = { workspace = true }
