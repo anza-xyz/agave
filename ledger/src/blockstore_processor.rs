@@ -2152,10 +2152,6 @@ pub fn process_single_slot(
         err
     })?;
 
-    if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
-        result?
-    }
-
     let block_id = blockstore
         .check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
         .inspect_err(|err| {
