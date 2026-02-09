@@ -84,12 +84,9 @@ impl FetchStage {
             })
             .unwrap();
 
-        Self {
-            thread_hdls: [tpu_vote_threads, vec![metrics_thread_hdl]]
-                .into_iter()
-                .flatten()
-                .collect(),
-        }
+        let mut thread_hdls = tpu_vote_threads;
+        thread_hdls.push(metrics_thread_hdl);
+        Self { thread_hdls }
     }
 
     pub fn join(self) -> thread::Result<()> {
