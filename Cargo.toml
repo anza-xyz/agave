@@ -34,6 +34,7 @@ members = [
     "fee",
     "fs",
     "genesis",
+    "genesis-cli",
     "genesis-utils",
     "geyser-plugin-interface",
     "geyser-plugin-manager",

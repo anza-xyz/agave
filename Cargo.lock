@@ -8609,6 +8609,45 @@ name = "solana-genesis"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-snapshots",
+ "base64 0.22.1",
+ "bincode",
+ "itertools 0.14.0",
+ "serde",
+ "serde_json",
+ "solana-account",
+ "solana-bls-signatures",
+ "solana-borsh",
+ "solana-clock",
+ "solana-cluster-type",
+ "solana-commitment-config",
+ "solana-epoch-schedule",
+ "solana-feature-gate-interface",
+ "solana-fee-calculator",
+ "solana-genesis-config",
+ "solana-inflation",
+ "solana-keypair",
+ "solana-loader-v3-interface",
+ "solana-native-token",
+ "solana-poh-config",
+ "solana-pubkey 4.0.0",
+ "solana-rent 3.0.0",
+ "solana-runtime",
+ "solana-sdk-ids",
+ "solana-signer",
+ "solana-stake-interface",
+ "solana-time-utils",
+ "solana-version",
+ "solana-vote",
+ "solana-vote-program",
+ "tempfile",
+]
+
+[[package]]
+name = "solana-genesis-cli"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-feature-set",
  "agave-logger",
  "agave-snapshots",
  "base64 0.22.1",
