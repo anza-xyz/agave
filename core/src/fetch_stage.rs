@@ -104,17 +104,23 @@ impl FetchStage {
             .would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET.saturating_mul(DEFAULT_TICKS_PER_SLOT))
         {
             let mut packets_sent = 0usize;
+            let mut packets_dropped = 0usize;
             for packet_batch in packet_batches {
                 let packets_in_batch = packet_batch.len();
                 match sendr.try_send(packet_batch) {
                     Ok(()) => {
                         packets_sent += packets_in_batch;
                     }
-                    Err(TrySendError::Full(_)) => {}
+                    Err(TrySendError::Full(_)) => {
+                        packets_dropped += packets_in_batch;
+                    }
                     Err(TrySendError::Disconnected(_)) => return Err(Error::Send),
                 };
             }
             inc_new_counter_debug!("fetch_stage-honor_forwards", packets_sent);
+            if packets_dropped > 0 {
+                inc_new_counter_error!("fetch_stage-dropped_forwards", packets_dropped);
+            }
         } else {
             inc_new_counter_info!("fetch_stage-discard_forwards", num_packets);
         }
