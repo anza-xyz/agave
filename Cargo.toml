@@ -30,6 +30,7 @@ members = [
     "download-utils",
     "entry",
     "faucet",
+    "faucet-cli",
     "feature-set",
     "fee",
     "fs",

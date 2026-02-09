@@ -7062,14 +7062,10 @@ dependencies = [
 name = "solana-faucet"
 version = "4.0.0-alpha.0"
 dependencies = [
- "agave-logger",
  "bincode",
- "clap",
  "crossbeam-channel",
  "log",
  "serde",
- "solana-clap-utils",
- "solana-cli-config",
  "solana-cli-output",
  "solana-hash 4.1.0",
  "solana-instruction",

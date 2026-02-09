@@ -8476,14 +8476,10 @@ dependencies = [
 name = "solana-faucet"
 version = "4.0.0-alpha.0"
 dependencies = [
- "agave-logger",
  "bincode",
- "clap 2.33.3",
  "crossbeam-channel",
  "log",
  "serde",
- "solana-clap-utils",
- "solana-cli-config",
  "solana-cli-output",
  "solana-faucet",
  "solana-hash 4.1.0",
@@ -8501,6 +8497,22 @@ dependencies = [
  "solana-version",
  "spl-memo-interface",
  "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "solana-faucet-cli"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-logger",
+ "clap 2.33.3",
+ "log",
+ "solana-clap-utils",
+ "solana-cli-config",
+ "solana-faucet",
+ "solana-keypair",
+ "solana-metrics",
+ "solana-version",
  "tokio",
 ]
 

@@ -1,0 +1,27 @@
+[package]
+name = "solana-faucet-cli"
+description = "Solana Faucet CLI"
+documentation = "https://docs.rs/solana-faucet-cli"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[[bin]]
+name = "solana-faucet"
+path = "src/main.rs"
+
+[dependencies]
+agave-logger = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-cli-config = { workspace = true }
+solana-faucet = { workspace = true }
+solana-keypair = "=3.1.0"
+solana-metrics = { workspace = true }
+solana-version = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
