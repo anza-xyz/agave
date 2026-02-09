@@ -2127,15 +2127,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dir-diff"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7ad16bf5f84253b50d6557681c58c3ab67c47c77d39fed9aeb56e947290bd10"
-dependencies = [
- "walkdir",
-]
-
-[[package]]
 name = "dirs-next"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8430,7 +8421,6 @@ dependencies = [
  "num-derive",
  "num-traits",
  "parking_lot 0.12.5",
- "qstring",
  "semver",
  "solana-derivation-path",
  "solana-offchain-message",
@@ -8677,8 +8667,6 @@ dependencies = [
  "bytemuck",
  "crossbeam-channel",
  "dashmap",
- "dir-diff",
- "fnv",
  "im",
  "itertools 0.14.0",
  "libc",
