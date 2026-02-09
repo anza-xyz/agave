@@ -24,13 +24,13 @@ use {
     solana_clock::MAX_PROCESSING_AGE,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
+            Arc,
         },
         time::{Duration, Instant},
     },
@@ -68,7 +68,7 @@ where
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
-    bank_forks: Arc<RwLock<BankForks>>,
+    sharable_banks: SharableBanks,
     /// Container for transaction state.
     /// Shared resource between `packet_receiver` and `scheduler`.
     container: R::Container,
@@ -100,7 +100,7 @@ where
         config: SchedulerConfig,
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
-        bank_forks: Arc<RwLock<BankForks>>,
+        sharable_banks: SharableBanks,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     ) -> Self {
@@ -109,7 +109,7 @@ where
             config,
             decision_maker,
             receive_and_buffer,
-            bank_forks,
+            sharable_banks,
             container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
             scheduler,
             count_metrics: SchedulerCountMetrics::default(),
@@ -307,7 +307,7 @@ where
     /// priority queue from highest to lowest priority. When the cursor reaches the end it
     /// wraps back to the top, continuously sweeping the queue.
     fn incremental_recheck(&mut self) {
-        let bank = self.bank_forks.read().unwrap().working_bank();
+        let bank = self.sharable_banks.working();
 
         // Start a new sweep if we have no active cursor.
         if self.recheck_cursor.is_none() {
@@ -487,7 +487,7 @@ mod tests {
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
@@ -567,7 +567,7 @@ mod tests {
             SchedulerConfig::default(),
             decision_maker,
             receive_and_buffer,
-            bank_forks,
+            bank_forks.read().unwrap().sharable_banks(),
             scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
         );
