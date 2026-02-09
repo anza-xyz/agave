@@ -250,8 +250,9 @@ where
     ) -> TransportResult<Signature> {
         let wire_transaction =
             bincode::serialize(&transaction).expect("serialize Transaction in send_batch");
-        self.send_wire_transaction(wire_transaction);
-        Ok(transaction.signatures[0])
+        let signature = transaction.signatures[0];
+        self.try_send_wire_transaction(wire_transaction)?;
+        Ok(signature)
     }
 
     fn async_send_versioned_transaction_batch(
