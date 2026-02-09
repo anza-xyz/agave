@@ -14,7 +14,7 @@ use {
     solana_transaction_error::{TransportError, TransportResult},
     std::{
         net::SocketAddr,
-        sync::{atomic::Ordering, Arc, Condvar, Mutex, MutexGuard},
+        sync::{atomic::Ordering, Arc, Condvar, Mutex},
         time::Duration,
     },
     tokio::{runtime::Runtime, time::timeout},
@@ -24,8 +24,8 @@ pub const MAX_OUTSTANDING_TASK: u64 = 2000;
 const SEND_DATA_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A semaphore used for limiting the number of asynchronous tasks spawn to the
-/// runtime. Before spawning a task, use acquire. After the task is done (be it
-/// success or failure), call release.
+/// runtime. Before spawning a task, use acquire. The returned guard will
+/// automatically release the permit when dropped (including on panic).
 struct AsyncTaskSemaphore {
     /// Keep the counter info about the usage
     counter: Mutex<u64>,
@@ -44,23 +44,32 @@ impl AsyncTaskSemaphore {
         }
     }
 
-    /// When returned, the lock has been locked and usage count has been
-    /// incremented. When the returned MutexGuard is dropped the lock is dropped
-    /// without decrementing the usage count.
-    pub fn acquire(&self) -> MutexGuard<'_, u64> {
+    /// Increment the usage count, blocking if at capacity. Returns a guard
+    /// that decrements the count on drop (panic-safe).
+    pub fn acquire(&'static self) -> AsyncTaskSemaphoreGuard {
         let mut count = self.counter.lock().unwrap();
         *count += 1;
         while *count > self.permits {
             count = self.cond_var.wait(count).unwrap();
         }
-        count
+        drop(count);
+        AsyncTaskSemaphoreGuard(self)
     }
 
     /// Acquire the lock and decrement the usage count
-    pub fn release(&self) {
+    fn release(&self) {
         let mut count = self.counter.lock().unwrap();
         *count -= 1;
         self.cond_var.notify_one();
+    }
+}
+
+/// RAII guard that releases a semaphore permit on drop (including on panic unwind).
+struct AsyncTaskSemaphoreGuard(&'static AsyncTaskSemaphore);
+
+impl Drop for AsyncTaskSemaphoreGuard {
+    fn drop(&mut self) {
+        self.0.release();
     }
 }
 
@@ -81,15 +90,16 @@ pub fn get_runtime() -> &'static Runtime {
 async fn send_data_async(
     connection: Arc<NonblockingQuicConnection>,
     buffer: Arc<Vec<u8>>,
+    _guard: AsyncTaskSemaphoreGuard,
 ) -> TransportResult<()> {
     let result = timeout(SEND_DATA_TIMEOUT, connection.send_data(&buffer)).await;
-    ASYNC_TASK_SEMAPHORE.release();
     handle_send_result(result, connection)
 }
 
 async fn send_data_batch_async(
     connection: Arc<NonblockingQuicConnection>,
     buffers: Vec<Vec<u8>>,
+    _guard: AsyncTaskSemaphoreGuard,
 ) -> TransportResult<()> {
     let result = timeout(
         u32::try_from(buffers.len())
@@ -98,7 +108,6 @@ async fn send_data_batch_async(
         connection.send_data_batch(&buffers),
     )
     .await;
-    ASYNC_TASK_SEMAPHORE.release();
     handle_send_result(result, connection)
 }
 
@@ -161,17 +170,16 @@ impl ClientConnection for QuicClientConnection {
     }
 
     fn send_data_async(&self, data: Arc<Vec<u8>>) -> TransportResult<()> {
-        let _lock = ASYNC_TASK_SEMAPHORE.acquire();
+        let guard = ASYNC_TASK_SEMAPHORE.acquire();
         let inner = self.inner.clone();
-
-        let _handle = RUNTIME.spawn(send_data_async(inner, data));
+        let _handle = RUNTIME.spawn(send_data_async(inner, data, guard));
         Ok(())
     }
 
     fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()> {
-        let _lock = ASYNC_TASK_SEMAPHORE.acquire();
+        let guard = ASYNC_TASK_SEMAPHORE.acquire();
         let inner = self.inner.clone();
-        let _handle = RUNTIME.spawn(send_data_batch_async(inner, buffers));
+        let _handle = RUNTIME.spawn(send_data_batch_async(inner, buffers, guard));
         Ok(())
     }
 
