@@ -9,7 +9,7 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    std::{collections::BTreeSet, ops::Bound, sync::Arc},
+    std::{collections::BTreeSet, iter::Rev, ops::Bound, sync::Arc},
 };
 
 /// This structure will hold `TransactionState` for the entirety of a
@@ -110,12 +110,12 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     fn get_min_max_priority(&self) -> Option<(u64, u64)>;
 
-    /// Return the next-lower priority ID strictly below `cursor` in the queue, or the
-    /// highest if `cursor` is `None` (i.e. start a new sweep).
-    fn next_recheck_id(
+    /// Return an iterator over priority IDs strictly below `cursor` in descending order,
+    /// or all IDs in descending order if `cursor` is `None`.
+    fn recheck_iter(
         &self,
         cursor: Option<&TransactionPriorityId>,
-    ) -> Option<TransactionPriorityId>;
+    ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>>;
 
     #[cfg(feature = "dev-context-only-utils")]
     fn clear(&mut self);
@@ -214,17 +214,16 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         Some((min, max))
     }
 
-    fn next_recheck_id(
+    fn recheck_iter(
         &self,
         cursor: Option<&TransactionPriorityId>,
-    ) -> Option<TransactionPriorityId> {
+    ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>> {
         match cursor {
-            None => self.priority_queue.last().copied(),
+            None => self.priority_queue.range(..).rev(),
             Some(cursor) => self
                 .priority_queue
                 .range((Bound::Unbounded, Bound::Excluded(cursor)))
-                .next_back()
-                .copied(),
+                .rev(),
         }
     }
 
@@ -391,11 +390,11 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     }
 
     #[inline]
-    fn next_recheck_id(
+    fn recheck_iter(
         &self,
         cursor: Option<&TransactionPriorityId>,
-    ) -> Option<TransactionPriorityId> {
-        self.inner.next_recheck_id(cursor)
+    ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>> {
+        self.inner.recheck_iter(cursor)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -573,24 +572,48 @@ mod tests {
     }
 
     #[test]
-    fn test_next_recheck_id_descends_and_wraps() {
+    fn test_recheck_iter_descends() {
         let mut container = TransactionStateContainer::with_capacity(8);
         for priority in [5, 10, 5, 1] {
             let (transaction, max_age, priority, cost) = test_transaction(priority);
             container.insert_new_transaction(transaction, max_age, priority, cost);
         }
 
-        let mut cursor = None;
-        let mut seen_priorities = Vec::new();
-        while let Some(id) = container.next_recheck_id(cursor.as_ref()) {
-            seen_priorities.push(id.priority);
-            cursor = Some(id);
-        }
-
+        let seen_priorities: Vec<_> = container.recheck_iter(None).map(|id| id.priority).collect();
         assert_eq!(seen_priorities, vec![10, 5, 5, 1]);
 
-        // When starting a new sweep, we should wrap back to the highest priority.
-        let wrapped = container.next_recheck_id(None).unwrap();
+        // With a cursor, should return items strictly below it.
+        let cursor = *container.recheck_iter(None).next().unwrap();
+        assert_eq!(cursor.priority, 10);
+        let remaining: Vec<_> = container
+            .recheck_iter(Some(&cursor))
+            .map(|id| id.priority)
+            .collect();
+        assert_eq!(remaining, vec![5, 5, 1]);
+    }
+
+    #[test]
+    fn test_recheck_iter_wraps_from_top_after_exhaustion() {
+        let mut container = TransactionStateContainer::with_capacity(4);
+        for priority in [10, 5] {
+            let (transaction, max_age, priority, cost) = test_transaction(priority);
+            container.insert_new_transaction(transaction, max_age, priority, cost);
+        }
+
+        // Walk the full iterator and remember the last (lowest) cursor.
+        let mut cursor = None;
+        for id in container.recheck_iter(None) {
+            cursor = Some(*id);
+        }
+        let cursor = cursor.unwrap();
+        assert_eq!(cursor.priority, 5);
+
+        // Starting below the last item should yield nothing.
+        let remaining: Vec<_> = container.recheck_iter(Some(&cursor)).collect();
+        assert!(remaining.is_empty());
+
+        // A fresh sweep should wrap back to the highest priority.
+        let wrapped = container.recheck_iter(None).next().unwrap();
         assert_eq!(wrapped.priority, 10);
     }
 

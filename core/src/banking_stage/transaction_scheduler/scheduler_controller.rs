@@ -309,28 +309,30 @@ where
     fn incremental_recheck(&mut self) {
         let bank = self.sharable_banks.working();
 
-        // Start a new sweep if we have no active cursor.
-        if self.recheck_cursor.is_none() {
-            self.recheck_cursor = self.container.next_recheck_id(None);
-        }
-
         // Walk the cursor to collect up to one chunk of valid IDs.
         self.recheck_chunk.clear();
-        while self.recheck_chunk.len() < CHECK_CHUNK {
-            let Some(curr) = self.recheck_cursor.take() else {
-                break;
-            };
-
-            // Advance cursor before we potentially remove `curr`.
-            self.recheck_cursor = self.container.next_recheck_id(Some(&curr));
+        let mut last_seen = None;
+        for id in self.container.recheck_iter(self.recheck_cursor.as_ref()) {
+            last_seen = Some(*id);
 
             // Skip if transaction was removed or is in-flight.
-            if self.container.get_transaction(curr.id).is_none() {
+            if self.container.get_transaction(id.id).is_none() {
                 continue;
             }
 
-            self.recheck_chunk.push(curr);
+            self.recheck_chunk.push(*id);
+            if self.recheck_chunk.len() >= CHECK_CHUNK {
+                break;
+            }
         }
+
+        // Update cursor: if we hit the chunk limit, continue from last seen;
+        // otherwise we exhausted the range, so wrap back to start.
+        self.recheck_cursor = if self.recheck_chunk.len() >= CHECK_CHUNK {
+            last_seen
+        } else {
+            None
+        };
 
         // Bail if no work to do (should only happen if container is empty).
         if self.recheck_chunk.is_empty() {
