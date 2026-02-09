@@ -340,8 +340,6 @@ pub(crate) mod external {
             if message.flags & pack_message_flags::EXECUTE != 0 {
                 self.execute_batch(message, should_drain_executes)
             } else {
-                parsing_results.clear();
-                parsed_transactions.clear();
                 self.check_batch(message, parsing_results, parsed_transactions)
                     .map(|()| false)
             }
@@ -472,6 +470,9 @@ pub(crate) mod external {
             parsing_results: &mut Vec<Result<(), TransactionViewError>>,
             parsed_transactions: &mut Vec<TxView>,
         ) -> Result<(), ExternalConsumeWorkerError> {
+            parsing_results.clear();
+            parsed_transactions.clear();
+
             let BankPair {
                 root_bank,
                 working_bank,
