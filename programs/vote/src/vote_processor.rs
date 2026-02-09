@@ -111,9 +111,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     };
     match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {
         VoteInstruction::InitializeAccount(vote_init) => {
-            if is_init_account_v2_enabled {
-                return Err(InstructionError::InvalidInstructionData);
-            }
             let rent =
                 get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 1)?;
             if !rent.is_exempt(me.get_lamports(), me.get_data().len()) {
@@ -949,53 +946,6 @@ mod tests {
             vote_account_initialize_v2,
         };
 
-        let all_v2_features_enabled = vote_state_v4
-            && bls_pubkey_management_in_vote_account
-            && commission_rate_in_basis_points
-            && custom_commission_collector
-            && block_revenue_sharing
-            && vote_account_initialize_v2;
-
-        // processing incompatible instruction should fail
-        if all_v2_features_enabled {
-            // If all v2 features are enabled, the old instruction should be rejected
-            process_instruction(
-                features,
-                &instruction_data,
-                vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::rent::id(), create_default_rent_account()),
-                    (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account.clone()),
-                ],
-                instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
-            );
-            return;
-        } else {
-            // If any v2 feature is disabled, the new instruction should be rejected
-            let bad_instruction_data =
-                serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
-                    node_pubkey,
-                    authorized_voter: vote_pubkey,
-                    authorized_withdrawer: vote_pubkey,
-                    ..Default::default()
-                }))
-                .unwrap();
-            process_instruction(
-                features,
-                &bad_instruction_data,
-                vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::rent::id(), create_default_rent_account()),
-                    (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account.clone()),
-                ],
-                instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
-            );
-        }
-
         let accounts = process_instruction(
             features,
             &instruction_data,
@@ -1126,30 +1076,8 @@ mod tests {
             && block_revenue_sharing
             && vote_account_initialize_v2;
 
-        // processing incompatible instruction should fail
-        if all_v2_features_enabled {
-            // If all v2 features are enabled, the old instruction should be rejected
-            let bad_instruction_data = serialize(&VoteInstruction::InitializeAccount(VoteInit {
-                node_pubkey,
-                authorized_voter: vote_pubkey,
-                authorized_withdrawer: vote_pubkey,
-                commission: 0,
-            }))
-            .unwrap();
-            process_instruction(
-                features,
-                &bad_instruction_data,
-                vec![
-                    (vote_pubkey, vote_account.clone()),
-                    (sysvar::rent::id(), create_default_rent_account()),
-                    (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account.clone()),
-                ],
-                instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
-            );
-        } else {
-            // If any v2 feature is disabled, the new instruction should be rejected
+        // If any v2 feature is disabled, the new instruction should be rejected
+        if !all_v2_features_enabled {
             process_instruction(
                 features,
                 &instruction_data,
