@@ -337,18 +337,18 @@ where
             return;
         }
 
-        // TODO: This alloc annoys.
-        //
         // Build our recheck batch & feed it through bank.
-        let txs: Vec<_> = self
-            .recheck_chunk
-            .iter()
-            .map(|pid| {
+        let txs = {
+            // NB: Always allocate a the same size chunk to help jemalloc predict us.
+            let mut txs = Vec::with_capacity(CHECK_CHUNK);
+            txs.extend(self.recheck_chunk.iter().map(|pid| {
                 self.container
                     .get_transaction(pid.id)
                     .expect("transaction must exist")
-            })
-            .collect();
+            }));
+
+            txs
+        };
         let lock_results = vec![Ok(()); txs.len()];
         let mut error_counters = TransactionErrorMetrics::default();
         let results = bank.check_transactions::<R::Transaction>(
