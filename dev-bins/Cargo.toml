@@ -117,7 +117,7 @@ solana-ledger = { path = "../ledger", version = "=4.0.0-alpha.0", features = ["a
 solana-loader-v3-interface = "6.1.0"
 solana-local-cluster = { path = "../local-cluster", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-measure = { path = "../measure", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-message = "3.0.1"
+solana-message = "3.1.0"
 solana-metrics = { path = "../metrics", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-native-token = "3.0.0"
 solana-net-utils = { path = "../net-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
