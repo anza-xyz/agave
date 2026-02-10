@@ -106,13 +106,16 @@ impl QosService {
         transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
         bank: &Bank,
     ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, usize) {
+        let remove_block_vote_cost_limit = bank
+            .feature_set
+            .is_active(&agave_feature_set::remove_block_vote_cost_limit::ID);
         let mut cost_tracking_time = Measure::start("cost_tracking_time");
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
         let select_results = transactions
             .zip(transactions_costs)
             .map(|(tx, cost)| match cost {
-                Ok(cost) => match cost_tracker.try_add(&cost) {
+                Ok(cost) => match cost_tracker.try_add(&cost, remove_block_vote_cost_limit) {
                     Ok(UpdatedCosts {
                         updated_block_cost,
                         updated_costliest_account_cost,
