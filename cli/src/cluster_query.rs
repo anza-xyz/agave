@@ -29,9 +29,7 @@ use {
     },
     solana_clock::{self as clock, Clock, Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
-    solana_connection_cache::connection_cache::{
-        ConnectionManager, ConnectionPool, NewConnectionConfig,
-    },
+    solana_tpu_client_next::TransactionSender,
     solana_hash::Hash,
     solana_message::Message,
     solana_nonce::state::State as NonceState,
@@ -58,7 +56,6 @@ use {
     solana_slot_history::{self as slot_history, SlotHistory},
     solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
-    solana_tpu_client::nonblocking::tpu_client::TpuClient,
     solana_transaction::Transaction,
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
@@ -1503,8 +1500,8 @@ pub async fn process_get_transaction_count(
     Ok(transaction_count.to_string())
 }
 
-pub async fn process_ping<P, M, C>(
-    tpu_client: Option<&TpuClient<P, M, C>>,
+pub async fn process_ping(
+    transaction_sender: Option<&TransactionSender>,
     config: &CliConfig<'_>,
     interval: &Duration,
     count: &Option<u64>,
@@ -1513,12 +1510,7 @@ pub async fn process_ping<P, M, C>(
     print_timestamp: bool,
     compute_unit_price: Option<u64>,
     rpc_client: &RpcClient,
-) -> ProcessResult
-where
-    P: ConnectionPool<NewConnectionConfig = C>,
-    M: ConnectionManager<ConnectionPool = P, NewConnectionConfig = C>,
-    C: NewConnectionConfig,
-{
+) -> ProcessResult {
     let (signal_sender, signal_receiver) = unbounded();
     let handler = move || {
         let _ = signal_sender.send(());
@@ -1611,10 +1603,18 @@ where
             format!("[{}.{:06}] ", micros / 1_000_000, micros % 1_000_000)
         };
 
-        let send_result = if let Some(tpu_client) = tpu_client {
-            match tpu_client.try_send_transaction(&tx).await {
-                Ok(()) => Ok(*tx.signatures.first().unwrap()),
-                Err(err) => Err(format!("TPU send error: {err}")),
+        let send_result = if let Some(transaction_sender) = transaction_sender {
+            match bincode::serialize(&tx) {
+                Ok(wire_tx) => {
+                    match transaction_sender
+                        .send_transactions_in_batch(vec![wire_tx])
+                        .await
+                    {
+                        Ok(()) => Ok(*tx.signatures.first().unwrap()),
+                        Err(err) => Err(format!("TPU send error: {err}")),
+                    }
+                }
+                Err(err) => Err(format!("Transaction serialization error: {err}")),
             }
         } else {
             rpc_client

@@ -12,7 +12,6 @@ use {
     solana_cli_output::{
         display::println_name_value, CliSignature, CliValidatorsSortOrder, OutputFormat,
     },
-    solana_client::connection_cache::ConnectionCache,
     solana_clock::{Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
@@ -29,9 +28,10 @@ use {
     solana_signature::Signature,
     solana_signer::{Signer, SignerError},
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
-    solana_tpu_client::{
-        nonblocking::tpu_client::TpuClient,
-        tpu_client::{TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE},
+    solana_tpu_client_next::{
+        client_builder::ClientBuilder,
+        node_address_service::LeaderTpuCacheServiceConfig,
+        websocket_node_address_service::WebsocketNodeAddressService,
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
@@ -39,6 +39,7 @@ use {
     std::{
         collections::HashMap, error, io::stdout, rc::Rc, str::FromStr, sync::Arc, time::Duration,
     },
+    tokio_util::sync::CancellationToken,
     thiserror::Error,
 };
 
@@ -958,93 +959,51 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 "Warning: The 'ping' command is deprecated in v4.0 and will be removed in v4.1."
             );
 
-            let connection_cache = if config.use_tpu_client {
-                Some({
-                    #[cfg(feature = "dev-context-only-utils")]
-                    let cache = ConnectionCache::new_quic_for_tests(
-                        "connection_cache_cli_ping_quic",
-                        DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                    );
-                    #[cfg(not(feature = "dev-context-only-utils"))]
-                    let cache = ConnectionCache::new_quic(
-                        "connection_cache_cli_ping_quic",
-                        DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                    );
-                    cache
-                })
+            let transaction_sender = if config.use_tpu_client {
+                let cancel = CancellationToken::new();
+                let leader_updater = WebsocketNodeAddressService::run(
+                    rpc_client.clone(),
+                    config.websocket_url.clone(),
+                    LeaderTpuCacheServiceConfig::default(),
+                    cancel.clone(),
+                )
+                .await
+                .unwrap_or_else(|err| {
+                    eprintln!("Could not create leader updater: {err:?}");
+                    std::process::exit(1);
+                });
+
+                let bind_socket = solana_net_utils::bind_to_unspecified()
+                    .unwrap_or_else(|err| {
+                        eprintln!("Could not bind UDP socket: {err:?}");
+                        std::process::exit(1);
+                    });
+
+                let (sender, _client) = ClientBuilder::new(Box::new(leader_updater))
+                    .bind_socket(bind_socket)
+                    .cancel_token(cancel)
+                    .build()
+                    .unwrap_or_else(|err| {
+                        eprintln!("Could not create TPU client: {err:?}");
+                        std::process::exit(1);
+                    });
+                Some(sender)
             } else {
                 None
             };
 
-            match connection_cache {
-                Some(ConnectionCache::Quic(cache)) => {
-                    let tpu_client = TpuClient::new_with_connection_cache(
-                        rpc_client.clone(),
-                        &config.websocket_url,
-                        TpuClientConfig::default(),
-                        cache,
-                    )
-                    .await
-                    .unwrap_or_else(|err| {
-                        eprintln!("Could not create TpuClient {err:?}");
-                        std::process::exit(1);
-                    });
-
-                    process_ping(
-                        Some(&tpu_client),
-                        config,
-                        interval,
-                        count,
-                        timeout,
-                        blockhash,
-                        *print_timestamp,
-                        *compute_unit_price,
-                        &rpc_client,
-                    )
-                    .await
-                }
-                Some(ConnectionCache::Udp(cache)) => {
-                    let tpu_client = TpuClient::new_with_connection_cache(
-                        rpc_client.clone(),
-                        &config.websocket_url,
-                        TpuClientConfig::default(),
-                        cache,
-                    )
-                    .await
-                    .unwrap_or_else(|err| {
-                        eprintln!("Could not create TpuClient {err:?}");
-                        std::process::exit(1);
-                    });
-
-                    process_ping(
-                        Some(&tpu_client),
-                        config,
-                        interval,
-                        count,
-                        timeout,
-                        blockhash,
-                        *print_timestamp,
-                        *compute_unit_price,
-                        &rpc_client,
-                    )
-                    .await
-                }
-                None => {
-                    use solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool};
-                    process_ping::<QuicPool, QuicConnectionManager, QuicConfig>(
-                        None,
-                        config,
-                        interval,
-                        count,
-                        timeout,
-                        blockhash,
-                        *print_timestamp,
-                        *compute_unit_price,
-                        &rpc_client,
-                    )
-                    .await
-                }
-            }
+            process_ping(
+                transaction_sender.as_ref(),
+                config,
+                interval,
+                count,
+                timeout,
+                blockhash,
+                *print_timestamp,
+                *compute_unit_price,
+                &rpc_client,
+            )
+            .await
         }
         CliCommand::Rent {
             data_length,
