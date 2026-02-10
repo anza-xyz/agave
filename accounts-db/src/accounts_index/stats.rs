@@ -135,13 +135,13 @@ impl Stats {
             age_now += Age::MAX as u64 + 1;
         }
         let age_delta = age_now.saturating_sub(last_age);
-        if age_delta > 0 {
-            return elapsed_ms / age_delta;
+        if let Some(v) = elapsed_ms.checked_div(age_delta) {
+            return v;
         } else {
             // did not advance an age, but probably did partial work, so report that
             let bin_delta = ages_flushed.saturating_sub(last_ages_flushed);
-            if bin_delta > 0 {
-                return elapsed_ms * self.bins / bin_delta;
+            if let Some(v) = (elapsed_ms * self.bins).checked_div(bin_delta) {
+                return v;
             }
         }
         0 // avoid crazy numbers
