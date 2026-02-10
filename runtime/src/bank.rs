@@ -174,7 +174,10 @@ use {
         transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+    solana_vote::{
+        vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+        vote_parser,
+    },
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -3151,6 +3154,10 @@ impl Bank {
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
     ) -> Result<()> {
+        if self.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(transaction) {
+            return Err(TransactionError::SanitizeFailure);
+        }
+
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != sanitized_epoch {

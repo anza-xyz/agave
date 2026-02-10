@@ -28,6 +28,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
+    solana_vote::vote_parser,
     std::num::Saturating,
 };
 
@@ -144,8 +145,15 @@ impl Consumer {
             bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
         let check_results: Vec<_> = check_results
             .into_iter()
-            .map(|result| match result {
-                Ok(_) => Ok(()),
+            .zip(txs.iter())
+            .map(|(result, tx)| match result {
+                Ok(_) => {
+                    if bank.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(tx) {
+                        Err(TransactionError::SanitizeFailure)
+                    } else {
+                        Ok(())
+                    }
+                }
                 Err(err) => Err(err),
             })
             .collect();
