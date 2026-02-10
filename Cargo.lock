@@ -76,7 +76,7 @@ dependencies = [
  "rayon",
  "serde",
  "solana-bls-signatures",
- "solana-hash 3.1.0",
+ "solana-hash 4.1.0",
  "solana-signer-store",
  "thiserror 2.0.18",
 ]
