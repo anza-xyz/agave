@@ -3879,7 +3879,7 @@ impl Bank {
             .accounts_db
             .get_pubkey_account_for_slot(self.slot());
         // Sort the accounts by pubkey to make diff deterministic.
-        accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        accounts.sort_unstable_by_key(|a| a.0);
         accounts
     }
 
