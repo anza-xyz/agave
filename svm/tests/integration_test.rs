@@ -2384,6 +2384,196 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
     test_entries
 }
 
+fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
+    let mut test_entries = vec![];
+
+    let program_name = "write-to-account";
+    let program_id = program_address(program_name);
+
+    let base_rent = Rent::default();
+    let bumped_rent = Rent {
+        lamports_per_byte_year: base_rent.lamports_per_byte_year.saturating_mul(4),
+        ..base_rent
+    };
+
+    let target_size = 8usize;
+    let old_min_balance = base_rent.minimum_balance(target_size);
+    let new_min_balance = bumped_rent.minimum_balance(target_size);
+    assert!(new_min_balance > old_min_balance + LAMPORTS_PER_SIGNATURE);
+
+    let mk_program_account = |lamports, size| {
+        AccountSharedData::create_from_existing_shared_data(
+            lamports,
+            Arc::new(vec![0; size]),
+            program_id,
+            false,
+            u64::MAX,
+        )
+    };
+
+    let mk_system_account = |lamports, size| {
+        AccountSharedData::create_from_existing_shared_data(
+            lamports,
+            Arc::new(vec![0; size]),
+            system_program::id(),
+            false,
+            u64::MAX,
+        )
+    };
+
+    // write-only should succeed below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+        test_entry.add_initial_program(program_name);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+        let target_data = mk_program_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let set_data_transaction = WriteProgramInstruction::Set.create_transaction(
+            program_id,
+            &fee_payer_keypair,
+            target,
+            None,
+        );
+        test_entry.push_transaction(set_data_transaction);
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        let mut expected_target = target_data;
+        expected_target.data_as_mut_slice()[0] = 100;
+        test_entry.update_expected_account_data(target, &expected_target);
+
+        test_entries.push(test_entry);
+    }
+
+    // realloc to a smaller size should succeed below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+        test_entry.add_initial_program(program_name);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+        let target_data = mk_program_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let new_target_size = target_size - 1;
+        let realloc_transaction = WriteProgramInstruction::Realloc(new_target_size)
+            .create_transaction(program_id, &fee_payer_keypair, target, None);
+        test_entry.push_transaction(realloc_transaction);
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        let expected_target = mk_program_account(old_min_balance, new_target_size);
+        test_entry.update_expected_account_data(target, &expected_target);
+
+        test_entries.push(test_entry);
+    }
+
+    // realloc to a larger size should fail below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+        test_entry.add_initial_program(program_name);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+        let target_data = mk_program_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let new_target_size = target_size + 1;
+        let realloc_transaction = WriteProgramInstruction::Realloc(new_target_size)
+            .create_transaction(program_id, &fee_payer_keypair, target, None);
+        test_entry
+            .push_transaction_with_status(realloc_transaction, ExecutionStatus::ExecutedFailed);
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        test_entries.push(test_entry);
+    }
+
+    // owner change should fail below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target_keypair = Keypair::new();
+        let target = target_keypair.pubkey();
+        let target_data = mk_system_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let new_owner = Pubkey::new_unique();
+        let transaction = Transaction::new_signed_with_payer(
+            &[system_instruction::assign(&target, &new_owner)],
+            Some(&fee_payer),
+            &[&fee_payer_keypair, &target_keypair],
+            Hash::default(),
+        );
+        test_entry.push_transaction_with_status(transaction, ExecutionStatus::ExecutedFailed);
+
+        test_entry.decrease_expected_lamports(&fee_payer, 2 * LAMPORTS_PER_SIGNATURE);
+
+        test_entries.push(test_entry);
+    }
+
+    // fee payer drops below updated rent minimum, should fail
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+        test_entry.add_initial_program(program_name);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let fee_payer_data =
+            mk_system_account(old_min_balance + LAMPORTS_PER_SIGNATURE, target_size);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+        let target_data = mk_program_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let set_data_transaction = WriteProgramInstruction::Set.create_transaction(
+            program_id,
+            &fee_payer_keypair,
+            target,
+            None,
+        );
+        test_entry.push_transaction_with_status(set_data_transaction, ExecutionStatus::Discarded);
+
+        test_entries.push(test_entry);
+    }
+
+    test_entries
+}
+
 enum AbortReason {
     None,
     Unprocessable,
@@ -2565,6 +2755,7 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
 #[test_case(simd83_account_deallocate())]
 #[test_case(simd83_fee_payer_deallocate())]
 #[test_case(simd83_account_reallocate())]
+#[test_case(simd0392_balance_checks())]
 #[test_case(all_or_nothing(AbortReason::None))]
 #[test_case(all_or_nothing(AbortReason::Unprocessable))]
 #[test_case(all_or_nothing(AbortReason::DropOnFailure))]

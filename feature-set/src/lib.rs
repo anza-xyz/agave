@@ -173,6 +173,8 @@ impl FeatureSet {
             custom_commission_collector: false, // Feature disabled for now.
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
             block_revenue_sharing: false, // Hard-coded as disabled for now. Not a fully-implemented feature yet.
+            relax_post_exec_min_balance_check: self
+                .is_active(&relax_post_exec_min_balance_check::id()),
         }
     }
 }
@@ -1296,6 +1298,10 @@ pub mod block_revenue_sharing {
     solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
 }
 
+pub mod relax_post_exec_min_balance_check {
+    solana_pubkey::declare_id!("DEJmsCntuYqbXtL5z5TxbaxJXFUJAFjf7TqWSF7YWjQg");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2306,6 +2312,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             limit_instruction_accounts::id(),
             "SIMD-406: Maximum instruction accounts",
+        ),
+        (
+            relax_post_exec_min_balance_check::id(),
+            "SIMD-0392: Relaxation of post-execution min_balance check",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

@@ -384,14 +384,20 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state =
-        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
+    let payer_pre_rent_state = get_account_rent_state(
+        payer_account.lamports(),
+        payer_account.data().len(),
+        rent.minimum_balance(payer_account.data().len()),
+    );
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
 
-    let payer_post_rent_state =
-        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
+    let payer_post_rent_state = get_account_rent_state(
+        payer_account.lamports(),
+        payer_account.data().len(),
+        rent.minimum_balance(payer_account.data().len()),
+    );
     check_rent_state_with_account(
         &payer_pre_rent_state,
         &payer_post_rent_state,
@@ -1909,9 +1915,23 @@ mod tests {
             1,
         );
 
+        let pre_account_state_info = TransactionAccountStateInfo::new_pre_exec(
+            &transaction_context,
+            sanitized_tx.message(),
+            &rent,
+            true,
+        );
+        assert_eq!(pre_account_state_info.len(), num_accounts,);
+
         assert_eq!(
-            TransactionAccountStateInfo::new(&transaction_context, sanitized_tx.message(), &rent,)
-                .len(),
+            TransactionAccountStateInfo::new_post_exec(
+                &transaction_context,
+                sanitized_tx.message(),
+                &pre_account_state_info,
+                &rent,
+                true,
+            )
+            .len(),
             num_accounts,
         );
     }

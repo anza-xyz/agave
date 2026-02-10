@@ -34,22 +34,20 @@ pub enum RentState {
 /// This method has a default implementation that calls into
 /// `check_rent_state_with_account`.
 pub fn check_rent_state(
-    pre_rent_state: Option<&RentState>,
-    post_rent_state: Option<&RentState>,
+    pre_rent_state: &RentState,
+    post_rent_state: &RentState,
     transaction_context: &TransactionContext,
     index: IndexOfAccount,
 ) -> TransactionResult<()> {
-    if let Some((pre_rent_state, post_rent_state)) = pre_rent_state.zip(post_rent_state) {
-        let expect_msg = "account must exist at TransactionContext index if rent-states are Some";
-        check_rent_state_with_account(
-            pre_rent_state,
-            post_rent_state,
-            transaction_context
-                .get_key_of_account_at_index(index)
-                .expect(expect_msg),
-            index,
-        )?;
-    }
+    let expect_msg = "account must exist at TransactionContext index";
+    check_rent_state_with_account(
+        pre_rent_state,
+        post_rent_state,
+        transaction_context
+            .get_key_of_account_at_index(index)
+            .expect(expect_msg),
+        index,
+    )?;
     Ok(())
 }
 
@@ -80,13 +78,13 @@ pub fn check_rent_state_with_account(
 /// lamports as uninitialized and uses the implemented `get_rent` to
 /// determine whether an account is rent-exempt.
 pub fn get_account_rent_state(
-    rent: &Rent,
     account_lamports: u64,
     account_size: usize,
+    min_balance: u64,
 ) -> RentState {
     if account_lamports == 0 {
         RentState::Uninitialized
-    } else if rent.is_exempt(account_lamports, account_size) {
+    } else if account_lamports >= min_balance {
         RentState::RentExempt
     } else {
         RentState::RentPaying {
@@ -94,6 +92,44 @@ pub fn get_account_rent_state(
             lamports: account_lamports,
         }
     }
+}
+
+/// Check whether a transition from the pre_exec_balance to the
+/// post_exec_balance is valid for an account that hasn't changed owner
+/// or data size.
+pub fn check_static_account_rent_state_transition(
+    pre_exec_balance: u64,
+    post_exec_balance: u64,
+    data_size: usize,
+    rent: &Rent,
+    relax_post_exec_min_balance_check: bool,
+) -> bool {
+    let rent_min_balance = rent.minimum_balance(data_size);
+    let (pre_state, post_state) = if relax_post_exec_min_balance_check {
+        let pre_state = if pre_exec_balance == 0 {
+            RentState::Uninitialized
+        } else {
+            RentState::RentExempt
+        };
+        let post_state = match (post_exec_balance, &pre_state) {
+            (0, _) => RentState::Uninitialized,
+            (post_balance, _) if post_balance >= rent_min_balance => RentState::RentExempt,
+            (post_balance, RentState::RentExempt) if post_balance >= pre_exec_balance => {
+                RentState::RentExempt
+            }
+            (post_balance, _) => RentState::RentPaying {
+                data_size,
+                lamports: post_balance,
+            },
+        };
+        (pre_state, post_state)
+    } else {
+        (
+            get_account_rent_state(pre_exec_balance, data_size, rent_min_balance),
+            get_account_rent_state(post_exec_balance, data_size, rent_min_balance),
+        )
+    };
+    transition_allowed(&pre_state, &post_state)
 }
 
 /// Check whether a transition from the pre_rent_state to the
