@@ -13,12 +13,18 @@ Please report failures in the Solana Discord in `#learning-corner`, with your ho
 Run on the server host:
 
 ```
-cargo run -p xdp-compatability --bin server -- --bind 0.0.0.0:<TARGET_IP>
+cargo run -p xdp-compatability --bin server -- --bind-address 0.0.0.0:<TARGET_IP>
 ```
 
 ### Client (XDP sender)
 
-Run on the client host:
+For XDP zero-copy, the client binary needs extra capabilities. Build it and set caps:
+```
+cargo build -p xdp-compatability --bin client
+sudo setcap cap_net_admin,cap_net_raw,cap_bpf,cap_perfmon+ep <path-to-client-binary>
+```
+
+Then run:
 ```
 cargo run -p xdp-compatability --bin client -- \
   --target-server <SERVER_IP>:<TARGET_IP> \

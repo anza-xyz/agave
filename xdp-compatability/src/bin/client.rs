@@ -10,7 +10,7 @@ mod linux {
             CapSet,
             Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
         },
-        clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
+        clap::{crate_description, crate_name, value_t_or_exit, App, Arg, ArgMatches},
         crossbeam_channel::bounded,
         log::{error, info, warn},
         solana_clap_utils::{
@@ -21,14 +21,14 @@ mod linux {
         std::{
             net::{IpAddr, SocketAddr, UdpSocket},
             process::exit,
+            sync::Arc,
             thread,
             time::{Duration, Instant},
         },
+        xdp_compatability::{
+            build_request, expected_response, make_token, response_seq, RESPONSE_PREFIX, SEQ_SIZE,
+        },
     };
-
-    const DEFAULT_COUNT: usize = 5;
-    const DEFAULT_TIMEOUT_MS: u64 = 1000;
-    const DEFAULT_PAYLOAD_SIZE: usize = 64;
 
     #[derive(Debug)]
     struct Config {
@@ -36,7 +36,7 @@ mod linux {
         server: SocketAddr,
         count: usize,
         timeout_ms: u64,
-        payload_size: usize,
+        max_loss_fraction: f64,
     }
 
     fn get_clap_app<'ab, 'v>() -> App<'ab, 'v> {
@@ -80,6 +80,7 @@ mod linux {
                     .long("count")
                     .value_name("COUNT")
                     .takes_value(true)
+                    .default_value("5")
                     .help("Number of test packets to send"),
             )
             .arg(
@@ -87,14 +88,16 @@ mod linux {
                     .long("timeout-ms")
                     .value_name("MS")
                     .takes_value(true)
+                    .default_value("1000")
                     .help("Receive timeout in milliseconds"),
             )
             .arg(
-                Arg::with_name("payload_size")
-                    .long("payload-size")
-                    .value_name("BYTES")
+                Arg::with_name("max_loss_fraction")
+                    .long("max-loss-fraction")
+                    .value_name("FRACTION")
                     .takes_value(true)
-                    .help("Payload size in bytes"),
+                    .default_value("0.0")
+                    .help("Allowed loss fraction (0.0-1.0). Timeouts count as loss."),
             )
     }
 
@@ -109,9 +112,13 @@ mod linux {
             .value_of("retransmit_xdp_interface")
             .map(|value| value.to_string());
         let cpu_list = matches.value_of("retransmit_xdp_cpu_cores");
-        let count = value_t!(matches, "count", usize).unwrap_or(DEFAULT_COUNT);
-        let timeout_ms = value_t!(matches, "timeout_ms", u64).unwrap_or(DEFAULT_TIMEOUT_MS);
-        let payload_size = value_t!(matches, "payload_size", usize).unwrap_or(DEFAULT_PAYLOAD_SIZE);
+        let count = value_t_or_exit!(matches, "count", usize);
+        let timeout_ms = value_t_or_exit!(matches, "timeout_ms", u64);
+        let max_loss_fraction = value_t_or_exit!(matches, "max_loss_fraction", f64);
+        if !(0.0..=1.0).contains(&max_loss_fraction) {
+            error!("--max-loss-fraction must be within [0.0, 1.0]");
+            exit(1);
+        }
         let zero_copy = matches.is_present("retransmit_xdp_zero_copy");
 
         let cpus = if let Some(cpu_list) = cpu_list {
@@ -129,7 +136,58 @@ mod linux {
             server,
             count,
             timeout_ms,
-            payload_size,
+            max_loss_fraction,
+        }
+    }
+
+    enum RecvResult {
+        Match,
+        Mismatch,
+        Timeout,
+    }
+
+    fn recv_until_match(udp: &UdpSocket, expected: &[u8], timeout_ms: u64) -> RecvResult {
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(timeout_ms))
+            .expect("timeout must be less than u64::MAX");
+        let mut buf = vec![0u8; expected.len().saturating_add(SEQ_SIZE)];
+        let mut saw_packet = false;
+        let expected_seq =
+            response_seq(expected, expected.len()).expect("expected response must be valid");
+        loop {
+            if Instant::now() > deadline {
+                return if saw_packet {
+                    RecvResult::Mismatch
+                } else {
+                    RecvResult::Timeout
+                };
+            }
+            match udp.recv(&mut buf) {
+                Ok(n) => {
+                    if n >= RESPONSE_PREFIX.len() && buf[..n].starts_with(RESPONSE_PREFIX) {
+                        saw_packet = true;
+                        if &buf[..n] == expected {
+                            return RecvResult::Match;
+                        }
+                        if let Some(seq) = response_seq(&buf, n) {
+                            if seq != expected_seq {
+                                warn!("Received response for different seq {seq}");
+                            } else {
+                                error!("Received response with mismatched hash for seq {seq}");
+                                return RecvResult::Mismatch;
+                            }
+                        } else {
+                            error!("Received malformed agave-xdp response (len {n})");
+                            return RecvResult::Mismatch;
+                        }
+                    } else {
+                        warn!("Received stray packet while waiting for response (len {n})");
+                    }
+                }
+                Err(_) => {
+                    // Ignore timeout and retry until deadline.
+                }
+            }
         }
     }
 
@@ -222,8 +280,8 @@ mod linux {
             warn!("Multiple CPU cores supplied; using CPU {cpu_id} for the compatibility client.");
         }
         let src_port = udp.local_addr().unwrap().port();
-        let dev = std::sync::Arc::new(dev);
-        let router = std::sync::Arc::new(router);
+        let dev = Arc::new(dev);
+        let router = Arc::new(router);
 
         let mut tx_loop_config_builder = TxLoopConfigBuilder::new(src_port);
         tx_loop_config_builder
@@ -244,27 +302,33 @@ mod linux {
         let (drop_sender, _drop_receiver) = bounded(1);
 
         let tx_thread = {
-            let router = std::sync::Arc::clone(&router);
+            let router = Arc::clone(&router);
             thread::spawn(move || {
                 tx_loop.run(receiver, drop_sender, move |ip| router.route(*ip).ok());
             })
         };
 
         let mut ok = 0usize;
+        let mut mismatches = 0usize;
+        let mut timeouts = 0usize;
         for seq in 0..config.count {
-            let payload = xdp_compatability::build_request(seq as u64, config.payload_size);
+            let token = make_token(seq as u64);
+            let payload = build_request(seq as u64, token);
             sender.send((vec![server], payload.clone())).unwrap();
 
-            let expected = xdp_compatability::expected_response(&payload);
+            let expected =
+                expected_response(&payload).expect("request built by client must be valid");
             match recv_until_match(&udp, &expected, config.timeout_ms) {
                 RecvResult::Match => {
                     ok = ok.saturating_add(1);
                 }
                 RecvResult::Mismatch => {
                     error!("Response mismatch for seq {seq}");
+                    mismatches = mismatches.saturating_add(1);
                 }
                 RecvResult::Timeout => {
                     error!("Response timeout for seq {seq}");
+                    timeouts = timeouts.saturating_add(1);
                 }
             }
         }
@@ -272,48 +336,20 @@ mod linux {
         drop(sender);
         let _ = tx_thread.join();
 
-        if ok == config.count {
-            info!("XDP compatibility test passed ({ok}/{})", config.count);
+        let allowed_loss = ((config.count as f64) * config.max_loss_fraction).floor() as usize;
+        if mismatches == 0 && timeouts <= allowed_loss {
+            info!(
+                "XDP compatibility test passed ({ok}/{} w/ {timeouts} timeouts)",
+                config.count
+            );
             exit(0);
         }
 
-        info!("XDP compatibility test failed ({ok}/{})", config.count);
+        info!(
+            "XDP compatibility test failed ({ok}/{}. {mismatches} mismatches, {timeouts} timeouts)",
+            config.count
+        );
         exit(1);
-    }
-
-    enum RecvResult {
-        Match,
-        Mismatch,
-        Timeout,
-    }
-
-    fn recv_until_match(udp: &UdpSocket, payload: &[u8], timeout_ms: u64) -> RecvResult {
-        let deadline = Instant::now().checked_add(Duration::from_millis(timeout_ms));
-        let mut buf = vec![0u8; payload.len().saturating_add(64)];
-        let mut saw_packet = false;
-        loop {
-            let Some(deadline) = deadline else {
-                return RecvResult::Timeout;
-            };
-            if Instant::now() > deadline {
-                return if saw_packet {
-                    RecvResult::Mismatch
-                } else {
-                    RecvResult::Timeout
-                };
-            }
-            match udp.recv(&mut buf) {
-                Ok(n) => {
-                    saw_packet = true;
-                    if &buf[..n] == payload {
-                        return RecvResult::Match;
-                    }
-                }
-                Err(_) => {
-                    // Ignore timeout and retry until deadline.
-                }
-            }
-        }
     }
 }
 
