@@ -39,7 +39,6 @@ members = [
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
-    "gossip-bin",
     "install",
     "io-uring",
     "keygen",
