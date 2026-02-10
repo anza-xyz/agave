@@ -19,10 +19,10 @@ use {
 
 pub type IpEchoServer = Runtime;
 
-// The IP echo server does minimal work and can function with a single thread
-pub const MINIMUM_IP_ECHO_SERVER_THREADS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 // IP echo requests require little computation and come in fairly infrequently,
-// so keep the number of server workers small to avoid overhead
+// so default to two server workers to avoid overhead:
+// - One thread to monitor the TcpListener and spawn async tasks
+// - One thread to service the spawned tasks
 pub const DEFAULT_IP_ECHO_SERVER_THREADS: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 pub const MAX_PORT_COUNT_PER_MESSAGE: usize = 4;
 

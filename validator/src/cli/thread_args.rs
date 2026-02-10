@@ -263,9 +263,6 @@ impl ThreadArg for IpEchoServerThreadsArg {
     fn default() -> usize {
         solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS.get()
     }
-    fn min() -> usize {
-        solana_net_utils::MINIMUM_IP_ECHO_SERVER_THREADS.get()
-    }
 }
 
 struct RayonGlobalThreadsArg;
