@@ -647,10 +647,10 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
         solana_vote::vote_transaction::VoteTransaction,
-        solana_vote_interface::{program as vote_program, state::Vote},
-        solana_vote_program::{
-            vote_instruction::{self, CreateVoteAccountConfig},
-            vote_state::{create_bls_pubkey_and_proof_of_possession, VoteInitV2, VoteStateV4},
+        solana_vote_interface::{
+            instruction::{self as vote_instruction, CreateVoteAccountConfig},
+            program as vote_program,
+            state::{Vote, VoteInit, VoteStateV4},
         },
         std::{
             sync::{
@@ -929,18 +929,14 @@ mod tests {
             0,
             &system_program::id(),
         )];
-        let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_account.pubkey());
-        ixs.append(&mut vote_instruction::create_account_with_config_v2(
+        ixs.append(&mut vote_instruction::create_account_with_config(
             &from.pubkey(),
             &vote_account.pubkey(),
-            &VoteInitV2 {
+            &VoteInit {
                 node_pubkey: validator.pubkey(),
                 authorized_voter: voter.pubkey(),
-                authorized_voter_bls_pubkey: bls_pubkey,
-                authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
                 authorized_withdrawer: Pubkey::new_unique(),
-                ..Default::default()
+                ..VoteInit::default()
             },
             vote_balance,
             CreateVoteAccountConfig {

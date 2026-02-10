@@ -34,7 +34,6 @@ solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-feature-gate-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }

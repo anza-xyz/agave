@@ -118,9 +118,8 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_bls_pubkey_and_proof_of_possession, create_v4_account_with_authorized,
-            BlockTimestamp, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4, VoteStateVersions,
-            VoterWithBLSArgs, MAX_LOCKOUT_HISTORY,
+            self, create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
+            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -3226,22 +3225,13 @@ fn test_bank_inherit_fee_rate_governor() {
     );
 }
 
-#[test_case(true; "bls_feature_active")]
-#[test_case(false; "bls_feature_inactive")]
-fn test_bank_vote_accounts(bls_feature_active: bool) {
+#[test]
+fn test_bank_vote_accounts() {
     let GenesisConfigInfo {
-        mut genesis_config,
+        genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(500, &solana_pubkey::new_rand(), 1);
-
-    if !bls_feature_active {
-        genesis_utils::deactivate_features(
-            &mut genesis_config,
-            &vec![feature_set::bls_pubkey_management_in_vote_account::id()],
-        );
-    }
-
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let vote_accounts = bank.vote_accounts();
@@ -3249,43 +3239,21 @@ fn test_bank_vote_accounts(bls_feature_active: bool) {
                                         // to have a vote account
 
     let vote_keypair = Keypair::new();
-    let instructions = if bls_feature_active {
-        let (bls_pubkey, bls_proof_of_possession) =
-            create_bls_pubkey_and_proof_of_possession(&vote_keypair.pubkey());
-        vote_instruction::create_account_with_config_v2(
-            &mint_keypair.pubkey(),
-            &vote_keypair.pubkey(),
-            &VoteInitV2 {
-                node_pubkey: mint_keypair.pubkey(),
-                authorized_voter: vote_keypair.pubkey(),
-                authorized_voter_bls_pubkey: bls_pubkey,
-                authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-                authorized_withdrawer: vote_keypair.pubkey(),
-                ..Default::default()
-            },
-            10,
-            vote_instruction::CreateVoteAccountConfig {
-                space: VoteStateV4::size_of() as u64,
-                ..vote_instruction::CreateVoteAccountConfig::default()
-            },
-        )
-    } else {
-        vote_instruction::create_account_with_config(
-            &mint_keypair.pubkey(),
-            &vote_keypair.pubkey(),
-            &VoteInit {
-                node_pubkey: mint_keypair.pubkey(),
-                authorized_voter: vote_keypair.pubkey(),
-                authorized_withdrawer: vote_keypair.pubkey(),
-                ..VoteInit::default()
-            },
-            10,
-            vote_instruction::CreateVoteAccountConfig {
-                space: VoteStateV4::size_of() as u64,
-                ..vote_instruction::CreateVoteAccountConfig::default()
-            },
-        )
-    };
+    let instructions = vote_instruction::create_account_with_config(
+        &mint_keypair.pubkey(),
+        &vote_keypair.pubkey(),
+        &VoteInit {
+            node_pubkey: mint_keypair.pubkey(),
+            authorized_voter: vote_keypair.pubkey(),
+            authorized_withdrawer: vote_keypair.pubkey(),
+            commission: 0,
+        },
+        10,
+        vote_instruction::CreateVoteAccountConfig {
+            space: VoteStateV4::size_of() as u64,
+            ..vote_instruction::CreateVoteAccountConfig::default()
+        },
+    );
 
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(
@@ -3353,18 +3321,14 @@ fn test_bank_cloned_stake_delegations() {
     };
 
     let vote_keypair = Keypair::new();
-    let (bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession(&vote_keypair.pubkey());
-    let mut instructions = vote_instruction::create_account_with_config_v2(
+    let mut instructions = vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
         &vote_keypair.pubkey(),
-        &VoteInitV2 {
+        &VoteInit {
             node_pubkey: mint_keypair.pubkey(),
             authorized_voter: vote_keypair.pubkey(),
-            authorized_voter_bls_pubkey: bls_pubkey,
-            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
             authorized_withdrawer: vote_keypair.pubkey(),
-            ..Default::default()
+            commission: 0,
         },
         vote_balance,
         vote_instruction::CreateVoteAccountConfig {
@@ -3668,16 +3632,12 @@ fn test_add_builtin() {
 
     let mock_account = Keypair::new();
     let mock_validator_identity = Keypair::new();
-    let (bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession(&mock_account.pubkey());
-    let mut instructions = vote_instruction::create_account_with_config_v2(
+    let mut instructions = vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
         &mock_account.pubkey(),
-        &VoteInitV2 {
+        &VoteInit {
             node_pubkey: mock_validator_identity.pubkey(),
-            authorized_voter_bls_pubkey: bls_pubkey,
-            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-            ..Default::default()
+            ..VoteInit::default()
         },
         1,
         vote_instruction::CreateVoteAccountConfig {
@@ -3719,16 +3679,12 @@ fn test_add_duplicate_static_program() {
 
     let mock_account = Keypair::new();
     let mock_validator_identity = Keypair::new();
-    let (bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession(&mock_account.pubkey());
-    let instructions = vote_instruction::create_account_with_config_v2(
+    let instructions = vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
         &mock_account.pubkey(),
-        &VoteInitV2 {
+        &VoteInit {
             node_pubkey: mock_validator_identity.pubkey(),
-            authorized_voter_bls_pubkey: bls_pubkey,
-            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
-            ..Default::default()
+            ..VoteInit::default()
         },
         1,
         vote_instruction::CreateVoteAccountConfig {
@@ -8494,20 +8450,16 @@ fn test_vote_epoch_panic() {
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let vote_keypair = keypair_from_seed(&[1u8; 32]).unwrap();
-    let (bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession(&vote_keypair.pubkey());
 
     let mut setup_ixs = Vec::new();
-    setup_ixs.extend(vote_instruction::create_account_with_config_v2(
+    setup_ixs.extend(vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
         &vote_keypair.pubkey(),
-        &VoteInitV2 {
+        &VoteInit {
             node_pubkey: mint_keypair.pubkey(),
             authorized_voter: vote_keypair.pubkey(),
-            authorized_voter_bls_pubkey: bls_pubkey,
-            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
             authorized_withdrawer: mint_keypair.pubkey(),
-            ..Default::default()
+            commission: 0,
         },
         1_000_000_000,
         vote_instruction::CreateVoteAccountConfig {
@@ -10137,17 +10089,12 @@ fn test_rent_state_changes_sysvars() {
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // Ensure transactions with sysvars succeed, even though sysvars appear RentPaying by balance
-    let (bls_pubkey, bls_proof_of_possession) =
-        create_bls_pubkey_and_proof_of_possession(&validator_vote_account_pubkey);
     let tx = Transaction::new_signed_with_payer(
         &[vote_instruction::authorize(
             &validator_vote_account_pubkey,
             &validator_voting_keypair.pubkey(),
             &Pubkey::new_unique(),
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            }),
+            VoteAuthorize::Voter,
         )],
         Some(&mint_keypair.pubkey()),
         &[&mint_keypair, &validator_voting_keypair],

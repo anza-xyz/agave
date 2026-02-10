@@ -8036,7 +8036,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
- "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-genesis-config",
  "solana-hash 4.1.0",
