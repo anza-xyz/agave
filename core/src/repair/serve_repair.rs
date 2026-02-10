@@ -658,12 +658,9 @@ impl ServeRepair {
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
-        data_budget: &DataBudget,
+        mut remaining_budget_estimate: usize,
         stats: &mut ServeRepairStats,
     ) -> Vec<RepairRequestWithMeta> {
-        // Estimate how much data budget we have left, 2x margin to prioritize
-        // staked requests (as those get filtered after sigverify)
-        let mut remaining_budget_estimate = data_budget.get() * 2;
         const MIN_RESPONSE_SIZE: usize = PACKET_DATA_SIZE + SIZE_OF_NONCE;
         let decode_request = |request| {
             if remaining_budget_estimate < MIN_RESPONSE_SIZE {
@@ -752,29 +749,6 @@ impl ServeRepair {
         stats.dropped_requests_load_shed += dropped_requests;
         stats.total_requests += total_requests;
 
-        let decode_start = Instant::now();
-        let mut decoded_requests = {
-            let whitelist = self.repair_whitelist.read().unwrap();
-            Self::decode_requests(
-                requests,
-                &epoch_staked_nodes,
-                &whitelist,
-                &my_id,
-                &socket_addr_space,
-                data_budget,
-                stats,
-            )
-        };
-        let whitelisted_request_count = decoded_requests.iter().filter(|r| r.whitelisted).count();
-        stats.decode_time_us += decode_start.elapsed().as_micros() as u64;
-        stats.whitelisted_requests += whitelisted_request_count.min(MAX_REQUESTS_PER_ITERATION);
-
-        if decoded_requests.len() > MAX_REQUESTS_PER_ITERATION {
-            stats.dropped_requests_low_stake += decoded_requests.len() - MAX_REQUESTS_PER_ITERATION;
-            decoded_requests.sort_unstable_by_key(|r| Reverse((r.whitelisted, r.stake)));
-            decoded_requests.truncate(MAX_REQUESTS_PER_ITERATION);
-        }
-
         // Check if we are currently a leader, so we can limit the service rate
         // If information is not available, assume we are not a leader.
         let is_leader = self
@@ -788,6 +762,35 @@ impl ServeRepair {
         } else {
             1
         };
+
+        let decode_start = Instant::now();
+        let mut decoded_requests = {
+            // Estimate how much data budget we have left, 2x margin to prioritize staked,
+            // apply byte cost multiplier here so we can operate in bytes inside decode_requests
+            let effective_data_budget_estimate =
+                data_budget.get().saturating_mul(2) / byte_cost_multiplier;
+            // staked requests (as those get filtered after sigverify)
+            let whitelist = self.repair_whitelist.read().unwrap();
+            Self::decode_requests(
+                requests,
+                &epoch_staked_nodes,
+                &whitelist,
+                &my_id,
+                &socket_addr_space,
+                effective_data_budget_estimate,
+                stats,
+            )
+        };
+        let whitelisted_request_count = decoded_requests.iter().filter(|r| r.whitelisted).count();
+        stats.decode_time_us += decode_start.elapsed().as_micros() as u64;
+        stats.whitelisted_requests += whitelisted_request_count.min(MAX_REQUESTS_PER_ITERATION);
+
+        if decoded_requests.len() > MAX_REQUESTS_PER_ITERATION {
+            stats.dropped_requests_low_stake += decoded_requests.len() - MAX_REQUESTS_PER_ITERATION;
+            decoded_requests.sort_unstable_by_key(|r| Reverse((r.whitelisted, r.stake)));
+            decoded_requests.truncate(MAX_REQUESTS_PER_ITERATION);
+        }
+
         let handle_requests_start = Instant::now();
         self.handle_requests(
             ping_cache,
