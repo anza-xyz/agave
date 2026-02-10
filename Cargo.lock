@@ -11455,43 +11455,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-transaction-dos"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "bincode",
- "clap 2.33.3",
- "log",
- "rand 0.9.2",
- "rayon",
- "solana-clap-utils",
- "solana-cli",
- "solana-client",
- "solana-commitment-config",
- "solana-core",
- "solana-faucet",
- "solana-gossip",
- "solana-hash 4.1.0",
- "solana-instruction",
- "solana-keypair",
- "solana-local-cluster",
- "solana-measure",
- "solana-message",
- "solana-net-utils",
- "solana-packet 4.0.0",
- "solana-poh-config",
- "solana-pubkey 4.0.0",
- "solana-rpc-client",
- "solana-runtime",
- "solana-signer",
- "solana-system-interface 3.0.0",
- "solana-transaction",
- "solana-transaction-status",
- "solana-version",
- "tokio",
-]
-
-[[package]]
 name = "solana-transaction-error"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
