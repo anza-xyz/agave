@@ -19,11 +19,6 @@ steps:
       queue: "release-build"
     timeout_in_minutes: 5
   - wait
-  - name: "publish docker"
-    command: "docker-solana/build.sh"
-    agents:
-      queue: "release-build"
-    timeout_in_minutes: 60
   - name: "publish crate"
     command: "ci/publish-crate.sh"
     agents:

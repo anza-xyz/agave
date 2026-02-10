@@ -641,6 +641,7 @@ fn test_snapshots_with_background_services() {
         cluster_info.clone(),
         snapshot_controller.clone(),
         false,
+        0,
     );
 
     let accounts_background_service =
@@ -805,6 +806,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         cluster_info.clone(),
         snapshot_controller.clone(),
         false,
+        0,
     );
 
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;

@@ -179,20 +179,6 @@ impl Stats {
         self.count.load(Ordering::Relaxed)
     }
 
-    /// This is an estimate of the # of items in mem that are awaiting flushing to disk.
-    /// returns (# items in mem) - (# items we intend to hold in mem for performance heuristics)
-    /// The result is also an estimate because 'held_in_mem' is based on a stat that is swapped out when stats are reported.
-    pub fn get_remaining_items_to_flush_estimate(&self) -> usize {
-        let in_mem = self.count_in_mem.load(Ordering::Relaxed) as u64;
-        // Note, `held_in_mem.clean` is purposely not included in this
-        // summation because clean items do not need to be flushed.
-        let held_in_mem = self.held_in_mem.slot_list_cached.load(Ordering::Relaxed)
-            + self.held_in_mem.slot_list_len.load(Ordering::Relaxed)
-            + self.held_in_mem.ref_count.load(Ordering::Relaxed)
-            + self.held_in_mem.age.load(Ordering::Relaxed);
-        in_mem.saturating_sub(held_in_mem) as usize
-    }
-
     pub fn report_stats<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
         &self,
         storage: &BucketMapHolder<T, U>,

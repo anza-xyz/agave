@@ -86,7 +86,6 @@ async fn test_stake_delegation_force() {
         authorized_withdrawer,
         commission: Some(0),
         use_v2_instruction: false,
-        bls_keypair: None,
         inflation_rewards_commission_bps: None,
         inflation_rewards_collector: None,
         block_revenue_commission_bps: None,

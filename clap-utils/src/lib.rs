@@ -29,7 +29,6 @@ pub fn hidden_unless_forced() -> bool {
 }
 
 pub mod compute_budget;
-pub mod compute_unit_price;
 pub mod fee_payer;
 pub mod input_parsers;
 pub mod input_validators;

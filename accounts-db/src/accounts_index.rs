@@ -1035,10 +1035,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.storage.set_startup(value);
     }
 
-    pub fn get_startup_remaining_items_to_flush_estimate(&self) -> usize {
-        self.storage.get_startup_remaining_items_to_flush_estimate()
-    }
-
     /// Scan AccountsIndex for a given iterator of Pubkeys.
     ///
     /// This fn takes 4 arguments.
@@ -1305,16 +1301,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.account_maps.len()
     }
 
-    // Same functionally to upsert, but:
-    // 1. operates on a batch of items
-    // 2. holds the write lock for the duration of adding the items
-    // Can save time when inserting lots of new keys.
-    // But, does NOT update secondary index
-    // This is designed to be called at startup time.
+    /// Same functionally to upsert, but:
+    /// 1. operates on a batch of items in reusable Vec, draining all elements
+    /// 2. holds the write lock for the duration of adding the items
+    ///
+    /// Can save time when inserting lots of new keys.
+    /// But, does NOT update secondary index
+    /// This is designed to be called at startup time.
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
-        mut items: Vec<(Pubkey, T)>,
+        items: &mut Vec<(Pubkey, T)>,
     ) -> InsertNewIfMissingIntoPrimaryIndexInfo {
         let use_disk = self.storage.storage.is_disk_index_enabled();
 
@@ -1949,9 +1946,9 @@ mod tests {
         let account_info = true;
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let account_info2: bool = !account_info;
-        let items = vec![(*pubkey, account_info), (*pubkey, account_info2)];
+        let mut items = vec![(*pubkey, account_info), (*pubkey, account_info2)];
         index.set_startup(Startup::Startup);
-        index.insert_new_if_missing_into_primary_index(slot, items);
+        index.insert_new_if_missing_into_primary_index(slot, &mut items);
     }
 
     #[test]
@@ -1962,10 +1959,10 @@ mod tests {
 
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let account_info = true;
-        let items = vec![(*pubkey, account_info)];
+        let mut items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let result = index.insert_new_if_missing_into_primary_index(slot, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot, &mut items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -1999,10 +1996,10 @@ mod tests {
         // not zero lamports
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let account_info = false;
-        let items = vec![(*pubkey, account_info)];
+        let mut items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let result = index.insert_new_if_missing_into_primary_index(slot, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot, &mut items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2221,9 +2218,9 @@ mod tests {
         let account_infos = [true, false];
 
         index.set_startup(Startup::Startup);
-        let items = vec![(key0, account_infos[0]), (key1, account_infos[1])];
+        let mut items = vec![(key0, account_infos[0]), (key1, account_infos[1])];
         let expected_len = items.len();
-        let result = index.insert_new_if_missing_into_primary_index(slot0, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot0, &mut items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2280,10 +2277,10 @@ mod tests {
                 );
             }
             None => {
-                let items = vec![(key, account_infos[0])];
+                let mut items = vec![(key, account_infos[0])];
                 index.set_startup(Startup::Startup);
                 let expected_len = items.len();
-                let result = index.insert_new_if_missing_into_primary_index(slot0, items);
+                let result = index.insert_new_if_missing_into_primary_index(slot0, &mut items);
                 assert_eq!(result.count, expected_len);
                 index.set_startup(Startup::Normal);
             }
@@ -2328,10 +2325,10 @@ mod tests {
                     index.set_startup(Startup::Normal);
                 }
 
-                let items = vec![(key, account_infos[1])];
+                let mut items = vec![(key, account_infos[1])];
                 index.set_startup(Startup::Startup);
                 let expected_len = items.len();
-                let result = index.insert_new_if_missing_into_primary_index(slot1, items);
+                let result = index.insert_new_if_missing_into_primary_index(slot1, &mut items);
                 assert_eq!(result.count, expected_len);
                 index.set_startup(Startup::Normal);
             }

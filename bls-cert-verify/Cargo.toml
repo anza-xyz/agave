@@ -1,0 +1,40 @@
+[package]
+name = "agave-bls-cert-verify"
+description = "The BLS cert verify logic shared between sigverify and block marker consumption"
+readme = "../README.md"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+
+[dependencies]
+agave-votor-messages = { workspace = true }
+bincode = { workspace = true }
+bitvec = { workspace = true }
+qualifier_attr = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["parallel"] }
+solana-signer-store = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+agave-votor = { workspace = true }
+criterion = { workspace = true }
+solana-hash = { workspace = true }
+
+[[bench]]
+name = "cert_verify"
+harness = false
+
+[lints]
+workspace = true

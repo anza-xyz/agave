@@ -45,51 +45,6 @@ fn morph_into_deployment_environment_v1<'a>(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn load_program_from_bytes(
-    log_collector: Option<Rc<RefCell<LogCollector>>>,
-    #[cfg(feature = "metrics")] load_program_metrics: &mut LoadProgramMetrics,
-    programdata: &[u8],
-    loader_key: &Pubkey,
-    account_size: usize,
-    deployment_slot: Slot,
-    program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
-    reloading: bool,
-) -> Result<ProgramCacheEntry, InstructionError> {
-    let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
-    let loaded_program = if reloading {
-        // Safety: this is safe because the program is being reloaded in the cache.
-        unsafe {
-            ProgramCacheEntry::reload(
-                loader_key,
-                program_runtime_environment,
-                deployment_slot,
-                effective_slot,
-                programdata,
-                account_size,
-                #[cfg(feature = "metrics")]
-                load_program_metrics,
-            )
-        }
-    } else {
-        ProgramCacheEntry::new(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            effective_slot,
-            programdata,
-            account_size,
-            #[cfg(feature = "metrics")]
-            load_program_metrics,
-        )
-    }
-    .map_err(|err| {
-        ic_logger_msg!(log_collector, "{}", err);
-        InstructionError::InvalidAccountData
-    })?;
-    Ok(loaded_program)
-}
-
 /// Directly deploy a program using a provided invoke context.
 /// This function should only be invoked from the runtime, since it does not
 /// provide any account loads or checks.
@@ -145,17 +100,23 @@ pub fn deploy_program(
         load_program_metrics.verify_code_us = verify_code_time.as_us();
     }
     // Reload but with program_runtime_environment
-    let executor = load_program_from_bytes(
-        log_collector,
-        #[cfg(feature = "metrics")]
-        load_program_metrics,
-        programdata,
-        loader_key,
-        account_size,
-        deployment_slot,
-        program_runtime_environment,
-        true,
-    )?;
+    let executor = unsafe {
+        // SAFETY: The executable has been verified just above.
+        ProgramCacheEntry::reload(
+            loader_key,
+            program_runtime_environment,
+            deployment_slot,
+            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+            programdata,
+            account_size,
+            #[cfg(feature = "metrics")]
+            load_program_metrics,
+        )
+    }
+    .map_err(|err| {
+        ic_logger_msg!(log_collector, "{}", err);
+        InstructionError::InvalidAccountData
+    })?;
     if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
         executor.tx_usage_counter.store(
             old_entry.tx_usage_counter.load(Ordering::Relaxed),

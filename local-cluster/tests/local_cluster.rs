@@ -80,6 +80,7 @@ use {
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
+    solana_transaction_error::TransportError,
     solana_turbine::broadcast_stage::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
         BroadcastStageType,
@@ -2884,13 +2885,17 @@ fn test_oc_bad_signatures() {
                     &bad_authorized_signer_keypair,
                     None,
                 );
-                LocalCluster::send_transaction_with_retries(
-                    &client,
-                    &[&node_keypair, &bad_authorized_signer_keypair],
-                    &mut vote_tx,
-                    5,
-                )
-                .unwrap();
+
+                // Send the bad vote and expect transaction error.
+                assert_matches!(
+                    LocalCluster::send_transaction_with_retries(
+                        &client,
+                        &[&node_keypair, &bad_authorized_signer_keypair],
+                        &mut vote_tx,
+                        5,
+                    ),
+                    Err(TransportError::TransactionError(_))
+                );
 
                 num_votes_simulated.fetch_add(1, Ordering::Relaxed);
             }

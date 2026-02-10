@@ -1254,11 +1254,8 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
         // Update `heaviest_subtree_fork_choice` to find the best fork to build on
         let root = self.tree_root.0;
         let new_votes = latest_validator_votes_for_frozen_banks.take_votes_dirty_set(root);
-        let (best_overall_slot, best_overall_hash) = self.add_votes(
-            new_votes.into_iter(),
-            bank.epoch_stakes_map(),
-            bank.epoch_schedule(),
-        );
+        let (best_overall_slot, best_overall_hash) =
+            self.add_votes(new_votes, bank.epoch_stakes_map(), bank.epoch_schedule());
         start.stop();
 
         datapoint_info!(

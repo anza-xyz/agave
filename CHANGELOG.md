@@ -19,6 +19,7 @@ Release channels have their own copy of this changelog:
 * `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
 #### Changes
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
+* Added `clientId` field to each node in `getClusterNodes` response
 ### Validator
 #### Breaking
 * Removed deprecated arguments

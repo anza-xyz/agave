@@ -913,10 +913,7 @@ fn make_stub_shred(
         // For coding shreds {common,coding} headers are not part of the
         // erasure coded slice and need to be written to the payload here.
         let mut payload = vec![0u8; ShredCode::SIZE_OF_PAYLOAD];
-        wincode::serialize_into(
-            &mut payload.as_mut_slice(),
-            &(&common_header, &coding_header),
-        )?;
+        wincode::serialize_into(&mut payload[..], &(&common_header, &coding_header))?;
         Shred::ShredCode(ShredCode {
             common_header,
             coding_header,
@@ -1512,8 +1509,7 @@ mod test {
                 ..data_header
             };
             let mut payload = vec![0u8; ShredData::SIZE_OF_PAYLOAD];
-            wincode::serialize_into(&mut payload.as_mut_slice(), &(&common_header, &data_header))
-                .unwrap();
+            wincode::serialize_into(&mut payload[..], &(&common_header, &data_header)).unwrap();
             rng.fill(&mut payload[ShredData::SIZE_OF_HEADERS..size]);
             let shred = ShredData {
                 common_header,
@@ -1547,11 +1543,7 @@ mod test {
                 ..coding_header
             };
             let mut payload = vec![0u8; ShredCode::SIZE_OF_PAYLOAD];
-            wincode::serialize_into(
-                &mut payload.as_mut_slice(),
-                &(&common_header, &coding_header),
-            )
-            .unwrap();
+            wincode::serialize_into(&mut payload[..], &(&common_header, &coding_header)).unwrap();
 
             payload[ShredCode::SIZE_OF_HEADERS..ShredCode::SIZE_OF_HEADERS + code.len()]
                 .copy_from_slice(&code);

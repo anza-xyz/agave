@@ -8917,6 +8917,11 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     bank1
         .transfer(amount, &mint_keypair, &key1.pubkey())
         .unwrap();
+    // Store accounts with lamports to populate the index
+    bank1.store_account(&key4.pubkey(), &AccountSharedData::new(1, 0, &owner));
+    bank1.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
+
+    // Then set the accounts to zero lamports
     bank1.store_account(&key4.pubkey(), &AccountSharedData::new(0, 0, &owner));
     bank1.store_account(&key5.pubkey(), &AccountSharedData::new(0, 0, &owner));
 
@@ -11245,9 +11250,11 @@ where
     // create a bank a few epochs in the future..
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 2);
 
-    // create the next bank in the current epoch
+    // create the next bank in the current epoch and populate bob's account with some lamports and data
     let slot = bank.slot() + 1;
     let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let account = AccountSharedData::new(1, len1, &program);
+    bank.store_account(&bob_pubkey, &account);
 
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;

@@ -544,11 +544,10 @@ impl AccountsBackgroundService {
                                 .flush_accounts_cache(force_flush, Some(max_clean_slot_inclusive));
 
                             if should_clean {
-                                bank.rc.accounts.accounts_db.clean_accounts(
-                                    Some(max_clean_slot_inclusive),
-                                    false,
-                                    bank.epoch_schedule(),
-                                );
+                                bank.rc
+                                    .accounts
+                                    .accounts_db
+                                    .clean_accounts(Some(max_clean_slot_inclusive), false);
                                 last_cleaned_slot = max_clean_slot_inclusive;
                                 previous_clean_time = Instant::now();
                             }

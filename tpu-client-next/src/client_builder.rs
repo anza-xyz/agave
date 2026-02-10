@@ -50,8 +50,7 @@ use {
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
     },
     solana_keypair::Keypair,
-    solana_tls_utils::NotifyKeyUpdate,
-    std::{error::Error, future::Future, net::UdpSocket, pin::Pin, sync::Arc},
+    std::{future::Future, net::UdpSocket, pin::Pin, sync::Arc},
     thiserror::Error,
     tokio::{
         runtime,
@@ -344,11 +343,5 @@ impl<T> CancellableHandle<T> {
     pub async fn shutdown(self) -> Result<T, JoinError> {
         self.cancel.cancel();
         self.handle.await
-    }
-}
-
-impl NotifyKeyUpdate for Client {
-    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn Error>> {
-        self.update_identity(key).map_err(|e| e.into())
     }
 }

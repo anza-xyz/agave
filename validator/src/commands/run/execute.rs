@@ -878,6 +878,11 @@ pub fn execute(
         )]
         .into(),
         voting_service_test_override: None,
+        snapshot_packager_niceness_adj: value_t_or_exit!(
+            matches,
+            "snapshot_packager_niceness_adj",
+            i8
+        ),
     };
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
@@ -1385,9 +1390,6 @@ fn new_snapshot_config(
         NonZeroUsize
     );
 
-    let snapshot_packager_niceness_adj =
-        value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
-
     let snapshot_config = SnapshotConfig {
         usage: if full_snapshot_archive_interval == SnapshotInterval::Disabled {
             SnapshotUsage::LoadOnly
@@ -1403,7 +1405,6 @@ fn new_snapshot_config(
         snapshot_version,
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain,
-        packager_thread_niceness_adj: snapshot_packager_niceness_adj,
     };
 
     if !is_snapshot_config_valid(&snapshot_config) {

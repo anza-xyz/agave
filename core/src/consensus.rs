@@ -2550,7 +2550,9 @@ pub mod test {
         );
         assert_eq!(voted_stakes[&0], 2);
         assert_eq!(total_stake, 2);
-        let mut new_votes = latest_validator_votes_for_frozen_banks.take_votes_dirty_set(0);
+        let mut new_votes: Vec<_> = latest_validator_votes_for_frozen_banks
+            .take_votes_dirty_set(0)
+            .collect();
         new_votes.sort();
         assert_eq!(new_votes, account_latest_votes);
     }
@@ -2605,8 +2607,9 @@ pub mod test {
         // should be the sum of all voted stake for on the fork
         assert_eq!(fork_stake, expected_bank_stake);
         assert_eq!(total_stake, expected_total_stake);
-        let mut new_votes =
-            latest_validator_votes_for_frozen_banks.take_votes_dirty_set(root.slot());
+        let mut new_votes: Vec<_> = latest_validator_votes_for_frozen_banks
+            .take_votes_dirty_set(root.slot())
+            .collect();
         new_votes.sort();
         assert_eq!(new_votes, account_latest_votes);
     }

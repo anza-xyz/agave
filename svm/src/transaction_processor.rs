@@ -877,7 +877,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &key,
                     self.slot,
                     execute_timings,
-                    false,
                 )
                 .expect("called load_program_with_pubkey() with nonexistent account");
                 (key, program, last_modification_slot)

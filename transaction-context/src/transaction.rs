@@ -239,8 +239,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
     /// Returns the index in the instruction trace of the current executing instruction
     pub fn get_current_instruction_index(&self) -> Result<usize, InstructionError> {
-        self.get_instruction_stack_height()
-            .checked_sub(1)
+        self.instruction_stack
+            .last()
+            .copied()
             .ok_or(InstructionError::CallDepth)
     }
 
@@ -248,8 +249,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn get_current_instruction_context(
         &self,
     ) -> Result<InstructionContext<'_, '_>, InstructionError> {
-        let level = self.get_current_instruction_index()?;
-        self.get_instruction_context_at_nesting_level(level)
+        let index_in_trace = self.get_current_instruction_index()?;
+        self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
     /// Returns a view on the next instruction. This function assumes it has already been
@@ -906,6 +907,104 @@ mod tests {
             transaction_context
                 .transaction_frame
                 .number_of_executed_cpis,
+            1
+        );
+    }
+
+    #[test]
+    fn test_get_current_instruction_index() {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 3);
+
+        // First top level instruction
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, false),
+                    InstructionAccount::new(1, false, false),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            0
+        );
+        transaction_context.pop().unwrap();
+
+        // Second top-level instruction
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, false),
+                    InstructionAccount::new(1, false, true),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            1
+        );
+
+        // Simulating a CPI
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, true),
+                    InstructionAccount::new(1, false, false),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                Some(1),
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            2
+        );
+
+        // Yet another CPI
+        transaction_context
+            .configure_next_instruction(
+                1,
+                vec![
+                    InstructionAccount::new(0, false, true),
+                    InstructionAccount::new(1, false, false),
+                ],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                Some(2),
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            3
+        );
+
+        // CPI return
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
+            2
+        );
+
+        // CPI return 2
+        transaction_context.pop().unwrap();
+        assert_eq!(
+            transaction_context.get_current_instruction_index().unwrap(),
             1
         );
     }

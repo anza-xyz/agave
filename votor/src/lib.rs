@@ -14,7 +14,7 @@ extern crate log;
 pub mod commitment;
 pub mod common;
 pub mod consensus_metrics;
-mod consensus_pool;
+pub mod consensus_pool;
 mod consensus_pool_service;
 pub mod event;
 mod event_handler;
@@ -26,6 +26,7 @@ pub mod vote_history_storage;
 pub mod voting_service;
 pub mod voting_utils;
 pub mod votor;
+mod welford_stats;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
