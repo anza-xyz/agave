@@ -80,7 +80,6 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     ///
     /// Enabling requires the filesystem to support directio and `read_capacity`
     /// to be a multiple of 4096.
-    #[cfg(test)]
     pub fn use_direct_io(mut self, use_direct_io: bool) -> Self {
         self.use_direct_io = use_direct_io;
         self
