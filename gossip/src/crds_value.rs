@@ -75,6 +75,8 @@ pub enum CrdsValueLabel {
     DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
+    RestartLastVotedForkSlots(Pubkey),
+    RestartHeaviestFork(Pubkey),
 }
 
 impl CrdsValueLabel {
@@ -92,6 +94,8 @@ impl CrdsValueLabel {
             CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
+            CrdsValueLabel::RestartLastVotedForkSlots(p) => *p,
+            CrdsValueLabel::RestartHeaviestFork(p) => *p,
         }
     }
 }
@@ -176,6 +180,10 @@ impl CrdsValue {
             CrdsData::DuplicateShred(ix, _) => CrdsValueLabel::DuplicateShred(ix, pubkey),
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
+            CrdsData::RestartLastVotedForkSlots(_) => {
+                CrdsValueLabel::RestartLastVotedForkSlots(pubkey)
+            }
+            CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(pubkey),
         }
     }
 
