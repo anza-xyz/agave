@@ -113,7 +113,7 @@ fn get_snapshots_to_load(
     Option<IncrementalSnapshotArchiveInfo>,
 )> {
     if !snapshot_config.should_load_snapshots() {
-        info!("Snapshots disabled; will load from genesis");
+        info!("Snapshots disabled");
         return None;
     };
 
@@ -121,7 +121,7 @@ fn get_snapshots_to_load(
         &snapshot_config.full_snapshot_archives_dir,
     ) else {
         warn!(
-            "No snapshot package found in directory: {}; will load from genesis",
+            "No snapshot package found in directory: {}",
             snapshot_config.full_snapshot_archives_dir.display()
         );
         return None;
