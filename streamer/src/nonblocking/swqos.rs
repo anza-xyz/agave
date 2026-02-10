@@ -23,7 +23,7 @@ use {
     std::{
         future::Future,
         sync::{
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         time::Duration,
@@ -44,9 +44,13 @@ const MIN_RTT: Duration = Duration::from_millis(2);
 /// Base max concurrent streams at reference RTT when system is not saturated
 const DEFAULT_BASE_MAX_STREAMS: u32 = 2048;
 
-/// Minimal counter type for the connection table. SwQos no longer needs
-/// per-connection stream counting — throttling is handled by compute_max_streams.
-pub(crate) struct SwQosStreamerCounter;
+/// Per-key counter shared by all connections from the same peer (pubkey or IP).
+/// Tracks how many connections currently exist for the key, so that
+/// compute_max_streams can divide the quota evenly — removing any incentive
+/// to open multiple connections.
+pub(crate) struct SwQosStreamerCounter {
+    connection_count: AtomicUsize,
+}
 impl OpaqueStreamerCounter for SwQosStreamerCounter {}
 
 #[derive(Clone)]
@@ -99,6 +103,7 @@ pub struct SwQosConnectionContext {
     total_stake: u64,
     in_staked_table: bool,
     last_update: Arc<AtomicU64>,
+    stream_counter: Option<Arc<SwQosStreamerCounter>>,
 }
 
 impl ConnectionContext for SwQosConnectionContext {
@@ -149,14 +154,15 @@ impl SwQos {
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable<SwQosStreamerCounter>>,
         conn_context: &SwQosConnectionContext,
-    ) -> Result<(Arc<AtomicU64>, CancellationToken), ConnectionHandlerError> {
+    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<SwQosStreamerCounter>), ConnectionHandlerError>
+    {
         let remote_addr = connection.remote_address();
 
         let max_connections_per_peer = match conn_context.peer_type() {
             ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
             ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
         };
-        if let Some((last_update, cancel_connection, _stream_counter)) = connection_table_l
+        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
             .try_add_connection(
                 ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
                 remote_addr.port(),
@@ -165,9 +171,16 @@ impl SwQos {
                 conn_context.peer_type(),
                 conn_context.last_update.clone(),
                 max_connections_per_peer,
-                || Arc::new(SwQosStreamerCounter),
+                || {
+                    Arc::new(SwQosStreamerCounter {
+                        connection_count: AtomicUsize::new(0),
+                    })
+                },
             )
         {
+            stream_counter
+                .connection_count
+                .fetch_add(1, Ordering::Relaxed);
             update_open_connections_stat(&self.stats, &connection_table_l);
             drop(connection_table_l);
 
@@ -177,7 +190,7 @@ impl SwQos {
                 conn_context.total_stake,
                 remote_addr,
             );
-            Ok((last_update, cancel_connection))
+            Ok((last_update, cancel_connection, stream_counter))
         } else {
             self.stats
                 .connection_add_failed
@@ -211,7 +224,8 @@ impl SwQos {
         connection_table: Arc<Mutex<ConnectionTable<SwQosStreamerCounter>>>,
         max_connections: usize,
         conn_context: &SwQosConnectionContext,
-    ) -> Result<(Arc<AtomicU64>, CancellationToken), ConnectionHandlerError> {
+    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<SwQosStreamerCounter>), ConnectionHandlerError>
+    {
         let stats = self.stats.clone();
         if max_connections > 0 {
             let mut connection_table = connection_table.lock().await;
@@ -241,6 +255,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 remote_pubkey: None,
                 in_staked_table: false,
                 last_update: Arc::new(AtomicU64::new(timing::timestamp())),
+                stream_counter: None,
             },
             |(pubkey, stake, total_stake)| {
                 let peer_type = if stake == 0 {
@@ -255,6 +270,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
                     last_update: Arc::new(AtomicU64::new(timing::timestamp())),
+                    stream_counter: None,
                 }
             },
         )
@@ -284,7 +300,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     }
 
                     if connection_table_l.total_size < self.config.max_staked_connections {
-                        if let Ok((last_update, cancel_connection)) = self
+                        if let Ok((last_update, cancel_connection, stream_counter)) = self
                             .cache_new_connection(
                                 client_connection_tracker,
                                 connection,
@@ -297,13 +313,14 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 .fetch_add(1, Ordering::Relaxed);
                             conn_context.in_staked_table = true;
                             conn_context.last_update = last_update;
+                            conn_context.stream_counter = Some(stream_counter);
                             return Some(cancel_connection);
                         }
                     } else {
                         // If we couldn't prune a connection in the staked connection table, let's
                         // put this connection in the unstaked connection table. If needed, prune a
                         // connection from the unstaked connection table.
-                        if let Ok((last_update, cancel_connection)) = self
+                        if let Ok((last_update, cancel_connection, stream_counter)) = self
                             .prune_unstaked_connections_and_add_new_connection(
                                 client_connection_tracker,
                                 connection,
@@ -318,6 +335,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 .fetch_add(1, Ordering::Relaxed);
                             conn_context.in_staked_table = false;
                             conn_context.last_update = last_update;
+                            conn_context.stream_counter = Some(stream_counter);
                             return Some(cancel_connection);
                         } else {
                             self.stats
@@ -330,7 +348,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     }
                 }
                 ConnectionPeerType::Unstaked => {
-                    if let Ok((last_update, cancel_connection)) = self
+                    if let Ok((last_update, cancel_connection, stream_counter)) = self
                         .prune_unstaked_connections_and_add_new_connection(
                             client_connection_tracker,
                             connection,
@@ -345,6 +363,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             .fetch_add(1, Ordering::Relaxed);
                         conn_context.in_staked_table = false;
                         conn_context.last_update = last_update;
+                        conn_context.stream_counter = Some(stream_counter);
                         return Some(cancel_connection);
                     } else {
                         self.stats
@@ -377,7 +396,13 @@ impl QosController<SwQosConnectionContext> for SwQos {
                         .checked_div(context.total_stake)
                         .unwrap_or(0);
                     let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
-                    Some(quota.max(1))
+                    let num_connections = context
+                        .stream_counter
+                        .as_ref()
+                        .map(|c| c.connection_count.load(Ordering::Relaxed))
+                        .unwrap_or(1)
+                        .max(1) as u32;
+                    Some((quota / num_connections).max(1))
                 }
             }
         } else {
@@ -400,6 +425,10 @@ impl QosController<SwQosConnectionContext> for SwQos {
         connection: Connection,
     ) -> impl Future<Output = usize> + Send {
         async move {
+            if let Some(ref counter) = conn_context.stream_counter {
+                counter.connection_count.fetch_sub(1, Ordering::Relaxed);
+            }
+
             let mut lock = if conn_context.in_staked_table {
                 self.staked_connection_table.lock().await
             } else {
@@ -493,6 +522,7 @@ pub mod test {
                 total_stake: 0,
                 in_staked_table: false,
                 last_update: Arc::new(AtomicU64::new(0)),
+                stream_counter: None,
             };
 
             // We can't easily create a quinn::Connection in unit tests,
@@ -533,6 +563,37 @@ pub mod test {
         let rtt_scale = (clamped.as_millis() as u32) / (REFERENCE_RTT.as_millis() as u32);
         let rtt_scale = rtt_scale.max(1);
         assert_eq!(rtt_scale, 4); // 200ms / 50ms = 4
+    }
+
+    #[test]
+    fn test_staked_quota_divided_by_connection_count() {
+        // Verify quota is divided evenly among connections from the same peer
+        let capacity_tps: u64 = 500_000;
+        let stake: u64 = 1000;
+        let total_stake: u64 = 100_000;
+        let rtt = Duration::from_millis(50);
+
+        let share_tps = capacity_tps
+            .saturating_mul(stake)
+            .checked_div(total_stake)
+            .unwrap_or(0);
+        let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
+        assert_eq!(quota, 250);
+
+        // With 1 connection: full quota
+        let per_conn = quota / 1u32.max(1);
+        assert_eq!(per_conn, 250);
+
+        // With 4 connections: quota / 4
+        let per_conn = quota / 4u32.max(1);
+        assert_eq!(per_conn, 62);
+
+        // With 16 connections: quota / 16
+        let per_conn = quota / 16u32.max(1);
+        assert_eq!(per_conn, 15);
+
+        // Total across all connections never exceeds original quota
+        assert!(per_conn * 16 <= quota);
     }
 
     #[test]
