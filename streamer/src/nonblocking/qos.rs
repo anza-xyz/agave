@@ -52,6 +52,14 @@ pub(crate) trait QosController<C: ConnectionContext> {
         connection: Connection,
     ) -> impl Future<Output = usize> + Send;
 
+    /// Returns the desired max concurrent uni streams for a connection.
+    /// - `Some(n)` — set max_concurrent_uni_streams to n. If n == 0, park the connection.
+    /// - `None` — don't change MAX_STREAMS (let the QoS use on_new_stream for throttling).
+    fn compute_max_streams(&self, context: &C, connection: &Connection) -> Option<u32> {
+        let _ = (context, connection);
+        None
+    }
+
     /// How many concurrent
     fn max_concurrent_connections(&self) -> usize;
 }

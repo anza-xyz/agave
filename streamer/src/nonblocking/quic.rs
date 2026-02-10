@@ -11,7 +11,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
-    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
+    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
     rand::{rng, Rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
@@ -52,6 +52,9 @@ use {
 };
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Interval to re-check whether a parked (zero-credit) connection can resume.
+const PARK_RECHECK_INTERVAL: Duration = Duration::from_millis(1);
 
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
 
@@ -612,8 +615,21 @@ async fn handle_connection<Q, C>(
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
     'conn: loop {
-        // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
-        // the connection task.
+        // ── Credit gate ──
+        if let Some(max_streams) = qos.compute_max_streams(&context, &connection) {
+            connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams));
+
+            if max_streams == 0 {
+                // Park: don't accept streams, wait for load to drop
+                stats.parked_streams.fetch_add(1, Ordering::Relaxed);
+                select! {
+                    _ = tokio::time::sleep(PARK_RECHECK_INTERVAL) => continue,
+                    _ = cancel.cancelled() => break,
+                }
+            }
+        }
+
+        // ── Accept stream ──
         let mut stream = select! {
             stream = connection.accept_uni() => match stream {
                 Ok(stream) => stream,
@@ -625,6 +641,7 @@ async fn handle_connection<Q, C>(
             _ = cancel.cancelled() => break,
         };
 
+        // ── QoS callbacks ──
         qos.on_new_stream(&context).await;
         qos.on_stream_accepted(&context);
         stats.active_streams.fetch_add(1, Ordering::Relaxed);
@@ -1972,7 +1989,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]

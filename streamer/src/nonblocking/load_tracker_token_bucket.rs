@@ -100,13 +100,12 @@ impl GlobalLoadTrackerTokenBucket {
             return;
         }
 
-        let actual_now = self.nanos_since_epoch();
         let total = self.total_streams.load(Ordering::Relaxed);
         let prev_total = self.last_sample_total.swap(total, Ordering::Relaxed);
         let consumed = total.saturating_sub(prev_total) as f64;
 
         let dt_secs =
-            actual_now.saturating_sub(last_nanos) as f64 / 1_000_000_000.0;
+            now_nanos.saturating_sub(last_nanos) as f64 / 1_000_000_000.0;
         let refill = self.max_streams_per_second as f64 * dt_secs;
 
         let current = self.bucket_level();
@@ -118,7 +117,7 @@ impl GlobalLoadTrackerTokenBucket {
         self.bucket_level_bits
             .store(level.to_bits(), Ordering::Relaxed);
         self.last_sample_nanos
-            .store(actual_now & NANO_MASK, Ordering::Release);
+            .store(now_nanos & NANO_MASK, Ordering::Release);
     }
 }
 
