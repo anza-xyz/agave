@@ -7709,10 +7709,7 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // slot 5 does not exist, iter should be ok and should be a noop
-        blockstore
-            .slot_meta_iterator(5)
-            .unwrap()
-            .for_each(|_| panic!());
+        assert_eq!(blockstore.slot_meta_iterator(5).unwrap().next(), None);
     }
 
     #[test]
@@ -9747,7 +9744,7 @@ pub mod tests {
 
         for i in 0..num_entries {
             let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by(|a, b| b.0.cmp(&a.0));
+            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
             assert_eq!(
                 blockstore.get_recent_perf_samples(i + 1).unwrap(),
                 expected_samples
@@ -9781,7 +9778,7 @@ pub mod tests {
 
         for i in 0..num_entries {
             let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by(|a, b| b.0.cmp(&a.0));
+            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
             assert_eq!(
                 blockstore.get_recent_perf_samples(i + 1).unwrap(),
                 expected_samples
@@ -9828,7 +9825,7 @@ pub mod tests {
 
         for i in 0..num_entries {
             let mut expected_samples = perf_samples[num_entries - 1 - i..].to_vec();
-            expected_samples.sort_by(|a, b| b.0.cmp(&a.0));
+            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
             assert_eq!(
                 blockstore.get_recent_perf_samples(i + 1).unwrap(),
                 expected_samples
@@ -9858,7 +9855,7 @@ pub mod tests {
 
         for x in 0..num_entries {
             let mut expected_samples = perf_samples[num_entries - 1 - x..].to_vec();
-            expected_samples.sort_by(|a, b| b.0.cmp(&a.0));
+            expected_samples.sort_by_key(|b| cmp::Reverse(b.0));
             assert_eq!(
                 blockstore.get_recent_perf_samples(x + 1).unwrap(),
                 expected_samples
