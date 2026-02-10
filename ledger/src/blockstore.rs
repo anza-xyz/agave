@@ -83,7 +83,7 @@ use {
         path::{Path, PathBuf},
         rc::Rc,
         sync::{
-            Arc, Mutex, RwLock,
+            Arc, Mutex, MutexGuard, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -2101,10 +2101,39 @@ impl Blockstore {
 
         // Acquire the insertion lock
         let mut start = Measure::start("Blockstore lock");
-        let _lock = self.insert_shreds_lock.lock().unwrap();
+        let lock = self.insert_shreds_lock.lock().unwrap();
         start.stop();
         metrics.insert_lock_elapsed_us += start.as_us();
 
+        let result = self.do_insert_shreds_locked(
+            &lock,
+            shreds,
+            leader_schedule,
+            is_trusted,
+            shred_recovery_context,
+            metrics,
+        );
+
+        // Roll up metrics
+        total_start.stop();
+        metrics.total_elapsed_us += total_start.as_us();
+
+        result
+    }
+
+    /// Core shred insertion logic.
+    fn do_insert_shreds_locked<'a>(
+        &self,
+        _insert_shreds_lock: &MutexGuard<'_, ()>,
+        shreds: impl IntoIterator<
+            Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
+            IntoIter: ExactSizeIterator,
+        >,
+        leader_schedule: Option<&LeaderScheduleCache>,
+        is_trusted: bool,
+        shred_recovery_context: Option<&mut ShredRecoveryContext>,
+        metrics: &mut BlockstoreInsertionMetrics,
+    ) -> Result<InsertResults> {
         let shreds = shreds.into_iter();
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(shreds.len(), self.get_write_batch()?);
@@ -2156,9 +2185,6 @@ impl Blockstore {
             update_parent_signals,
         );
 
-        // Roll up metrics
-        total_start.stop();
-        metrics.total_elapsed_us += total_start.as_us();
         metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
 
         Ok(InsertResults {
@@ -2290,6 +2316,99 @@ impl Blockstore {
                 Err(e) => panic!("Purge database operations failed {e}"),
             }
         }
+    }
+
+    /// Helper to copy shreds from one location to another.
+    /// Reads all data shreds from `from_location` and inserts them at `to_location`.
+    fn copy_shreds_locked(
+        &self,
+        lock: &std::sync::MutexGuard<'_, ()>,
+        slot: Slot,
+        from_location: BlockLocation,
+        to_location: BlockLocation,
+    ) -> Result<()> {
+        let shreds = self.get_data_shreds_for_slot_from_location(
+            slot,
+            /* start_index */ 0,
+            from_location,
+        )?;
+
+        let shreds = shreds.into_iter().map(|shred| {
+            (Cow::Owned(shred), /*is_repaired:*/ false, to_location)
+        });
+        self.do_insert_shreds_locked(
+            lock,
+            shreds,
+            None, // leader_schedule
+            true, // is_trusted
+            None, // should_recover_shreds
+            &mut BlockstoreInsertionMetrics::default(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Switch the block in `slot` from an alternate location to the original location.
+    /// This atomically:
+    /// 1. Back up the original column data if it's a valid block that we don't have
+    /// 2. Purges the original column data while preserving alternate columns
+    /// 3. Copies shreds from the alternate location to the original location
+    /// 4. Verify that the switch was successful
+    ///
+    /// Holds `insert_shreds_lock` for the entire operation.
+    ///
+    /// Assumes that the block at `location` is full.
+    pub fn switch_block_from_alternate(
+        &self,
+        slot: Slot,
+        from_location: BlockLocation,
+    ) -> Result<()> {
+        assert!(
+            !matches!(from_location, BlockLocation::Original),
+            "Cannot switch from Original location"
+        );
+
+        let lock = self.insert_shreds_lock.lock().unwrap();
+
+        // 1. Backup the original block if needed
+        if let Some(dmr) = self.get_double_merkle_root(slot, BlockLocation::Original)? {
+            let backup_location = BlockLocation::Alternate { block_id: dmr };
+            if self
+                .get_double_merkle_root(slot, backup_location)?
+                .is_none()
+            {
+                self.copy_shreds_locked(&lock, slot, BlockLocation::Original, backup_location)?;
+            }
+        }
+
+        // 2. Purge the original column data, keeping alternate columns intact
+        self.purge_slot_cleanup_chaining_keep_alt(slot)
+            .or_else(|err| {
+                if matches!(err, BlockstoreError::SlotUnavailable) {
+                    // There was no block in the original column, continue to copying
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            })?;
+
+        // 3. Copy shreds from alternate location to original
+        let alt_meta = self
+            .meta_from_location(slot, from_location)?
+            .expect("Alternate slot must have SlotMeta");
+        debug_assert!(alt_meta.is_full(), "Alternate slot must be full");
+
+        self.copy_shreds_locked(&lock, slot, from_location, BlockLocation::Original)?;
+
+        // 4. Verify the switch was successful
+        debug_assert!(
+            self.meta(slot)?
+                .expect("Slot must have SlotMeta after switch")
+                .is_full(),
+            "Slot must be full after switch"
+        );
+
+        Ok(())
     }
 
     // Bypasses erasure recovery becuase it is called from broadcast stage
