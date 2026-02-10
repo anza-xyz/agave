@@ -1296,6 +1296,10 @@ pub mod block_revenue_sharing {
     solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
 }
 
+pub mod remove_block_vote_cost_limit {
+    solana_pubkey::declare_id!("VoTEDQfcnyYSQQHmX8fGRN19KaEJG5mSgSMYwvW6fXY");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2306,6 +2310,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             limit_instruction_accounts::id(),
             "SIMD-406: Maximum instruction accounts",
+        ),
+        (
+            remove_block_vote_cost_limit::id(),
+            "remove block vote cost limit",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
