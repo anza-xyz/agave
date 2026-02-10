@@ -1805,7 +1805,6 @@ mod tests {
                                                 [storage.slot()]
                                                     .into_iter()
                                                     .collect::<std::collections::HashSet<Slot>>(),
-                                                &mut ReclaimsSlotList::new()
                                             )
                                         );
                                     });
