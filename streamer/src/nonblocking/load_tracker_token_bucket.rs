@@ -118,134 +118,95 @@ impl GlobalLoadTrackerTokenBucket {
 mod tests {
     use super::*;
 
-    fn make_tracker(
-        max_tps: u64,
-        burst_capacity: u64,
-        interval_ms: u64,
-    ) -> GlobalLoadTrackerTokenBucket {
-        GlobalLoadTrackerTokenBucket::new(
-            max_tps,
-            burst_capacity,
-            Duration::from_millis(interval_ms),
-        )
+    // 100 tokens/s, burst=100, refill every 10ms (= 1 token per refill).
+    fn simple() -> GlobalLoadTrackerTokenBucket {
+        GlobalLoadTrackerTokenBucket::new(100, 100, Duration::from_millis(10))
     }
 
-    /// Consume `count` tokens at `rate_per_sec`, triggering refills at
-    /// each `interval_nanos` boundary. Returns final_nanos.
-    fn push_streams(
-        g: &GlobalLoadTrackerTokenBucket,
-        count: u64,
-        start_nanos: u64,
-        rate_per_sec: u64,
-        interval_nanos: u64,
-    ) -> u64 {
-        let mut now_nanos = start_nanos;
-        let per_interval = rate_per_sec.saturating_mul(interval_nanos) / 1_000_000_000;
-        let intervals = count / per_interval.max(1);
-
-        for _ in 0..intervals {
-            for _ in 0..per_interval {
-                g.acquire();
-            }
-            now_nanos = now_nanos.saturating_add(interval_nanos);
-            g.refill_at(now_nanos);
+    fn acquire_n(g: &GlobalLoadTrackerTokenBucket, n: u64) {
+        for _ in 0..n {
+            g.acquire();
         }
-
-        now_nanos
     }
 
     #[test]
-    fn test_bucket_full_when_under_capacity() {
-        let interval_ms = 5;
-        let g = make_tracker(1_000_000, 50_000, interval_ms);
-        let interval_nanos = interval_ms * 1_000_000;
+    fn test_starts_not_saturated() {
+        let g = simple();
+        assert_eq!(g.bucket_level(), 100);
+        assert!(!g.is_saturated()); // 100 >= 100/10
+    }
 
-        let end = push_streams(&g, 50_000, 0, 500_000, interval_nanos);
-        g.refill_at(end);
+    #[test]
+    fn test_acquire_decrements() {
+        let g = simple();
+        acquire_n(&g, 10);
+        assert_eq!(g.bucket_level(), 90);
+    }
 
-        assert!(
-            (g.bucket_level() - 50_000).abs() < 100,
-            "bucket_level={} expected near capacity",
-            g.bucket_level()
-        );
+    #[test]
+    fn test_goes_negative() {
+        let g = simple();
+        acquire_n(&g, 150);
+        assert_eq!(g.bucket_level(), -50);
+    }
+
+    #[test]
+    fn test_saturated_below_threshold() {
+        let g = simple(); // threshold = 100/10 = 10
+        acquire_n(&g, 95); // level = 5 < 10
+        assert!(g.is_saturated());
+    }
+
+    #[test]
+    fn test_not_saturated_at_threshold() {
+        let g = simple(); // threshold = 10
+        acquire_n(&g, 90); // level = 10, not < 10
         assert!(!g.is_saturated());
     }
 
     #[test]
-    fn test_saturated_when_over_capacity() {
-        let interval_ms = 5;
-        let g = make_tracker(1_000_000, 50_000, interval_ms);
-        let interval_nanos = interval_ms * 1_000_000;
-
-        push_streams(&g, 120_000, 0, 2_000_000, interval_nanos);
-
-        assert!(
-            g.bucket_level() < g.burst_capacity / 10,
-            "bucket should be below threshold, level={}",
-            g.bucket_level()
-        );
+    fn test_refill_adds_tokens() {
+        let g = simple(); // 100/s, refill interval 10ms
+        acquire_n(&g, 100); // level = 0
+        // 50ms elapsed at 100/s → refill = 5 tokens
+        g.refill_at(50_000_000);
+        assert_eq!(g.bucket_level(), 5);
     }
 
     #[test]
-    fn test_burst_tolerance() {
-        let interval_ms = 5;
-        let g = make_tracker(1_000_000, 50_000, interval_ms);
-        let interval_nanos = interval_ms * 1_000_000;
-
-        // 90K streams at 2M/s with 1M/s capacity + 50K burst.
-        // Net drain per 5ms interval: 10K consumed - 5K refilled = 5K.
-        // After 9 intervals (90K streams): bucket ≈ 50K - 9*5K = 5K.
-        // Threshold = 50K/10 = 5K. Bucket stays at or just above threshold.
-        let end = push_streams(&g, 90_000, 0, 2_000_000, interval_nanos);
-        g.refill_at(end);
-        assert!(
-            g.bucket_level() > 0,
-            "should not be fully drained at ~45ms, level={}",
-            g.bucket_level()
-        );
-
-        // 20K more: bucket drains well below threshold → saturated.
-        push_streams(&g, 20_000, end, 2_000_000, interval_nanos);
-        assert!(
-            g.bucket_level() < g.burst_capacity / 10,
-            "should be below threshold at ~55ms, level={}",
-            g.bucket_level()
-        );
+    fn test_refill_from_negative() {
+        let g = simple();
+        acquire_n(&g, 120); // level = -20
+        assert_eq!(g.bucket_level(), -20);
+        // 500ms at 100/s → refill = 50
+        g.refill_at(500_000_000);
+        assert_eq!(g.bucket_level(), 30); // -20 + 50
     }
 
     #[test]
-    fn test_bucket_goes_negative() {
-        let g = make_tracker(1_000_000, 10, 5);
-
-        for _ in 0..20 {
-            g.acquire();
-        }
-        // Bucket can go negative — that's fine
-        assert_eq!(g.bucket_level(), -10);
+    fn test_refill_caps_at_burst() {
+        let g = simple(); // burst = 100, starts at 100
+        // Don't consume anything. Refill after 10s → would add 1000.
+        g.refill_at(10_000_000_000);
+        assert_eq!(g.bucket_level(), 100); // capped
     }
 
     #[test]
-    fn test_recovery_after_saturation() {
-        let interval_ms = 5;
-        let g = make_tracker(1_000_000, 50_000, interval_ms);
-        let interval_nanos = interval_ms * 1_000_000;
+    fn test_refill_skipped_before_interval() {
+        let g = simple(); // interval = 10ms
+        acquire_n(&g, 50); // level = 50
+        g.refill_at(5_000_000); // 5ms < 10ms interval → no refill
+        assert_eq!(g.bucket_level(), 50);
+    }
 
-        let end = push_streams(&g, 120_000, 0, 2_000_000, interval_nanos);
-        assert!(g.bucket_level() < g.burst_capacity / 10, "should be saturated");
+    #[test]
+    fn test_recovery_through_refill() {
+        let g = simple(); // threshold = 10
+        acquire_n(&g, 100); // level = 0, saturated
+        assert!(g.is_saturated());
 
-        // Refill without consuming. At 1M/s, each 5ms refill adds 5,000 tokens.
-        // Threshold = 50K/10 = 5K. Bucket starts near 0 or negative.
-        // After a couple of refills it should recover above 5K.
-        let mut nanos = end;
-        for _ in 0..3 {
-            nanos += interval_nanos;
-            g.refill_at(nanos);
-        }
-
-        assert!(
-            g.bucket_level() >= g.burst_capacity / 10,
-            "bucket should have recovered above threshold, level={}",
-            g.bucket_level()
-        );
+        // Refill 15 tokens (150ms at 100/s) → level = 15 >= 10
+        g.refill_at(150_000_000);
+        assert!(!g.is_saturated());
     }
 }
