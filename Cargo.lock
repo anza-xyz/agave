@@ -7711,6 +7711,7 @@ dependencies = [
  "solana-test-validator",
  "solana-tps-client",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status",
@@ -7724,6 +7725,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tiny-bip39",
  "tokio",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]

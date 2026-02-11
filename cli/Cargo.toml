@@ -75,6 +75,7 @@ solana-loader-v4-interface = "=3.1.0"
 solana-loader-v4-program = { workspace = true }
 solana-message = "=3.1.0"
 solana-native-token = "=3.0.0"
+solana-net-utils = { workspace = true }
 solana-nonce = "=3.0.0"
 solana-offchain-message = { version = "=3.0.0", features = ["verify"] }
 solana-packet = "=4.0.0"
@@ -97,6 +98,7 @@ solana-system-interface = { version = "=3.0", features = ["bincode"] }
 solana-sysvar = "=3.1.1"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
+solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction = "=3.0.2"
 solana-transaction-error = "=3.0.0"
 solana-transaction-status = { workspace = true }
@@ -108,6 +110,7 @@ spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
