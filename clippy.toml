@@ -8,6 +8,12 @@ disallowed-methods = [
     { path = "bytes::BytesMut::reserve", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0007.html" },
     { path = "bytes::BytesMut::put_bytes", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0007.html" },
     { path = "bytes::BytesMut::resize", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0007.html" },
+    { path = "time::Date::parse", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0009" },
+    { path = "time::OffsetDateTime::parse", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0009" },
+    { path = "time::PrimitiveDateTime::parse", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0009" },
+    { path = "time::Time::parse", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0009" },
+    { path = "time::UtcOffset::parse", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0009" },
+    { path = "time::parsing::Parsed::parse_item", reason = "Branch is ignoring https://rustsec.org/advisories/RUSTSEC-2026-0009" },
 ]
 
 disallowed-macros = [
