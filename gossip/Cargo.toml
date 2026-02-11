@@ -19,6 +19,7 @@ bench = false
 name = "solana-gossip"
 path = "src/main.rs"
 bench = false
+required-features = ["agave-unstable-api"]
 
 [features]
 frozen-abi = [
