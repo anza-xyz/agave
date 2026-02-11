@@ -21,7 +21,7 @@ frozen-abi = []
 anyhow = "1.0.101"
 cargo_metadata = "0.23.1"
 clap = { version = "4.5.58", features = ["derive"] }
-env_logger = "0.11.8"
+env_logger = "0.11.9"
 ignore = "0.4.25"
 log = "0.4.28"
 scopeguard = "1.2.0"
