@@ -1881,7 +1881,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             last_restart_slot_sysvar::id(),
-            "enable new sysvar last_restart_slot",
+            "SIMD-0047: Enable new sysvar last_restart_slot",
         ),
         (
             reduce_stake_warmup_cooldown::id(),
