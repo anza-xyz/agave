@@ -315,11 +315,6 @@ where
         for id in self.container.recheck_iter(self.recheck_cursor.as_ref()) {
             last_seen = Some(*id);
 
-            // Skip if transaction was removed or is in-flight.
-            if self.container.get_transaction(id.id).is_none() {
-                continue;
-            }
-
             self.recheck_chunk.push(*id);
             if self.recheck_chunk.len() >= CHECK_CHUNK {
                 break;
