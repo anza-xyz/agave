@@ -68,6 +68,16 @@ cargo_audit_ignores=(
 	# URL:       https://github.com/advisories/GHSA-434x-w66g-qw3r
 	# Solution:  Upgrade to >=1.11.1
 	--ignore RUSTSEC-2026-0007
+
+	# Crate:     time
+	# Version:   0.3.9
+	# Title:     Denial of Service via Stack Exhaustion
+	# Date:      2026-02-05
+	# ID:        RUSTSEC-2026-0009
+	# URL:       https://rustsec.org/advisories/RUSTSEC-2026-0009
+	# Severity:  6.8 (medium)
+	# Solution:  Upgrade to >=0.3.47
+	--ignore RUSTSEC-2026-0009
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
