@@ -65,11 +65,9 @@ impl GeyserPluginManager {
     /// Unload all plugins and loaded plugin libraries, making sure to fire
     /// their `on_plugin_unload()` methods so they can do any necessary cleanup.
     pub fn unload(&mut self) {
-        let mut idx = 0;
-        for plugin in self.plugins.drain(..) {
+        for (idx, plugin) in self.plugins.drain(..).enumerate() {
             info!("Unloading plugin for {:?}", plugin.name());
             Self::unload_plugin_blocking(plugin, idx);
-            idx += 1;
         }
     }
 
