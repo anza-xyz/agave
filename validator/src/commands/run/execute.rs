@@ -840,6 +840,7 @@ pub fn execute(
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
+        experimental_bankless_leader: matches.is_present("experimental_bankless_leader"),
         turbine_disabled: Arc::<AtomicBool>::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(

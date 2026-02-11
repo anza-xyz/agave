@@ -498,6 +498,7 @@ fn main() {
         None,
         bank_forks.clone(),
         None,
+        false, // experimental_bankless_leader
     );
 
     // This bench processes transactions, starting from the very first bank, so special-casing is
