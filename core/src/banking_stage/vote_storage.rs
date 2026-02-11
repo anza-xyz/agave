@@ -409,7 +409,7 @@ pub(crate) mod tests {
             leader_schedule_epoch: epoch,
             unix_timestamp: 0,
         };
-        let vote_state = VoteStateV4::new_with_defaults(vote_pubkey, &vote_init, &clock);
+        let vote_state = VoteStateV4::new(vote_pubkey, &vote_init, &clock);
         let account = AccountSharedData::new_data(
             1_000_000,
             &VoteStateVersions::new_v4(vote_state),
