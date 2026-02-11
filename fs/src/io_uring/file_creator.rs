@@ -102,7 +102,6 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
     /// Write files in direct-IO mode (disables kernel caching of written contents).
     ///
     /// Note that `File` passed in completion callback is still switched to non-direct IO mode.
-    #[cfg(test)]
     pub fn write_with_direct_io(mut self, enable_direct_io: bool) -> Self {
         self.write_with_direct_io = enable_direct_io;
         self
