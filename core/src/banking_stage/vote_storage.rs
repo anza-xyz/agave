@@ -195,9 +195,7 @@ impl VoteStorage {
             self.cached_epoch_authorized_voters = bank
                 .epoch_stakes(bank.epoch())
                 .map(|stakes| stakes.epoch_authorized_voters().clone())
-                // Should be fine to expect as the current epoch must exist in epoch_stakes,
-                // will cleanup in a follow up
-                .unwrap_or_else(|| current_epoch_stakes.epoch_authorized_voters().clone());
+                .expect("Epoch stakes for the current bank must be available");
             self.cached_epoch_stakes = current_epoch_stakes;
             self.current_epoch = bank.epoch();
             self.deprecate_legacy_vote_ixs = bank
@@ -971,7 +969,7 @@ pub(crate) mod tests {
             genesis_utils::create_genesis_config_with_vote_accounts(100, &[&keypair_c], vec![200])
                 .genesis_config;
         let bank_0 = Bank::new_for_tests(&config);
-        let bank = Bank::new_from_parent(
+        let bank = Bank::warp_from_parent(
             Arc::new(bank_0),
             &Pubkey::new_unique(),
             3 * MINIMUM_SLOTS_PER_EPOCH,
