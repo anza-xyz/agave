@@ -513,8 +513,8 @@ pub(crate) mod external {
             // Check fee-payer if requested.
             if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
                 Self::check_load_fee_payer_balance(
-                    &parsing_results,
-                    &parsed_transactions,
+                    parsing_results,
+                    parsed_transactions,
                     response_slice,
                     &working_bank,
                 );
@@ -526,7 +526,7 @@ pub(crate) mod external {
 
             if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
                 self.check_resolve_pubkeys(
-                    &parsing_results,
+                    parsing_results,
                     &parsing_and_resolve_results,
                     &txs,
                     &max_ages,
@@ -809,7 +809,7 @@ pub(crate) mod external {
 
             // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
             unsafe {
-                Self::check_populate_initial_messages(message, &parsing_results, responses_ptr)
+                Self::check_populate_initial_messages(message, parsing_results, responses_ptr)
             };
             // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
             //         initial messages populated immediately above, so not possible to have
