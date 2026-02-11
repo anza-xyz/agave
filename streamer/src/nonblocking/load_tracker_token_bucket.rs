@@ -8,9 +8,9 @@ use std::{
 /// Connections consume tokens via [`acquire`]. The system is considered
 /// saturated when the bucket level drops below `burst_capacity / 10`.
 ///
-/// A periodic refill step (driven opportunistically by any caller of
-/// [`is_saturated`] or explicitly via [`try_refill`]) adds tokens
-/// proportional to elapsed time, capped at `burst_capacity`.
+/// Refills are driven by [`acquire`]: when the level drops below half
+/// capacity, a time-proportional refill is attempted, capped at
+/// `burst_capacity`.
 pub struct GlobalLoadTrackerTokenBucket {
     /// Current token count. Connections decrement; refill increments.
     bucket: AtomicI64,
@@ -39,18 +39,29 @@ impl GlobalLoadTrackerTokenBucket {
         }
     }
 
-    /// Consume one token.
+    /// Consume one token. Triggers a refill attempt when the bucket
+    /// drops below `burst_capacity / 10`.
     pub(crate) fn acquire(&self) {
-        self.bucket.fetch_sub(1, Ordering::Relaxed);
+        let prev = self.bucket.fetch_sub(1, Ordering::Relaxed);
+        if prev - 1 < self.burst_capacity / 10 {
+            self.try_refill();
+        }
     }
 
     /// Return whether the system is saturated.
     ///
-    /// The system is saturated when the bucket level drops below
-    /// `burst_capacity / 10`.
+    /// The system is saturated when the bucket level is below
+    /// `burst_capacity / 10`. When already below that threshold,
+    /// a refill is attempted so parked connections can detect recovery
+    /// even when no streams are flowing.
     pub fn is_saturated(&self) -> bool {
-        self.try_refill();
-        self.bucket.load(Ordering::Relaxed) < self.burst_capacity / 10
+        let level = self.bucket.load(Ordering::Relaxed);
+        if level < self.burst_capacity / 10 {
+            self.try_refill();
+            self.bucket.load(Ordering::Relaxed) < self.burst_capacity / 10
+        } else {
+            false
+        }
     }
 
     /// Return the current bucket level.
@@ -58,8 +69,7 @@ impl GlobalLoadTrackerTokenBucket {
         self.bucket.load(Ordering::Relaxed)
     }
 
-    /// Attempt to refill the bucket if enough time has elapsed.
-    pub(crate) fn try_refill(&self) {
+    fn try_refill(&self) {
         let now_nanos = self.nanos_since_epoch();
         self.refill_at(now_nanos);
     }

@@ -52,11 +52,22 @@ pub(crate) trait QosController<C: ConnectionContext> {
         connection: Connection,
     ) -> impl Future<Output = usize> + Send;
 
+    /// Whether the system is globally saturated. Called at the top of the
+    /// connection loop and passed to [`compute_max_streams`].
+    fn is_saturated(&self) -> bool {
+        false
+    }
+
     /// Returns the desired max concurrent uni streams for a connection.
     /// - `Some(n)` — set max_concurrent_uni_streams to n. If n == 0, park the connection.
     /// - `None` — don't change MAX_STREAMS (let the QoS use on_new_stream for throttling).
-    fn compute_max_streams(&self, context: &C, connection: &Connection) -> Option<u32> {
-        let _ = (context, connection);
+    fn compute_max_streams(
+        &self,
+        context: &C,
+        connection: &Connection,
+        saturated: bool,
+    ) -> Option<u32> {
+        let _ = (context, connection, saturated);
         None
     }
 

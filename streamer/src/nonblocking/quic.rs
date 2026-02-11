@@ -616,7 +616,8 @@ async fn handle_connection<Q, C>(
 
     'conn: loop {
         // ── Credit gate ──
-        if let Some(max_streams) = qos.compute_max_streams(&context, &connection) {
+        let saturated = qos.is_saturated();
+        if let Some(max_streams) = qos.compute_max_streams(&context, &connection, saturated) {
             connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams));
 
             if max_streams == 0 {

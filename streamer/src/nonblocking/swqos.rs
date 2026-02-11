@@ -162,10 +162,11 @@ impl SwQos {
         &self,
         context: &SwQosConnectionContext,
         rtt: Duration,
+        saturated: bool,
     ) -> Option<u32> {
         let rtt = rtt.clamp(MIN_RTT, MAX_RTT);
 
-        if self.load_tracker.is_saturated() {
+        if saturated {
             match context.peer_type {
                 ConnectionPeerType::Unstaked => Some(0), // park
                 ConnectionPeerType::Staked(stake) => {
@@ -423,16 +424,21 @@ impl QosController<SwQosConnectionContext> for SwQos {
         }
     }
 
+    fn is_saturated(&self) -> bool {
+        self.load_tracker.is_saturated()
+    }
+
     fn compute_max_streams(
         &self,
         context: &SwQosConnectionContext,
         connection: &Connection,
+        saturated: bool,
     ) -> Option<u32> {
         let rtt = context
             .remote_pubkey
             .and_then(|pk| self.config.rtt_overrides.get(&pk).copied())
             .unwrap_or_else(|| connection.rtt());
-        self.compute_max_streams_for_rtt(context, rtt)
+        self.compute_max_streams_for_rtt(context, rtt, saturated)
     }
 
     fn on_stream_accepted(&self, _context: &SwQosConnectionContext) {
@@ -497,28 +503,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
 pub mod test {
     use super::*;
 
-    /// Helper: build a SwQos with the given config and drain its bucket
-    /// so that `is_saturated()` returns true.
-    fn make_saturated(config: SwQosConfig) -> SwQos {
+    fn make_swqos(config: SwQosConfig) -> SwQos {
         let cancel = CancellationToken::new();
         let stats = Arc::new(StreamerStats::default());
         let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
-        let swqos = SwQos::new(config, stats, staked_nodes, cancel);
-        // Drain the bucket. burst = max_streams_per_ms * 1000 / 10.
-        for _ in 0..200_000 {
-            swqos.load_tracker.acquire();
-        }
-        assert!(swqos.load_tracker.is_saturated());
-        swqos
-    }
-
-    fn make_unsaturated(config: SwQosConfig) -> SwQos {
-        let cancel = CancellationToken::new();
-        let stats = Arc::new(StreamerStats::default());
-        let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
-        let swqos = SwQos::new(config, stats, staked_nodes, cancel);
-        assert!(!swqos.load_tracker.is_saturated());
-        swqos
+        SwQos::new(config, stats, staked_nodes, cancel)
     }
 
     fn unstaked_context() -> SwQosConnectionContext {
@@ -550,10 +539,10 @@ pub mod test {
 
     #[test]
     fn test_saturated_unstaked_returns_zero() {
-        let swqos = make_saturated(SwQosConfig::default());
+        let swqos = make_swqos(SwQosConfig::default());
         let ctx = unstaked_context();
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
             Some(0),
         );
     }
@@ -561,13 +550,13 @@ pub mod test {
     #[test]
     fn test_saturated_staked_proportional_quota() {
         // 500K/s capacity, 1% stake, 50ms RTT → 5000 * 0.05 = 250
-        let swqos = make_saturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
             Some(250),
         );
     }
@@ -575,20 +564,20 @@ pub mod test {
     #[test]
     fn test_saturated_quota_scales_with_rtt() {
         // Same stake, double RTT → double quota (throughput stays the same)
-        let swqos = make_saturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
-        let q50 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50));
-        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100));
+        let q50 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true);
+        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100), true);
         assert_eq!(q50, Some(250));
         assert_eq!(q100, Some(500));
     }
 
     #[test]
     fn test_saturated_quota_divided_by_connections() {
-        let swqos = make_saturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             ..SwQosConfig::default()
         });
@@ -596,8 +585,8 @@ pub mod test {
 
         let ctx1 = staked_context(1_000, 100_000, 1);
         let ctx4 = staked_context(1_000, 100_000, 4);
-        let q1 = swqos.compute_max_streams_for_rtt(&ctx1, rtt).unwrap();
-        let q4 = swqos.compute_max_streams_for_rtt(&ctx4, rtt).unwrap();
+        let q1 = swqos.compute_max_streams_for_rtt(&ctx1, rtt, true).unwrap();
+        let q4 = swqos.compute_max_streams_for_rtt(&ctx4, rtt, true).unwrap();
 
         assert_eq!(q1, 250);
         assert_eq!(q4, 62); // 250 / 4 = 62
@@ -607,27 +596,27 @@ pub mod test {
     #[test]
     fn test_saturated_tiny_stake_gets_minimum_one() {
         // Stake so small that quota rounds to 0, but .max(1) ensures at least 1
-        let swqos = make_saturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1, 1_000_000_000, 1);
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
             Some(1),
         );
     }
 
     #[test]
     fn test_saturated_total_stake_zero_no_panic() {
-        let swqos = make_saturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 0, 1);
         // checked_div(0) → unwrap_or(0) → quota=0 → .max(1) → 1
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
             Some(1),
         );
     }
@@ -636,27 +625,27 @@ pub mod test {
 
     #[test]
     fn test_unsaturated_base_at_reference_rtt() {
-        let swqos = make_unsaturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             base_max_streams: 1024,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
         // At REFERENCE_RTT (50ms): rtt_scale=1.0 → base_max_streams
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&ctx, REFERENCE_RTT),
+            swqos.compute_max_streams_for_rtt(&ctx, REFERENCE_RTT, false),
             Some(1024),
         );
     }
 
     #[test]
     fn test_unsaturated_scales_linearly_with_rtt() {
-        let swqos = make_unsaturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             base_max_streams: 1024,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
-        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100)).unwrap();
-        let q200 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(200)).unwrap();
+        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100), false).unwrap();
+        let q200 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(200), false).unwrap();
         // 100ms = 2x ref → ~2048, 200ms = 4x ref → ~4096
         assert!((q100 as i32 - 2048).abs() <= 1, "q100={q100}");
         assert!((q200 as i32 - 4096).abs() <= 1, "q200={q200}");
@@ -666,28 +655,28 @@ pub mod test {
 
     #[test]
     fn test_unsaturated_low_rtt_floors_at_base() {
-        let swqos = make_unsaturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             base_max_streams: 1024,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
         // RTT < REFERENCE_RTT: rtt_scale.max(1.0) keeps it at base_max_streams
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(5)),
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(5), false),
             Some(1024),
         );
     }
 
     #[test]
     fn test_unsaturated_rtt_clamped_at_max() {
-        let swqos = make_unsaturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             base_max_streams: 1024,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
         // 500ms RTT gets clamped to MAX_RTT (200ms) → scale = 4.0 → 4096
-        let q_500 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(500));
-        let q_max = swqos.compute_max_streams_for_rtt(&ctx, MAX_RTT);
+        let q_500 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(500), false);
+        let q_max = swqos.compute_max_streams_for_rtt(&ctx, MAX_RTT, false);
         assert_eq!(q_500, q_max);
         assert_eq!(q_max, Some(4096));
     }
@@ -695,7 +684,7 @@ pub mod test {
     #[test]
     fn test_unsaturated_ignores_stake() {
         // In unsaturated mode, quota depends only on RTT, not stake
-        let swqos = make_unsaturated(SwQosConfig {
+        let swqos = make_swqos(SwQosConfig {
             base_max_streams: 1024,
             ..SwQosConfig::default()
         });
@@ -703,8 +692,8 @@ pub mod test {
         let big = staked_context(900_000, 1_000_000, 1);
         let small = staked_context(1_000, 1_000_000, 1);
         assert_eq!(
-            swqos.compute_max_streams_for_rtt(&big, rtt),
-            swqos.compute_max_streams_for_rtt(&small, rtt),
+            swqos.compute_max_streams_for_rtt(&big, rtt, false),
+            swqos.compute_max_streams_for_rtt(&small, rtt, false),
         );
     }
 }
