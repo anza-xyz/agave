@@ -8405,7 +8405,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "thiserror 2.0.18",
- "wincode 0.4.0",
+ "wincode 0.4.3",
 ]
 
 [[package]]
@@ -9141,7 +9141,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "trees",
- "wincode 0.4.0",
+ "wincode 0.4.3",
 ]
 
 [[package]]
@@ -11630,7 +11630,7 @@ dependencies = [
  "static_assertions",
  "test-case",
  "thiserror 2.0.18",
- "wincode 0.4.0",
+ "wincode 0.4.3",
 ]
 
 [[package]]
@@ -13517,16 +13517,16 @@ dependencies = [
 
 [[package]]
 name = "wincode"
-version = "0.4.0"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70404f69984d4a07b1fd1baeec55f577c9fecdea55a9c7196fb32fd84f84955a"
+checksum = "6d1068d2b3145b56f47cd84e5eb99d3371bf03605bb4ee1b1efb519ff23d92f7"
 dependencies = [
  "pastey",
  "proc-macro2",
  "quote",
  "solana-short-vec",
  "thiserror 2.0.18",
- "wincode-derive 0.4.0",
+ "wincode-derive 0.4.1",
 ]
 
 [[package]]
@@ -13543,9 +13543,9 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6505f603ab2302ff300837c3c96e5b1c6e4b65a66b756e3eb07376c935ff1907"
+checksum = "0cfae870aaafeb47dd6eed6b48a945c3da75cc03ae6cbddc651bc3808526eadf"
 dependencies = [
  "darling",
  "proc-macro2",
