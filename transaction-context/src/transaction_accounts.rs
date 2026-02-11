@@ -239,8 +239,8 @@ pub(crate) type DeconstructedTransactionAccounts =
 
 #[derive(Debug)]
 pub struct TransactionAccounts {
-    shared_account_fields: UnsafeCell<Box<[AccountSharedFields]>>,
-    private_account_fields: UnsafeCell<Box<[AccountPrivateFields]>>,
+    shared_account_fields: Box<[UnsafeCell<AccountSharedFields>]>,
+    private_account_fields: Box<[UnsafeCell<AccountPrivateFields>]>,
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
@@ -257,7 +257,7 @@ impl TransactionAccounts {
             .enumerate()
             .map(|(idx, item)| {
                 (
-                    AccountSharedFields {
+                    UnsafeCell::new(AccountSharedFields {
                         key: item.0,
                         owner: *item.1.owner(),
                         lamports: item.1.lamports(),
@@ -266,19 +266,22 @@ impl TransactionAccounts {
                                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(idx as u64)),
                             item.1.data().len() as u64,
                         ),
-                    },
-                    AccountPrivateFields {
+                    }),
+                    UnsafeCell::new(AccountPrivateFields {
                         rent_epoch: item.1.rent_epoch(),
                         executable: item.1.executable(),
                         payload: item.1.data_clone(),
-                    },
+                    }),
                 )
             })
-            .collect::<(Vec<AccountSharedFields>, Vec<AccountPrivateFields>)>();
+            .collect::<(
+                Vec<UnsafeCell<AccountSharedFields>>,
+                Vec<UnsafeCell<AccountPrivateFields>>,
+            )>();
 
         TransactionAccounts {
-            shared_account_fields: UnsafeCell::new(shared_accounts.into_boxed_slice()),
-            private_account_fields: UnsafeCell::new(private_fields.into_boxed_slice()),
+            shared_account_fields: shared_accounts.into_boxed_slice(),
+            private_account_fields: private_fields.into_boxed_slice(),
             borrow_counters,
             touched_flags,
             resize_delta: Cell::new(0),
@@ -287,8 +290,7 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn len(&self) -> usize {
-        // SAFETY: The borrow is local to this function and is only reading length.
-        unsafe { (*self.shared_account_fields.get()).len() }
+        self.shared_account_fields.len()
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -346,14 +348,19 @@ impl TransactionAccounts {
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (*self.shared_account_fields.get())
-                .get_mut(index as usize)
+            &mut *self
+                .shared_account_fields
+                .get(index as usize)
                 .unwrap()
+                .get()
         };
+
         let private_fields = unsafe {
-            (*self.private_account_fields.get())
-                .get_mut(index as usize)
+            &mut *self
+                .private_account_fields
+                .get(index as usize)
                 .unwrap()
+                .get()
         };
 
         let account = TransactionAccountViewMut {
@@ -378,14 +385,19 @@ impl TransactionAccounts {
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (*self.shared_account_fields.get())
+            &*self
+                .shared_account_fields
                 .get(index as usize)
                 .unwrap()
+                .get()
         };
+
         let private_fields = unsafe {
-            (*self.private_account_fields.get())
+            &*self
+                .private_account_fields
                 .get(index as usize)
                 .unwrap()
+                .get()
         };
 
         let account = TransactionAccountView {
@@ -414,11 +426,14 @@ impl TransactionAccounts {
     }
 
     fn deconstruct_into_keyed_account_shared_data(&mut self) -> Vec<KeyedAccountSharedData> {
-        self.shared_account_fields
-            .get_mut()
+        let shared_account_fields = std::mem::take(&mut self.shared_account_fields);
+        let private_account_fields = std::mem::take(&mut self.private_account_fields);
+        shared_account_fields
             .into_iter()
-            .zip(&mut *self.private_account_fields.get_mut())
-            .map(|(shared_fields, private_fields)| {
+            .zip(private_account_fields)
+            .map(|(shared_fields_cell, private_fields_cell)| {
+                let shared_fields = shared_fields_cell.into_inner();
+                let private_fields = private_fields_cell.into_inner();
                 (
                     shared_fields.key,
                     AccountSharedData::create_from_existing_shared_data(
@@ -434,11 +449,14 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn deconstruct_into_account_shared_data(&mut self) -> Vec<AccountSharedData> {
-        self.shared_account_fields
-            .get_mut()
+        let shared_account_fields = std::mem::take(&mut self.shared_account_fields);
+        let private_account_fields = std::mem::take(&mut self.private_account_fields);
+        shared_account_fields
             .into_iter()
-            .zip(&mut *self.private_account_fields.get_mut())
-            .map(|(shared_fields, private_fields)| {
+            .zip(private_account_fields)
+            .map(|(shared_fields_cell, private_fields_cell)| {
+                let shared_fields = shared_fields_cell.into_inner();
+                let private_fields = private_fields_cell.into_inner();
                 AccountSharedData::create_from_existing_shared_data(
                     shared_fields.lamports,
                     private_fields.payload.clone(),
@@ -462,18 +480,18 @@ impl TransactionAccounts {
     pub(crate) fn account_key(&self, index: IndexOfAccount) -> Option<&Pubkey> {
         // SAFETY: We never modify an account key, so returning a reference to it is safe.
         unsafe {
-            (*self.shared_account_fields.get())
+            self.shared_account_fields
                 .get(index as usize)
-                .map(|acc| &acc.key)
+                .map(|acc| &(*acc.get()).key)
         }
     }
 
     pub(crate) fn account_keys_iter(&self) -> impl Iterator<Item = &Pubkey> {
         // SAFETY: We never modify account keys, so returning an immutable reference to them is safe.
         unsafe {
-            (*self.shared_account_fields.get())
+            self.shared_account_fields
                 .iter()
-                .map(|item| &item.key)
+                .map(|item| &(*item.get()).key)
         }
     }
 }
