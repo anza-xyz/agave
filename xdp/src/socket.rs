@@ -64,7 +64,11 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<xdp_umem_reg>() as libc::socklen_t,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                let err = io::Error::last_os_error();
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!("setsockopt(XDP_UMEM_REG) failed: {err}"),
+                ));
             }
 
             for (ring, size) in [
@@ -86,7 +90,11 @@ impl<U: Umem> Socket<U> {
                     mem::size_of::<u32>() as socklen_t,
                 ) < 0
                 {
-                    return Err(io::Error::last_os_error());
+                    let err = io::Error::last_os_error();
+                    return Err(io::Error::new(
+                        err.kind(),
+                        format!("setsockopt(SOL_XDP, ring={ring}, size={size}) failed: {err}"),
+                    ));
                 }
             }
 
@@ -100,7 +108,11 @@ impl<U: Umem> Socket<U> {
                 &mut optlen,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                let err = io::Error::last_os_error();
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!("getsockopt(XDP_MMAP_OFFSETS) failed: {err}"),
+                ));
             }
 
             let tx_completion_ring = TxCompletionRing::new(
@@ -177,7 +189,14 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<sockaddr_xdp>() as socklen_t,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                let err = io::Error::last_os_error();
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!(
+                        "bind(AF_XDP, ifindex={}, queue={}, flags=0x{:x}) failed: {err}",
+                        sxdp.sxdp_ifindex, sxdp.sxdp_queue_id, sxdp.sxdp_flags,
+                    ),
+                ));
             }
 
             let tx = Tx {
