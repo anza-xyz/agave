@@ -83,6 +83,7 @@ impl VoteStorage {
             .map(|pubkey| (*pubkey, (1u64, VoteAccount::new_random())))
             .collect();
         let epoch_stakes = VersionedEpochStakes::new_for_tests(vote_accounts, 0);
+        // Authorized voters don't change in tests so it's fine to use the authorized voters from the "wrong" epoch
         let epoch_authorized_voters = epoch_stakes.epoch_authorized_voters().clone();
 
         Self {
@@ -194,6 +195,8 @@ impl VoteStorage {
             self.cached_epoch_authorized_voters = bank
                 .epoch_stakes(bank.epoch())
                 .map(|stakes| stakes.epoch_authorized_voters().clone())
+                // Should be fine to expect as the current epoch must exist in epoch_stakes,
+                // will cleanup in a follow up
                 .unwrap_or_else(|| current_epoch_stakes.epoch_authorized_voters().clone());
             self.cached_epoch_stakes = current_epoch_stakes;
             self.current_epoch = bank.epoch();
