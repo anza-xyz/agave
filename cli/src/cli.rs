@@ -328,7 +328,7 @@ pub enum CliCommand {
         authorized_withdrawer: Pubkey,
         // VoteInit (v1) args.
         commission: Option<u8>,
-        // VoteInitV2 args (SIMD-0387).
+        // VoteInitV2 args (SIMD-0464).
         use_v2_instruction: bool,
         inflation_rewards_commission_bps: Option<u16>,
         inflation_rewards_collector: Option<Pubkey>,
@@ -2308,7 +2308,7 @@ mod tests {
             }),
         });
         // Use MocksMap to queue multiple GetAccountInfo responses:
-        // 1. SIMD-0387 feature account (returns null = feature inactive)
+        // 1. SIMD-0464 feature account (returns null = feature inactive)
         // 2. Vote account
         let mut mocks = MocksMap::default();
         mocks.insert(RpcRequest::GetAccountInfo, feature_check_response);

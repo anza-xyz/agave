@@ -14,7 +14,7 @@ use {
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
         stake::check_current_authority,
     },
-    agave_feature_set::bls_pubkey_management_in_vote_account,
+    agave_feature_set::{bls_pubkey_management_in_vote_account, vote_account_initialize_v2},
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
@@ -107,13 +107,13 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("VOTER_PUBKEY"),
                     "Authorized voter [default: validator identity pubkey]."
                 ))
-                // SIMD-0387 VoteInitV2 arguments.
+                // SIMD-0464 VoteInitV2 arguments.
                 .arg(
                     Arg::with_name("use_v2_instruction")
                         .long("use-v2-instruction")
                         .takes_value(false)
                         .help(
-                            "Force use of VoteInitV2 (SIMD-0387). Required in sign-only mode \
+                            "Force use of VoteInitV2 (SIMD-0464). Required in sign-only mode \
                              after feature activation. In normal mode, instruction version is \
                              auto-detected based on feature status.",
                         ),
@@ -127,7 +127,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .help(
                             "Commission rate in basis points (0-10000) for inflation rewards. 100 \
                              basis points = 1%. Only valid with VoteInitV2 (--use-v2-instruction \
-                             or when SIMD-0387 feature is active). [default: 10000 (100%)]",
+                             or when SIMD-0464 feature is active). [default: 10000 (100%)]",
                         ),
                 )
                 .arg(pubkey!(
@@ -136,7 +136,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("COLLECTOR_PUBKEY")
                         .takes_value(true),
                     "Account to collect inflation rewards commission. Only valid with VoteInitV2 \
-                     (--use-v2-instruction or when SIMD-0387 feature is active). [default: vote \
+                     (--use-v2-instruction or when SIMD-0464 feature is active). [default: vote \
                      account address]"
                 ))
                 .arg(
@@ -148,7 +148,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .help(
                             "Commission rate in basis points (0-10000) for block revenue. 100 \
                              basis points = 1%. Only valid with VoteInitV2 (--use-v2-instruction \
-                             or when SIMD-0387 feature is active). [default: 10000 (100%)]",
+                             or when SIMD-0464 feature is active). [default: 10000 (100%)]",
                         ),
                 )
                 .arg(pubkey!(
@@ -157,7 +157,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("COLLECTOR_PUBKEY")
                         .takes_value(true),
                     "Account to collect block revenue commission. Only valid with VoteInitV2 \
-                     (--use-v2-instruction or when SIMD-0387 feature is active). [default: \
+                     (--use-v2-instruction or when SIMD-0464 feature is active). [default: \
                      identity account address]"
                 ))
                 .arg(
@@ -548,7 +548,7 @@ pub fn parse_create_vote_account(
     // VoteInit (v1) args.
     let commission: Option<u8> = value_of(matches, "commission");
 
-    // VoteInitV2 args (SIMD-0387).
+    // VoteInitV2 args (SIMD-0464).
     let use_v2_instruction = matches.is_present("use_v2_instruction");
     let inflation_rewards_commission_bps: Option<u16> =
         value_of(matches, "inflation_rewards_commission_bps");
@@ -917,7 +917,7 @@ pub async fn process_create_vote_account(
     authorized_withdrawer: Pubkey,
     // VoteInit (v1) args.
     commission: Option<u8>,
-    // VoteInitV2 args (SIMD-0387).
+    // VoteInitV2 args (SIMD-0464).
     use_v2_instruction: bool,
     inflation_rewards_commission_bps: Option<u16>,
     inflation_rewards_collector: Option<&Pubkey>,
@@ -964,8 +964,8 @@ pub async fn process_create_vote_account(
         // Sign-only without explicit flag, default to VoteInit (v1).
         false
     } else {
-        // Check SIMD-0387 feature gate status.
-        get_feature_is_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
+        // Check SIMD-0464 feature gate status.
+        get_feature_is_active(rpc_client, &vote_account_initialize_v2::id())
             .await
             .unwrap_or(false)
     };
@@ -981,7 +981,7 @@ pub async fn process_create_vote_account(
         return Err(CliError::BadParameter(
             "VoteInitV2 arguments (--inflation-rewards-commission-bps, \
              --inflation-rewards-collector, --block-revenue-commission-bps, \
-             --block-revenue-collector) require --use-v2-instruction flag or SIMD-0387 feature to \
+             --block-revenue-collector) require --use-v2-instruction flag or SIMD-0464 feature to \
              be active."
                 .to_owned(),
         )
