@@ -35,10 +35,10 @@ serde = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
-solana-hash = "=4.0.1"
+solana-hash = "=4.1.0"
 solana-instruction = "=3.1.0"
 solana-keypair = "=3.1.0"
-solana-message = "=3.0.1"
+solana-message = "=3.1.0"
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-packet = "=4.0.0"
@@ -46,7 +46,7 @@ solana-pubkey = { version = "=4.0.0", features = ["rand"] }
 solana-signer = "=3.0.0"
 solana-system-interface = "=3.0"
 solana-system-transaction = "=3.0.0"
-solana-transaction = "=3.0.2"
+solana-transaction = "=3.1.0"
 solana-version = { workspace = true }
 spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }

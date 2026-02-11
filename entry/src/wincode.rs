@@ -9,10 +9,11 @@ use {
     solana_transaction::versioned,
     std::mem::MaybeUninit,
     wincode::{
+        config::Config,
         containers::{self, Pod},
         error::invalid_tag_encoding,
         io::{Reader, Writer},
-        len::ShortU16Len,
+        len::ShortU16,
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
 };
@@ -29,89 +30,93 @@ struct MessageHeader {
 #[wincode(from = "solana_transaction::CompiledInstruction")]
 struct CompiledInstruction {
     program_id_index: u8,
-    accounts: containers::Vec<u8, ShortU16Len>,
-    data: containers::Vec<u8, ShortU16Len>,
+    accounts: containers::Vec<u8, ShortU16>,
+    data: containers::Vec<u8, ShortU16>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "legacy::Message", struct_extensions)]
 struct LegacyMessage {
     header: MessageHeader,
-    account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
+    account_keys: containers::Vec<Pod<Address>, ShortU16>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::MessageAddressTableLookup")]
 struct MessageAddressTableLookup {
     account_key: Pod<Address>,
-    writable_indexes: containers::Vec<u8, ShortU16Len>,
-    readonly_indexes: containers::Vec<u8, ShortU16Len>,
+    writable_indexes: containers::Vec<u8, ShortU16>,
+    readonly_indexes: containers::Vec<u8, ShortU16>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::Message")]
 struct V0Message {
     header: MessageHeader,
-    account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
+    account_keys: containers::Vec<Pod<Address>, ShortU16>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
-    address_table_lookups: containers::Vec<MessageAddressTableLookup, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16>,
+    address_table_lookups: containers::Vec<MessageAddressTableLookup, ShortU16>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "versioned::VersionedTransaction")]
 pub(crate) struct VersionedTransaction {
-    signatures: containers::Vec<Pod<Signature>, ShortU16Len>,
+    signatures: containers::Vec<Pod<Signature>, ShortU16>,
     message: VersionedMsg,
 }
 
 struct VersionedMsg;
 
-impl SchemaWrite for VersionedMsg {
+unsafe impl<C: Config> SchemaWrite<C> for VersionedMsg {
     type Src = solana_message::VersionedMessage;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
-            solana_message::VersionedMessage::Legacy(message) => LegacyMessage::size_of(message),
+            solana_message::VersionedMessage::Legacy(message) => {
+                <LegacyMessage as SchemaWrite<C>>::size_of(message)
+            }
             // +1 for message version prefix
-            solana_message::VersionedMessage::V0(message) => Ok(1 + V0Message::size_of(message)?),
+            solana_message::VersionedMessage::V0(message) => {
+                Ok(1 + <V0Message as SchemaWrite<C>>::size_of(message)?)
+            }
         }
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
             solana_message::VersionedMessage::Legacy(message) => {
-                LegacyMessage::write(writer, message)
+                <LegacyMessage as SchemaWrite<C>>::write(writer, message)
             }
             solana_message::VersionedMessage::V0(message) => {
-                u8::write(writer, &MESSAGE_VERSION_PREFIX)?;
-                V0Message::write(writer, message)
+                <u8 as SchemaWrite<C>>::write(&mut writer, &MESSAGE_VERSION_PREFIX)?;
+                <V0Message as SchemaWrite<C>>::write(writer, message)
             }
         }
     }
 }
 
-impl<'de> SchemaRead<'de> for VersionedMsg {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for VersionedMsg {
     type Dst = solana_message::VersionedMessage;
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // From `solana_message`:
         //
         // If the first bit is set, the remaining 7 bits will be used to determine
         // which message version is serialized starting from version `0`. If the first
         // is bit is not set, all bytes are used to encode the legacy `Message`
         // format.
-        let variant = u8::get(reader)?;
+        let variant = <u8 as SchemaRead<C>>::get(&mut reader)?;
 
         if variant & MESSAGE_VERSION_PREFIX != 0 {
             let version = variant & !MESSAGE_VERSION_PREFIX;
             return match version {
                 0 => {
-                    let msg = V0Message::get(reader)?;
+                    let msg = <V0Message as SchemaRead<C>>::get(&mut reader)?;
                     dst.write(solana_message::VersionedMessage::V0(msg));
                     Ok(())
                 }
@@ -125,22 +130,22 @@ impl<'de> SchemaRead<'de> for VersionedMsg {
         // As such, we need to write the remaining fields into the message manually,
         // as calling `LegacyMessage::read` will miss the first field.
         // Builder is used to ensure any partially initialized data is dropped on errors.
-        let mut msg_builder = LegacyMessageUninitBuilder::from_maybe_uninit_mut(&mut msg);
+        let mut msg_builder = LegacyMessageUninitBuilder::<C>::from_maybe_uninit_mut(&mut msg);
         // SAFETY: initializer function uses header builder and initialize all fields
         unsafe {
             msg_builder.init_header_with(|uninit_header| {
                 let mut header_builder =
-                    MessageHeaderUninitBuilder::from_maybe_uninit_mut(uninit_header);
+                    MessageHeaderUninitBuilder::<C>::from_maybe_uninit_mut(uninit_header);
                 header_builder.write_num_required_signatures(variant);
-                header_builder.read_num_readonly_signed_accounts(reader)?;
-                header_builder.read_num_readonly_unsigned_accounts(reader)?;
+                header_builder.read_num_readonly_signed_accounts(&mut reader)?;
+                header_builder.read_num_readonly_unsigned_accounts(&mut reader)?;
                 debug_assert!(header_builder.is_init());
                 header_builder.finish();
                 Ok(())
             })?;
         }
-        msg_builder.read_account_keys(reader)?;
-        msg_builder.read_recent_blockhash(reader)?;
+        msg_builder.read_account_keys(&mut reader)?;
+        msg_builder.read_recent_blockhash(&mut reader)?;
         msg_builder.read_instructions(reader)?;
         debug_assert!(msg_builder.is_init());
         // SAFETY: All fields are initialized, safe to close the builder and assume initialized.

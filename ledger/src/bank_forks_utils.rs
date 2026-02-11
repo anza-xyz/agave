@@ -22,7 +22,6 @@ use {
     solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
     std::{
         path::PathBuf,
-        result,
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
     thiserror::Error,
@@ -59,8 +58,7 @@ pub enum BankForksUtilsError {
     ProcessBlockstoreFromGenesis(#[source] BlockstoreProcessorError),
 }
 
-pub type LoadResult =
-    result::Result<(Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>), BankForksUtilsError>;
+pub type BankAndHashes = (Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>);
 
 /// Load the banks via genesis or a snapshot
 ///
@@ -77,100 +75,91 @@ pub fn load_bank_forks(
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> LoadResult {
-    fn get_snapshots_to_load(
-        snapshot_config: &SnapshotConfig,
-    ) -> Option<(
-        FullSnapshotArchiveInfo,
-        Option<IncrementalSnapshotArchiveInfo>,
-    )> {
-        if !snapshot_config.should_load_snapshots() {
-            info!("Snapshots disabled; will load from genesis");
-            return None;
-        };
-
-        let Some(full_snapshot_archive_info) =
-            snapshot_paths::get_highest_full_snapshot_archive_info(
-                &snapshot_config.full_snapshot_archives_dir,
-            )
-        else {
-            warn!(
-                "No snapshot package found in directory: {}; will load from genesis",
-                snapshot_config.full_snapshot_archives_dir.display()
-            );
-            return None;
-        };
-
-        let incremental_snapshot_archive_info =
-            snapshot_paths::get_highest_incremental_snapshot_archive_info(
-                &snapshot_config.incremental_snapshot_archives_dir,
-                full_snapshot_archive_info.slot(),
-            );
-
-        Some((
-            full_snapshot_archive_info,
-            incremental_snapshot_archive_info,
-        ))
+) -> Result<BankAndHashes, BankForksUtilsError> {
+    if let Some(result) = bank_forks_from_snapshot(
+        genesis_config,
+        &account_paths,
+        snapshot_config,
+        process_options,
+        accounts_update_notifier.clone(),
+        exit.clone(),
+    )? {
+        return Ok(result);
     }
 
-    let (bank_forks, starting_snapshot_hashes) =
-        if let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
-            get_snapshots_to_load(snapshot_config)
-        {
-            info!(
-                "Initializing bank snapshots dir: {}",
-                snapshot_config.bank_snapshots_dir.display()
-            );
-            std::fs::create_dir_all(&snapshot_config.bank_snapshots_dir)
-                .expect("create bank snapshots dir");
-            let (bank_forks, starting_snapshot_hashes) = bank_forks_from_snapshot(
-                full_snapshot_archive_info,
-                incremental_snapshot_archive_info,
-                genesis_config,
-                account_paths,
-                snapshot_config,
-                process_options,
-                accounts_update_notifier,
-                exit,
-            )?;
-            (bank_forks, Some(starting_snapshot_hashes))
-        } else {
-            info!("Processing ledger from genesis");
-            let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
-                genesis_config,
-                blockstore,
-                account_paths,
-                process_options,
-                transaction_status_sender,
-                entry_notification_sender,
-                accounts_update_notifier,
-                exit,
-            )
-            .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
-            (bank_forks, None)
-        };
+    info!("Processing ledger from genesis");
+    let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
+        genesis_config,
+        blockstore,
+        account_paths,
+        process_options,
+        transaction_status_sender,
+        entry_notification_sender,
+        accounts_update_notifier,
+        exit,
+    )
+    .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
 
-    if let Some(ref new_hard_forks) = process_options.new_hard_forks {
-        let root_bank = bank_forks.read().unwrap().root_bank();
-        new_hard_forks
-            .iter()
-            .for_each(|hard_fork_slot| root_bank.register_hard_fork(*hard_fork_slot));
-    }
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    root_bank.register_hard_forks(process_options.new_hard_forks.as_ref());
 
-    Ok((bank_forks, starting_snapshot_hashes))
+    Ok((bank_forks, None))
 }
 
-#[allow(clippy::too_many_arguments)]
+fn get_snapshots_to_load(
+    snapshot_config: &SnapshotConfig,
+) -> Option<(
+    FullSnapshotArchiveInfo,
+    Option<IncrementalSnapshotArchiveInfo>,
+)> {
+    if !snapshot_config.should_load_snapshots() {
+        info!("Snapshots disabled");
+        return None;
+    };
+
+    let Some(full_snapshot_archive_info) = snapshot_paths::get_highest_full_snapshot_archive_info(
+        &snapshot_config.full_snapshot_archives_dir,
+    ) else {
+        warn!(
+            "No snapshot package found in directory: {}",
+            snapshot_config.full_snapshot_archives_dir.display()
+        );
+        return None;
+    };
+
+    let incremental_snapshot_archive_info =
+        snapshot_paths::get_highest_incremental_snapshot_archive_info(
+            &snapshot_config.incremental_snapshot_archives_dir,
+            full_snapshot_archive_info.slot(),
+        );
+
+    Some((
+        full_snapshot_archive_info,
+        incremental_snapshot_archive_info,
+    ))
+}
+
 fn bank_forks_from_snapshot(
-    full_snapshot_archive_info: FullSnapshotArchiveInfo,
-    incremental_snapshot_archive_info: Option<IncrementalSnapshotArchiveInfo>,
     genesis_config: &GenesisConfig,
-    account_paths: Vec<PathBuf>,
+    account_paths: &[PathBuf],
     snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Arc<RwLock<BankForks>>, StartingSnapshotHashes), BankForksUtilsError> {
+) -> Result<Option<BankAndHashes>, BankForksUtilsError> {
+    let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
+        get_snapshots_to_load(snapshot_config)
+    else {
+        return Ok(None);
+    };
+
+    info!(
+        "Initializing bank snapshots dir: {}",
+        snapshot_config.bank_snapshots_dir.display()
+    );
+    std::fs::create_dir_all(&snapshot_config.bank_snapshots_dir)
+        .expect("create bank snapshots dir");
+
     // Fail hard here if snapshot fails to load, don't silently continue
     if account_paths.is_empty() {
         return Err(BankForksUtilsError::AccountPathsNotPresent);
@@ -218,7 +207,7 @@ fn bank_forks_from_snapshot(
 
     let bank = if let Some(fastboot_snapshot) = fastboot_snapshot {
         snapshot_bank_utils::bank_from_snapshot_dir(
-            &account_paths,
+            account_paths,
             &fastboot_snapshot,
             genesis_config,
             &process_options.runtime_config,
@@ -241,7 +230,7 @@ fn bank_forks_from_snapshot(
         snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
         snapshot_bank_utils::bank_from_snapshot_archives(
-            &account_paths,
+            account_paths,
             &snapshot_config.bank_snapshots_dir,
             &full_snapshot_archive_info,
             incremental_snapshot_archive_info.as_ref(),
@@ -300,6 +289,10 @@ fn bank_forks_from_snapshot(
         full: full_snapshot_hash,
         incremental: incremental_snapshot_hash,
     };
+    bank.register_hard_forks(process_options.new_hard_forks.as_ref());
 
-    Ok((BankForks::new_rw_arc(bank), starting_snapshot_hashes))
+    Ok(Some((
+        BankForks::new_rw_arc(bank),
+        Some(starting_snapshot_hashes),
+    )))
 }

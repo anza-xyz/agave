@@ -65,7 +65,7 @@ pub struct MetricsAgent {
 pub trait MetricsWriter {
     // Write the points and empty the vector.  Called on the internal
     // MetricsAgent worker thread.
-    fn write(&self, points: Vec<DataPoint>);
+    fn write(&self, client: &reqwest::blocking::Client, points: Vec<DataPoint>);
 }
 
 struct InfluxDbMetricsWriter {
@@ -137,24 +137,13 @@ pub fn serialize_points(points: &Vec<DataPoint>, host_id: &str) -> String {
 }
 
 impl MetricsWriter for InfluxDbMetricsWriter {
-    fn write(&self, points: Vec<DataPoint>) {
+    fn write(&self, client: &reqwest::blocking::Client, points: Vec<DataPoint>) {
         if let Some(ref write_url) = self.write_url {
             debug!("submitting {} points", points.len());
 
             let host_id = HOST_ID.read().unwrap();
 
             let line = serialize_points(&points, &host_id);
-
-            let client = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build();
-            let client = match client {
-                Ok(client) => client,
-                Err(err) => {
-                    warn!("client instantiation failed: {err}");
-                    return;
-                }
-            };
 
             let response = client.post(write_url.as_str()).body(line).send();
             if let Ok(resp) = response {
@@ -261,6 +250,7 @@ impl MetricsAgent {
     // Returns an updated value for `last_write_time`.  Which is equal to `Instant::now()`, just
     // before `write` in updated.
     fn write(
+        client: &reqwest::blocking::Client,
         writer: &Arc<dyn MetricsWriter + Send + Sync>,
         max_points: usize,
         max_points_per_sec: usize,
@@ -272,14 +262,17 @@ impl MetricsAgent {
         let now = Instant::now();
         let secs_since_last_write = now.duration_since(last_write_time).as_secs();
 
-        writer.write(Self::combine_points(
-            max_points,
-            max_points_per_sec,
-            secs_since_last_write,
-            points_buffered,
-            points,
-            counters,
-        ));
+        writer.write(
+            client,
+            Self::combine_points(
+                max_points,
+                max_points_per_sec,
+                secs_since_last_write,
+                points_buffered,
+                points,
+                counters,
+            ),
+        );
 
         now
     }
@@ -298,11 +291,13 @@ impl MetricsAgent {
         let max_points = write_frequency.as_secs() as usize * max_points_per_sec;
 
         // Bind common arguments in the `Self::write()` call.
-        let write = |last_write_time: Instant,
+        let write = |client: &reqwest::blocking::Client,
+                     last_write_time: Instant,
                      points: &mut Vec<DataPoint>,
                      counters: &mut CounterMap|
          -> Instant {
             Self::write(
+                client,
                 writer,
                 max_points,
                 max_points_per_sec,
@@ -313,12 +308,18 @@ impl MetricsAgent {
             )
         };
 
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("metrics http client successfully instantiated");
+
         loop {
             match receiver.try_recv() {
                 Ok(cmd) => match cmd {
                     MetricsCommand::Flush(barrier) => {
                         debug!("metrics_thread: flush");
-                        last_write_time = write(last_write_time, &mut points, &mut counters);
+                        last_write_time =
+                            write(&client, last_write_time, &mut points, &mut counters);
                         barrier.wait();
                     }
                     MetricsCommand::Submit(point, level) => {
@@ -346,7 +347,7 @@ impl MetricsAgent {
 
             let now = Instant::now();
             if now.duration_since(last_write_time) >= write_frequency {
-                last_write_time = write(last_write_time, &mut points, &mut counters);
+                last_write_time = write(&client, last_write_time, &mut points, &mut counters);
             }
         }
 
@@ -567,7 +568,7 @@ pub mod test_mocks {
     }
 
     impl MetricsWriter for MockMetricsWriter {
-        fn write(&self, points: Vec<DataPoint>) {
+        fn write(&self, _client: &reqwest::blocking::Client, points: Vec<DataPoint>) {
             assert!(!points.is_empty());
 
             let new_points = points.len();

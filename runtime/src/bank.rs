@@ -174,7 +174,10 @@ use {
         transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+    solana_vote::{
+        vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+        vote_parser,
+    },
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -1546,7 +1549,6 @@ impl Bank {
                     &key,
                     self.slot,
                     &mut ExecuteTimings::default(),
-                    false,
                 ) {
                     recompiled.tx_usage_counter.fetch_add(
                         program_to_recompile
@@ -3152,6 +3154,10 @@ impl Bank {
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
     ) -> Result<()> {
+        if self.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(transaction) {
+            return Err(TransactionError::SanitizeFailure);
+        }
+
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != sanitized_epoch {
@@ -3880,7 +3886,7 @@ impl Bank {
             .accounts_db
             .get_pubkey_account_for_slot(self.slot());
         // Sort the accounts by pubkey to make diff deterministic.
-        accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        accounts.sort_unstable_by_key(|a| a.0);
         accounts
     }
 
@@ -4331,6 +4337,14 @@ impl Bank {
                 .write()
                 .unwrap()
                 .register(new_hard_fork_slot);
+        }
+    }
+
+    pub fn register_hard_forks(&self, new_hard_fork_slots: Option<&Vec<Slot>>) {
+        if let Some(slots) = new_hard_fork_slots {
+            slots
+                .iter()
+                .for_each(|hard_fork_slot| self.register_hard_fork(*hard_fork_slot));
         }
     }
 
@@ -4945,11 +4959,10 @@ impl Bank {
                 // perform an accounts hash calculation *up to that slot*.  If we cleaned *past*
                 // that slot, then accounts could be removed from older storages, which would
                 // change the accounts hash.
-                self.rc.accounts.accounts_db.clean_accounts(
-                    Some(latest_full_snapshot_slot),
-                    true,
-                    self.epoch_schedule(),
-                );
+                self.rc
+                    .accounts
+                    .accounts_db
+                    .clean_accounts(Some(latest_full_snapshot_slot), true);
                 info!("Cleaning... Done.");
             } else {
                 info!("Cleaning... Skipped.");
@@ -4962,7 +4975,6 @@ impl Bank {
                 info!("Shrinking...");
                 self.rc.accounts.accounts_db.shrink_all_slots(
                     true,
-                    self.epoch_schedule(),
                     // we cannot allow the snapshot slot to be shrunk
                     Some(self.slot()),
                 );
@@ -5249,11 +5261,10 @@ impl Bank {
         // So when we're snapshotting, the highest slot to clean is lowered by one.
         let highest_slot_to_clean = self.slot().saturating_sub(1);
 
-        self.rc.accounts.accounts_db.clean_accounts(
-            Some(highest_slot_to_clean),
-            false,
-            self.epoch_schedule(),
-        );
+        self.rc
+            .accounts
+            .accounts_db
+            .clean_accounts(Some(highest_slot_to_clean), false);
     }
 
     pub fn print_accounts_stats(&self) {
@@ -6110,7 +6121,6 @@ impl Bank {
     pub fn load_program(
         &self,
         pubkey: &Pubkey,
-        reload: bool,
         effective_epoch: Epoch,
     ) -> Option<Arc<ProgramCacheEntry>> {
         let environments = self
@@ -6122,7 +6132,6 @@ impl Bank {
             pubkey,
             self.slot(),
             &mut ExecuteTimings::default(), // Called by ledger-tool, metrics not accumulated.
-            reload,
         )
         .map(|(loaded_program, _last_modification_slot)| loaded_program)
     }

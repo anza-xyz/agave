@@ -470,12 +470,7 @@ pub mod tests {
         test_all_empty_or_min(&blockstore, 100);
         test_all_empty_or_min(&blockstore, 0);
 
-        blockstore
-            .slot_meta_iterator(0)
-            .unwrap()
-            .for_each(|(_, _)| {
-                panic!();
-            });
+        assert_eq!(blockstore.slot_meta_iterator(0).unwrap().next(), None);
     }
 
     #[test]

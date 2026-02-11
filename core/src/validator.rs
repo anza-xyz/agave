@@ -156,6 +156,7 @@ use {
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
         borrow::Cow,
+        cmp,
         collections::{HashMap, HashSet},
         net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
@@ -2924,7 +2925,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
                 "{:.3}% of active stake is not visible in gossip",
                 (offline_stake as f64 / total_activated_stake as f64) * 100.
             );
-            offline_nodes.sort_by(|b, a| a.0.cmp(&b.0)); // sort by reverse stake weight
+            offline_nodes.sort_by_key(|a| cmp::Reverse(a.0)); // sort by reverse stake weight
             for (stake, identity) in offline_nodes {
                 info!(
                     "    {:.3}% - {}",

@@ -31,8 +31,7 @@ use {
 };
 pub use {
     ip_echo_server::{
-        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE,
-        MINIMUM_IP_ECHO_SERVER_THREADS, ip_echo_server,
+        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
     },
     socket_addr_space::SocketAddrSpace,
 };

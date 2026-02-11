@@ -2154,7 +2154,7 @@ pub(crate) mod tests {
 
         // Load the migrated program to the cache and run checks.
         let entry = roundtrip_bank
-            .load_program(&bpf_loader_v2_program_address, false, upgrade_slot)
+            .load_program(&bpf_loader_v2_program_address, upgrade_slot)
             .unwrap();
 
         let mut program_cache = roundtrip_bank

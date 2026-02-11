@@ -61,6 +61,7 @@ use {
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
         borrow::Cow,
+        cmp,
         collections::{HashMap, HashSet},
         num::Saturating,
         ops::Index,
@@ -1396,7 +1397,7 @@ impl ReplaySlotStats {
                 .per_program_timings
                 .iter()
                 .collect();
-            per_pubkey_timings.sort_by(|a, b| b.1.accumulated_us.cmp(&a.1.accumulated_us));
+            per_pubkey_timings.sort_by_key(|b| cmp::Reverse(b.1.accumulated_us));
             let (total_us, total_units, total_count, total_errored_units, total_errored_count) =
                 per_pubkey_timings.iter().fold(
                     (0, 0, 0, 0, 0),
@@ -1804,7 +1805,7 @@ fn process_next_slots(
     }
 
     // Reverse sort by slot, so the next slot to be processed can be popped
-    pending_slots.sort_by(|a, b| b.1.slot().cmp(&a.1.slot()));
+    pending_slots.sort_by_key(|b| cmp::Reverse(b.1.slot()));
     Ok(())
 }
 
@@ -2095,7 +2096,7 @@ fn supermajority_root_from_vote_accounts(
         .collect();
 
     // Sort from greatest to smallest slot
-    roots_stakes.sort_unstable_by(|a, b| a.0.cmp(&b.0).reverse());
+    roots_stakes.sort_unstable_by_key(|a| cmp::Reverse(a.0));
 
     // Find latest root
     supermajority_root(&roots_stakes, total_epoch_stake)

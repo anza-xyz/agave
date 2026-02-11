@@ -107,15 +107,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
         self.storage.set_startup(is_startup);
     }
 
-    /// estimate how many items are still needing to be flushed to the disk cache.
-    pub fn get_startup_remaining_items_to_flush_estimate(&self) -> usize {
-        self.storage
-            .disk
-            .as_ref()
-            .map(|_| self.storage.stats.get_remaining_items_to_flush_estimate())
-            .unwrap_or_default()
-    }
-
     /// allocate BucketMapHolder and InMemAccountsIndex[]
     pub fn new(bins: usize, config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
         let num_flush_threads = config

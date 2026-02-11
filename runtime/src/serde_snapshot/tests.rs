@@ -28,7 +28,6 @@ mod serde_snapshot_tests {
             ObsoleteAccounts,
         },
         solana_clock::Slot,
-        solana_epoch_schedule::EpochSchedule,
         solana_pubkey::Pubkey,
         std::{
             fs::File,
@@ -839,14 +838,13 @@ mod serde_snapshot_tests {
                 pubkey_count,
                 accounts.all_account_count_in_accounts_file(shrink_slot)
             );
-            accounts.shrink_all_slots(*startup, &EpochSchedule::default(), None);
+            accounts.shrink_all_slots(*startup, None);
             assert_eq!(
                 pubkey_count_after_shrink,
                 accounts.all_account_count_in_accounts_file(shrink_slot)
             );
 
             let no_ancestors = Ancestors::default();
-            let epoch_schedule = EpochSchedule::default();
 
             let calculated_capitalization = accounts
                 .calculate_capitalization_at_startup_from_index(&no_ancestors, current_slot);
@@ -866,7 +864,7 @@ mod serde_snapshot_tests {
             assert_eq!(accounts_lt_hash_pre, accounts_lt_hash_post);
 
             // repeating should be no-op
-            accounts.shrink_all_slots(*startup, &epoch_schedule, None);
+            accounts.shrink_all_slots(*startup, None);
             assert_eq!(
                 pubkey_count_after_shrink,
                 accounts.all_account_count_in_accounts_file(shrink_slot)
