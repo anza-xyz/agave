@@ -66,11 +66,10 @@ impl Bank {
         transaction: &impl TransactionWithMeta,
         fee_budget_limits: &FeeBudgetLimits,
     ) -> u64 {
-        let (_last_hash, last_lamports_per_signature) =
+        let (_last_hash, _last_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
         let fee_details = solana_fee::calculate_fee_details(
             transaction,
-            last_lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),

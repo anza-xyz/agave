@@ -4038,7 +4038,6 @@ fn test_program_fees() {
     );
     let expected_normal_fee = solana_fee::calculate_fee(
         &sanitized_message,
-        congestion_multiplier == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
         bank.feature_set.as_ref().into(),
@@ -4071,7 +4070,6 @@ fn test_program_fees() {
     );
     let expected_prioritized_fee = solana_fee::calculate_fee(
         &sanitized_message,
-        congestion_multiplier == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
         bank.feature_set.as_ref().into(),

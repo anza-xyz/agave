@@ -5187,7 +5187,8 @@ fn test_ref_account_key_after_program_id() {
 fn test_fuzz_instructions() {
     agave_logger::setup();
     use rand::{rng, Rng};
-    let bank = create_simple_test_bank(1_000_000_000);
+    let mut bank = create_simple_test_bank(1_000_000_000);
+    bank.zero_fee_structure_for_tests();
 
     let max_programs = 5;
     let program_keys: Vec<_> = (0..max_programs)
@@ -9472,7 +9473,7 @@ fn test_call_precomiled_program() {
 
 fn calculate_test_fee(
     message: &impl SVMMessage,
-    lamports_per_signature: u64,
+    _lamports_per_signature: u64,
     fee_structure: &FeeStructure,
 ) -> u64 {
     let fee_budget_limits = FeeBudgetLimits::from(
@@ -9484,7 +9485,6 @@ fn calculate_test_fee(
     );
     solana_fee::calculate_fee(
         message,
-        lamports_per_signature == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
         FeeFeatures {
@@ -11615,6 +11615,9 @@ fn test_failed_simulation_load_error() {
 
     bank.freeze();
     let mint_balance = bank.get_account(&mint_keypair.pubkey()).unwrap().lamports();
+    let expected_fee = bank
+        .get_fee_for_message(&new_sanitized_message(transaction.message.clone()))
+        .unwrap();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(
@@ -11627,9 +11630,9 @@ fn test_failed_simulation_load_error() {
             loaded_accounts_data_size: 0,
             return_data: None,
             inner_instructions: None,
-            fee: Some(0),
+            fee: Some(expected_fee),
             pre_balances: Some(vec![mint_balance, 0]),
-            post_balances: Some(vec![mint_balance, 0]),
+            post_balances: Some(vec![mint_balance.saturating_sub(expected_fee), 0]),
             pre_token_balances: Some(vec![]),
             post_token_balances: Some(vec![]),
         }
@@ -12593,6 +12596,7 @@ fn test_temporary_account_execute_and_commit() {
 
     let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.zero_fee_structure_for_tests();
     bank.activate_feature(&feature_set::relax_intrabatch_account_locks::ID);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
@@ -12666,6 +12670,7 @@ fn test_temporary_account_recreated_execute_and_commit() {
 
     let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.zero_fee_structure_for_tests();
     bank.activate_feature(&feature_set::relax_intrabatch_account_locks::ID);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 

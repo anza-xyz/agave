@@ -27,14 +27,12 @@ impl From<&FeatureSet> for FeeFeatures {
 /// Calculate fee for `SanitizedMessage`
 pub fn calculate_fee(
     message: &impl SVMStaticMessage,
-    zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
     fee_features: FeeFeatures,
 ) -> u64 {
     calculate_fee_details(
         message,
-        zero_fees_for_test,
         lamports_per_signature,
         prioritization_fee,
         fee_features,
@@ -44,15 +42,10 @@ pub fn calculate_fee(
 
 pub fn calculate_fee_details(
     message: &impl SVMStaticMessage,
-    zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
     fee_features: FeeFeatures,
 ) -> FeeDetails {
-    if zero_fees_for_test {
-        return FeeDetails::default();
-    }
-
     FeeDetails::new(
         calculate_signature_fee(
             SignatureCounts::from(message),

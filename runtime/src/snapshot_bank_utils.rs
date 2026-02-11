@@ -1845,7 +1845,8 @@ mod tests {
             },
         };
 
-        let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+        let mut bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+        bank0.zero_fee_structure_for_tests();
 
         let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
 
