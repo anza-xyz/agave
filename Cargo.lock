@@ -154,7 +154,7 @@ dependencies = [
  "ctrlc",
  "dirs-next",
  "indicatif 0.18.3",
- "nix 0.31.1",
+ "nix",
  "reqwest 0.12.28",
  "scopeguard",
  "semver 1.0.27",
@@ -265,7 +265,7 @@ dependencies = [
  "agave-transaction-view",
  "ahash 0.8.12",
  "libc",
- "nix 0.31.1",
+ "nix",
  "rts-alloc",
  "shaq",
  "solana-pubkey 4.0.0",
@@ -2286,12 +2286,12 @@ dependencies = [
 
 [[package]]
 name = "ctrlc"
-version = "3.5.1"
+version = "3.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73736a89c4aff73035ba2ed2e565061954da00d4970fc9ac25dcc85a2a20d790"
+checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
 dependencies = [
  "dispatch2",
- "nix 0.30.1",
+ "nix",
  "windows-sys 0.61.0",
 ]
 
@@ -4764,18 +4764,6 @@ dependencies = [
  "cfg-if 0.1.10",
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "nix"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
-dependencies = [
- "bitflags 2.10.0",
- "cfg-if 1.0.4",
- "cfg_aliases",
- "libc",
 ]
 
 [[package]]
@@ -9370,7 +9358,7 @@ dependencies = [
  "hxdmp",
  "itertools 0.14.0",
  "log",
- "nix 0.31.1",
+ "nix",
  "pcap-file",
  "rand 0.9.2",
  "serde",
@@ -9485,7 +9473,7 @@ dependencies = [
  "fnv",
  "libc",
  "log",
- "nix 0.31.1",
+ "nix",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "rayon",
@@ -10858,7 +10846,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "nix 0.31.1",
+ "nix",
  "num_cpus",
  "pem",
  "percentage",
