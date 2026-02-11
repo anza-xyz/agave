@@ -117,6 +117,10 @@ impl ConnectionContext for SwQosConnectionContext {
 }
 
 impl SwQos {
+    pub fn load_tracker(&self) -> &GlobalLoadTrackerTokenBucket {
+        &self.load_tracker
+    }
+
     pub fn new(
         config: SwQosConfig,
         stats: Arc<StreamerStats>,
@@ -411,7 +415,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     fn on_stream_accepted(&self, _context: &SwQosConnectionContext) {
-        self.load_tracker.record_stream();
+        self.load_tracker.acquire();
     }
 
     fn on_stream_error(&self, _conn_context: &SwQosConnectionContext) {}
@@ -501,19 +505,11 @@ pub mod test {
         let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
         let swqos = SwQos::new(config, stats, staked_nodes, cancel);
 
-        // Exhaust the bucket
+        // Exhaust the bucket by acquiring all tokens directly.
+        // With max_streams_per_ms=1, burst_capacity = 1*1000/10 = 100 tokens.
         for _ in 0..200 {
-            swqos.load_tracker.record_stream();
+            swqos.load_tracker.acquire();
         }
-        // Force bucket update by calling is_saturated after some records
-        std::thread::sleep(Duration::from_millis(5));
-        // Record more to ensure saturation
-        for _ in 0..200 {
-            swqos.load_tracker.record_stream();
-        }
-
-        // Wait for update interval to pass
-        std::thread::sleep(Duration::from_millis(5));
 
         if swqos.load_tracker.is_saturated() {
             let context = SwQosConnectionContext {

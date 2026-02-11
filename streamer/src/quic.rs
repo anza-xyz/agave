@@ -233,6 +233,26 @@ pub struct StreamerStats {
 }
 
 impl StreamerStats {
+    pub fn total_new_streams(&self) -> usize {
+        self.total_new_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn parked_streams(&self) -> usize {
+        self.parked_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn total_packets_sent_to_consumer(&self) -> usize {
+        self.total_packets_sent_to_consumer.load(Ordering::Relaxed)
+    }
+
+    pub fn connection_added_from_staked_peer(&self) -> usize {
+        self.connection_added_from_staked_peer.load(Ordering::Relaxed)
+    }
+
+    pub fn connection_added_from_unstaked_peer(&self) -> usize {
+        self.connection_added_from_unstaked_peer.load(Ordering::Relaxed)
+    }
+
     pub fn report(&self, name: &'static str) {
         let process_sampled_packets_us_hist = {
             let mut metrics = self.process_sampled_packets_us_hist.lock().unwrap();

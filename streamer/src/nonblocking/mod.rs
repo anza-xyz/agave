@@ -1,5 +1,5 @@
 pub mod connection_rate_limiter;
-pub(crate) mod load_tracker_token_bucket;
+pub mod load_tracker_token_bucket;
 pub mod qos;
 pub mod quic;
 #[cfg(feature = "dev-context-only-utils")]

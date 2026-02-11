@@ -1134,7 +1134,7 @@ pub mod test {
             swqos::SwQosConfig,
             testing_utilities::{
                 check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
-                spawn_stake_weighted_qos_server, SpawnTestServerResult,
+                spawn_stake_weighted_qos_server, SpawnSwQosServerResult, SpawnTestServerResult,
             },
         },
         assert_matches::assert_matches,
@@ -1589,11 +1589,15 @@ pub mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let cancel = CancellationToken::new();
-        let SpawnNonBlockingServerResult {
-            endpoints: _,
-            stats: _,
-            thread: t,
-            max_concurrent_connections: _,
+        let SpawnSwQosServerResult {
+            server:
+                SpawnNonBlockingServerResult {
+                    endpoints: _,
+                    stats: _,
+                    thread: t,
+                    max_concurrent_connections: _,
+                },
+            swqos: _,
         } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
             [s],
@@ -1625,11 +1629,15 @@ pub mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let cancel = CancellationToken::new();
-        let SpawnNonBlockingServerResult {
-            endpoints: _,
-            stats,
-            thread: t,
-            max_concurrent_connections: _,
+        let SpawnSwQosServerResult {
+            server:
+                SpawnNonBlockingServerResult {
+                    endpoints: _,
+                    stats,
+                    thread: t,
+                    max_concurrent_connections: _,
+                },
+            swqos: _,
         } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
             [s],

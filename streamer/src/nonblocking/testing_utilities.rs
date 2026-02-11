@@ -35,6 +35,12 @@ use {
 /// makes sense to have keep-alive enable and set the value to be around half of the connection timeout.
 const QUIC_KEEP_ALIVE_FOR_TESTS: Duration = Duration::from_secs(5);
 
+/// Result of spawning a SwQos server, includes the SwQos for diagnostics.
+pub struct SpawnSwQosServerResult {
+    pub server: SpawnNonBlockingServerResult,
+    pub swqos: Arc<SwQos>,
+}
+
 /// Spawn a streamer instance in the current tokio runtime.
 pub fn spawn_stake_weighted_qos_server(
     name: &'static str,
@@ -45,7 +51,7 @@ pub fn spawn_stake_weighted_qos_server(
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError>
+) -> Result<SpawnSwQosServerResult, QuicServerError>
 where
 {
     let stats = Arc::<StreamerStats>::default();
@@ -57,16 +63,18 @@ where
         cancel.clone(),
     ));
 
-    spawn_server(
+    let server = spawn_server(
         name,
         stats,
         sockets,
         keypair,
         packet_sender,
         quic_server_params,
-        swqos,
+        swqos.clone(),
         cancel,
-    )
+    )?;
+
+    Ok(SpawnSwQosServerResult { server, swqos })
 }
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
@@ -128,11 +136,15 @@ pub fn setup_quic_server(
     let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
     let cancel = CancellationToken::new();
 
-    let SpawnNonBlockingServerResult {
-        endpoints: _,
-        stats,
-        thread: handle,
-        max_concurrent_connections: _,
+    let SpawnSwQosServerResult {
+        server:
+            SpawnNonBlockingServerResult {
+                endpoints: _,
+                stats,
+                thread: handle,
+                max_concurrent_connections: _,
+            },
+        swqos: _,
     } = spawn_stake_weighted_qos_server(
         "quic_streamer_test",
         sockets,
