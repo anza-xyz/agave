@@ -13,6 +13,8 @@
 //!      verify throughput is equal (BDP scaling compensates for RTT)
 //!   6. Mixed stake + RTT: 3 peers with different stakes AND RTTs,
 //!      verify throughput tracks stake regardless of RTT
+//!   7. Unsaturated BDP scaling: equal stake, different RTTs above
+//!      REFERENCE_RTT, verify equal throughput without saturation
 //!
 //! Usage:
 //!   cargo run --example test_max_streams --features dev-context-only-utils
@@ -875,6 +877,116 @@ async fn main() {
         println!("  WARN: throughput ordering doesn't match stake ordering");
     } else {
         println!("  WARN: throughput shares deviate significantly from stake shares");
+    }
+
+    print_stats(&server.stats);
+    server.cancel.cancel();
+    sleep(Duration::from_millis(200)).await;
+
+    // ── Experiment 7: Unsaturated BDP scaling ───────────────────────
+    print_header("Experiment 7: Unsaturated BDP scaling");
+    println!("  3 peers, equal stake, RTTs of 50ms/100ms/200ms (all >= REFERENCE_RTT)");
+    println!("  System NOT saturated — generous quotas, BDP-scaled by RTT");
+
+    // When unsaturated: quota = base_max_streams * (rtt / REFERENCE_RTT)
+    //   50ms:  1024 * 1.0 = 1024 concurrent → 1024/0.05 = 20,480/s
+    //   100ms: 1024 * 2.0 = 2048 concurrent → 2048/0.10 = 20,480/s
+    //   200ms: 1024 * 4.0 = 4096 concurrent → 4096/0.20 = 20,480/s
+    // All achieve the same throughput: base_max_streams / REFERENCE_RTT.
+    let bdp_peers: Vec<(Keypair, Duration)> = vec![
+        (Keypair::new(), Duration::from_millis(50)),
+        (Keypair::new(), Duration::from_millis(100)),
+        (Keypair::new(), Duration::from_millis(200)),
+    ];
+
+    let stake_map7: HashMap<Pubkey, u64> = bdp_peers
+        .iter()
+        .map(|(kp, _)| (kp.pubkey(), 1_000_000_000))
+        .collect();
+    let rtt_overrides7: HashMap<Pubkey, Duration> = bdp_peers
+        .iter()
+        .map(|(kp, rtt)| (kp.pubkey(), *rtt))
+        .collect();
+    let staked_nodes7 =
+        StakedNodes::new(Arc::new(stake_map7), HashMap::<Pubkey, u64>::default());
+
+    // High capacity so the system stays unsaturated.
+    // 3 peers at ~20K/s each = ~60K/s total << 500K/s capacity.
+    let server = setup_server_with_config(
+        staked_nodes7,
+        SwQosConfig {
+            max_streams_per_ms: 500,
+            max_connections_per_staked_peer: 1,
+            rtt_overrides: rtt_overrides7,
+            ..Default::default()
+        },
+    );
+    sleep(Duration::from_millis(200)).await;
+
+    let measure_duration = Duration::from_secs(3);
+
+    let mut handles = Vec::new();
+    for (keypair, rtt) in &bdp_peers {
+        let conn = connect(&server.server_address, Some(keypair)).await;
+        let rtt = *rtt;
+        handles.push(tokio::spawn(async move {
+            let sent = blast_concurrent(&conn, measure_duration, rtt).await;
+            (rtt, sent)
+        }));
+    }
+
+    let mut results7: Vec<(Duration, usize)> = Vec::new();
+    for h in handles {
+        results7.push(h.await.unwrap());
+    }
+
+    let lt = server.swqos.load_tracker();
+    assert!(
+        !lt.is_saturated(),
+        "system should stay unsaturated with 500K/s capacity"
+    );
+
+    let total_throughput7: usize = results7.iter().map(|(_, sent)| sent).sum();
+    println!(
+        "  total throughput: {} streams in {}s ({:.0}/s)",
+        total_throughput7,
+        measure_duration.as_secs(),
+        total_throughput7 as f64 / measure_duration.as_secs_f64(),
+    );
+    println!(
+        "  saturated={} bucket_level={}",
+        lt.is_saturated(),
+        lt.bucket_level()
+    );
+
+    println!(
+        "  {:>6}  {:>6}  {:>10}  {:>10}  {:>5}",
+        "RTT", "quota", "throughput", "tput/s", "ratio"
+    );
+    let baseline7 = results7[0].1 as f64;
+    let mut pass7 = true;
+    for (rtt, sent) in &results7 {
+        let rtt_scale = (rtt.as_secs_f64() / 0.050_f64).max(1.0);
+        let quota = (1024.0 * rtt_scale) as u32;
+        let tps = *sent as f64 / measure_duration.as_secs_f64();
+        let ratio = *sent as f64 / baseline7;
+        println!(
+            "  {:>5}ms  {:>6}  {:>10}  {:>9.0}/s  {:>4.2}x",
+            rtt.as_millis(),
+            quota,
+            sent,
+            tps,
+            ratio,
+        );
+        if ratio < 0.5 || ratio > 2.0 {
+            pass7 = false;
+        }
+    }
+
+    if pass7 {
+        println!("  PASS: BDP scaling equalizes throughput across RTTs (unsaturated)");
+    } else {
+        println!("  WARN: throughput varies significantly with RTT");
     }
 
     print_stats(&server.stats);
