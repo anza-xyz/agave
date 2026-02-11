@@ -14,12 +14,12 @@ use {
         error::invalid_tag_encoding,
         io::{Reader, Writer},
         len::ShortU16,
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
+        ReadResult, SchemaRead, SchemaWrite, UninitBuilder, WriteResult,
     },
 };
 
-#[derive(SchemaWrite, SchemaRead)]
-#[wincode(from = "solana_message::MessageHeader", struct_extensions)]
+#[derive(SchemaWrite, SchemaRead, UninitBuilder)]
+#[wincode(from = "solana_message::MessageHeader")]
 struct MessageHeader {
     num_required_signatures: u8,
     num_readonly_signed_accounts: u8,
@@ -34,8 +34,8 @@ struct CompiledInstruction {
     data: containers::Vec<u8, ShortU16>,
 }
 
-#[derive(SchemaWrite, SchemaRead)]
-#[wincode(from = "legacy::Message", struct_extensions)]
+#[derive(SchemaWrite, SchemaRead, UninitBuilder)]
+#[wincode(from = "legacy::Message")]
 struct LegacyMessage {
     header: MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16>,
