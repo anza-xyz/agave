@@ -435,12 +435,14 @@ impl TransactionAccounts {
     }
 
     fn deconstruct_into_keyed_account_shared_data(&mut self) -> Vec<KeyedAccountSharedData> {
-        self.shared_account_fields
-            .iter_mut()
-            .zip(self.private_account_fields.iter_mut())
+        let shared_account_fields = std::mem::take(&mut self.shared_account_fields);
+        let private_account_fields = std::mem::take(&mut self.private_account_fields);
+        shared_account_fields
+            .into_iter()
+            .zip(private_account_fields)
             .map(|(shared_fields_cell, private_fields_cell)| {
-                let shared_fields = shared_fields_cell.get_mut();
-                let private_fields = private_fields_cell.get_mut();
+                let shared_fields = shared_fields_cell.into_inner();
+                let private_fields = private_fields_cell.into_inner();
                 (
                     shared_fields.key,
                     AccountSharedData::create_from_existing_shared_data(
@@ -456,12 +458,14 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn deconstruct_into_account_shared_data(&mut self) -> Vec<AccountSharedData> {
-        self.shared_account_fields
-            .iter_mut()
-            .zip(self.private_account_fields.iter_mut())
+        let shared_account_fields = std::mem::take(&mut self.shared_account_fields);
+        let private_account_fields = std::mem::take(&mut self.private_account_fields);
+        shared_account_fields
+            .into_iter()
+            .zip(private_account_fields)
             .map(|(shared_fields_cell, private_fields_cell)| {
-                let shared_fields = shared_fields_cell.get_mut();
-                let private_fields = private_fields_cell.get_mut();
+                let shared_fields = shared_fields_cell.into_inner();
+                let private_fields = private_fields_cell.into_inner();
                 AccountSharedData::create_from_existing_shared_data(
                     shared_fields.lamports,
                     private_fields.payload.clone(),
