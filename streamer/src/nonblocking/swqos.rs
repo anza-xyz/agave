@@ -37,13 +37,13 @@ use {
 const REFERENCE_RTT: Duration = Duration::from_millis(50);
 
 /// Max RTT for BDP clamping
-const MAX_RTT: Duration = Duration::from_millis(350);
+const MAX_RTT: Duration = Duration::from_millis(200);
 
 /// Min RTT floor
 const MIN_RTT: Duration = Duration::from_millis(2);
 
 /// Base max concurrent streams at reference RTT when system is not saturated
-const DEFAULT_BASE_MAX_STREAMS: u32 = 2048;
+const DEFAULT_BASE_MAX_STREAMS: u32 = 1024;
 
 /// Per-key counter shared by all connections from the same peer (pubkey or IP).
 /// Tracks how many connections currently exist for the key, so that
@@ -397,8 +397,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
             .and_then(|pk| self.config.rtt_overrides.get(&pk).copied())
             .unwrap_or_else(|| connection.rtt())
             .clamp(MIN_RTT, MAX_RTT);
-        let rtt_scale = (rtt.as_millis() as u32) / (REFERENCE_RTT.as_millis() as u32);
-        let rtt_scale = rtt_scale.max(1);
 
         if self.load_tracker.is_saturated() {
             match context.peer_type {
@@ -420,7 +418,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 }
             }
         } else {
-            Some(self.config.base_max_streams * rtt_scale)
+            // BDP-scaled generous credit: at REFERENCE_RTT → base_max_streams,
+            // scales linearly with RTT, floored at base_max_streams.
+            let rtt_scale =
+                (rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64()).max(1.0);
+            Some((self.config.base_max_streams as f64 * rtt_scale) as u32)
         }
     }
 
