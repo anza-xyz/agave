@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum ClientId {
     SolanaLabs,
@@ -10,6 +12,22 @@ pub enum ClientId {
     Sig,
     // If new variants are added, update From<u16> and TryFrom<ClientId>.
     Unknown(u16),
+}
+
+impl fmt::Display for ClientId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::SolanaLabs => write!(f, "SolanaLabs"),
+            Self::JitoLabs => write!(f, "JitoLabs"),
+            Self::Frankendancer => write!(f, "Frankendancer"),
+            Self::Agave => write!(f, "Agave"),
+            Self::AgavePaladin => write!(f, "AgavePaladin"),
+            Self::Firedancer => write!(f, "Firedancer"),
+            Self::AgaveBam => write!(f, "AgaveBam"),
+            Self::Sig => write!(f, "Sig"),
+            Self::Unknown(id) => write!(f, "Unknown({id})"),
+        }
+    }
 }
 
 impl From<u16> for ClientId {
@@ -81,5 +99,19 @@ mod test {
         for client in 8u16..=u16::MAX {
             assert_eq!(u16::try_from(ClientId::Unknown(client)), Ok(client));
         }
+    }
+
+    #[test]
+    fn test_fmt() {
+        assert_eq!(format!("{}", ClientId::SolanaLabs), "SolanaLabs");
+        assert_eq!(format!("{}", ClientId::JitoLabs), "JitoLabs");
+        assert_eq!(format!("{}", ClientId::Frankendancer), "Frankendancer");
+        assert_eq!(format!("{}", ClientId::Agave), "Agave");
+        assert_eq!(format!("{}", ClientId::AgavePaladin), "AgavePaladin");
+        assert_eq!(format!("{}", ClientId::Firedancer), "Firedancer");
+        assert_eq!(format!("{}", ClientId::AgaveBam), "AgaveBam");
+        assert_eq!(format!("{}", ClientId::Sig), "Sig");
+        assert_eq!(format!("{}", ClientId::Unknown(0)), "Unknown(0)");
+        assert_eq!(format!("{}", ClientId::Unknown(u16::MAX)), "Unknown(65535)");
     }
 }

@@ -521,7 +521,7 @@ impl fmt::Display for CliValidators {
 
             writeln!(
                 f,
-                "{} {:<44}  {:<44}  {:>3}%  {:>14}  {:>14} {:>7} {:>8}  {:>7} {:>9} {:>22} \
+                "{} {:<44}  {:<44}  {:>3}%  {:>14}  {:>14} {:>7} {:>8}  {:>7} {:<14} {:>22} \
                  ({:.2}%)",
                 if validator.delinquent {
                     WARNING.to_string()
@@ -560,7 +560,7 @@ impl fmt::Display for CliValidators {
             0
         };
         let header = style(format!(
-            "{:padding$} {:<44}  {:<38}  {}  {}  {} {}  {}  {} {:>9} {:>22}",
+            "{:padding$} {:<44}  {:<38}  {}  {}  {} {}  {}  {} {:<14} {:>22}",
             " ",
             "Identity",
             "Vote Account",
@@ -735,8 +735,8 @@ impl fmt::Display for CliValidators {
         for (client_id, info) in self.stake_by_client_id.iter() {
             writeln!(
                 f,
-                "{:>7} - {:4} current validators ({:>5.2}%){}",
-                client_id.to_string(),
+                "{:<14} - {:4} current validators ({:>5.2}%){}",
+                client_id,
                 info.current_validators,
                 100. * info.current_active_stake as f64 / self.total_active_stake as f64,
                 if info.delinquent_validators > 0 {
