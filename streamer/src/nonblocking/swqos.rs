@@ -155,6 +155,42 @@ impl SwQos {
             ))),
         }
     }
+
+    /// Core MAX_STREAMS computation, separated from `compute_max_streams`
+    /// so it can be called directly in unit tests (without a quinn::Connection).
+    pub(crate) fn compute_max_streams_for_rtt(
+        &self,
+        context: &SwQosConnectionContext,
+        rtt: Duration,
+    ) -> Option<u32> {
+        let rtt = rtt.clamp(MIN_RTT, MAX_RTT);
+
+        if self.load_tracker.is_saturated() {
+            match context.peer_type {
+                ConnectionPeerType::Unstaked => Some(0), // park
+                ConnectionPeerType::Staked(stake) => {
+                    let capacity_tps = self.config.max_streams_per_ms * 1000;
+                    let share_tps = capacity_tps
+                        .saturating_mul(stake)
+                        .checked_div(context.total_stake)
+                        .unwrap_or(0);
+                    let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
+                    let num_connections = context
+                        .stream_counter
+                        .as_ref()
+                        .map(|c| c.connection_count.load(Ordering::Relaxed))
+                        .unwrap_or(1)
+                        .max(1) as u32;
+                    Some((quota / num_connections).max(1))
+                }
+            }
+        } else {
+            // BDP-scaled generous credit: at REFERENCE_RTT → base_max_streams,
+            // scales linearly with RTT, floored at base_max_streams.
+            let rtt_scale = (rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64()).max(1.0);
+            Some((self.config.base_max_streams as f64 * rtt_scale) as u32)
+        }
+    }
 }
 
 impl SwQos {
@@ -395,35 +431,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
         let rtt = context
             .remote_pubkey
             .and_then(|pk| self.config.rtt_overrides.get(&pk).copied())
-            .unwrap_or_else(|| connection.rtt())
-            .clamp(MIN_RTT, MAX_RTT);
-
-        if self.load_tracker.is_saturated() {
-            match context.peer_type {
-                ConnectionPeerType::Unstaked => Some(0), // park
-                ConnectionPeerType::Staked(stake) => {
-                    let capacity_tps = self.config.max_streams_per_ms * 1000;
-                    let share_tps = capacity_tps
-                        .saturating_mul(stake)
-                        .checked_div(context.total_stake)
-                        .unwrap_or(0);
-                    let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
-                    let num_connections = context
-                        .stream_counter
-                        .as_ref()
-                        .map(|c| c.connection_count.load(Ordering::Relaxed))
-                        .unwrap_or(1)
-                        .max(1) as u32;
-                    Some((quota / num_connections).max(1))
-                }
-            }
-        } else {
-            // BDP-scaled generous credit: at REFERENCE_RTT → base_max_streams,
-            // scales linearly with RTT, floored at base_max_streams.
-            let rtt_scale =
-                (rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64()).max(1.0);
-            Some((self.config.base_max_streams as f64 * rtt_scale) as u32)
-        }
+            .unwrap_or_else(|| connection.rtt());
+        self.compute_max_streams_for_rtt(context, rtt)
     }
 
     fn on_stream_accepted(&self, _context: &SwQosConnectionContext) {
@@ -488,137 +497,214 @@ impl QosController<SwQosConnectionContext> for SwQos {
 pub mod test {
     use super::*;
 
-    #[test]
-    fn test_compute_max_streams_not_saturated() {
-        // When not saturated, compute_max_streams returns generous BDP-scaled value
-        let config = SwQosConfig {
-            base_max_streams: 2048,
-            ..SwQosConfig::default()
-        };
+    /// Helper: build a SwQos with the given config and drain its bucket
+    /// so that `is_saturated()` returns true.
+    fn make_saturated(config: SwQosConfig) -> SwQos {
         let cancel = CancellationToken::new();
         let stats = Arc::new(StreamerStats::default());
         let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
         let swqos = SwQos::new(config, stats, staked_nodes, cancel);
-
-        // The tracker starts with burst_capacity tokens, so it's not saturated
-        assert!(!swqos.load_tracker.is_saturated());
-    }
-
-    #[test]
-    fn test_compute_max_streams_saturated_unstaked_returns_zero() {
-        // When saturated, unstaked connections should be parked (max_streams = 0)
-        let config = SwQosConfig {
-            max_streams_per_ms: 1, // very low to easily saturate
-            base_max_streams: 2048,
-            ..SwQosConfig::default()
-        };
-        let cancel = CancellationToken::new();
-        let stats = Arc::new(StreamerStats::default());
-        let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
-        let swqos = SwQos::new(config, stats, staked_nodes, cancel);
-
-        // Exhaust the bucket by acquiring all tokens directly.
-        // With max_streams_per_ms=1, burst_capacity = 1*1000/10 = 100 tokens.
-        for _ in 0..200 {
+        // Drain the bucket. burst = max_streams_per_ms * 1000 / 10.
+        for _ in 0..200_000 {
             swqos.load_tracker.acquire();
         }
+        assert!(swqos.load_tracker.is_saturated());
+        swqos
+    }
 
-        if swqos.load_tracker.is_saturated() {
-            let context = SwQosConnectionContext {
-                peer_type: ConnectionPeerType::Unstaked,
-                remote_pubkey: None,
-                total_stake: 0,
-                in_staked_table: false,
-                last_update: Arc::new(AtomicU64::new(0)),
-                stream_counter: None,
-            };
+    fn make_unsaturated(config: SwQosConfig) -> SwQos {
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+        let staked_nodes = Arc::new(RwLock::new(crate::streamer::StakedNodes::default()));
+        let swqos = SwQos::new(config, stats, staked_nodes, cancel);
+        assert!(!swqos.load_tracker.is_saturated());
+        swqos
+    }
 
-            // We can't easily create a quinn::Connection in unit tests,
-            // but we can verify the logic directly
-            assert!(
-                matches!(context.peer_type, ConnectionPeerType::Unstaked),
-                "unstaked peer should be parked when saturated"
-            );
+    fn unstaked_context() -> SwQosConnectionContext {
+        SwQosConnectionContext {
+            peer_type: ConnectionPeerType::Unstaked,
+            remote_pubkey: None,
+            total_stake: 0,
+            in_staked_table: false,
+            last_update: Arc::new(AtomicU64::new(0)),
+            stream_counter: None,
         }
     }
 
+    fn staked_context(stake: u64, total_stake: u64, num_connections: usize) -> SwQosConnectionContext {
+        let counter = Arc::new(SwQosStreamerCounter {
+            connection_count: AtomicUsize::new(num_connections),
+        });
+        SwQosConnectionContext {
+            peer_type: ConnectionPeerType::Staked(stake),
+            remote_pubkey: None,
+            total_stake,
+            in_staked_table: true,
+            last_update: Arc::new(AtomicU64::new(0)),
+            stream_counter: Some(counter),
+        }
+    }
+
+    // ── Saturated path ──────────────────────────────────────────────
+
     #[test]
-    fn test_total_stake_zero_no_panic() {
-        // Verify no panic when total_stake is 0
-        let capacity_tps: u64 = 500_000;
-        let stake: u64 = 100;
-        let total_stake: u64 = 0;
-        let share_tps = capacity_tps
-            .saturating_mul(stake)
-            .checked_div(total_stake)
-            .unwrap_or(0);
-        assert_eq!(share_tps, 0);
+    fn test_saturated_unstaked_returns_zero() {
+        let swqos = make_saturated(SwQosConfig::default());
+        let ctx = unstaked_context();
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            Some(0),
+        );
     }
 
     #[test]
-    fn test_rtt_scale_minimum_is_one() {
-        let rtt = Duration::from_millis(10); // less than REFERENCE_RTT
-        let clamped = rtt.clamp(MIN_RTT, MAX_RTT);
-        let rtt_scale = (clamped.as_millis() as u32) / (REFERENCE_RTT.as_millis() as u32);
-        let rtt_scale = rtt_scale.max(1);
-        assert_eq!(rtt_scale, 1);
+    fn test_saturated_staked_proportional_quota() {
+        // 500K/s capacity, 1% stake, 50ms RTT → 5000 * 0.05 = 250
+        let swqos = make_saturated(SwQosConfig {
+            max_streams_per_ms: 500,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 100_000, 1);
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            Some(250),
+        );
     }
 
     #[test]
-    fn test_rtt_scale_high_rtt() {
-        let rtt = Duration::from_millis(200);
-        let clamped = rtt.clamp(MIN_RTT, MAX_RTT);
-        let rtt_scale = (clamped.as_millis() as u32) / (REFERENCE_RTT.as_millis() as u32);
-        let rtt_scale = rtt_scale.max(1);
-        assert_eq!(rtt_scale, 4); // 200ms / 50ms = 4
+    fn test_saturated_quota_scales_with_rtt() {
+        // Same stake, double RTT → double quota (throughput stays the same)
+        let swqos = make_saturated(SwQosConfig {
+            max_streams_per_ms: 500,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 100_000, 1);
+        let q50 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50));
+        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100));
+        assert_eq!(q50, Some(250));
+        assert_eq!(q100, Some(500));
     }
 
     #[test]
-    fn test_staked_quota_divided_by_connection_count() {
-        // Verify quota is divided evenly among connections from the same peer
-        let capacity_tps: u64 = 500_000;
-        let stake: u64 = 1000;
-        let total_stake: u64 = 100_000;
+    fn test_saturated_quota_divided_by_connections() {
+        let swqos = make_saturated(SwQosConfig {
+            max_streams_per_ms: 500,
+            ..SwQosConfig::default()
+        });
         let rtt = Duration::from_millis(50);
 
-        let share_tps = capacity_tps
-            .saturating_mul(stake)
-            .checked_div(total_stake)
-            .unwrap_or(0);
-        let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
-        assert_eq!(quota, 250);
+        let ctx1 = staked_context(1_000, 100_000, 1);
+        let ctx4 = staked_context(1_000, 100_000, 4);
+        let q1 = swqos.compute_max_streams_for_rtt(&ctx1, rtt).unwrap();
+        let q4 = swqos.compute_max_streams_for_rtt(&ctx4, rtt).unwrap();
 
-        // With 1 connection: full quota
-        let per_conn = quota / 1u32.max(1);
-        assert_eq!(per_conn, 250);
-
-        // With 4 connections: quota / 4
-        let per_conn = quota / 4u32.max(1);
-        assert_eq!(per_conn, 62);
-
-        // With 16 connections: quota / 16
-        let per_conn = quota / 16u32.max(1);
-        assert_eq!(per_conn, 15);
-
-        // Total across all connections never exceeds original quota
-        assert!(per_conn * 16 <= quota);
+        assert_eq!(q1, 250);
+        assert_eq!(q4, 62); // 250 / 4 = 62
+        assert!(q4 * 4 <= q1); // multi-conn never exceeds single-conn quota
     }
 
     #[test]
-    fn test_staked_quota_proportional() {
-        // Verify proportional share calculation for staked peers
-        let capacity_tps: u64 = 500_000;
-        let stake: u64 = 1000;
-        let total_stake: u64 = 100_000;
-        let rtt = Duration::from_millis(50);
+    fn test_saturated_tiny_stake_gets_minimum_one() {
+        // Stake so small that quota rounds to 0, but .max(1) ensures at least 1
+        let swqos = make_saturated(SwQosConfig {
+            max_streams_per_ms: 500,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1, 1_000_000_000, 1);
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            Some(1),
+        );
+    }
 
-        let share_tps = capacity_tps
-            .saturating_mul(stake)
-            .checked_div(total_stake)
-            .unwrap_or(0);
-        assert_eq!(share_tps, 5000); // 1% of 500K
+    #[test]
+    fn test_saturated_total_stake_zero_no_panic() {
+        let swqos = make_saturated(SwQosConfig {
+            max_streams_per_ms: 500,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 0, 1);
+        // checked_div(0) → unwrap_or(0) → quota=0 → .max(1) → 1
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50)),
+            Some(1),
+        );
+    }
 
-        let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
-        assert_eq!(quota, 250); // 5000 * 0.05 = 250 streams in flight
+    // ── Unsaturated path ────────────────────────────────────────────
+
+    #[test]
+    fn test_unsaturated_base_at_reference_rtt() {
+        let swqos = make_unsaturated(SwQosConfig {
+            base_max_streams: 1024,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 100_000, 1);
+        // At REFERENCE_RTT (50ms): rtt_scale=1.0 → base_max_streams
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, REFERENCE_RTT),
+            Some(1024),
+        );
+    }
+
+    #[test]
+    fn test_unsaturated_scales_linearly_with_rtt() {
+        let swqos = make_unsaturated(SwQosConfig {
+            base_max_streams: 1024,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 100_000, 1);
+        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100)).unwrap();
+        let q200 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(200)).unwrap();
+        // 100ms = 2x ref → ~2048, 200ms = 4x ref → ~4096
+        assert!((q100 as i32 - 2048).abs() <= 1, "q100={q100}");
+        assert!((q200 as i32 - 4096).abs() <= 1, "q200={q200}");
+        // Ratio should be 2x
+        assert!((q200 as f64 / q100 as f64 - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_unsaturated_low_rtt_floors_at_base() {
+        let swqos = make_unsaturated(SwQosConfig {
+            base_max_streams: 1024,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 100_000, 1);
+        // RTT < REFERENCE_RTT: rtt_scale.max(1.0) keeps it at base_max_streams
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(5)),
+            Some(1024),
+        );
+    }
+
+    #[test]
+    fn test_unsaturated_rtt_clamped_at_max() {
+        let swqos = make_unsaturated(SwQosConfig {
+            base_max_streams: 1024,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 100_000, 1);
+        // 500ms RTT gets clamped to MAX_RTT (200ms) → scale = 4.0 → 4096
+        let q_500 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(500));
+        let q_max = swqos.compute_max_streams_for_rtt(&ctx, MAX_RTT);
+        assert_eq!(q_500, q_max);
+        assert_eq!(q_max, Some(4096));
+    }
+
+    #[test]
+    fn test_unsaturated_ignores_stake() {
+        // In unsaturated mode, quota depends only on RTT, not stake
+        let swqos = make_unsaturated(SwQosConfig {
+            base_max_streams: 1024,
+            ..SwQosConfig::default()
+        });
+        let rtt = Duration::from_millis(100);
+        let big = staked_context(900_000, 1_000_000, 1);
+        let small = staked_context(1_000, 1_000_000, 1);
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&big, rtt),
+            swqos.compute_max_streams_for_rtt(&small, rtt),
+        );
     }
 }
