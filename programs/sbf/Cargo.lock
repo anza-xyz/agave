@@ -10453,7 +10453,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-sdk-ids",
  "solana-svm-log-collector",
- "solana-zk-sdk 5.0.0",
+ "solana-zk-sdk 5.0.1",
 ]
 
 [[package]]
@@ -10495,9 +10495,9 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-sdk"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d89042b5867c7440526d47085db2cd11a7ae557461a4f41a3b3a569799dd9d6"
+checksum = "09670ff59f60e6ddc2209c2e4353992a9b9f01d4e244f3e9d67bd5146e33d388"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.22.1",

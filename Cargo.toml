@@ -579,7 +579,7 @@ solana-vote-interface = "5.0.0"
 solana-vote-program = { path = "programs/vote", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-wen-restart = { path = "wen-restart", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-zk-sdk = "5.0.0"
+solana-zk-sdk = "5.0.1"
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 spl-associated-token-account-interface = "2.0.0"
 spl-generic-token = "2.0.0"
