@@ -106,7 +106,6 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
 /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
-#[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
 pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     environments: &ProgramRuntimeEnvironments,
@@ -119,6 +118,8 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         program_id: pubkey.to_string(),
         ..LoadProgramMetrics::default()
     };
+    #[cfg(not(feature = "metrics"))]
+    let _ = execute_timings;
 
     let (load_result, last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
     let loaded_program = match load_result {
