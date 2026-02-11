@@ -5,7 +5,7 @@ use {
         integration_tests::{ValidatorKeys, DEFAULT_NODE_STAKE},
         validator_configs::*,
     },
-    agave_feature_set::FeatureSet,
+    agave_feature_set::{bls_pubkey_management_in_vote_account, vote_state_v4, FeatureSet},
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
     agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     itertools::izip,
@@ -55,7 +55,10 @@ use {
     solana_transaction_error::TransportError,
     solana_vote_program::{
         vote_instruction,
-        vote_state::{self, VoteInit, VoteStateV4},
+        vote_state::{
+            self, create_bls_pubkey_and_proof_of_possession, VoteAuthorize, VoteInit, VoteStateV4,
+            VoterWithBLSArgs,
+        },
     },
     std::{
         collections::HashMap,
@@ -1058,6 +1061,20 @@ impl LocalCluster {
             .expect("client transfer should succeed");
     }
 
+    fn is_feature_active(rpc_client: &RpcClient, feature_id: &Pubkey) -> bool {
+        rpc_client
+            .get_account_with_commitment(feature_id, CommitmentConfig::processed())
+            .ok()
+            .and_then(|r| r.value)
+            .and_then(|account| solana_feature_gate_interface::from_account(&account))
+            .is_some_and(|feature| feature.activated_at.is_some())
+    }
+
+    fn is_bls_pubkey_feature_enabled(rpc_client: &RpcClient) -> bool {
+        Self::is_feature_active(rpc_client, &bls_pubkey_management_in_vote_account::id())
+            && Self::is_feature_active(rpc_client, &vote_state_v4::id())
+    }
+
     fn setup_vote_and_stake_accounts(
         client: &QuicTpuClient,
         vote_account: &Keypair,
@@ -1079,8 +1096,8 @@ impl LocalCluster {
             .unwrap_or(0)
             == 0
         {
-            // 1) Create vote account
-            let instructions = vote_instruction::create_account_with_config(
+            // 1) Create vote account — always use V1 InitializeAccount
+            let mut instructions = vote_instruction::create_account_with_config(
                 &from_account.pubkey(),
                 &vote_account_pubkey,
                 &VoteInit {
@@ -1095,6 +1112,21 @@ impl LocalCluster {
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
             );
+
+            // If BLS feature is active, append an authorize instruction to set the BLS key
+            if Self::is_bls_pubkey_feature_enabled(client.rpc_client()) {
+                let (bls_pubkey, bls_proof_of_possession) =
+                    create_bls_pubkey_and_proof_of_possession(&vote_account_pubkey);
+                instructions.push(vote_instruction::authorize(
+                    &vote_account_pubkey,
+                    &vote_account_pubkey,
+                    &vote_account_pubkey,
+                    VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                        bls_pubkey,
+                        bls_proof_of_possession,
+                    }),
+                ));
+            }
             let message = Message::new(&instructions, Some(&from_account.pubkey()));
             let mut transaction = Transaction::new(
                 &[from_account.as_ref(), vote_account],
