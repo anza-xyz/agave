@@ -21,6 +21,7 @@ use {
     quinn::Connection,
     solana_time_utils as timing,
     std::{
+        collections::HashMap,
         future::Future,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -61,6 +62,10 @@ pub struct SwQosConfig {
     pub max_connections_per_staked_peer: usize,
     pub max_connections_per_unstaked_peer: usize,
     pub base_max_streams: u32,
+    /// Per-peer RTT overrides for quota calculation (testing only).
+    /// When a peer's pubkey is in the map, `compute_max_streams` uses
+    /// the mapped duration instead of `connection.rtt()`.
+    pub rtt_overrides: HashMap<solana_pubkey::Pubkey, Duration>,
 }
 
 impl Default for SwQosConfig {
@@ -72,6 +77,7 @@ impl Default for SwQosConfig {
             max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
             base_max_streams: DEFAULT_BASE_MAX_STREAMS,
+            rtt_overrides: HashMap::new(),
         }
     }
 }
@@ -386,7 +392,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
         context: &SwQosConnectionContext,
         connection: &Connection,
     ) -> Option<u32> {
-        let rtt = connection.rtt().clamp(MIN_RTT, MAX_RTT);
+        let rtt = context
+            .remote_pubkey
+            .and_then(|pk| self.config.rtt_overrides.get(&pk).copied())
+            .unwrap_or_else(|| connection.rtt())
+            .clamp(MIN_RTT, MAX_RTT);
         let rtt_scale = (rtt.as_millis() as u32) / (REFERENCE_RTT.as_millis() as u32);
         let rtt_scale = rtt_scale.max(1);
 
