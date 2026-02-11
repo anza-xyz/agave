@@ -481,65 +481,68 @@ mod tests {
         exit: Arc<AtomicBool>,
     }
 
-    fn setup() -> TestContext {
-        let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
-        let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
+    impl Default for TestContext {
+        fn default() -> Self {
+            let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
+            let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
 
-        // Create 10 node validatorvotekeypairs vec
-        let validator_keypairs = (0..10)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        // Make stake monotonic decreasing so rank is deterministic
-        let stake = (0..validator_keypairs.len())
-            .rev()
-            .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
-            .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stake,
-        );
-        let my_keypair = validator_keypairs[0].node_keypair.insecure_clone();
-        let my_pubkey = my_keypair.pubkey();
-        let contact_info = ContactInfo::new_localhost(&my_pubkey, 0);
-        let _cluster_info = ClusterInfo::new(
-            contact_info,
-            Arc::new(my_keypair),
-            SocketAddrSpace::Unspecified,
-        );
-        let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank0);
+            // Create 10 node validatorvotekeypairs vec
+            let validator_keypairs = (0..10)
+                .map(|_| ValidatorVoteKeypairs::new_rand())
+                .collect::<Vec<_>>();
+            // Make stake monotonic decreasing so rank is deterministic
+            let stake = (0..validator_keypairs.len())
+                .rev()
+                .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
+                .collect::<Vec<_>>();
+            let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+                1_000_000_000,
+                &validator_keypairs,
+                stake,
+            );
+            let my_keypair = validator_keypairs[0].node_keypair.insecure_clone();
+            let my_pubkey = my_keypair.pubkey();
+            let bank0 = Bank::new_for_tests(&genesis.genesis_config);
+            let bank_forks = BankForks::new_rw_arc(bank0);
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let leader_schedule_cache =
-            Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
+            let ledger_path = get_tmp_ledger_path_auto_delete!();
+            let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+            let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+            let leader_schedule_cache =
+                Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
-        let root_bank = sharable_banks.root();
-        let consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
-        let my_vote_pubkey = Pubkey::new_unique();
+            let root_bank = sharable_banks.root();
+            let consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
+            let my_vote_pubkey = Pubkey::new_unique();
 
-        TestContext {
-            consensus_pool,
-            bls_sender,
-            bls_receiver,
-            commitment_sender,
-            commitment_receiver,
-            validator_keypairs,
-            leader_schedule_cache,
-            sharable_banks,
-            my_pubkey,
-            my_vote_pubkey,
-            blockstore,
-            exit: Arc::new(AtomicBool::new(false)),
+            TestContext {
+                consensus_pool,
+                bls_sender,
+                bls_receiver,
+                commitment_sender,
+                commitment_receiver,
+                validator_keypairs,
+                leader_schedule_cache,
+                sharable_banks,
+                my_pubkey,
+                my_vote_pubkey,
+                blockstore,
+                exit: Arc::new(AtomicBool::new(false)),
+            }
         }
     }
 
+    /// Test the full consensus message flow:
+    /// 1. Validators 0-7 send notarize votes for slot 2. After processing all
+    ///    votes, we expect a notarize/finalize certificate to be produced and
+    ///    forwarded via the BLS channel, a finalized event to be emitted, and a
+    ///    commitment update to be sent.
+    /// 2. A skip certificate is then sent for slot 3 and we verify it is
+    ///    immediately forwarded via the BLS channel.
     #[test]
     fn test_receive_and_send_consensus_message() {
         agave_logger::setup();
-        let mut ctx = setup();
+        let mut ctx = TestContext::default();
 
         // validator 0 to 7 send Notarize on slot 2
         let block_id = Hash::new_unique();
@@ -683,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_send_produce_block_event() {
-        let mut ctx = setup();
+        let mut ctx = TestContext::default();
 
         // Find when is the next leader slot for me (validator 0)
         let next_leader_slot = ctx
@@ -766,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_send_certificates() {
-        let ctx = setup();
+        let ctx = TestContext::default();
 
         let certificates = vec![
             Arc::new(Certificate {
@@ -806,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_send_certificates_channel_disconnected() {
-        let ctx = setup();
+        let ctx = TestContext::default();
         drop(ctx.bls_receiver); // Disconnect channel
 
         let certificates = vec![Arc::new(Certificate {
@@ -824,7 +827,7 @@ mod tests {
 
     #[test]
     fn test_maybe_update_root_and_send_new_certificates() {
-        let mut ctx = setup();
+        let mut ctx = TestContext::default();
 
         let certificates = vec![Arc::new(Certificate {
             cert_type: CertificateType::Skip(1),
