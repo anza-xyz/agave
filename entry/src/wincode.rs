@@ -93,7 +93,7 @@ unsafe impl<C: Config> SchemaWrite<C> for VersionedMsg {
                 <LegacyMessage as SchemaWrite<C>>::write(writer, message)
             }
             solana_message::VersionedMessage::V0(message) => {
-                <u8 as SchemaWrite<C>>::write(&mut writer, &MESSAGE_VERSION_PREFIX)?;
+                <u8 as SchemaWrite<C>>::write(writer.by_ref(), &MESSAGE_VERSION_PREFIX)?;
                 <V0Message as SchemaWrite<C>>::write(writer, message)
             }
         }
@@ -110,13 +110,13 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for VersionedMsg {
         // which message version is serialized starting from version `0`. If the first
         // is bit is not set, all bytes are used to encode the legacy `Message`
         // format.
-        let variant = <u8 as SchemaRead<C>>::get(&mut reader)?;
+        let variant = <u8 as SchemaRead<C>>::get(reader.by_ref())?;
 
         if variant & MESSAGE_VERSION_PREFIX != 0 {
             let version = variant & !MESSAGE_VERSION_PREFIX;
             return match version {
                 0 => {
-                    let msg = <V0Message as SchemaRead<C>>::get(&mut reader)?;
+                    let msg = <V0Message as SchemaRead<C>>::get(reader.by_ref())?;
                     dst.write(solana_message::VersionedMessage::V0(msg));
                     Ok(())
                 }
@@ -137,15 +137,15 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for VersionedMsg {
                 let mut header_builder =
                     MessageHeaderUninitBuilder::<C>::from_maybe_uninit_mut(uninit_header);
                 header_builder.write_num_required_signatures(variant);
-                header_builder.read_num_readonly_signed_accounts(&mut reader)?;
-                header_builder.read_num_readonly_unsigned_accounts(&mut reader)?;
+                header_builder.read_num_readonly_signed_accounts(reader.by_ref())?;
+                header_builder.read_num_readonly_unsigned_accounts(reader.by_ref())?;
                 debug_assert!(header_builder.is_init());
                 header_builder.finish();
                 Ok(())
             })?;
         }
-        msg_builder.read_account_keys(&mut reader)?;
-        msg_builder.read_recent_blockhash(&mut reader)?;
+        msg_builder.read_account_keys(reader.by_ref())?;
+        msg_builder.read_recent_blockhash(reader.by_ref())?;
         msg_builder.read_instructions(reader)?;
         debug_assert!(msg_builder.is_init());
         // SAFETY: All fields are initialized, safe to close the builder and assume initialized.
