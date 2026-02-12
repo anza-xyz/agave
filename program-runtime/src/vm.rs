@@ -182,8 +182,7 @@ pub fn execute<'a, 'b: 'a>(
             let (debug_port, debug_metadata) = (
                 invoke_context.debug_port,
                 format!(
-                    "index_in_trace={};program_id={};cpi_level={};caller={}",
-                    instruction_context.get_index_in_trace(),
+                    "program_id={};cpi_level={};caller={}",
                     program_id,
                     instruction_context.get_stack_height().saturating_sub(1),
                     invoke_context
