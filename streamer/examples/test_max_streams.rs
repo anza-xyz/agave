@@ -315,9 +315,9 @@ async fn main() {
     // to be meaningfully divided among multiple connections:
     //   capacity_tps = max_streams_per_ms * 1000 = 10_000
     //   share_tps = capacity_tps * 9B / 10B = 9_000 (90% of capacity)
-    //   quota = share_tps * MIN_RTT = 9_000 * 0.002 = 18 streams
-    //   1 conn: max_streams = 18
-    //   4 conn: max_streams = 18/4 = 4 each → total concurrent = 16 ≈ 18
+    //   quota = share_tps * MIN_RTT = 9_000 * 0.010 = 90 streams
+    //   1 conn: max_streams = 90
+    //   4 conn: max_streams = 90/4 = 22 each → total concurrent = 88 ≈ 90
     //
     // A background peer (10% stake) keeps the bucket saturated so that
     // compute_max_streams applies the stake-proportional quota.
@@ -885,17 +885,17 @@ async fn main() {
 
     // ── Experiment 7: Unsaturated BDP scaling ───────────────────────
     print_header("Experiment 7: Unsaturated BDP scaling");
-    println!("  3 peers, equal stake, RTTs of 50ms/100ms/200ms (all >= REFERENCE_RTT)");
+    println!("  3 peers, equal stake, RTTs of 100ms/150ms/200ms (all >= REFERENCE_RTT)");
     println!("  System NOT saturated — generous quotas, BDP-scaled by RTT");
 
     // When unsaturated: quota = base_max_streams * (rtt / REFERENCE_RTT)
-    //   50ms:  1024 * 1.0 = 1024 concurrent → 1024/0.05 = 20,480/s
-    //   100ms: 1024 * 2.0 = 2048 concurrent → 2048/0.10 = 20,480/s
-    //   200ms: 1024 * 4.0 = 4096 concurrent → 4096/0.20 = 20,480/s
+    //   100ms: 2048 * 1.0 = 2048 concurrent → 2048/0.10 = 20,480/s
+    //   150ms: 2048 * 1.5 = 3072 concurrent → 3072/0.15 = 20,480/s
+    //   200ms: 2048 * 2.0 = 4096 concurrent → 4096/0.20 = 20,480/s
     // All achieve the same throughput: base_max_streams / REFERENCE_RTT.
     let bdp_peers: Vec<(Keypair, Duration)> = vec![
-        (Keypair::new(), Duration::from_millis(50)),
         (Keypair::new(), Duration::from_millis(100)),
+        (Keypair::new(), Duration::from_millis(150)),
         (Keypair::new(), Duration::from_millis(200)),
     ];
 
@@ -966,8 +966,8 @@ async fn main() {
     let baseline7 = results7[0].1 as f64;
     let mut pass7 = true;
     for (rtt, sent) in &results7 {
-        let rtt_scale = (rtt.as_secs_f64() / 0.050_f64).max(1.0);
-        let quota = (1024.0 * rtt_scale) as u32;
+        let rtt_scale = (rtt.as_secs_f64() / 0.100_f64).max(1.0);
+        let quota = (2048.0 * rtt_scale) as u32;
         let tps = *sent as f64 / measure_duration.as_secs_f64();
         let ratio = *sent as f64 / baseline7;
         println!(
