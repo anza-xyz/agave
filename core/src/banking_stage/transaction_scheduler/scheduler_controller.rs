@@ -184,11 +184,13 @@ where
             }
 
             self.receive_completed()?;
-            let (_, clean_time_us) = measure_us!(self.incremental_recheck());
-            self.timing_metrics.update(|timing_metrics| {
-                timing_metrics.clean_time_us += clean_time_us;
-            });
-            self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
+            let scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
+            if scheduled == 0 {
+                let (_, clean_time_us) = measure_us!(self.incremental_recheck());
+                self.timing_metrics.update(|timing_metrics| {
+                    timing_metrics.clean_time_us += clean_time_us;
+                });
+            }
             self.receive_and_buffer_packets(&decision).map_err(|_| {
                 SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
             })?;
@@ -218,8 +220,8 @@ where
         decision: &BufferedPacketsDecision,
         cost_pacer: Option<&CostPacer>,
         now: &Instant,
-    ) -> Result<(), SchedulerError> {
-        match decision {
+    ) -> Result<usize, SchedulerError> {
+        let scheduled = match decision {
             BufferedPacketsDecision::Consume(bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
@@ -249,18 +251,22 @@ where
                     timing_metrics.schedule_time_us += schedule_time_us;
                 });
                 self.scheduling_details.update(&scheduling_summary);
+
+                scheduling_summary.num_scheduled
             }
             BufferedPacketsDecision::Forward => {
                 let (_, clear_time_us) = measure_us!(self.clear_container());
                 self.timing_metrics.update(|timing_metrics| {
                     timing_metrics.clear_time_us += clear_time_us;
                 });
-            }
-            BufferedPacketsDecision::ForwardAndHold => {}
-            BufferedPacketsDecision::Hold => {}
-        }
 
-        Ok(())
+                0
+            }
+            BufferedPacketsDecision::ForwardAndHold => 0,
+            BufferedPacketsDecision::Hold => 0,
+        };
+
+        Ok(scheduled)
     }
 
     fn pre_graph_filter(
