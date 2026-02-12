@@ -253,7 +253,7 @@ mod tests {
         let rollback_accounts = RollbackAccounts::new(
             Some(nonce),
             fee_payer_address,
-            rent_epoch_updated_fee_payer_account.clone(),
+            rent_epoch_updated_fee_payer_account,
             u64::MAX, // ignored
         );
 

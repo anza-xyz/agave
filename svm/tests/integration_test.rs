@@ -1528,9 +1528,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
     let mut initial_nonce_account = AccountSharedData::new_data(
         LAMPORTS_PER_SOL,
-        &nonce::versions::Versions::new(nonce::state::State::Initialized(
-            initial_nonce_data.clone(),
-        )),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
         &system_program::id(),
     )
     .unwrap();
@@ -1538,7 +1536,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
     let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
-    let mut advanced_nonce_info = initial_nonce_info.clone();
+    let mut advanced_nonce_info = initial_nonce_info;
     advanced_nonce_info
         .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
         .unwrap();
@@ -1695,10 +1693,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[
-                successful_noop_instruction.clone(),
-                advance_instruction.clone(),
-            ],
+            &[successful_noop_instruction.clone(), advance_instruction],
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1921,7 +1916,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.push_transaction(first_transaction);
         test_entry.push_nonce_transaction_with_status(
-            second_transaction.clone(),
+            second_transaction,
             nonce_pubkey,
             ExecutionStatus::Discarded,
         );
@@ -1944,7 +1939,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     // * a successful blockhash transaction that changes the nonce authority
     // * a nonce transaction that uses the nonce with the new authority; this transaction succeeds
     if !fee_paying_nonce {
-        let mut test_entry = common_test_entry.clone();
+        let mut test_entry = common_test_entry;
 
         let new_authority_keypair = Keypair::new();
         let new_authority = new_authority_keypair.pubkey();
@@ -1963,7 +1958,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let second_transaction = Transaction::new_signed_with_payer(
             &[
                 system_instruction::advance_nonce_account(&nonce_pubkey, &new_authority),
-                successful_noop_instruction.clone(),
+                successful_noop_instruction,
             ],
             Some(&fee_payer),
             &[&fee_payer_keypair, &new_authority_keypair],
@@ -1971,7 +1966,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         );
 
         test_entry.push_transaction(first_transaction);
-        test_entry.push_nonce_transaction(second_transaction.clone(), nonce_pubkey);
+        test_entry.push_nonce_transaction(second_transaction, nonce_pubkey);
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
@@ -2227,9 +2222,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
             nonce::state::Data::new(dealloc_fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
         let mut initial_nonce_account = AccountSharedData::new_data(
             LAMPORTS_PER_SOL,
-            &nonce::versions::Versions::new(nonce::state::State::Initialized(
-                initial_nonce_data.clone(),
-            )),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
             &system_program::id(),
         )
         .unwrap();
@@ -2237,7 +2230,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
         let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
-        let mut advanced_nonce_info = initial_nonce_info.clone();
+        let mut advanced_nonce_info = initial_nonce_info;
         advanced_nonce_info
             .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
             .unwrap();
@@ -2363,7 +2356,7 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
     // * successful large realloc up
     // * transaction is aborted based on the new transaction data size post-realloc
     {
-        let mut test_entry = common_test_entry.clone();
+        let mut test_entry = common_test_entry;
 
         let new_target_size = target_start_size + MAX_PERMITTED_DATA_INCREASE;
 
@@ -2371,10 +2364,8 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
             .create_transaction(program_id, &fee_payer_keypair, target, None);
         test_entry.push_transaction(realloc_transaction);
 
-        test_entry.push_transaction_with_status(
-            print_transaction.clone(),
-            ExecutionStatus::ProcessedFailed,
-        );
+        test_entry
+            .push_transaction_with_status(print_transaction, ExecutionStatus::ProcessedFailed);
 
         test_entry.update_expected_account_data(target, &mk_target(new_target_size));
 
@@ -2979,7 +2970,7 @@ fn program_cache_stats() {
 
     test_entry.push_transaction_with_status(
         make_transaction(&[
-            failing_transfer_instruction.clone(),
+            failing_transfer_instruction,
             succesful_noop_instruction.clone(),
             succesful_transfer_instruction.clone(),
         ]),
@@ -2992,7 +2983,7 @@ fn program_cache_stats() {
     test_entry.push_transaction_with_status(
         make_transaction(&[
             succesful_noop_instruction.clone(),
-            fee_only_noop_instruction.clone(),
+            fee_only_noop_instruction,
         ]),
         ExecutionStatus::ProcessedFailed,
     );
@@ -3192,9 +3183,7 @@ fn svm_inspect_nonce_load_failure(fee_paying_nonce: bool) {
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
     let mut initial_nonce_account = AccountSharedData::new_data(
         LAMPORTS_PER_SOL,
-        &nonce::versions::Versions::new(nonce::state::State::Initialized(
-            initial_nonce_data.clone(),
-        )),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
         &system_program::id(),
     )
     .unwrap();
@@ -3203,7 +3192,7 @@ fn svm_inspect_nonce_load_failure(fee_paying_nonce: bool) {
     let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
     let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
-    let mut advanced_nonce_info = initial_nonce_info.clone();
+    let mut advanced_nonce_info = initial_nonce_info;
     advanced_nonce_info
         .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
         .unwrap();
@@ -3376,7 +3365,7 @@ fn svm_inspect_account() {
 
     let mut final_test_entry = SvmTestEntry {
         initial_accounts: initial_test_entry.final_accounts.clone(),
-        final_accounts: initial_test_entry.final_accounts.clone(),
+        final_accounts: initial_test_entry.final_accounts,
         ..SvmTestEntry::default()
     };
 

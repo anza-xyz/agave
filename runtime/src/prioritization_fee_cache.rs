@@ -607,9 +607,9 @@ mod tests {
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
         )];
-        sync_update(&prioritization_fee_cache, bank2.clone(), txs.iter());
+        sync_update(&prioritization_fee_cache, bank2, txs.iter());
 
-        let bank3 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 3));
+        let bank3 = Arc::new(Bank::new_from_parent(bank, &collector, 3));
         sync_update(
             &prioritization_fee_cache,
             bank3.clone(),
@@ -919,7 +919,7 @@ mod tests {
                     &Pubkey::new_unique(),
                 ),
             ];
-            sync_update(&prioritization_fee_cache, bank2.clone(), txs.iter());
+            sync_update(&prioritization_fee_cache, bank2, txs.iter());
         }
 
         // Assert after finalize with bank1 of slot 1,

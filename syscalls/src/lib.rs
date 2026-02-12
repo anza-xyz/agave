@@ -4107,7 +4107,8 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
+    #[expect(clippy::redundant_clone)]
     fn test_syscall_get_sysvar() {
         let config = Config::default();
 

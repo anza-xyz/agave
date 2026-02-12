@@ -272,7 +272,7 @@ impl Stakes<StakeAccount> {
             stake_delegations,
             unused: stakes.unused,
             epoch: stakes.epoch,
-            stake_history: stakes.stake_history.clone(),
+            stake_history: stakes.stake_history,
         })
     }
 

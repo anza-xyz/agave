@@ -904,7 +904,7 @@ pub(crate) fn remap_append_vec_file(
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     let append_vec_path_cstr = cstring_from_path(&append_vec_file_info.path)?;
 
-    let mut remapped_append_vec_path = append_vec_file_info.path.to_path_buf();
+    let mut remapped_append_vec_path = append_vec_file_info.path.clone();
 
     // Break out of the loop in the following situations:
     // 1. The new ID is the same as the original ID.  This means we do not need to
