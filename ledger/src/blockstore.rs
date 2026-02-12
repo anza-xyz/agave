@@ -37,7 +37,10 @@ use {
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
-    solana_entry::entry::{create_ticks, Entry, MaxDataShredsLen},
+    solana_entry::{
+        block_component::BlockComponent,
+        entry::{create_ticks, Entry, MaxDataShredsLen},
+    },
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -3523,14 +3526,13 @@ impl Blockstore {
             .map(|x| x.0)
     }
 
-    /// Returns the entry vector for the slot starting with `shred_start_index`, the number of
-    /// shreds that comprise the entry vector, and whether the slot is full (consumed all shreds).
-    pub fn get_slot_entries_with_shred_info(
+    /// Helper function that contains the common logic for getting slot data with shred info
+    fn get_slot_data_with_shred_info_common(
         &self,
         slot: Slot,
         start_index: u64,
         allow_dead_slots: bool,
-    ) -> Result<(Vec<Entry>, u64, bool)> {
+    ) -> Result<(CompletedRanges, SlotMeta, u64)> {
         let (completed_ranges, slot_meta) = self.get_completed_ranges(slot, start_index)?;
 
         // Check if the slot is dead *after* fetching completed ranges to avoid a race
@@ -3540,7 +3542,7 @@ impl Blockstore {
         if self.is_dead(slot) && !allow_dead_slots {
             return Err(BlockstoreError::DeadSlot);
         } else if completed_ranges.is_empty() {
-            return Ok((vec![], 0, false));
+            return Err(BlockstoreError::SlotUnavailable);
         }
 
         let slot_meta = slot_meta.unwrap();
@@ -3549,8 +3551,50 @@ impl Blockstore {
             .map(|&Range { end, .. }| u64::from(end) - start_index)
             .unwrap_or(0);
 
+        Ok((completed_ranges, slot_meta, num_shreds))
+    }
+
+    /// Returns the entry vector for the slot starting with `shred_start_index`, the number of
+    /// shreds that comprise the entry vector, and whether the slot is full (consumed all shreds).
+    pub fn get_slot_entries_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<Entry>, u64, bool)> {
+        let (completed_ranges, slot_meta, num_shreds) =
+            match self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots) {
+                Ok(data) => data,
+                Err(BlockstoreError::SlotUnavailable) => return Ok((vec![], 0, false)),
+                Err(e) => return Err(e),
+            };
+
         let entries = self.get_slot_entries_in_block(slot, completed_ranges, Some(&slot_meta))?;
         Ok((entries, num_shreds, slot_meta.is_full()))
+    }
+
+    /// Returns the components vector for the slot starting with `shred_start_index`, the number of
+    /// shreds that comprise the components vector, and whether the slot is full (consumed all
+    /// shreds).
+    pub fn get_slot_components_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<BlockComponent>, Vec<Range<u32>>, bool)> {
+        let (completed_ranges, slot_meta, _) =
+            match self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots) {
+                Ok(data) => data,
+                Err(BlockstoreError::SlotUnavailable) => return Ok((vec![], vec![], false)),
+                Err(e) => return Err(e),
+            };
+
+        let components =
+            self.get_slot_components_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+
+        debug_assert_eq!(completed_ranges.len(), components.len());
+
+        Ok((components, completed_ranges, slot_meta.is_full()))
     }
 
     /// Gets accounts used in transactions in the slot range [starting_slot, ending_slot].
@@ -3654,6 +3698,103 @@ impl Blockstore {
                 Some(out)
             })
             .collect()
+    }
+
+    /// Helper function to process shreds in `completed_ranges` and apply a transformation
+    /// to the resulting block components.
+    /// This function takes advantage of the fact that `completed_ranges` are both
+    /// contiguous and in sorted order. To clarify, suppose completed_ranges is as follows:
+    ///   completed_ranges = [..., (s_i..e_i), (s_i+1..e_i+1), ...]
+    /// Then, the following statements are true:
+    ///   s_i < e_i == s_i+1 < e_i+1
+    /// Note that one range in CompletedRanges corresponds to one BlockComponent.
+    fn process_slot_data_in_block<T, I, F>(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+        transform: F,
+    ) -> Result<Vec<T>>
+    where
+        I: IntoIterator<Item = T>,
+        F: Fn(BlockComponent) -> Result<I>,
+    {
+        debug_assert!(completed_ranges
+            .iter()
+            .tuple_windows()
+            .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end));
+        let maybe_panic = |index: u64| {
+            if let Some(slot_meta) = slot_meta {
+                if slot > self.lowest_cleanup_slot() {
+                    panic!("Missing shred. slot: {slot}, index: {index}, slot meta: {slot_meta:?}");
+                }
+            }
+        };
+        let Some((&Range { start, .. }, &Range { end, .. })) =
+            completed_ranges.first().zip(completed_ranges.last())
+        else {
+            return Ok(vec![]);
+        };
+        let indices = u64::from(start)..u64::from(end);
+        let keys = indices.clone().map(|index| (slot, index));
+        let keys = self.data_shred_cf.multi_get_keys(keys);
+        let mut shreds =
+            self.data_shred_cf
+                .multi_get_bytes(&keys)
+                .zip(indices)
+                .map(|(shred, index)| {
+                    shred?.ok_or_else(|| {
+                        maybe_panic(index);
+                        BlockstoreError::MissingShred(slot, index)
+                    })
+                });
+        completed_ranges
+            .iter()
+            .map(|Range { start, end }| end - start)
+            .map(|num_shreds| {
+                shreds
+                    .by_ref()
+                    .take(num_shreds as usize)
+                    .process_results(|shreds| Shredder::deshred(shreds))?
+                    .map_err(|e| {
+                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                            format!("could not reconstruct entries buffer from shreds: {e:?}"),
+                        )))
+                    })
+                    .and_then(|payload| {
+                        let component = wincode::deserialize(&payload).map_err(|e| {
+                            BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                                format!("could not reconstruct block component: {e:?}"),
+                            )))
+                        })?;
+
+                        transform(component).map_err(|e| {
+                            BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                                format!("could not transform block component: {e:?}"),
+                            )))
+                        })
+                    })
+            })
+            .flatten_ok()
+            .collect()
+    }
+
+    /// Fetch the components corresponding to all of the shred indices in `completed_ranges`
+    /// This function takes advantage of the fact that `completed_ranges` are both
+    /// contiguous and in sorted order. To clarify, suppose completed_ranges is as follows:
+    ///   completed_ranges = [..., (s_i..e_i), (s_i+1..e_i+1), ...]
+    /// Then, the following statements are true:
+    ///   s_i < e_i == s_i+1 < e_i+1
+    /// Note that one range in CompletedRanges corresponds to one BlockComponent.
+    fn get_slot_components_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<BlockComponent>> {
+        self.process_slot_data_in_block(slot, completed_ranges, slot_meta, |c| {
+            Ok(std::iter::once(c))
+        })
     }
 
     /// Fetch the entries corresponding to all of the shred indices in `completed_ranges`
