@@ -540,7 +540,7 @@ impl EventHandler {
             *my_pubkey = new_pubkey;
             // The vote history file for the new identity must exist for set-identity to succeed
             vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)?;
-            vctx.identity_keypair = new_identity.clone();
+            vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }
         Ok(())
@@ -866,8 +866,8 @@ mod tests {
         let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
-            event_sender.clone(),
-            exit.clone(),
+            event_sender,
+            exit,
             Arc::new(MigrationStatus::default()),
         )));
 
@@ -1290,12 +1290,12 @@ mod tests {
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_2));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
         // Slot 3 somehow links to block 1, should not trigger Notarize vote because it has a wrong parent (not 2)
-        let _ = test_context.create_block_and_send_block_event(3, bank1.clone());
+        let _ = test_context.create_block_and_send_block_event(3, bank1);
         test_context.check_no_vote_or_commitment();
 
         // Slot 4 completed replay without parent ready or parent notarized should not trigger Notarize vote
         let slot = 4;
-        let bank4 = test_context.create_block_and_send_block_event(slot, bank2.clone());
+        let bank4 = test_context.create_block_and_send_block_event(slot, bank2);
         let block_id_4 = bank4.block_id().unwrap();
 
         // Send parent ready for slot 4 should trigger Notarize vote for slot 4
@@ -1329,7 +1329,7 @@ mod tests {
         test_context.send_block_notarized_event((1, block_id_1));
         test_context.check_for_vote(&Vote::new_finalization_vote(1));
 
-        let bank2 = test_context.create_block_and_send_block_event(2, bank1.clone());
+        let bank2 = test_context.create_block_and_send_block_event(2, bank1);
         let block_id_2 = bank2.block_id().unwrap();
         // Both Notarize and Finalize votes should trigger for 2
         test_context.check_for_vote(&Vote::new_notarization_vote(2, block_id_2));
@@ -1339,7 +1339,7 @@ mod tests {
 
         // Create bank3 but do not Notarize, so Finalize vote should not trigger
         let slot = 3;
-        let bank3 = test_context.create_block_only(slot, bank2.clone());
+        let bank3 = test_context.create_block_only(slot, bank2);
         let block_id_3 = bank3.block_id().unwrap();
         // Check no notarization vote for 3
         test_context.check_no_vote_or_commitment();
@@ -1362,7 +1362,7 @@ mod tests {
 
         // Simulate that block 4 never arrives, we create block 4 but send timeout event
         let slot = 4;
-        let bank4 = test_context.create_block_only(slot, bank3.clone());
+        let bank4 = test_context.create_block_only(slot, bank3);
         test_context.send_timeout_event(slot);
         // We did eventually complete replay for 4
         test_context.send_block_event(slot, bank4.clone());
@@ -1375,8 +1375,8 @@ mod tests {
         // Now we get block 5, it's replayed and we get block_notarized, but since 4~7 is a bad
         // window already, we shouldn't have notarize or finalize vote for 5
         let slot = 5;
-        let bank5 = test_context.create_block_only(slot, bank4.clone());
-        test_context.send_block_event(slot, bank5.clone());
+        let bank5 = test_context.create_block_only(slot, bank4);
+        test_context.send_block_event(slot, bank5);
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1545,7 +1545,7 @@ mod tests {
         let bank4 = test_context.create_block_and_send_block_event(4, root_bank);
         let block_id_4 = bank4.block_id().unwrap();
 
-        let bank5 = test_context.create_block_and_send_block_event(5, bank4.clone());
+        let bank5 = test_context.create_block_and_send_block_event(5, bank4);
         let block_id_5 = bank5.block_id().unwrap();
 
         test_context.send_finalized_event((5, block_id_5), true);
@@ -1555,11 +1555,11 @@ mod tests {
 
         // We are partitioned off from rest of the network, and suddenly received finalize for
         // slot 9 a little before we finished replay slot 9
-        let bank9 = test_context.create_block_only(9, bank5.clone());
+        let bank9 = test_context.create_block_only(9, bank5);
         let block_id_9 = bank9.block_id().unwrap();
         test_context.send_finalized_event((9, block_id_9), true);
 
-        test_context.send_block_event(9, bank9.clone());
+        test_context.send_block_event(9, bank9);
 
         // We should now have parent ready for slot 9
         test_context.check_parent_ready_slot((9, (5, block_id_5)));

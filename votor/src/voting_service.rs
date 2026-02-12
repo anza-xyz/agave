@@ -309,7 +309,7 @@ mod tests {
                     "TestAlpenglowConnectionCache",
                     10,
                 )),
-                bank_forks.clone(),
+                bank_forks,
                 Some(VotingServiceOverride {
                     additional_listeners: vec![listener],
                     alpenglow_port_override: AlpenglowPortOverride::default(),
