@@ -3591,9 +3591,7 @@ impl Blockstore {
 
         let components =
             self.get_slot_components_in_block(slot, &completed_ranges, Some(&slot_meta))?;
-
         debug_assert_eq!(completed_ranges.len(), components.len());
-
         Ok((components, completed_ranges, slot_meta.is_full()))
     }
 
