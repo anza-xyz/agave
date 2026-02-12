@@ -2,7 +2,7 @@ use {
     crate::{
         nonblocking::{
             load_tracker_token_bucket::GlobalLoadTrackerTokenBucket,
-            qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
+            qos::{ConnectionContext, OpaqueStreamerCounter, ParkedStreamMode, QosController},
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
@@ -62,6 +62,7 @@ pub struct SwQosConfig {
     pub max_connections_per_staked_peer: usize,
     pub max_connections_per_unstaked_peer: usize,
     pub base_max_streams: u32,
+    pub parked_stream_mode: ParkedStreamMode,
     /// Per-peer RTT overrides for quota calculation (testing only).
     /// When a peer's pubkey is in the map, `compute_max_streams` uses
     /// the mapped duration instead of `connection.rtt()`.
@@ -77,6 +78,7 @@ impl Default for SwQosConfig {
             max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
             base_max_streams: DEFAULT_BASE_MAX_STREAMS,
+            parked_stream_mode: ParkedStreamMode::Park,
             rtt_overrides: HashMap::new(),
         }
     }
@@ -166,6 +168,11 @@ impl SwQos {
     ) -> Option<u32> {
         let rtt = rtt.clamp(MIN_RTT, MAX_RTT);
 
+        // BDP-scaled generous credit: at REFERENCE_RTT → base_max_streams,
+        // scales linearly with RTT, floored at base_max_streams.
+        let rtt_scale = (rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64()).max(1.0);
+        let unsat_max = (self.config.base_max_streams as f64 * rtt_scale) as u32;
+
         if saturated {
             match context.peer_type {
                 ConnectionPeerType::Unstaked => Some(0), // park
@@ -182,14 +189,12 @@ impl SwQos {
                         .map(|c| c.connection_count.load(Ordering::Relaxed))
                         .unwrap_or(1)
                         .max(1) as u32;
-                    Some((quota / num_connections).max(1))
+                    let per_conn = (quota / num_connections).max(1);
+                    Some(per_conn.min(unsat_max.max(1)))
                 }
             }
         } else {
-            // BDP-scaled generous credit: at REFERENCE_RTT → base_max_streams,
-            // scales linearly with RTT, floored at base_max_streams.
-            let rtt_scale = (rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64()).max(1.0);
-            Some((self.config.base_max_streams as f64 * rtt_scale) as u32)
+            Some(unsat_max)
         }
     }
 }
@@ -493,6 +498,14 @@ impl QosController<SwQosConnectionContext> for SwQos {
         async {}
     }
 
+    fn parked_stream_mode(&self, context: &SwQosConnectionContext) -> ParkedStreamMode {
+        if context.peer_type().is_staked() {
+            ParkedStreamMode::Allow
+        } else {
+            self.config.parked_stream_mode
+        }
+    }
+
     fn max_concurrent_connections(&self) -> usize {
         // Allow 25% more connections than required to allow for handshake
         (self.config.max_staked_connections + self.config.max_unstaked_connections) * 5 / 4
@@ -695,5 +708,66 @@ pub mod test {
             swqos.compute_max_streams_for_rtt(&big, rtt, false),
             swqos.compute_max_streams_for_rtt(&small, rtt, false),
         );
+    }
+
+    // ── Hard cap ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_saturated_quota_capped_by_unsaturated_max() {
+        // 100% stake at 50ms RTT: saturated quota = 500K * 0.05 = 25000
+        // but unsaturated max = base_max_streams * 1.0 = 1024
+        // hard cap: min(25000, 1024) = 1024
+        let swqos = make_swqos(SwQosConfig {
+            max_streams_per_ms: 500,
+            base_max_streams: 1024,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000_000, 1_000_000, 1);
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
+            Some(1024),
+        );
+    }
+
+    #[test]
+    fn test_saturated_quota_not_capped_when_below_unsaturated() {
+        // 1% stake at 50ms RTT: saturated quota = 5000 * 0.05 = 250
+        // unsaturated max = 1024 → no cap applied
+        let swqos = make_swqos(SwQosConfig {
+            max_streams_per_ms: 500,
+            base_max_streams: 1024,
+            ..SwQosConfig::default()
+        });
+        let ctx = staked_context(1_000, 100_000, 1);
+        assert_eq!(
+            swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
+            Some(250),
+        );
+    }
+
+    // ── Parked stream mode ───────────────────────────────────────────
+
+    #[test]
+    fn test_parked_stream_mode_staked_returns_allow() {
+        let swqos = make_swqos(SwQosConfig::default());
+        let ctx = staked_context(1_000, 100_000, 1);
+        assert_eq!(swqos.parked_stream_mode(&ctx), ParkedStreamMode::Allow);
+    }
+
+    #[test]
+    fn test_parked_stream_mode_unstaked_returns_config_default() {
+        let swqos = make_swqos(SwQosConfig::default());
+        let ctx = unstaked_context();
+        assert_eq!(swqos.parked_stream_mode(&ctx), ParkedStreamMode::Park);
+    }
+
+    #[test]
+    fn test_parked_stream_mode_unstaked_returns_config_override() {
+        let swqos = make_swqos(SwQosConfig {
+            parked_stream_mode: ParkedStreamMode::Reset,
+            ..SwQosConfig::default()
+        });
+        let ctx = unstaked_context();
+        assert_eq!(swqos.parked_stream_mode(&ctx), ParkedStreamMode::Reset);
     }
 }

@@ -13,6 +13,16 @@ pub(crate) trait ConnectionContext: Clone + Send + Sync {
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey>;
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ParkedStreamMode {
+    /// Park and periodically re-check saturation before accepting more streams.
+    Park,
+    /// Accept streams but immediately stop/reset them.
+    Reset,
+    /// Process streams as usual (subject to whatever credit is already issued).
+    Allow,
+}
+
 /// A trait to manage QoS for connections. This includes
 /// 1) deriving the ConnectionContext for a connection
 /// 2) managing connection caching and connection limits, stream limits
@@ -69,6 +79,11 @@ pub(crate) trait QosController<C: ConnectionContext> {
     ) -> Option<u32> {
         let _ = (context, connection, saturated);
         None
+    }
+
+    /// Behavior for connections that are effectively parked (MAX_STREAMS == 0).
+    fn parked_stream_mode(&self, _context: &C) -> ParkedStreamMode {
+        ParkedStreamMode::Park
     }
 
     /// How many concurrent

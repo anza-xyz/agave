@@ -11,6 +11,10 @@ use std::{
 /// Refills are driven by [`acquire`]: when the level drops below half
 /// capacity, a time-proportional refill is attempted, capped at
 /// `burst_capacity`.
+///
+/// NOTE: This is intentionally not a generic rate limiter. The bucket can go
+/// negative to represent debt after bursts, which keeps the system saturated
+/// longer and helps protect downstream pipeline capacity during slot spikes.
 pub struct GlobalLoadTrackerTokenBucket {
     /// Current token count. Connections decrement; refill increments.
     bucket: AtomicI64,
