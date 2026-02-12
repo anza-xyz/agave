@@ -387,7 +387,7 @@ impl BenchWithdraw {
         let (vote_pubkey, vote_account) = create_test_account();
         let authorized_withdrawer_pubkey = solana_pubkey::new_rand();
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
+            (vote_pubkey, vote_account),
             (sysvar::clock::id(), create_default_clock_account()),
             (sysvar::rent::id(), create_default_rent_account()),
             (authorized_withdrawer_pubkey, AccountSharedData::default()),
@@ -939,8 +939,8 @@ impl BenchCompactUpdateVoteState {
         };
 
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::slot_hashes::id(), slot_hashes_account),
             (sysvar::clock::id(), create_default_clock_account()),
         ];
 
@@ -1002,8 +1002,8 @@ impl BenchTowerSync {
         };
 
         let transaction_accounts = vec![
-            (vote_pubkey, vote_account.clone()),
-            (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
+            (vote_pubkey, vote_account),
+            (sysvar::slot_hashes::id(), slot_hashes_account),
             (sysvar::clock::id(), create_default_clock_account()),
         ];
 

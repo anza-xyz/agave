@@ -991,7 +991,7 @@ mod tests {
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
-            poh_recorder.clone(),
+            poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -1126,7 +1126,7 @@ mod tests {
             transaction_recorder,
             poh_service,
             entry_receiver,
-        ) = create_test_recorder(bank.clone(), blockstore, None, None);
+        ) = create_test_recorder(bank, blockstore, None, None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
@@ -1144,7 +1144,7 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
+            bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
         );
 
@@ -1285,7 +1285,7 @@ mod tests {
             ) = create_test_recorder(bank.clone(), blockstore, None, None);
             let banking_stage = BankingStage::new_num_threads(
                 BlockProductionMethod::CentralScheduler,
-                poh_recorder.clone(),
+                poh_recorder,
                 transaction_recorder,
                 non_vote_receiver,
                 tpu_vote_receiver,
@@ -1438,7 +1438,7 @@ mod tests {
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
-            poh_recorder.clone(),
+            poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,

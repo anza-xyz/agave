@@ -1413,7 +1413,7 @@ pub mod tests {
 
         // Reopen the database which has logic to delete program_costs column
         {
-            let _rocks = Rocks::open(db_path.to_path_buf(), options.clone()).unwrap();
+            let _rocks = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
 
         // The deprecated column should have been dropped by Rocks::open()

@@ -1384,9 +1384,9 @@ mod tests {
         }
 
         // ww conflict in-batch succeeds or fails based on feature
-        let accounts = Accounts::new(accounts_db.clone());
+        let accounts = Accounts::new(accounts_db);
         let results = accounts.lock_accounts(
-            [w_tx.clone(), r_tx.clone()].iter(),
+            [w_tx, r_tx].iter(),
             [Ok(()), Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,

@@ -180,7 +180,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         highest_parent_ready,
         blockstore,
         record_receiver,
-        poh_recorder: poh_recorder.clone(),
+        poh_recorder,
         leader_schedule_cache,
         bank_forks,
         rpc_subscriptions,

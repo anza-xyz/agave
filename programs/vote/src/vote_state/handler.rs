@@ -1836,7 +1836,7 @@ mod tests {
         rent: Rent,
         expected_version: ExpectedVoteStateVersion,
     ) {
-        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent.clone());
+        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
         let mut vote_account = instruction_context
             .try_borrow_instruction_account(0)
@@ -1871,7 +1871,7 @@ mod tests {
         vote_account: AccountSharedData,
         rent: Rent,
     ) {
-        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent.clone());
+        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
         let mut vote_account = instruction_context
             .try_borrow_instruction_account(0)
@@ -2156,7 +2156,7 @@ mod tests {
                 authorized_withdrawer,
                 commission,
                 authorized_voters: AuthorizedVoters::new(0, authorized_voter),
-                votes: votes_deque.clone(),
+                votes: votes_deque,
                 epoch_credits: epoch_credits.clone(),
                 root_slot,
                 ..VoteState1_14_11::default()
@@ -2232,7 +2232,7 @@ mod tests {
                 pending_delegator_rewards: 999,
                 bls_pubkey_compressed: Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
                 authorized_voters: AuthorizedVoters::new(0, authorized_voter),
-                epoch_credits: epoch_credits.clone(),
+                epoch_credits,
                 root_slot,
                 ..VoteStateV4::default()
             };
@@ -2303,7 +2303,7 @@ mod tests {
         let mut vote_account = AccountSharedData::new(lamports, account_size, &id());
         vote_account.set_data_from_slice(&vec![0; account_size]);
 
-        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent.clone());
+        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
         let mut vote_account_borrowed = instruction_context
             .try_borrow_instruction_account(0)
