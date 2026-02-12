@@ -1956,7 +1956,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             add_new_reserved_account_keys::id(),
-            "add new unwritable reserved accounts #34899",
+            "SIMD-0105: Maintain Dynamic Set of Reserved Account Keys",
         ),
         (
             index_erasure_conflict_duplicate_proofs::id(),
