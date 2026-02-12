@@ -12,9 +12,9 @@ use {
     },
     solana_account::{state_traits::StateMut, ReadableAccount},
     solana_accounts_db::{
+        account_storage_entry::AccountStorageEntry,
         accounts_db::{
-            stats::PurgeStats, AccountStorageEntry, AccountsDb, GetUniqueAccountsResult,
-            UpdateIndexThreadSelection,
+            stats::PurgeStats, AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection,
         },
         storable_accounts::StorableAccountsBySlot,
     },
@@ -206,22 +206,12 @@ impl<'a> SnapshotMinimizer<'a> {
         );
         info!("{process_snapshot_storages_measure}");
 
-        // Avoid excessive logging
-        self.accounts_db()
-            .log_dead_slots
-            .store(false, Ordering::Relaxed);
-
         let (_, purge_dead_slots_measure) =
             measure_time!(self.purge_dead_slots(dead_slots), "purge dead slots");
         info!("{purge_dead_slots_measure}");
 
         let (_, drop_storages_measure) = measure_time!(drop(dead_storages), "drop storages");
         info!("{drop_storages_measure}");
-
-        // Turn logging back on after minimization
-        self.accounts_db()
-            .log_dead_slots
-            .store(true, Ordering::Relaxed);
     }
 
     /// Determines minimum set of slots that accounts in `minimized_account_set` are in

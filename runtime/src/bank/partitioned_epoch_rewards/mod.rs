@@ -6,8 +6,8 @@ mod sysvar;
 use {
     super::Bank,
     crate::{
-        inflation_rewards::points::PointValue, stake_account::StakeAccount,
-        stake_history::StakeHistory,
+        inflation_rewards::points::PointValue, reward_info::RewardInfo,
+        stake_account::StakeAccount, stake_history::StakeHistory,
     },
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
@@ -18,7 +18,6 @@ use {
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_reward_info::RewardInfo,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::{mem::MaybeUninit, sync::Arc},
@@ -36,8 +35,9 @@ pub(crate) struct PartitionedStakeReward {
     pub stake: Stake,
     /// Stake reward for recording in the Bank on distribution
     pub stake_reward: u64,
-    /// Vote commission for recording reward info
-    pub commission: u8,
+    /// Reward commission in basis points (0-10,000 representing 0-100%) for
+    /// recording reward info.
+    pub commission_bps: u16,
 }
 
 /// A vector of stake rewards.
@@ -151,45 +151,54 @@ pub(crate) enum EpochRewardPhase {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct VoteRewardsAccounts {
+pub(super) struct RewardCommissionAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
-    /// total lamports across all `vote_rewards`
-    pub(super) total_vote_rewards_lamports: u64,
+    /// total lamports across all `accounts_with_rewards`
+    pub(super) total_reward_commission_lamports: u64,
 }
 
-/// Wrapper struct to implement StorableAccounts for VoteRewardsAccounts
-pub(super) struct VoteRewardsAccountsStorable<'a> {
+/// Wrapper struct to implement StorableAccounts for RewardCommissionAccounts
+pub(super) struct RewardCommissionAccountsStorable<'a> {
     pub slot: Slot,
-    pub vote_rewards_accounts: &'a VoteRewardsAccounts,
+    pub reward_commission_accounts: &'a RewardCommissionAccounts,
 }
 
-impl<'a> StorableAccounts<'a> for VoteRewardsAccountsStorable<'a> {
+impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
     fn account<Ret>(
         &self,
         index: usize,
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
-        let (pubkey, _, account) = &self.vote_rewards_accounts.accounts_with_rewards[index];
+        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
         callback((pubkey, account).into())
     }
 
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
+        callback(pubkey, account)
+    }
+
     fn is_zero_lamport(&self, index: usize) -> bool {
-        self.vote_rewards_accounts.accounts_with_rewards[index]
+        self.reward_commission_accounts.accounts_with_rewards[index]
             .2
             .lamports()
             == 0
     }
 
     fn data_len(&self, index: usize) -> usize {
-        self.vote_rewards_accounts.accounts_with_rewards[index]
+        self.reward_commission_accounts.accounts_with_rewards[index]
             .2
             .data()
             .len()
     }
 
     fn pubkey(&self, index: usize) -> &Pubkey {
-        &self.vote_rewards_accounts.accounts_with_rewards[index].0
+        &self.reward_commission_accounts.accounts_with_rewards[index].0
     }
 
     fn slot(&self, _index: usize) -> Slot {
@@ -201,7 +210,7 @@ impl<'a> StorableAccounts<'a> for VoteRewardsAccountsStorable<'a> {
     }
 
     fn len(&self) -> usize {
-        self.vote_rewards_accounts.accounts_with_rewards.len()
+        self.reward_commission_accounts.accounts_with_rewards.len()
     }
 }
 
@@ -216,7 +225,7 @@ pub(super) struct StakeRewardCalculation {
 
 #[derive(Debug)]
 struct CalculateValidatorRewardsResult {
-    vote_rewards_accounts: VoteRewardsAccounts,
+    reward_commission_accounts: RewardCommissionAccounts,
     stake_reward_calculation: StakeRewardCalculation,
     point_value: PointValue,
 }
@@ -224,7 +233,7 @@ struct CalculateValidatorRewardsResult {
 impl Default for CalculateValidatorRewardsResult {
     fn default() -> Self {
         Self {
-            vote_rewards_accounts: VoteRewardsAccounts::default(),
+            reward_commission_accounts: RewardCommissionAccounts::default(),
             stake_reward_calculation: StakeRewardCalculation::default(),
             point_value: PointValue {
                 points: 0,
@@ -300,11 +309,10 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 #[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
-    pub(super) vote_account_rewards: VoteRewardsAccounts,
+    pub(super) reward_commission_accounts: RewardCommissionAccounts,
     pub(super) stake_rewards: StakeRewardCalculation,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
-    pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
     point_value: PointValue,
 }
@@ -449,7 +457,7 @@ mod tests {
                     stake_pubkey: stake_reward.stake_pubkey,
                     stake,
                     stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                    commission: stake_reward.stake_reward_info.commission.unwrap(),
+                    commission_bps: stake_reward.stake_reward_info.commission_bps.unwrap(),
                 })
             } else {
                 None
@@ -1185,7 +1193,7 @@ mod tests {
             reward_type: RewardType::Voting,
             lamports: 55,
             post_balance: 5555,
-            commission: Some(5),
+            commission_bps: Some(500),
         };
 
         let rewards_and_partitions = KeyedRewardsAndNumPartitions {

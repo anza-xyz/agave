@@ -681,16 +681,42 @@ impl RpcClient {
         &self,
         transaction: &impl SerializableTransaction,
     ) -> ClientResult<Signature> {
+        self.send_and_confirm_transaction_with_config(
+            transaction,
+            self.commitment(),
+            RpcSendTransactionConfig {
+                preflight_commitment: Some(self.commitment().commitment),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await
+    }
+
+    /// Send a transaction and wait for confirmation with custom configuration.
+    ///
+    /// This method is similar to [`send_and_confirm_transaction`] but allows
+    /// specifying both a commitment level and transaction send configuration.
+    ///
+    /// [`send_and_confirm_transaction`]: RpcClient::send_and_confirm_transaction
+    pub async fn send_and_confirm_transaction_with_config(
+        &self,
+        transaction: &impl SerializableTransaction,
+        commitment: CommitmentConfig,
+        config: RpcSendTransactionConfig,
+    ) -> ClientResult<Signature> {
         const SEND_RETRIES: usize = 1;
         const GET_STATUS_RETRIES: usize = usize::MAX;
 
         'sending: for _ in 0..SEND_RETRIES {
             let (latest_blockhash, signature) = self
-                .send_transaction_and_get_latest_blockhash(transaction, None)
+                .send_transaction_and_get_latest_blockhash(transaction, Some(config))
                 .await?;
 
             for status_retry in 0..GET_STATUS_RETRIES {
-                match self.get_signature_status(&signature).await? {
+                match self
+                    .get_signature_status_with_commitment(&signature, commitment)
+                    .await?
+                {
                     Some(Ok(_)) => return Ok(signature),
                     Some(Err(e)) => return Err(e.into()),
                     None => {
@@ -3537,49 +3563,6 @@ impl RpcClient {
             })
     }
 
-    #[deprecated(
-        note = "Use `get_ui_account_with_config()` instead. This function will be removed in a \
-                future version of `solana_rpc_client`."
-    )]
-    pub async fn get_account_with_config(
-        &self,
-        pubkey: &Pubkey,
-        config: RpcAccountInfoConfig,
-    ) -> RpcResult<Option<Account>> {
-        #[allow(deprecated)]
-        let response = self
-            .send(
-                RpcRequest::GetAccountInfo,
-                json!([pubkey.to_string(), config]),
-            )
-            .await;
-
-        response
-            .map(|result_json: Value| {
-                if result_json.is_null() {
-                    return Err(
-                        RpcError::ForUser(format!("AccountNotFound: pubkey={pubkey}")).into(),
-                    );
-                }
-                let Response {
-                    context,
-                    value: rpc_account,
-                } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
-                trace!("Response account {pubkey:?} {rpc_account:?}");
-                let account = rpc_account.and_then(|rpc_account| rpc_account.to_account());
-
-                Ok(Response {
-                    context,
-                    value: account,
-                })
-            })
-            .map_err(|err| {
-                Into::<ClientError>::into(RpcError::ForUser(format!(
-                    "AccountNotFound: pubkey={pubkey}: {err}"
-                )))
-            })?
-    }
-
     /// Returns all information associated with the account of the provided pubkey.
     ///
     /// If the account does not exist, this method returns `Ok(None)`.
@@ -3813,40 +3796,6 @@ impl RpcClient {
                 })
                 .collect(),
         })
-    }
-
-    #[deprecated(
-        note = "Use `get_multiple_ui_accounts_with_config()` instead. This function will be \
-                removed in a future version of `solana_rpc_client`."
-    )]
-    pub async fn get_multiple_accounts_with_config(
-        &self,
-        pubkeys: &[Pubkey],
-        config: RpcAccountInfoConfig,
-    ) -> RpcResult<Vec<Option<Account>>> {
-        #[allow(deprecated)]
-        {
-            let config = RpcAccountInfoConfig {
-                commitment: config.commitment.or_else(|| Some(self.commitment())),
-                ..config
-            };
-            let pubkeys: Vec<_> = pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
-            let response = self
-                .send(RpcRequest::GetMultipleAccounts, json!([pubkeys, config]))
-                .await?;
-            let Response {
-                context,
-                value: accounts,
-            } = serde_json::from_value::<Response<Vec<Option<UiAccount>>>>(response)?;
-            let accounts: Vec<Option<Account>> = accounts
-                .into_iter()
-                .map(|rpc_account| rpc_account.and_then(|a| a.to_account()))
-                .collect();
-            Ok(Response {
-                context,
-                value: accounts,
-            })
-        }
     }
 
     /// Returns the account information for a list of pubkeys.
@@ -4117,34 +4066,6 @@ impl RpcClient {
                 })
                 .collect()
         })
-    }
-
-    #[deprecated(
-        note = "Use `get_program_ui_accounts_with_config()` instead. This function will be \
-                removed in a future version of `solana_rpc_client`."
-    )]
-    pub async fn get_program_accounts_with_config(
-        &self,
-        pubkey: &Pubkey,
-        mut config: RpcProgramAccountsConfig,
-    ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        #[allow(deprecated)]
-        {
-            let commitment = config
-                .account_config
-                .commitment
-                .unwrap_or_else(|| self.commitment());
-            config.account_config.commitment = Some(commitment);
-
-            let accounts = self
-                .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
-                    RpcRequest::GetProgramAccounts,
-                    json!([pubkey.to_string(), config]),
-                )
-                .await?
-                .parse_value();
-            parse_keyed_accounts(accounts, RpcRequest::GetProgramAccounts)
-        }
     }
 
     /// Returns all accounts owned by the provided program pubkey.
@@ -4441,7 +4362,7 @@ impl RpcClient {
         };
 
         self.send(
-            RpcRequest::GetTokenAccountsByOwner,
+            RpcRequest::GetTokenAccountsByDelegate,
             json!([delegate.to_string(), token_account_filter, config]),
         )
         .await
@@ -4898,35 +4819,6 @@ pub(crate) fn get_rpc_request_str(rpc_addr: SocketAddr, tls: bool) -> String {
     }
 }
 
-#[deprecated(
-    note = "Parsing accounts whose data is of type `UiAccountData::Json` will yield `None` when \
-            it should not. Do not use this function."
-)]
-pub(crate) fn parse_keyed_accounts(
-    accounts: Vec<RpcKeyedAccount>,
-    request: RpcRequest,
-) -> ClientResult<Vec<(Pubkey, Account)>> {
-    let mut pubkey_accounts: Vec<(Pubkey, Account)> = Vec::with_capacity(accounts.len());
-    for RpcKeyedAccount { pubkey, account } in accounts.into_iter() {
-        let pubkey = pubkey.parse().map_err(|_| {
-            ClientError::new_with_request(
-                RpcError::ParseError("Pubkey".to_string()).into(),
-                request,
-            )
-        })?;
-        pubkey_accounts.push((
-            pubkey,
-            account.to_account().ok_or_else(|| {
-                ClientError::new_with_request(
-                    RpcError::ParseError("Account from rpc".to_string()).into(),
-                    request,
-                )
-            })?,
-        ));
-    }
-    Ok(pubkey_accounts)
-}
-
 fn pubkey_ui_account_client_result_from_keyed_accounts(
     accounts: Vec<RpcKeyedAccount>,
     request: RpcRequest,
@@ -4964,4 +4856,44 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     mocks.insert(get_account_request, get_account_response);
 
     mocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_token_accounts_by_delegate_uses_correct_rpc_method() {
+        let delegate = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let pubkey = Pubkey::new_unique();
+        let account = mock_encoded_account(&pubkey);
+        let keyed_account = RpcKeyedAccount {
+            pubkey: pubkey.to_string(),
+            account,
+        };
+
+        let get_account_request = RpcRequest::GetTokenAccountsByDelegate;
+        let get_account_response = serde_json::to_value(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None,
+            },
+            value: { [keyed_account.clone()] },
+        })
+        .unwrap();
+
+        let mut mocks = crate::mock_sender::Mocks::default();
+        mocks.insert(get_account_request, get_account_response);
+        let client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
+        let resp = client
+            .get_token_accounts_by_delegate_with_commitment(
+                &delegate,
+                TokenAccountsFilter::Mint(mint),
+                CommitmentConfig::processed(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(&resp.value, &[keyed_account]);
+    }
 }

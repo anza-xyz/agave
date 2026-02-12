@@ -531,10 +531,7 @@ impl SendTransactionService {
 mod test {
     use {
         super::*,
-        crate::{
-            test_utils::{CreateClient, Stoppable},
-            transaction_client::TpuClientNextClient,
-        },
+        crate::test_utils::create_client_for_tests,
         crossbeam_channel::{bounded, unbounded},
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
@@ -547,18 +544,16 @@ mod test {
         tokio::runtime::Handle,
     };
 
+    const GENESIS_LAMPORTS: u64 = 10_000_000_000;
+
     #[tokio::test(flavor = "multi_thread")]
     async fn service_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = unbounded();
 
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
-            "127.0.0.1:0".parse().unwrap(),
-            None,
-            1,
-        );
+        let client =
+            create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
             &bank_forks,
@@ -573,7 +568,7 @@ mod test {
 
         drop(sender);
         send_transaction_service.join().unwrap();
-        client.stop();
+        client.cancel();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -595,12 +590,8 @@ mod test {
         };
 
         let exit = Arc::new(AtomicBool::new(false));
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
-            "127.0.0.1:0".parse().unwrap(),
-            None,
-            1,
-        );
+        let client =
+            create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service = SendTransactionService::new(
             &bank_forks,
             receiver,
@@ -616,7 +607,7 @@ mod test {
 
         thread::spawn(move || {
             exit.store(true, Ordering::Relaxed);
-            client.stop();
+            client.cancel();
         });
 
         let mut option = Ok(());
@@ -629,7 +620,7 @@ mod test {
     async fn process_transactions() {
         agave_logger::setup();
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(GENESIS_LAMPORTS);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
@@ -711,8 +702,8 @@ mod test {
             ),
         );
 
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+        let client = create_client_for_tests(
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,
@@ -905,14 +896,14 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.stop();
+        client.cancel();
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn retry_durable_nonce_transactions() {
         agave_logger::setup();
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(GENESIS_LAMPORTS);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let leader_forward_count = 1;
@@ -1000,8 +991,8 @@ mod test {
             ),
         );
         let stats = SendTransactionServiceStats::default();
-        let client = TpuClientNextClient::create_client(
-            Some(Handle::current()),
+        let client = create_client_for_tests(
+            Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,
@@ -1237,6 +1228,6 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.stop();
+        client.cancel();
     }
 }

@@ -15,14 +15,13 @@ use {
     agave_syscalls::create_program_runtime_environment_v1,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_account::AccountSharedData,
-    solana_bpf_loader_program::create_vm,
     solana_client_traits::SyncClient,
     solana_instruction::{AccountMeta, Instruction},
     solana_measure::measure::Measure,
     solana_message::Message,
     solana_program_entrypoint::SUCCESS,
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+        create_vm, execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
         serialization::serialize_parameters,
     },
     solana_pubkey::Pubkey,
@@ -256,7 +255,6 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .unwrap(),
         stricter_abi_and_runtime_constraints,
         account_data_direct_mapping,
-        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
@@ -292,7 +290,6 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .unwrap(),
         stricter_abi_and_runtime_constraints,
         account_data_direct_mapping,
-        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 

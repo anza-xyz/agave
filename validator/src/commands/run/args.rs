@@ -36,25 +36,6 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
-// Declared out of line to allow use of #[rustfmt::skip]
-#[rustfmt::skip]
-const WEN_RESTART_HELP: &str =
-    "Only used during coordinated cluster restarts.\n\n\
-     Need to also specify the leader's pubkey in --wen-restart-leader.\n\n\
-     When specified, the validator will enter Wen Restart mode which pauses normal activity. \
-     Validators in this mode will gossip their last vote to reach consensus on a safe restart \
-     slot and repair all blocks on the selected fork. The safe slot will be a descendant of the \
-     latest optimistically confirmed slot to ensure we do not roll back any optimistically \
-     confirmed slots.\n\n\
-     The progress in this mode will be saved in the file location provided. If consensus is \
-     reached, the validator will automatically exit with 200 status code. Then the operators are \
-     expected to restart the validator with --wait_for_supermajority and other arguments \
-     (including new shred_version, supermajority slot, and bankhash) given in the error log \
-     before the exit so the cluster will resume execution. The progress file will be kept around \
-     for future debugging.\n\n\
-     If wen_restart fails, refer to the progress file (in proto3 format) for further debugging and \
-     watch the discord channel for instructions.";
-
 pub mod account_secondary_indexes;
 pub mod blockstore_options;
 pub mod json_rpc_config;
@@ -365,18 +346,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(
                 "Specify TVU address to advertise in gossip [default: ask --entrypoint or \
                  localhost when --entrypoint is not provided]",
-            ),
-    )
-    .arg(
-        Arg::with_name("tpu_vortexor_receiver_address")
-            .long("tpu-vortexor-receiver-address")
-            .value_name("HOST:PORT")
-            .takes_value(true)
-            .hidden(hidden_unless_forced())
-            .validator(solana_net_utils::is_host_port)
-            .help(
-                "TPU Vortexor Receiver address to which verified transaction packet will be \
-                 forwarded.",
             ),
     )
     .arg(
@@ -703,14 +672,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "A list of validators to gossip with. If specified, gossip will not push/pull \
                  from from validators outside this set. [default: all validators]",
             ),
-    )
-    .arg(
-        Arg::with_name("tpu_connection_pool_size")
-            .long("tpu-connection-pool-size")
-            .takes_value(true)
-            .default_value(&default_args.tpu_connection_pool_size)
-            .validator(is_parsable::<usize>)
-            .help("Controls the TPU connection pool size per remote address"),
     )
     .arg(
         Arg::with_name("tpu_max_connections_per_ipaddr_per_minute")
@@ -1086,6 +1047,32 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Number of bins to divide the accounts index into"),
     )
     .arg(
+        Arg::with_name("accounts_index_limit")
+            .long("accounts-index-limit")
+            .value_name("VALUE")
+            .takes_value(true)
+            .possible_values(&[
+                "minimal",
+                "25GB",
+                "50GB",
+                "100GB",
+                "200GB",
+                "400GB",
+                "800GB",
+                "unlimited",
+            ])
+            .default_value("unlimited")
+            .help("Sets the memory limit for the accounts index")
+            .long_help(
+                "Sets the memory limit for the accounts index. The size options will limit the \
+                 accounts index memory to the specified value. E.g. \"50GB\" means the accounts \
+                 index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
+                 accounts index in memory. The \"minimal\" option reduces memory usage as much as \
+                 possible. All index entries that are not in memory are kept in the disk-backed \
+                 index. The disk-backed index has lower performance; prefer higher limits here.",
+            ),
+    )
+    .arg(
         Arg::with_name("accounts_index_initial_accounts_count")
             .long("accounts-index-initial-accounts-count")
             .value_name("NUMBER")
@@ -1100,19 +1087,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("PATH")
             .takes_value(true)
             .multiple(true)
-            .requires("enable_accounts_disk_index")
             .help(
                 "Persistent accounts-index location. May be specified multiple times. [default: \
                  <LEDGER>/accounts_index]",
-            ),
-    )
-    .arg(
-        Arg::with_name("enable_accounts_disk_index")
-            .long("enable-accounts-disk-index")
-            .help("Enables the disk-based accounts index")
-            .long_help(
-                "Enables the disk-based accounts index. Reduce the memory footprint of the \
-                 accounts index at the cost of index performance.",
             ),
     )
     .arg(
@@ -1238,30 +1215,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(|s| is_within_range(s, 1..))
             .help(DefaultSchedulerPool::cli_message()),
-    )
-    .arg(
-        Arg::with_name("wen_restart")
-            .long("wen-restart")
-            .hidden(hidden_unless_forced())
-            .value_name("FILE")
-            .takes_value(true)
-            .required(false)
-            .conflicts_with("wait_for_supermajority")
-            .requires("wen_restart_coordinator")
-            .help(WEN_RESTART_HELP),
-    )
-    .arg(
-        Arg::with_name("wen_restart_coordinator")
-            .long("wen-restart-coordinator")
-            .hidden(hidden_unless_forced())
-            .value_name("PUBKEY")
-            .takes_value(true)
-            .required(false)
-            .requires("wen_restart")
-            .help(
-                "Specifies the pubkey of the leader used in wen restart. May get stuck if the \
-                 leader used is different from others.",
-            ),
     )
     .arg(
         Arg::with_name("retransmit_xdp_interface")

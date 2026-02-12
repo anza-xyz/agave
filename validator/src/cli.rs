@@ -34,7 +34,7 @@ use {
         DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
         DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_QUIC_ENDPOINTS,
     },
-    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     std::{cmp::Ordering, path::PathBuf, str::FromStr},
 };
 
@@ -137,6 +137,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         usage_warning: "CUDA support will be dropped"
     );
     add_arg!(
+        // deprecated in v4.0.0
+        Arg::with_name("enable_accounts_disk_index")
+            .long("enable-accounts-disk-index")
+            .help("Enables the disk-based accounts index")
+            .conflicts_with("accounts_index_limit"),
+        replaced_by: "accounts-index-limit",
+    );
+    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("tpu_coalesce_ms")
             .long("tpu-coalesce-ms")
@@ -145,6 +153,15 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .validator(is_parsable::<u64>)
             .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
             usage_warning:"tpu_coalesce will be dropped (currently ignored)",
+    );
+    add_arg!(
+        // deprecated in v4.0.0
+        Arg::with_name("tpu_connection_pool_size")
+            .long("tpu-connection-pool-size")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .help("Controls the TPU connection pool size per remote address"),
+         usage_warning:"This parameter is misleading, avoid setting it",
     );
     add_arg!(
         // deprecated in v3.1.0
@@ -222,7 +239,6 @@ pub struct DefaultArgs {
 
     pub accounts_shrink_optimize_total_space: String,
     pub accounts_shrink_ratio: String,
-    pub tpu_connection_pool_size: String,
 
     pub tpu_max_connections_per_unstaked_peer: String,
     pub tpu_max_connections_per_staked_peer: String,
@@ -238,8 +254,6 @@ pub struct DefaultArgs {
 
     pub banking_trace_dir_byte_limit: String,
     pub block_production_pacing_fill_time_millis: String,
-
-    pub wen_restart_path: String,
 
     pub thread_args: DefaultThreadArgs,
 }
@@ -274,7 +288,6 @@ impl DefaultArgs {
             accounts_shrink_optimize_total_space: DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE
                 .to_string(),
             accounts_shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_RATIO.to_string(),
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE.to_string(),
             tpu_max_connections_per_ipaddr_per_minute:
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE.to_string(),
             vote_use_quic: DEFAULT_VOTE_USE_QUIC.to_string(),
@@ -293,7 +306,6 @@ impl DefaultArgs {
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
-            wen_restart_path: "wen_restart_progress.proto".to_string(),
             thread_args: DefaultThreadArgs::default(),
         }
     }

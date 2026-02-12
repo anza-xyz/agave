@@ -8,7 +8,7 @@ use {
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
-    serde::{de::Deserializer, Deserialize, Serialize},
+    serde::{Deserialize, Serialize, de::Deserializer},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::{self, Pubkey},
@@ -112,13 +112,13 @@ impl Sanitize for CrdsData {
 /// Random timestamp for tests and benchmarks.
 pub(crate) fn new_rand_timestamp<R: Rng>(rng: &mut R) -> u64 {
     const DELAY: u64 = 10 * 60 * 1000; // 10 minutes
-    timestamp() - DELAY + rng.gen_range(0..2 * DELAY)
+    timestamp() - DELAY + rng.random_range(0..2 * DELAY)
 }
 
 impl CrdsData {
     /// New random CrdsData for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> CrdsData {
-        let kind = rng.gen_range(0..8);
+        let kind = rng.random_range(0..8);
         // TODO: Implement other kinds of CrdsData here.
         // TODO: Assign ranges to each arm proportional to their frequency in
         // the mainnet crds table.
@@ -128,13 +128,13 @@ impl CrdsData {
             1 => CrdsData::LowestSlot(0, LowestSlot::new_rand(rng, pubkey)),
             2 => CrdsData::LegacySnapshotHashes(LegacySnapshotHashes::new_rand(rng, pubkey)),
             3 => CrdsData::AccountsHashes(AccountsHashes::new_rand(rng, pubkey)),
-            4 => CrdsData::Vote(rng.gen_range(0..MAX_VOTES), Vote::new_rand(rng, pubkey)),
+            4 => CrdsData::Vote(rng.random_range(0..MAX_VOTES), Vote::new_rand(rng, pubkey)),
             5 => CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
                 rng, pubkey,
             )),
             6 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
             _ => CrdsData::EpochSlots(
-                rng.gen_range(0..MAX_EPOCH_SLOTS),
+                rng.random_range(0..MAX_EPOCH_SLOTS),
                 EpochSlots::new_rand(rng, pubkey),
             ),
         }
@@ -239,9 +239,9 @@ impl Sanitize for AccountsHashes {
 impl AccountsHashes {
     /// New random AccountsHashes for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
-        let num_hashes = rng.gen_range(0..MAX_ACCOUNTS_HASHES) + 1;
+        let num_hashes = rng.random_range(0..MAX_ACCOUNTS_HASHES) + 1;
         let hashes = std::iter::repeat_with(|| {
-            let slot = 47825632 + rng.gen_range(0..512);
+            let slot = 47825632 + rng.random_range(0..512);
             let hash = Hash::new_unique();
             (slot, hash)
         })
@@ -311,8 +311,8 @@ impl LowestSlot {
     fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         Self {
             from: pubkey.unwrap_or_else(solana_pubkey::new_rand),
-            root: rng.gen(),
-            lowest: rng.gen(),
+            root: rng.random(),
+            lowest: rng.random(),
             slots: BTreeSet::default(),
             stash: Vec::default(),
             wallclock: new_rand_timestamp(rng),
@@ -427,7 +427,7 @@ impl<'de> Deserialize<'de> for Vote {
 pub(crate) struct LegacyVersion {
     from: Pubkey,
     wallclock: u64,
-    version: solana_version::LegacyVersion1,
+    version: solana_version::v1::Version,
 }
 reject_deserialize!(LegacyVersion, "LegacyVersion is deprecated");
 
@@ -444,7 +444,7 @@ impl Sanitize for LegacyVersion {
 pub(crate) struct Version {
     from: Pubkey,
     wallclock: u64,
-    version: solana_version::LegacyVersion2,
+    version: solana_version::v2::Version,
 }
 reject_deserialize!(Version, "Version is deprecated");
 
@@ -537,7 +537,7 @@ mod test {
 
     #[test]
     fn test_max_vote_index() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
         let vote = Vote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
         let vote = CrdsValue::new(CrdsData::Vote(OLD_MAX_VOTES, vote), &keypair);
@@ -546,7 +546,7 @@ mod test {
 
     #[test]
     fn test_vote_round_trip() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let vote = vote_state::Vote::new(
             vec![1, 3, 7], // slots
             Hash::new_unique(),
@@ -563,7 +563,7 @@ mod test {
         let vote = Vote::new(
             Pubkey::new_unique(), // from
             tx,
-            rng.gen(), // wallclock
+            rng.random(), // wallclock
         )
         .unwrap();
         assert_eq!(vote.slot, Some(7));
@@ -612,7 +612,7 @@ mod test {
             commit: Option<u32>,
         }
 
-        let legacy_v1: solana_version::LegacyVersion1 = {
+        let legacy_v1: solana_version::v1::Version = {
             let bytes = bincode::serialize(&LegacyVersion1Mirror {
                 major: 0,
                 minor: 0,
@@ -636,7 +636,7 @@ mod test {
         let version = CrdsData::Version(Version {
             from: keypair.pubkey(),
             wallclock: timestamp(),
-            version: solana_version::LegacyVersion2::default(),
+            version: solana_version::v2::Version::default(),
         });
         let bytes = bincode::serialize(&version).unwrap();
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
@@ -647,7 +647,7 @@ mod test {
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
 
         // AccountsHashes
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let accounts_hashes =
             CrdsData::AccountsHashes(AccountsHashes::new_rand(&mut rng, Some(keypair.pubkey())));
         let bytes = bincode::serialize(&accounts_hashes).unwrap();

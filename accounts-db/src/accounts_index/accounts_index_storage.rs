@@ -53,7 +53,6 @@ impl BgThreads {
         storage: &Arc<BucketMapHolder<T, U>>,
         in_mem: &[Arc<InMemAccountsIndex<T, U>>],
         threads: NonZeroUsize,
-        can_advance_age: bool,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let is_disk_index_enabled = storage.is_disk_index_enabled();
@@ -70,7 +69,7 @@ impl BgThreads {
             (0..num_threads)
                 .map(|idx| {
                     // the first thread we start is special
-                    let can_advance_age = can_advance_age && idx == 0;
+                    let can_advance_age = idx == 0;
                     let storage_ = Arc::clone(storage);
                     let local_exit = local_exit.clone();
                     let system_exit = exit.clone();
@@ -108,15 +107,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
         self.storage.set_startup(is_startup);
     }
 
-    /// estimate how many items are still needing to be flushed to the disk cache.
-    pub fn get_startup_remaining_items_to_flush_estimate(&self) -> usize {
-        self.storage
-            .disk
-            .as_ref()
-            .map(|_| self.storage.stats.get_remaining_items_to_flush_estimate())
-            .unwrap_or_default()
-    }
-
     /// allocate BucketMapHolder and InMemAccountsIndex[]
     pub fn new(bins: usize, config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
         let num_flush_threads = config
@@ -131,7 +121,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
             .collect();
 
         Self {
-            _bg_threads: BgThreads::new(&storage, &in_mem, num_flush_threads, true, exit),
+            _bg_threads: BgThreads::new(&storage, &in_mem, num_flush_threads, exit),
             storage,
             in_mem,
         }

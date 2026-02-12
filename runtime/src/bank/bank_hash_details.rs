@@ -15,7 +15,7 @@ use {
     solana_message::inner_instruction::InnerInstructionsList,
     solana_pubkey::Pubkey,
     solana_svm::transaction_commit_result::CommittedTransaction,
-    solana_transaction_context::TransactionReturnData,
+    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionResult,
     solana_transaction_status_client_types::UiInstruction,
     std::str::FromStr,
@@ -249,7 +249,7 @@ pub fn write_bank_hash_details_file(bank: &Bank) -> std::result::Result<(), Stri
         .rc
         .accounts
         .accounts_db
-        .get_base_working_path()
+        .bank_hash_details_dir()
         .join("bank_hash_details");
     let path = parent_dir.join(details.filename()?);
     // A file with the same name implies the same hash for this slot. Skip

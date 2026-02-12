@@ -292,7 +292,9 @@ impl SigVerifyStage {
         verifier: &mut T,
         stats: &mut SigVerifierStats,
     ) -> Result<(), T::SendType> {
-        let (mut batches, num_packets, recv_duration) = streamer::recv_packet_batches(recvr)?;
+        const SOFT_RECEIVE_CAP: usize = 5_000;
+        let (mut batches, num_packets, recv_duration) =
+            streamer::recv_packet_batches(recvr, SOFT_RECEIVE_CAP)?;
 
         let batches_len = batches.len();
         debug!(
@@ -395,7 +397,7 @@ impl SigVerifyStage {
         Builder::new()
             .name(thread_name.to_string())
             .spawn(move || {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
                 loop {
                     if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, MAX_DEDUPER_AGE) {

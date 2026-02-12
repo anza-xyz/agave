@@ -2,107 +2,87 @@
 
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
-    agave_precompiles::{get_precompile, is_precompile},
     agave_syscalls::create_program_runtime_environment_v1,
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, WritableAccount},
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
-    solana_precompile_error::PrecompileError,
+    solana_message::{LegacyMessage, Message, SanitizedMessage},
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
-    solana_rent::Rent,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction_context::{
-        instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
-        IndexOfAccount, TransactionContext,
-    },
-    std::{rc::Rc, sync::Arc},
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
+    solana_transaction_context::transaction::TransactionContext,
+    std::{collections::HashSet, rc::Rc, sync::Arc},
 };
 
-/// Implement the callback trait so that the SVM API can be used to load
-/// program ELFs from accounts (ie. `load_program_with_pubkey`).
-struct InstrContextCallback<'a>(&'a InstrContext);
+/// Default callback with no precompile support.
+struct DefaultCallback;
 
-impl InvokeContextCallback for InstrContextCallback<'_> {
-    fn is_precompile(&self, program_id: &Pubkey) -> bool {
-        is_precompile(program_id, |feature_id: &Pubkey| {
-            self.0.feature_set.is_active(feature_id)
-        })
-    }
+impl InvokeContextCallback for DefaultCallback {}
 
-    fn process_precompile(
-        &self,
-        program_id: &Pubkey,
-        data: &[u8],
-        instruction_datas: Vec<&[u8]>,
-    ) -> std::result::Result<(), PrecompileError> {
-        if let Some(precompile) = get_precompile(program_id, |feature_id: &Pubkey| {
-            self.0.feature_set.is_active(feature_id)
-        }) {
-            precompile.verify(data, &instruction_datas, &self.0.feature_set)
-        } else {
-            Err(PrecompileError::InvalidPublicKey)
-        }
-    }
-}
-
-fn compile_accounts<'a>(
-    input: &'a InstrContext,
-    compute_budget: &ComputeBudget,
-    rent: Rent,
+fn compile_message(
+    instruction: &Instruction,
+    accounts: &[(Pubkey, solana_account::Account)],
+    program_id: &Pubkey,
     loader_key: &Pubkey,
-) -> (Vec<InstructionAccount>, TransactionContext<'a>) {
-    let mut transaction_accounts: Vec<KeyedAccountSharedData> = input
-        .accounts
+) -> Option<(SanitizedMessage, Vec<(Pubkey, AccountSharedData)>)> {
+    let message = Message::new(std::slice::from_ref(instruction), None);
+    let transaction_accounts: Vec<_> = message
+        .account_keys
         .iter()
-        .map(|(pubkey, account)| (*pubkey, AccountSharedData::from(account.clone())))
-        .collect();
-
-    // Add default account for the program being invoked if not already present.
-    if !transaction_accounts
-        .iter()
-        .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
-    {
-        transaction_accounts.push((
-            input.instruction.program_id,
-            AccountSharedData::new(0, 0, loader_key),
-        ));
-    }
-
-    let transaction_context = TransactionContext::new(
-        transaction_accounts.clone(),
-        rent,
-        compute_budget.max_instruction_stack_depth,
-        compute_budget.max_instruction_trace_length,
-    );
-
-    let num_transaction_accounts = transaction_context.get_number_of_accounts();
-
-    let instruction_accounts = input
-        .instruction
-        .accounts
-        .iter()
-        .map(|meta| {
-            let index_in_transaction = transaction_context
-                .find_index_of_account(&meta.pubkey)
-                .unwrap_or(num_transaction_accounts)
-                as IndexOfAccount;
-            InstructionAccount::new(index_in_transaction, meta.is_signer, meta.is_writable)
+        .map(|key| {
+            let account = accounts
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, a)| AccountSharedData::from(a.clone()))
+                .unwrap_or_else(|| {
+                    if key == program_id {
+                        let mut account = AccountSharedData::new(0, 0, loader_key);
+                        account.set_executable(true);
+                        account
+                    } else {
+                        AccountSharedData::default()
+                    }
+                });
+            (*key, account)
         })
         .collect();
 
-    (instruction_accounts, transaction_context)
+    let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
+
+    Some((sanitized_message, transaction_accounts))
 }
 
 /// Execute a single instruction against the Solana VM.
+///
+/// This version does not support precompiles. Use [`execute_instr_with_callback`]
+/// if you need precompile support.
 pub fn execute_instr(
     input: InstrContext,
+    compute_budget: &ComputeBudget,
+    program_cache: &mut ProgramCacheForTxBatch,
+    sysvar_cache: &SysvarCache,
+) -> Option<InstrEffects> {
+    execute_instr_with_callback(
+        &input,
+        &DefaultCallback,
+        compute_budget,
+        program_cache,
+        sysvar_cache,
+    )
+}
+
+/// Execute a single instruction against the Solana VM with a custom callback.
+pub fn execute_instr_with_callback<C: InvokeContextCallback>(
+    input: &InstrContext,
+    callback: &C,
     compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
@@ -111,20 +91,27 @@ pub fn execute_instr(
     let mut timings = ExecuteTimings::default();
 
     let log_collector = LogCollector::new_ref();
-    let runtime_features = input.feature_set.runtime_features();
+    let feature_set = input.feature_set;
 
     let rent = sysvar_cache.get_rent().unwrap();
-    let loader_key = program_cache
-        .find(&input.instruction.program_id)?
-        .account_owner();
+    let program_id = &input.instruction.program_id;
+    let loader_key = program_cache.find(program_id)?.account_owner();
 
-    let (instruction_accounts, mut transaction_context) =
-        compile_accounts(&input, compute_budget, (*rent).clone(), &loader_key);
+    let (sanitized_message, transaction_accounts) =
+        compile_message(&input.instruction, &input.accounts, program_id, &loader_key)?;
+
+    let mut transaction_context = TransactionContext::new(
+        transaction_accounts,
+        (*rent).clone(),
+        compute_budget.max_instruction_stack_depth,
+        compute_budget.max_instruction_trace_length,
+        sanitized_message.num_instructions(),
+    );
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
             create_program_runtime_environment_v1(
-                &input.feature_set.runtime_features(),
+                &input.feature_set,
                 &compute_budget.to_budget(),
                 false, /* deployment */
                 false, /* debugging_features */
@@ -134,7 +121,6 @@ pub fn execute_instr(
         ..ProgramRuntimeEnvironments::default()
     };
 
-    let instruction_data = input.instruction.data.iter().copied().collect::<Vec<_>>();
     let result = {
         #[allow(deprecated)]
         let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
@@ -144,19 +130,14 @@ pub fn execute_instr(
             .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
             .unwrap_or_default();
 
-        let callback = InstrContextCallback(&input);
-
-        let program_idx =
-            transaction_context.find_index_of_account(&input.instruction.program_id)?;
-
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             EnvironmentConfig::new(
                 blockhash,
                 blockhash_lamports_per_signature,
-                &callback,
-                &runtime_features,
+                callback,
+                &feature_set,
                 &environments,
                 &environments,
                 sysvar_cache,
@@ -166,20 +147,24 @@ pub fn execute_instr(
             compute_budget.to_cost(),
         );
 
+        let compiled_ix = sanitized_message.instructions().first()?;
+        let svm_instruction = SVMInstruction::from(compiled_ix);
+        let program_account_index = compiled_ix.program_id_index as u16;
+
         invoke_context
-            .transaction_context
-            .configure_next_instruction_for_tests(
-                program_idx,
-                instruction_accounts,
-                input.instruction.data.to_vec(),
+            .prepare_next_top_level_instruction(
+                &sanitized_message,
+                &svm_instruction,
+                program_account_index,
+                svm_instruction.data,
             )
-            .unwrap();
+            .ok()?;
 
         if invoke_context.is_precompile(&input.instruction.program_id) {
             invoke_context.process_precompile(
                 &input.instruction.program_id,
                 &input.instruction.data,
-                [instruction_data.as_slice()].into_iter(),
+                [input.instruction.data.as_slice()].into_iter(),
             )
         } else {
             invoke_context.process_instruction(&mut compute_units_consumed, &mut timings)
@@ -207,16 +192,12 @@ pub fn execute_instr(
 
     Some(InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
-            if get_precompile(&input.instruction.program_id, |_| true).is_some() {
-                Some(0)
-            } else {
-                Some(code)
-            }
+            Some(code)
         } else {
             None
         },
         result: result.err(),
-        modified_accounts: transaction_context
+        resulting_accounts: transaction_context
             .deconstruct_without_keys()
             .unwrap()
             .into_iter()
@@ -232,10 +213,41 @@ pub fn execute_instr(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, agave_feature_set::FeatureSet, solana_account::Account,
-        solana_instruction::AccountMeta, solana_pubkey::Pubkey,
-        solana_stable_layout::stable_instruction::StableInstruction, solana_sysvar_id::SysvarId,
+        super::*, solana_account::Account, solana_instruction::AccountMeta, solana_pubkey::Pubkey,
+        solana_svm_feature_set::SVMFeatureSet, solana_sysvar_id::SysvarId,
     };
+
+    #[test]
+    fn test_compile_message() {
+        let program_id = Pubkey::new_from_array([1u8; 32]);
+        let writable = Pubkey::new_from_array([2u8; 32]);
+        let loader_key = Pubkey::new_from_array([3u8; 32]);
+
+        let instruction = Instruction {
+            program_id,
+            accounts: vec![AccountMeta::new(writable, false)],
+            data: vec![1, 2, 3],
+        };
+
+        let accounts = vec![(
+            writable,
+            Account {
+                lamports: 100,
+                ..Account::default()
+            },
+        )];
+
+        let (message, tx_accounts) =
+            compile_message(&instruction, &accounts, &program_id, &loader_key).unwrap();
+
+        assert_eq!(message.instructions().len(), 1);
+        assert_eq!(tx_accounts.len(), 2);
+        assert_eq!(tx_accounts[0].0, writable);
+        assert_eq!(tx_accounts[1].0, program_id);
+
+        // Verify the writable account is NOT promoted to signer.
+        assert!(!message.is_signer(0));
+    }
 
     #[test]
     fn test_system_program_exec() {
@@ -248,7 +260,7 @@ mod tests {
 
         let cu_avail = 10000u64;
         let slot = 10;
-        let feature_set = FeatureSet::default();
+        let feature_set = SVMFeatureSet::default();
 
         // Create Clock sysvar
         let clock = solana_clock::Clock {
@@ -263,7 +275,7 @@ mod tests {
 
         // Build the instruction context.
         let context = InstrContext {
-            feature_set: feature_set.clone(),
+            feature_set,
             accounts: vec![
                 (
                     from_pubkey,
@@ -316,7 +328,7 @@ mod tests {
                     },
                 ),
             ],
-            instruction: StableInstruction {
+            instruction: Instruction {
                 program_id: system_program_id,
                 accounts: vec![
                     AccountMeta {
@@ -329,14 +341,12 @@ mod tests {
                         is_signer: false,
                         is_writable: true,
                     },
-                ]
-                .into(),
+                ],
                 data: vec![
                     // Transfer
                     0x02, 0x00, 0x00, 0x00, // Lamports
                     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                ]
-                .into(),
+                ],
             },
         };
 
@@ -352,12 +362,12 @@ mod tests {
         crate::sysvar_cache::fill_from_accounts(&mut sysvar_cache, &context.accounts);
 
         // Create Program Cache
-        let mut program_cache = crate::program_cache::new_with_builtins(&feature_set, slot);
+        let mut program_cache = crate::program_cache::new_with_builtins(slot);
 
         let environments = ProgramRuntimeEnvironments {
             program_runtime_v1: Arc::new(
                 create_program_runtime_environment_v1(
-                    &feature_set.runtime_features(),
+                    &context.feature_set,
                     &compute_budget.to_budget(),
                     false, /* deployment */
                     false, /* debugging_features */
@@ -387,14 +397,14 @@ mod tests {
 
         // Verify account changes.
         let from_account = effects
-            .modified_accounts
+            .resulting_accounts
             .iter()
             .find(|(k, _)| k == &from_pubkey)
             .unwrap();
         assert_eq!(from_account.1.lamports, 999);
 
         let to_account = effects
-            .modified_accounts
+            .resulting_accounts
             .iter()
             .find(|(k, _)| k == &to_pubkey)
             .unwrap();

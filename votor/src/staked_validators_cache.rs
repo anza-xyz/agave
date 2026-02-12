@@ -1,10 +1,7 @@
-#![allow(dead_code)]
-
 use {
     crate::voting_service::AlpenglowPortOverride,
     lru::LruCache,
     solana_clock::{Epoch, Slot},
-    solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
@@ -41,9 +38,6 @@ pub struct StakedValidatorsCache {
     /// Bank forks
     bank_forks: Arc<RwLock<BankForks>>,
 
-    // Cache Epoch schedule since it never changes
-    epoch_schedule: EpochSchedule,
-
     /// Whether to include the running validator's socket address in cache entries
     include_self: bool,
 
@@ -62,17 +56,10 @@ impl StakedValidatorsCache {
         include_self: bool,
         alpenglow_port_override: Option<AlpenglowPortOverride>,
     ) -> Self {
-        let epoch_schedule = bank_forks
-            .read()
-            .unwrap()
-            .working_bank()
-            .epoch_schedule()
-            .clone();
         Self {
             cache: LruCache::new(max_cache_size),
             ttl,
             bank_forks,
-            epoch_schedule,
             include_self,
             alpenglow_port_override,
             alpenglow_port_override_last_modified: Instant::now(),
@@ -81,7 +68,12 @@ impl StakedValidatorsCache {
 
     #[inline]
     fn cur_epoch(&self, slot: Slot) -> Epoch {
-        self.epoch_schedule.get_epoch(slot)
+        self.bank_forks
+            .read()
+            .unwrap()
+            .working_bank()
+            .epoch_schedule()
+            .get_epoch(slot)
     }
 
     fn refresh_cache_entry(
@@ -132,7 +124,7 @@ impl StakedValidatorsCache {
             .collect();
 
         nodes.dedup_by_key(|node| node.alpenglow_socket);
-        nodes.sort_unstable_by(|a, b| a.stake.cmp(&b.stake));
+        nodes.sort_unstable_by_key(|a| a.stake);
 
         let mut alpenglow_sockets = Vec::with_capacity(nodes.len());
         let override_map = self
@@ -167,7 +159,6 @@ impl StakedValidatorsCache {
         cluster_info: &ClusterInfo,
         access_time: Instant,
     ) -> (&[SocketAddr], bool) {
-        let epoch = self.cur_epoch(slot);
         // Check if self.alpenglow_port_override has a different last_modified.
         // Immediately refresh the cache if it does.
         if let Some(alpenglow_port_override) = &self.alpenglow_port_override {
@@ -176,14 +167,15 @@ impl StakedValidatorsCache {
                 self.alpenglow_port_override_last_modified =
                     alpenglow_port_override.last_modified();
                 trace!(
-                    "refreshing cache entry for epoch {epoch} due to alpenglow port override \
-                     last_modified change"
+                    "refreshing cache entry for epoch {} due to alpenglow port override \
+                     last_modified change",
+                    self.cur_epoch(slot)
                 );
-                self.refresh_cache_entry(epoch, cluster_info, access_time);
+                self.refresh_cache_entry(self.cur_epoch(slot), cluster_info, access_time);
             }
         }
 
-        self.get_staked_validators_by_epoch(epoch, cluster_info, access_time)
+        self.get_staked_validators_by_epoch(self.cur_epoch(slot), cluster_info, access_time)
     }
 
     fn get_staked_validators_by_epoch(
@@ -273,12 +265,12 @@ mod tests {
                 .map(|(node_ix, pubkey)| {
                     let mut contact_info = ContactInfo::new(*pubkey, 0_u64, 0_u16);
 
-                    contact_info
+                    assert!(contact_info
                         .set_alpenglow((
                             Ipv4Addr::LOCALHOST,
-                            8080_u16.saturating_add(node_ix as u16),
+                            8080_u16.saturating_add(node_ix as u16)
                         ))
-                        .unwrap();
+                        .is_ok());
 
                     contact_info
                 });

@@ -605,12 +605,13 @@ impl BankingStage {
         macro_rules! spawn_scheduler {
             ($scheduler:ident) => {
                 let exit = exit.clone();
+                let shutdown_signal = self.banking_shutdown_signal.clone();
                 let bank_forks = self.bank_forks.clone();
                 threads.push(
                     Builder::new()
                         .name("solBnkTxSched".to_string())
                         .spawn(move || {
-                            let scheduler_controller = SchedulerController::new(
+                            let mut scheduler_controller = SchedulerController::new(
                                 exit,
                                 scheduler_config,
                                 decision_maker,
@@ -621,8 +622,17 @@ impl BankingStage {
                             );
 
                             match scheduler_controller.run() {
-                                Ok(_) => {}
-                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
+                                Ok(_) => info!("Scheduler exiting without error"),
+                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {
+                                    info!("Upstream disconnected, shutting down banking");
+
+                                    // NB: We must signal shutdown before dropping the scheduler
+                                    //     controller, else, the workers may exit with an error and
+                                    //     trigger a new spawn before we have a chance to issue the
+                                    //     cancel.
+                                    shutdown_signal.cancel();
+                                    drop(scheduler_controller);
+                                }
                                 Err(SchedulerError::DisconnectedSendChannel(_)) => {
                                     warn!("Unexpected worker disconnect from scheduler")
                                 }
@@ -684,12 +694,14 @@ impl BankingStage {
         let decision_maker = DecisionMaker::from(self.poh_recorder.read().unwrap().deref());
 
         let worker_exit_signal = self.worker_exit_signal.clone();
+        let shutdown_signal = self.banking_shutdown_signal.clone();
         let bank_forks = self.bank_forks.clone();
         Builder::new()
             .name("solBanknStgVote".to_string())
             .spawn(move || {
                 VoteWorker::new(
                     worker_exit_signal,
+                    shutdown_signal,
                     decision_maker,
                     tpu_receiver,
                     gossip_receiver,
@@ -720,10 +732,7 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::{
-            logon_flags,
-            server::{AgaveSession, AgaveWorkerSession},
-        },
+        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -731,7 +740,7 @@ mod external {
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
-                flags,
+                flags: _,
                 tpu_to_pack,
                 progress_tracker,
                 workers,
@@ -748,25 +757,8 @@ mod external {
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
-            // Potentially spawn vote worker.
-            let mut threads = Vec::with_capacity(workers.len() + 3);
-            let tpu_to_pack_receivers = if flags & logon_flags::REROUTE_VOTES != 0 {
-                BankingPacketReceivers {
-                    non_vote_receiver: self.non_vote_receiver.clone(),
-                    gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
-                    tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
-                }
-            } else {
-                threads.push(self.spawn_vote_worker());
-
-                BankingPacketReceivers {
-                    non_vote_receiver: self.non_vote_receiver.clone(),
-                    gossip_vote_receiver: None,
-                    tpu_vote_receiver: None,
-                }
-            };
-
             // Spawn the external consumer workers.
+            let mut threads = Vec::with_capacity(workers.len() + 2);
             let mut worker_metrics = Vec::with_capacity(workers.len());
             for (
                 index,
@@ -807,8 +799,14 @@ mod external {
             }
 
             // Spawn tpu to pack.
+            let tpu_to_pack_receivers = BankingPacketReceivers {
+                non_vote_receiver: self.non_vote_receiver.clone(),
+                gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
+                tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
+            };
             threads.push(tpu_to_pack::spawn(
                 self.worker_exit_signal.clone(),
+                self.banking_shutdown_signal.clone(),
                 tpu_to_pack_receivers,
                 tpu_to_pack,
             ));

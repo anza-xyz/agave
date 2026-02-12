@@ -1398,7 +1398,7 @@ fn process_instruction<'a>(
                 )
             };
 
-            #[cfg(not(target_feature = "dynamic-frames"))]
+            #[cfg(all(not(target_feature = "dynamic-frames"), not(feature = "sbpf-v3")))]
             // We don't know in which frame we are now, so we skip a few (10) frames at the start
             // which might have been used by the current call stack. We check that the memory for
             // the 10..MAX_CALL_DEPTH frames is zeroed. Then we write a sentinel value, and in the
@@ -1412,7 +1412,17 @@ fn process_instruction<'a>(
                 stack.fill(42);
             }
 
-            #[cfg(target_feature = "dynamic-frames")]
+            #[cfg(feature = "sbpf-v3")]
+            // In sbpfv3, we don't have stack gaps nor dynamic frames, so this code is similar
+            // to the one above, but we can't index from `i * STACK_FRAME_SIZE * 2`. Instead,
+            // we do `i * STACK_FRAME_SIZE`.
+            for i in 10..MAX_CALL_DEPTH {
+                let stack = &mut stack[i * STACK_FRAME_SIZE..(i + 1) * STACK_FRAME_SIZE];
+                assert!(stack == &ZEROS[..STACK_FRAME_SIZE], "stack not zeroed");
+                stack.fill(42);
+            }
+
+            #[cfg(all(target_feature = "dynamic-frames", feature = "sbpf-v3"))]
             // When we have dynamic frames, the stack grows from the higher addresses, so we
             // compare from zero until the beginning of a function frame.
             unsafe {

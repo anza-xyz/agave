@@ -1,59 +1,33 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
-    cfg_if::cfg_if,
     solana_bincode::limited_deserialize,
-    solana_clock::Slot,
-    solana_instruction::{error::InstructionError, AccountMeta},
+    solana_instruction::{AccountMeta, error::InstructionError},
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
-    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
-        execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
-        invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
-        loaded_programs::{
-            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, DELAY_VISIBILITY_SLOT_OFFSET,
-        },
-        mem_pool::VmMemoryPool,
-        serialization, stable_log,
+        deploy_program,
+        invoke_context::InvokeContext,
+        loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
         sysvar_cache::get_sysvar_with_account_check,
+        vm::execute,
     },
     solana_pubkey::Pubkey,
-    solana_sbpf::{
-        declare_builtin_function,
-        ebpf::{self, MM_HEAP_START},
-        elf::{ElfError, Executable},
-        error::{EbpfError, ProgramResult},
-        memory_region::{AccessType, MemoryMapping, MemoryRegion},
-        program::BuiltinProgram,
-        verifier::RequisiteVerifier,
-        vm::{ContextObject, EbpfVm},
-    },
+    solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_svm_log_collector::{ic_logger_msg, ic_msg, LogCollector},
+    solana_svm_log_collector::{LogCollector, ic_logger_msg, ic_msg},
     solana_svm_measure::measure::Measure,
-    solana_svm_type_overrides::sync::{atomic::Ordering, Arc},
-    solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
-    solana_transaction_context::{
-        instruction::InstructionContext, IndexOfAccount, TransactionContext,
-    },
-    std::{cell::RefCell, mem, rc::Rc},
+    solana_svm_type_overrides::sync::Arc,
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, instruction as system_instruction},
+    solana_transaction_context::{IndexOfAccount, instruction::InstructionContext},
+    std::{cell::RefCell, rc::Rc},
 };
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
@@ -62,162 +36,6 @@ const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
 const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
-
-thread_local! {
-    pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
-}
-
-fn morph_into_deployment_environment_v1<'a>(
-    from: Arc<BuiltinProgram<InvokeContext<'a, 'a>>>,
-) -> Result<BuiltinProgram<InvokeContext<'a, 'a>>, ElfError> {
-    let mut config = from.get_config().clone();
-    config.reject_broken_elfs = true;
-    // Once the tests are being build using a toolchain which supports the newer SBPF versions,
-    // the deployment of older versions will be disabled:
-    // config.enabled_sbpf_versions =
-    //     *config.enabled_sbpf_versions.end()..=*config.enabled_sbpf_versions.end();
-
-    let mut result = BuiltinProgram::new_loader(config);
-
-    for (_key, (name, value)) in from.get_function_registry().iter() {
-        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
-        if name != *b"sol_alloc_free_" {
-            result.register_function(unsafe { std::str::from_utf8_unchecked(name) }, value)?;
-        }
-    }
-
-    Ok(result)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn load_program_from_bytes(
-    log_collector: Option<Rc<RefCell<LogCollector>>>,
-    load_program_metrics: &mut LoadProgramMetrics,
-    programdata: &[u8],
-    loader_key: &Pubkey,
-    account_size: usize,
-    deployment_slot: Slot,
-    program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
-    reloading: bool,
-) -> Result<ProgramCacheEntry, InstructionError> {
-    let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
-    let loaded_program = if reloading {
-        // Safety: this is safe because the program is being reloaded in the cache.
-        unsafe {
-            ProgramCacheEntry::reload(
-                loader_key,
-                program_runtime_environment,
-                deployment_slot,
-                effective_slot,
-                programdata,
-                account_size,
-                load_program_metrics,
-            )
-        }
-    } else {
-        ProgramCacheEntry::new(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            effective_slot,
-            programdata,
-            account_size,
-            load_program_metrics,
-        )
-    }
-    .map_err(|err| {
-        ic_logger_msg!(log_collector, "{}", err);
-        InstructionError::InvalidAccountData
-    })?;
-    Ok(loaded_program)
-}
-
-/// Directly deploy a program using a provided invoke context.
-/// This function should only be invoked from the runtime, since it does not
-/// provide any account loads or checks.
-pub fn deploy_program(
-    log_collector: Option<Rc<RefCell<LogCollector>>>,
-    program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
-    program_runtime_environment: ProgramRuntimeEnvironment,
-    program_id: &Pubkey,
-    loader_key: &Pubkey,
-    account_size: usize,
-    programdata: &[u8],
-    deployment_slot: Slot,
-) -> Result<LoadProgramMetrics, InstructionError> {
-    let mut load_program_metrics = LoadProgramMetrics::default();
-    let mut register_syscalls_time = Measure::start("register_syscalls_time");
-    let deployment_program_runtime_environment =
-        morph_into_deployment_environment_v1(program_runtime_environment.clone()).map_err(|e| {
-            ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
-            InstructionError::ProgramEnvironmentSetupFailure
-        })?;
-    register_syscalls_time.stop();
-    load_program_metrics.register_syscalls_us = register_syscalls_time.as_us();
-    // Verify using stricter deployment_program_runtime_environment
-    let mut load_elf_time = Measure::start("load_elf_time");
-    let executable = Executable::<InvokeContext>::load(
-        programdata,
-        Arc::new(deployment_program_runtime_environment),
-    )
-    .map_err(|err| {
-        ic_logger_msg!(log_collector, "{}", err);
-        InstructionError::InvalidAccountData
-    })?;
-    load_elf_time.stop();
-    load_program_metrics.load_elf_us = load_elf_time.as_us();
-    let mut verify_code_time = Measure::start("verify_code_time");
-    executable.verify::<RequisiteVerifier>().map_err(|err| {
-        ic_logger_msg!(log_collector, "{}", err);
-        InstructionError::InvalidAccountData
-    })?;
-    verify_code_time.stop();
-    load_program_metrics.verify_code_us = verify_code_time.as_us();
-    // Reload but with program_runtime_environment
-    let executor = load_program_from_bytes(
-        log_collector,
-        &mut load_program_metrics,
-        programdata,
-        loader_key,
-        account_size,
-        deployment_slot,
-        program_runtime_environment,
-        true,
-    )?;
-    if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
-        executor.tx_usage_counter.store(
-            old_entry.tx_usage_counter.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-    }
-    load_program_metrics.program_id = program_id.to_string();
-    program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(executor));
-    Ok(load_program_metrics)
-}
-
-#[macro_export]
-macro_rules! deploy_program {
-    ($invoke_context:expr, $program_id:expr, $loader_key:expr, $account_size:expr, $programdata:expr, $deployment_slot:expr $(,)?) => {
-        assert_eq!(
-            $deployment_slot,
-            $invoke_context.program_cache_for_tx_batch.slot()
-        );
-        let load_program_metrics = $crate::deploy_program(
-            $invoke_context.get_log_collector(),
-            $invoke_context.program_cache_for_tx_batch,
-            $invoke_context
-                .get_program_runtime_environments_for_deployment()
-                .program_runtime_v1
-                .clone(),
-            $program_id,
-            $loader_key,
-            $account_size,
-            $programdata,
-            $deployment_slot,
-        )?;
-        load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
-    };
-}
 
 fn write_program_data(
     program_data_offset: usize,
@@ -242,127 +60,6 @@ fn write_program_data(
         .ok_or(InstructionError::AccountDataTooSmall)?
         .copy_from_slice(bytes);
     Ok(())
-}
-
-/// Only used in macro, do not use directly!
-pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
-    const KIBIBYTE: u64 = 1024;
-    const PAGE_SIZE_KB: u64 = 32;
-    let mut rounded_heap_size = u64::from(heap_size);
-    rounded_heap_size =
-        rounded_heap_size.saturating_add(PAGE_SIZE_KB.saturating_mul(KIBIBYTE).saturating_sub(1));
-    rounded_heap_size
-        .checked_div(PAGE_SIZE_KB.saturating_mul(KIBIBYTE))
-        .expect("PAGE_SIZE_KB * KIBIBYTE > 0")
-        .saturating_sub(1)
-        .saturating_mul(heap_cost)
-}
-
-/// Only used in macro, do not use directly!
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-fn create_vm<'a, 'b>(
-    program: &'a Executable<InvokeContext<'b, 'b>>,
-    regions: Vec<MemoryRegion>,
-    accounts_metadata: Vec<SerializedAccountMetadata>,
-    invoke_context: &'a mut InvokeContext<'b, 'b>,
-    stack: &mut [u8],
-    heap: &mut [u8],
-) -> Result<EbpfVm<'a, InvokeContext<'b, 'b>>, Box<dyn std::error::Error>> {
-    let stack_size = stack.len();
-    let heap_size = heap.len();
-    let memory_mapping = create_memory_mapping(
-        program,
-        stack,
-        heap,
-        regions,
-        invoke_context.transaction_context,
-        invoke_context
-            .get_feature_set()
-            .stricter_abi_and_runtime_constraints,
-        invoke_context.get_feature_set().account_data_direct_mapping,
-    )?;
-    invoke_context.set_syscall_context(SyscallContext {
-        allocator: BpfAllocator::new(heap_size as u64),
-        accounts_metadata,
-    })?;
-    Ok(EbpfVm::new(
-        program.get_loader().clone(),
-        program.get_sbpf_version(),
-        invoke_context,
-        memory_mapping,
-        stack_size,
-    ))
-}
-
-/// Create the SBF virtual machine
-#[macro_export]
-macro_rules! create_vm {
-    ($vm:ident, $program:expr, $regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
-        let invoke_context = &*$invoke_context;
-        let stack_size = $program.get_config().stack_size();
-        let heap_size = invoke_context.get_compute_budget().heap_size;
-        let heap_cost_result = invoke_context.consume_checked($crate::calculate_heap_cost(
-            heap_size,
-            invoke_context.get_execution_cost().heap_cost,
-        ));
-        let $vm = heap_cost_result.and_then(|_| {
-            let (mut stack, mut heap) = $crate::MEMORY_POOL
-                .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
-            let vm = $crate::create_vm(
-                $program,
-                $regions,
-                $accounts_metadata,
-                $invoke_context,
-                stack
-                    .as_slice_mut()
-                    .get_mut(..stack_size)
-                    .expect("invalid stack size"),
-                heap.as_slice_mut()
-                    .get_mut(..heap_size as usize)
-                    .expect("invalid heap size"),
-            );
-            vm.map(|vm| (vm, stack, heap))
-        });
-    };
-}
-
-fn create_memory_mapping<'a, 'b, C: ContextObject>(
-    executable: &'a Executable<C>,
-    stack: &'b mut [u8],
-    heap: &'b mut [u8],
-    additional_regions: Vec<MemoryRegion>,
-    transaction_context: &TransactionContext,
-    stricter_abi_and_runtime_constraints: bool,
-    account_data_direct_mapping: bool,
-) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
-    let config = executable.get_config();
-    let sbpf_version = executable.get_sbpf_version();
-    let regions: Vec<MemoryRegion> = vec![
-        executable.get_ro_region(),
-        MemoryRegion::new_writable_gapped(
-            stack,
-            ebpf::MM_STACK_START,
-            if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
-                config.stack_frame_size as u64
-            } else {
-                0
-            },
-        ),
-        MemoryRegion::new_writable(heap, MM_HEAP_START),
-    ]
-    .into_iter()
-    .chain(additional_regions)
-    .collect();
-
-    Ok(MemoryMapping::new_with_access_violation_handler(
-        regions,
-        config,
-        sbpf_version,
-        transaction_context.access_violation_handler(
-            stricter_abi_and_runtime_constraints,
-            account_data_direct_mapping,
-        ),
-    )?)
 }
 
 declare_builtin_function!(
@@ -1210,21 +907,23 @@ fn process_loader_upgradeable_instruction(
                     &[],
                 )?;
 
-                if upgrade_authority_address.is_none() {
+                if let Some(upgrade_authority_address) = upgrade_authority_address {
+                    if migration_authority::check_id(&provided_authority_address) {
+                        invoke_context.native_invoke(
+                            solana_loader_v4_interface::instruction::transfer_authority(
+                                &program_address,
+                                &provided_authority_address,
+                                &upgrade_authority_address,
+                            ),
+                            &[],
+                        )?;
+                    }
+                } else {
                     invoke_context.native_invoke(
                         solana_loader_v4_interface::instruction::finalize(
                             &program_address,
                             &provided_authority_address,
                             &program_address,
-                        ),
-                        &[],
-                    )?;
-                } else if migration_authority::check_id(&provided_authority_address) {
-                    invoke_context.native_invoke(
-                        solana_loader_v4_interface::instruction::transfer_authority(
-                            &program_address,
-                            &provided_authority_address,
-                            &upgrade_authority_address.unwrap(),
                         ),
                         &[],
                     )?;
@@ -1449,264 +1148,14 @@ fn common_close_account(
 }
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-fn execute<'a, 'b: 'a>(
-    executable: &'a Executable<InvokeContext<'static, 'static>>,
-    invoke_context: &'a mut InvokeContext<'b, 'b>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // We dropped the lifetime tracking in the Executor by setting it to 'static,
-    // thus we need to reintroduce the correct lifetime of InvokeContext here again.
-    let executable = unsafe {
-        mem::transmute::<
-            &'a Executable<InvokeContext<'static, 'static>>,
-            &'a Executable<InvokeContext<'b, 'b>>,
-        >(executable)
-    };
-    let log_collector = invoke_context.get_log_collector();
-    let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-    let program_id = *instruction_context.get_program_key()?;
-    let is_loader_deprecated =
-        instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
-    cfg_if! {
-        if #[cfg(any(
-            target_os = "windows",
-            not(target_arch = "x86_64"),
-            feature = "sbpf-debugger"
-        ))] {
-            let use_jit = false;
-        } else {
-            let use_jit = executable.get_compiled_program().is_some();
-        }
-    }
-    let stricter_abi_and_runtime_constraints = invoke_context
-        .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
-    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let mask_out_rent_epoch_in_vm_serialization = invoke_context
-        .get_feature_set()
-        .mask_out_rent_epoch_in_vm_serialization;
-    let provide_instruction_data_offset_in_vm_r2 = invoke_context
-        .get_feature_set()
-        .provide_instruction_data_offset_in_vm_r2;
-
-    let mut serialize_time = Measure::start("serialize");
-    let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
-        serialization::serialize_parameters(
-            &instruction_context,
-            stricter_abi_and_runtime_constraints,
-            account_data_direct_mapping,
-            mask_out_rent_epoch_in_vm_serialization,
-        )?;
-    serialize_time.stop();
-
-    // save the account addresses so in case we hit an AccessViolation error we
-    // can map to a more specific error
-    let account_region_addrs = accounts_metadata
-        .iter()
-        .map(|m| {
-            let vm_end = m
-                .vm_data_addr
-                .saturating_add(m.original_data_len as u64)
-                .saturating_add(if !is_loader_deprecated {
-                    MAX_PERMITTED_DATA_INCREASE as u64
-                } else {
-                    0
-                });
-            m.vm_data_addr..vm_end
-        })
-        .collect::<Vec<_>>();
-
-    let mut create_vm_time = Measure::start("create_vm");
-    let execution_result = {
-        let compute_meter_prev = invoke_context.get_remaining();
-        create_vm!(vm, executable, regions, accounts_metadata, invoke_context);
-        let (mut vm, stack, heap) = match vm {
-            Ok(info) => info,
-            Err(e) => {
-                ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
-                return Err(Box::new(InstructionError::ProgramEnvironmentSetupFailure));
-            }
-        };
-        create_vm_time.stop();
-
-        vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
-        vm.registers[1] = ebpf::MM_INPUT_START;
-
-        // SIMD-0321: Provide offset to instruction data in VM register 2.
-        if provide_instruction_data_offset_in_vm_r2 {
-            vm.registers[2] = instruction_data_offset as u64;
-        }
-        let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
-        let register_trace = std::mem::take(&mut vm.register_trace);
-        MEMORY_POOL.with_borrow_mut(|memory_pool| {
-            memory_pool.put_stack(stack);
-            memory_pool.put_heap(heap);
-            debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-            debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
-        });
-        drop(vm);
-        invoke_context.insert_register_trace(register_trace);
-        if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-            execute_time.stop();
-            invoke_context.timings.execute_us += execute_time.as_us();
-        }
-
-        ic_logger_msg!(
-            log_collector,
-            "Program {} consumed {} of {} compute units",
-            &program_id,
-            compute_units_consumed,
-            compute_meter_prev
-        );
-        let (_returned_from_program_id, return_data) =
-            invoke_context.transaction_context.get_return_data();
-        if !return_data.is_empty() {
-            stable_log::program_return(&log_collector, &program_id, return_data);
-        }
-        match result {
-            ProgramResult::Ok(status) if status != SUCCESS => {
-                let error: InstructionError = status.into();
-                Err(Box::new(error) as Box<dyn std::error::Error>)
-            }
-            ProgramResult::Err(mut error) => {
-                // Don't clean me up!!
-                // This feature is active on all networks, but we still toggle
-                // it off during fuzzing.
-                if invoke_context
-                    .get_feature_set()
-                    .deplete_cu_meter_on_vm_failure
-                    && !matches!(error, EbpfError::SyscallError(_))
-                {
-                    // when an exception is thrown during the execution of a
-                    // Basic Block (e.g., a null memory dereference or other
-                    // faults), determining the exact number of CUs consumed
-                    // up to the point of failure requires additional effort
-                    // and is unnecessary since these cases are rare.
-                    //
-                    // In order to simplify CU tracking, simply consume all
-                    // remaining compute units so that the block cost
-                    // tracker uses the full requested compute unit cost for
-                    // this failed transaction.
-                    invoke_context.consume(invoke_context.get_remaining());
-                }
-
-                if stricter_abi_and_runtime_constraints {
-                    if let EbpfError::SyscallError(err) = error {
-                        error = err
-                            .downcast::<EbpfError>()
-                            .map(|err| *err)
-                            .unwrap_or_else(EbpfError::SyscallError);
-                    }
-                    if let EbpfError::AccessViolation(access_type, vm_addr, len, _section_name) =
-                        error
-                    {
-                        // If stricter_abi_and_runtime_constraints is enabled and a program tries to write to a readonly
-                        // region we'll get a memory access violation. Map it to a more specific
-                        // error so it's easier for developers to see what happened.
-                        if let Some((instruction_account_index, vm_addr_range)) =
-                            account_region_addrs
-                                .iter()
-                                .enumerate()
-                                .find(|(_, vm_addr_range)| vm_addr_range.contains(&vm_addr))
-                        {
-                            let transaction_context = &invoke_context.transaction_context;
-                            let instruction_context =
-                                transaction_context.get_current_instruction_context()?;
-                            let account = instruction_context.try_borrow_instruction_account(
-                                instruction_account_index as IndexOfAccount,
-                            )?;
-                            if vm_addr.saturating_add(len) <= vm_addr_range.end {
-                                // The access was within the range of the accounts address space,
-                                // but it might not be within the range of the actual data.
-                                let is_access_outside_of_data = vm_addr
-                                    .saturating_add(len)
-                                    .saturating_sub(vm_addr_range.start)
-                                    as usize
-                                    > account.get_data().len();
-                                error = EbpfError::SyscallError(Box::new(
-                                    #[allow(deprecated)]
-                                    match access_type {
-                                        AccessType::Store => {
-                                            if let Err(err) = account.can_data_be_changed() {
-                                                err
-                                            } else {
-                                                // The store was allowed but failed,
-                                                // thus it must have been an attempt to grow the account.
-                                                debug_assert!(is_access_outside_of_data);
-                                                InstructionError::InvalidRealloc
-                                            }
-                                        }
-                                        AccessType::Load => {
-                                            // Loads should only fail when they are outside of the account data.
-                                            debug_assert!(is_access_outside_of_data);
-                                            if account.can_data_be_changed().is_err() {
-                                                // Load beyond readonly account data happened because the program
-                                                // expected more data than there actually is.
-                                                InstructionError::AccountDataTooSmall
-                                            } else {
-                                                // Load beyond writable account data also attempted to grow.
-                                                InstructionError::InvalidRealloc
-                                            }
-                                        }
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
-                Err(if let EbpfError::SyscallError(err) = error {
-                    err
-                } else {
-                    error.into()
-                })
-            }
-            _ => Ok(()),
-        }
-    };
-
-    fn deserialize_parameters(
-        invoke_context: &mut InvokeContext,
-        parameter_bytes: &[u8],
-        stricter_abi_and_runtime_constraints: bool,
-        account_data_direct_mapping: bool,
-    ) -> Result<(), InstructionError> {
-        serialization::deserialize_parameters(
-            &invoke_context
-                .transaction_context
-                .get_current_instruction_context()?,
-            stricter_abi_and_runtime_constraints,
-            account_data_direct_mapping,
-            parameter_bytes,
-            &invoke_context.get_syscall_context()?.accounts_metadata,
-        )
-    }
-
-    let mut deserialize_time = Measure::start("deserialize");
-    let execute_or_deserialize_result = execution_result.and_then(|_| {
-        deserialize_parameters(
-            invoke_context,
-            parameter_bytes.as_slice(),
-            stricter_abi_and_runtime_constraints,
-            account_data_direct_mapping,
-        )
-        .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
-    });
-    deserialize_time.stop();
-
-    // Update the timings
-    invoke_context.timings.serialize_us += serialize_time.as_us();
-    invoke_context.timings.create_vm_us += create_vm_time.as_us();
-    invoke_context.timings.deserialize_us += deserialize_time.as_us();
-
-    execute_or_deserialize_result
-}
-
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 mod test_utils {
+    #[cfg(all(feature = "svm-internal", feature = "metrics"))]
+    use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
         super::*, agave_syscalls::create_program_runtime_environment_v1,
         solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
+        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4,
     };
 
@@ -1721,7 +1170,6 @@ mod test_utils {
     #[cfg(feature = "svm-internal")]
     #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
     fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
-        let mut load_program_metrics = LoadProgramMetrics::default();
         let program_runtime_environment = create_program_runtime_environment_v1(
             invoke_context.get_feature_set(),
             invoke_context.get_compute_budget(),
@@ -1749,19 +1197,24 @@ mod test_utils {
                     .get_key_of_account_at_index(index)
                     .expect("Failed to get account key");
 
-                if let Ok(loaded_program) = load_program_from_bytes(
-                    None,
-                    &mut load_program_metrics,
-                    account
-                        .data()
-                        .get(programdata_data_offset.min(account.data().len())..)
-                        .unwrap(),
+                let programdata = account
+                    .data()
+                    .get(programdata_data_offset.min(account.data().len())..)
+                    .unwrap();
+                let program_runtime_environment = program_runtime_environment.clone();
+                let effective_slot = DELAY_VISIBILITY_SLOT_OFFSET;
+                let loaded_program = ProgramCacheEntry::new(
                     owner,
-                    account.data().len(),
+                    program_runtime_environment,
                     0,
-                    program_runtime_environment.clone(),
-                    false,
-                ) {
+                    effective_slot,
+                    programdata,
+                    account.data().len(),
+                    #[cfg(feature = "metrics")]
+                    &mut LoadProgramMetrics::default(),
+                )
+                .map_err(|_| InstructionError::InvalidAccountData);
+                if let Ok(loaded_program) = loaded_program {
                     invoke_context
                         .program_cache_for_tx_batch
                         .store_modified_entry(*pubkey, Arc::new(loaded_program));
@@ -1778,18 +1231,21 @@ mod tests {
         assert_matches::assert_matches,
         rand::Rng,
         solana_account::{
-            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
             AccountSharedData, ReadableAccount, WritableAccount,
+            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
-        solana_instruction::{error::InstructionError, AccountMeta},
+        solana_instruction::{AccountMeta, error::InstructionError},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, with_mock_invoke_context,
+            invoke_context::mock_process_instruction, vm::calculate_heap_cost,
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
+        solana_sbpf::program::BuiltinProgram,
         solana_sdk_ids::{system_program, sysvar},
+        solana_svm_type_overrides::sync::atomic::Ordering,
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
     };
 

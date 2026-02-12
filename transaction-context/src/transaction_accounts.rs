@@ -2,9 +2,9 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
+        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
         vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_REGION_SIZE},
         vm_slice::VmSlice,
-        IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
@@ -30,12 +30,14 @@ struct AccountSharedFields {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 struct AccountPrivateFields {
     rent_epoch: u64,
     executable: bool,
     payload: Arc<Vec<u8>>,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl AccountPrivateFields {
     fn payload_len(&self) -> usize {
         self.payload.len()
@@ -43,11 +45,13 @@ impl AccountPrivateFields {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct TransactionAccountView<'a> {
     abi_account: &'a AccountSharedFields,
     private_fields: &'a AccountPrivateFields,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl ReadableAccount for TransactionAccountView<'_> {
     fn lamports(&self) -> u64 {
         self.abi_account.lamports
@@ -70,6 +74,7 @@ impl ReadableAccount for TransactionAccountView<'_> {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl PartialEq<AccountSharedData> for TransactionAccountView<'_> {
     fn eq(&self, other: &AccountSharedData) -> bool {
         other.lamports() == self.lamports()
@@ -81,11 +86,13 @@ impl PartialEq<AccountSharedData> for TransactionAccountView<'_> {
 }
 
 #[derive(Debug)]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct TransactionAccountViewMut<'a> {
     abi_account: &'a mut AccountSharedFields,
     private_fields: &'a mut AccountPrivateFields,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl TransactionAccountViewMut<'_> {
     fn data_mut(&mut self) -> &mut Vec<u8> {
         Arc::make_mut(&mut self.private_fields.payload)
@@ -172,6 +179,7 @@ impl TransactionAccountViewMut<'_> {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl ReadableAccount for TransactionAccountViewMut<'_> {
     fn lamports(&self) -> u64 {
         self.abi_account.lamports
@@ -194,6 +202,7 @@ impl ReadableAccount for TransactionAccountViewMut<'_> {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl WritableAccount for TransactionAccountViewMut<'_> {
     fn set_lamports(&mut self, lamports: u64) {
         self.abi_account.lamports = lamports;
@@ -231,22 +240,25 @@ impl WritableAccount for TransactionAccountViewMut<'_> {
 }
 
 /// An account key and the matching account
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub type KeyedAccountSharedData = (Pubkey, AccountSharedData);
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub(crate) type DeconstructedTransactionAccounts =
     (Vec<KeyedAccountSharedData>, Box<[Cell<bool>]>, Cell<i64>);
 
 #[derive(Debug)]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct TransactionAccounts {
-    shared_account_fields: UnsafeCell<Box<[AccountSharedFields]>>,
-    private_account_fields: UnsafeCell<Box<[AccountPrivateFields]>>,
+    shared_account_fields: Box<[UnsafeCell<AccountSharedFields>]>,
+    private_account_fields: Box<[UnsafeCell<AccountPrivateFields>]>,
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
     lamports_delta: Cell<i128>,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl TransactionAccounts {
-    #[cfg(not(target_os = "solana"))]
     pub(crate) fn new(accounts: Vec<KeyedAccountSharedData>) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
@@ -255,7 +267,7 @@ impl TransactionAccounts {
             .enumerate()
             .map(|(idx, item)| {
                 (
-                    AccountSharedFields {
+                    UnsafeCell::new(AccountSharedFields {
                         key: item.0,
                         owner: *item.1.owner(),
                         lamports: item.1.lamports(),
@@ -264,19 +276,22 @@ impl TransactionAccounts {
                                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(idx as u64)),
                             item.1.data().len() as u64,
                         ),
-                    },
-                    AccountPrivateFields {
+                    }),
+                    UnsafeCell::new(AccountPrivateFields {
                         rent_epoch: item.1.rent_epoch(),
                         executable: item.1.executable(),
                         payload: item.1.data_clone(),
-                    },
+                    }),
                 )
             })
-            .collect::<(Vec<AccountSharedFields>, Vec<AccountPrivateFields>)>();
+            .collect::<(
+                Vec<UnsafeCell<AccountSharedFields>>,
+                Vec<UnsafeCell<AccountPrivateFields>>,
+            )>();
 
         TransactionAccounts {
-            shared_account_fields: UnsafeCell::new(shared_accounts.into_boxed_slice()),
-            private_account_fields: UnsafeCell::new(private_fields.into_boxed_slice()),
+            shared_account_fields: shared_accounts.into_boxed_slice(),
+            private_account_fields: private_fields.into_boxed_slice(),
             borrow_counters,
             touched_flags,
             resize_delta: Cell::new(0),
@@ -285,24 +300,9 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn len(&self) -> usize {
-        // RUST UPGRADE NOTE
-        //
-        // Rust 1.87.0 reports a `needless_borrow` warning
-        // Rust 1.88.0 reports a `dangerous_implicit_autorefs` warning if the
-        // recommendation given from Rust 1.87.0 is applied
-        //
-        // In order to facilitate upgrading to Rust >= 1.88.0, use the 1.88.0
-        // suggestion and ignore the warning given by 1.87.0. This comment and
-        // the `#[allow(clippy::needless_borrow)]` will be removed after the
-        // Rust version has advanced
-        #[allow(clippy::needless_borrow)]
-        // SAFETY: The borrow is local to this function and is only reading length.
-        unsafe {
-            (&(*self.shared_account_fields.get())).len()
-        }
+        self.shared_account_fields.len()
     }
 
-    #[cfg(not(target_os = "solana"))]
     pub fn touch(&self, index: IndexOfAccount) -> Result<(), InstructionError> {
         self.touched_flags
             .get(index as usize)
@@ -353,22 +353,23 @@ impl TransactionAccounts {
             .ok_or(InstructionError::MissingAccount)?;
         borrow_counter.try_borrow_mut()?;
 
-        // See previous RUST UPGRADE NOTE in this file
-        #[allow(clippy::needless_borrow)]
         // SAFETY: The borrow counter guarantees this is the only mutable borrow of this account.
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (&mut (*self.shared_account_fields.get()))
-                .get_mut(index as usize)
+            &mut *self
+                .shared_account_fields
+                .get(index as usize)
                 .unwrap()
+                .get()
         };
-        // See previous RUST UPGRADE NOTE in this file
-        #[allow(clippy::needless_borrow)]
+
         let private_fields = unsafe {
-            (&mut (*self.private_account_fields.get()))
-                .get_mut(index as usize)
+            &mut *self
+                .private_account_fields
+                .get(index as usize)
                 .unwrap()
+                .get()
         };
 
         let account = TransactionAccountViewMut {
@@ -389,22 +390,23 @@ impl TransactionAccounts {
             .ok_or(InstructionError::MissingAccount)?;
         borrow_counter.try_borrow()?;
 
-        // See previous RUST UPGRADE NOTE in this file
-        #[allow(clippy::needless_borrow)]
         // SAFETY: The borrow counter guarantees there are no mutable borrow of this account.
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (&(*self.shared_account_fields.get()))
+            &*self
+                .shared_account_fields
                 .get(index as usize)
                 .unwrap()
+                .get()
         };
-        // See previous RUST UPGRADE NOTE in this file
-        #[allow(clippy::needless_borrow)]
+
         let private_fields = unsafe {
-            (&(*self.private_account_fields.get()))
+            &*self
+                .private_account_fields
                 .get(index as usize)
                 .unwrap()
+                .get()
         };
 
         let account = TransactionAccountView {
@@ -433,11 +435,14 @@ impl TransactionAccounts {
     }
 
     fn deconstruct_into_keyed_account_shared_data(&mut self) -> Vec<KeyedAccountSharedData> {
-        self.shared_account_fields
-            .get_mut()
+        let shared_account_fields = std::mem::take(&mut self.shared_account_fields);
+        let private_account_fields = std::mem::take(&mut self.private_account_fields);
+        shared_account_fields
             .into_iter()
-            .zip(&mut *self.private_account_fields.get_mut())
-            .map(|(shared_fields, private_fields)| {
+            .zip(private_account_fields)
+            .map(|(shared_fields_cell, private_fields_cell)| {
+                let shared_fields = shared_fields_cell.into_inner();
+                let private_fields = private_fields_cell.into_inner();
                 (
                     shared_fields.key,
                     AccountSharedData::create_from_existing_shared_data(
@@ -453,11 +458,14 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn deconstruct_into_account_shared_data(&mut self) -> Vec<AccountSharedData> {
-        self.shared_account_fields
-            .get_mut()
+        let shared_account_fields = std::mem::take(&mut self.shared_account_fields);
+        let private_account_fields = std::mem::take(&mut self.private_account_fields);
+        shared_account_fields
             .into_iter()
-            .zip(&mut *self.private_account_fields.get_mut())
-            .map(|(shared_fields, private_fields)| {
+            .zip(private_account_fields)
+            .map(|(shared_fields_cell, private_fields_cell)| {
+                let shared_fields = shared_fields_cell.into_inner();
+                let private_fields = private_fields_cell.into_inner();
                 AccountSharedData::create_from_existing_shared_data(
                     shared_fields.lamports,
                     private_fields.payload.clone(),
@@ -479,31 +487,31 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn account_key(&self, index: IndexOfAccount) -> Option<&Pubkey> {
-        // See previous RUST UPGRADE NOTE in this file
-        #[allow(clippy::needless_borrow)]
         // SAFETY: We never modify an account key, so returning a reference to it is safe.
         unsafe {
-            (&(*self.shared_account_fields.get()))
+            self.shared_account_fields
                 .get(index as usize)
-                .map(|acc| &acc.key)
+                .map(|acc| &(*acc.get()).key)
         }
     }
 
     pub(crate) fn account_keys_iter(&self) -> impl Iterator<Item = &Pubkey> {
         // SAFETY: We never modify account keys, so returning an immutable reference to them is safe.
         unsafe {
-            (*self.shared_account_fields.get())
+            self.shared_account_fields
                 .iter()
-                .map(|item| &item.key)
+                .map(|item| &(*item.get()).key)
         }
     }
 }
 
 #[derive(Default, Debug, Clone)]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 struct BorrowCounter {
     counter: Cell<i8>,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl BorrowCounter {
     #[inline]
     fn is_writing(&self) -> bool {
@@ -551,17 +559,20 @@ impl BorrowCounter {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct AccountRef<'a> {
     account: TransactionAccountView<'a>,
     borrow_counter: &'a BorrowCounter,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl Drop for AccountRef<'_> {
     fn drop(&mut self) {
         self.borrow_counter.release_borrow();
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl<'a> Deref for AccountRef<'a> {
     type Target = TransactionAccountView<'a>;
     fn deref(&self) -> &Self::Target {
@@ -570,11 +581,13 @@ impl<'a> Deref for AccountRef<'a> {
 }
 
 #[derive(Debug)]
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 pub struct AccountRefMut<'a> {
     account: TransactionAccountViewMut<'a>,
     borrow_counter: &'a BorrowCounter,
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl Drop for AccountRefMut<'_> {
     fn drop(&mut self) {
         // SAFETY: We are synchronizing the lengths.
@@ -588,6 +601,7 @@ impl Drop for AccountRefMut<'_> {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl<'a> Deref for AccountRefMut<'a> {
     type Target = TransactionAccountViewMut<'a>;
     fn deref(&self) -> &Self::Target {
@@ -595,13 +609,14 @@ impl<'a> Deref for AccountRefMut<'a> {
     }
 }
 
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl DerefMut for AccountRefMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.account
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
     use {
         crate::transaction_accounts::TransactionAccounts, solana_account::AccountSharedData,

@@ -4,11 +4,10 @@
 use {
     crate::{
         packet::{
-            BytesPacketBatch, Packet, PacketBatch, PacketFlags, PacketRef, PacketRefMut,
+            BytesPacketBatch, PacketBatch, PacketFlags, PacketRef, PacketRefMut,
             RecycledPacketBatch,
         },
         recycled_vec::RecycledVec,
-        recycler::Recycler,
     },
     rayon::{prelude::*, ThreadPool},
     solana_hash::Hash,
@@ -32,8 +31,6 @@ static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::n
 });
 
 pub type TxOffset = RecycledVec<u32>;
-
-type TxOffsets = (TxOffset, TxOffset, TxOffset, TxOffset, Vec<Vec<u32>>);
 
 #[derive(Debug, PartialEq, Eq)]
 struct PacketOffsets {
@@ -396,58 +393,6 @@ fn check_for_simple_vote_transaction(
     Ok(())
 }
 
-pub fn generate_offsets(
-    batches: &mut [PacketBatch],
-    recycler: &Recycler<TxOffset>,
-    reject_non_vote: bool,
-) -> TxOffsets {
-    debug!("allocating..");
-    let mut signature_offsets: RecycledVec<_> = recycler.allocate("sig_offsets");
-    let mut pubkey_offsets: RecycledVec<_> = recycler.allocate("pubkey_offsets");
-    let mut msg_start_offsets: RecycledVec<_> = recycler.allocate("msg_start_offsets");
-    let mut msg_sizes: RecycledVec<_> = recycler.allocate("msg_size_offsets");
-    let mut current_offset: usize = 0;
-    let offsets = batches
-        .iter_mut()
-        .map(|batch| {
-            batch
-                .iter_mut()
-                .map(|mut packet| {
-                    let packet_offsets =
-                        get_packet_offsets(&mut packet, current_offset, reject_non_vote);
-
-                    trace!("pubkey_offset: {}", packet_offsets.pubkey_start);
-
-                    let mut pubkey_offset = packet_offsets.pubkey_start;
-                    let mut sig_offset = packet_offsets.sig_start;
-                    let msg_size = current_offset.saturating_add(packet.meta().size) as u32;
-                    for _ in 0..packet_offsets.sig_len {
-                        signature_offsets.push(sig_offset);
-                        sig_offset = sig_offset.saturating_add(size_of::<Signature>() as u32);
-
-                        pubkey_offsets.push(pubkey_offset);
-                        pubkey_offset = pubkey_offset.saturating_add(size_of::<Pubkey>() as u32);
-
-                        msg_start_offsets.push(packet_offsets.msg_start);
-
-                        let msg_size = msg_size.saturating_sub(packet_offsets.msg_start);
-                        msg_sizes.push(msg_size);
-                    }
-                    current_offset = current_offset.saturating_add(size_of::<Packet>());
-                    packet_offsets.sig_len
-                })
-                .collect()
-        })
-        .collect();
-    (
-        signature_offsets,
-        pubkey_offsets,
-        msg_start_offsets,
-        msg_sizes,
-        offsets,
-    )
-}
-
 fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<RecycledPacketBatch>) {
     let mut bytes_batches = Vec::new();
     let mut pinned_batches = Vec::new();
@@ -538,21 +483,6 @@ pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
     });
 }
 
-pub fn copy_return_values<I, T>(sig_lens: I, out: &RecycledVec<u8>, rvs: &mut [Vec<u8>])
-where
-    I: IntoIterator<Item = T>,
-    T: IntoIterator<Item = u32>,
-{
-    debug_assert!(rvs.iter().flatten().all(|&rv| rv == 0u8));
-    let mut offset = 0usize;
-    let rvs = rvs.iter_mut().flatten();
-    for (k, rv) in sig_lens.into_iter().flatten().zip(rvs) {
-        let out = out[offset..].iter().take(k as usize).all(|&x| x == 1u8);
-        *rv = u8::from(k != 0u32 && out);
-        offset = offset.saturating_add(k as usize);
-    }
-}
-
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
     for (batch, v) in batches.iter_mut().zip(r) {
         for (mut pkt, f) in batch.iter_mut().zip(v) {
@@ -580,14 +510,13 @@ mod tests {
         },
         bincode::{deserialize, serialize},
         bytes::{BufMut, Bytes, BytesMut},
-        rand::{thread_rng, Rng},
+        rand::Rng,
         solana_keypair::Keypair,
         solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
         solana_packet::PACKET_DATA_SIZE,
         solana_signature::Signature,
         solana_signer::Signer,
         solana_transaction::{versioned::VersionedTransaction, Transaction},
-        std::iter::repeat_with,
         test_case::test_case,
     };
 
@@ -597,46 +526,6 @@ mod tests {
         assert!(a.len() >= b.len());
         let end = a.len() - b.len() + 1;
         (0..end).find(|&i| a[i..i + b.len()] == b[..])
-    }
-
-    #[test]
-    fn test_copy_return_values() {
-        let mut rng = rand::thread_rng();
-        let sig_lens: Vec<Vec<u32>> = {
-            let size = rng.gen_range(0..64);
-            repeat_with(|| {
-                let size = rng.gen_range(0..16);
-                repeat_with(|| rng.gen_range(0..5)).take(size).collect()
-            })
-            .take(size)
-            .collect()
-        };
-        let out: Vec<Vec<Vec<bool>>> = sig_lens
-            .iter()
-            .map(|sig_lens| {
-                sig_lens
-                    .iter()
-                    .map(|&size| repeat_with(|| rng.gen()).take(size as usize).collect())
-                    .collect()
-            })
-            .collect();
-        let expected: Vec<Vec<u8>> = out
-            .iter()
-            .map(|out| {
-                out.iter()
-                    .map(|out| u8::from(!out.is_empty() && out.iter().all(|&k| k)))
-                    .collect()
-            })
-            .collect();
-        let out = RecycledVec::<u8>::from_vec(
-            out.into_iter().flatten().flatten().map(u8::from).collect(),
-        );
-        let mut rvs: Vec<Vec<u8>> = sig_lens
-            .iter()
-            .map(|sig_lens| vec![0u8; sig_lens.len()])
-            .collect();
-        copy_return_values(sig_lens, &out, &mut rvs);
-        assert_eq!(rvs, expected);
     }
 
     #[test]
@@ -1124,7 +1013,7 @@ mod tests {
     #[test]
     fn test_is_simple_vote_transaction() {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // transfer tx is not
         {
@@ -1207,7 +1096,7 @@ mod tests {
     #[test]
     fn test_is_simple_vote_transaction_with_offsets() {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // batch of legacy messages
         {
@@ -1272,11 +1161,11 @@ mod tests {
 
     #[test]
     fn test_shrink_fuzz() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..5 {
             let mut batches: Vec<_> = (0..3)
                 .map(|_| {
-                    if rng.gen_bool(0.5) {
+                    if rng.random_bool(0.5) {
                         let batch = (0..PACKETS_PER_BATCH)
                             .map(|_| {
                                 BytesPacket::from_data(None, test_tx()).expect("serialize request")
@@ -1293,7 +1182,7 @@ mod tests {
                 .collect();
             batches.iter_mut().for_each(|b| {
                 b.iter_mut()
-                    .for_each(|mut p| p.meta_mut().set_discard(thread_rng().gen()))
+                    .for_each(|mut p| p.meta_mut().set_discard(rand::rng().random()))
             });
             //find all the non discarded packets
             let mut start = vec![];

@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 // Activate some of the Rust 2024 lints to make the future migration easier.
 #![warn(if_let_rescope)]
 #![warn(keyword_idents_2024)]
@@ -18,6 +10,16 @@
 pub mod buffered_reader;
 pub mod buffered_writer;
 pub mod dirs;
+mod file_info;
 pub mod file_io;
 pub mod io_setup;
 mod io_uring;
+
+pub use file_info::FileInfo;
+
+/// Alias for file offsets and sizes - since files can exceed 4GB, use 64-bits
+pub type FileSize = u64;
+
+/// Single IO performed on a filesystem can never exceed 32-bits,
+/// this also constrains possible buffer sizes that are used for IO operations.
+pub type IoSize = u32;

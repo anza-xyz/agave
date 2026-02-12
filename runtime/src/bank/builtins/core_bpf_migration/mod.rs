@@ -15,14 +15,15 @@ use {
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{LoadProgramMetrics, ProgramCacheForTxBatch},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_svm_callback::InvokeContextCallback,
-    solana_transaction_context::TransactionContext,
+    solana_transaction_context::transaction::TransactionContext,
     source_buffer::SourceBuffer,
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,
@@ -161,6 +162,7 @@ impl Bank {
                 self.rent_collector.rent.clone(),
                 compute_budget.max_instruction_stack_depth,
                 compute_budget.max_instruction_trace_length,
+                1,
             );
 
             struct MockCallback {}
@@ -183,8 +185,10 @@ impl Bank {
                 compute_budget.to_cost(),
             );
 
-            let load_program_metrics = solana_bpf_loader_program::deploy_program(
+            let mut load_program_metrics = LoadProgramMetrics::default();
+            deploy_program(
                 dummy_invoke_context.get_log_collector(),
+                &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 program_runtime_environments.program_runtime_v1.clone(),
                 program_id,
@@ -206,6 +210,7 @@ impl Bank {
             .unwrap()
             .merge(
                 &self.transaction_processor.environments,
+                self.slot,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
 
@@ -216,11 +221,16 @@ impl Bank {
         &mut self,
         builtin_program_id: &Pubkey,
         config: &CoreBpfMigrationConfig,
+        allow_prefunded: bool,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(config.datapoint_name, ("slot", self.slot, i64));
 
-        let target =
-            TargetBuiltin::new_checked(self, builtin_program_id, &config.migration_target)?;
+        let target = TargetBuiltin::new_checked(
+            self,
+            builtin_program_id,
+            &config.migration_target,
+            allow_prefunded,
+        )?;
         let source = if let Some(expected_hash) = config.verified_build_hash {
             SourceBuffer::new_checked_with_verified_build_hash(
                 self,
@@ -381,6 +391,7 @@ impl Bank {
     ///     self.upgrade_loader_v2_program_with_loader_v3_program(
     ///        &bpf_loader_v2_program_address,
     ///        &source_buffer_address,
+    ///        true,
     ///        "test_upgrade_loader_v2_program_with_loader_v3_program",
     ///     );
     /// }
@@ -392,11 +403,13 @@ impl Bank {
         &mut self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
+        allow_prefunded: bool,
         datapoint_name: &'static str,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(datapoint_name, ("slot", self.slot, i64));
 
-        let target = TargetBpfV2::new_checked(self, loader_v2_bpf_program_address)?;
+        let target =
+            TargetBpfV2::new_checked(self, loader_v2_bpf_program_address, allow_prefunded)?;
         let source = SourceBuffer::new_checked(self, source_buffer_address)?;
 
         // Attempt serialization first before modifying the bank.
@@ -718,8 +731,10 @@ pub(crate) mod tests {
             let entries = program_cache.get_flattened_entries(true, true);
             let target_entry = entries
                 .iter()
-                .find(|(program_id, _)| program_id == &self.target_program_address)
-                .map(|(_, entry)| entry)
+                .find(|(program_id, _last_modification_slot, _entry)| {
+                    program_id == &self.target_program_address
+                })
+                .map(|(_program_id, _last_modification_slot, entry)| entry)
                 .unwrap();
 
             // The target program entry should be updated.
@@ -792,7 +807,7 @@ pub(crate) mod tests {
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         // Run the post-migration program checks.
@@ -857,7 +872,7 @@ pub(crate) mod tests {
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         // Run the post-migration program checks.
@@ -924,7 +939,7 @@ pub(crate) mod tests {
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
                 .unwrap_err(),
             CoreBpfMigrationError::UpgradeAuthorityMismatch(_, _)
         )
@@ -978,7 +993,7 @@ pub(crate) mod tests {
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
                 .unwrap_err(),
             CoreBpfMigrationError::BuildHashMismatch(_, _)
         )
@@ -1040,7 +1055,7 @@ pub(crate) mod tests {
             datapoint_name: "test_migrate_builtin",
         };
 
-        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config, true)
             .unwrap();
 
         let program_data_address = get_program_data_address(&builtin_id);
@@ -1810,6 +1825,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
         .unwrap();
@@ -1890,6 +1906,7 @@ pub(crate) mod tests {
             bank.upgrade_loader_v2_program_with_loader_v3_program(
                 &bpf_loader_v2_program_address,
                 &source_buffer_address,
+                true,
                 "test_upgrade_loader_v2_program_with_loader_v3_program",
             )
             .unwrap_err(),
@@ -2087,6 +2104,7 @@ pub(crate) mod tests {
         bank.upgrade_loader_v2_program_with_loader_v3_program(
             &bpf_loader_v2_program_address,
             &source_buffer_address,
+            true,
             "test_upgrade_loader_v2_program_with_loader_v3_program",
         )
         .unwrap();
@@ -2136,7 +2154,7 @@ pub(crate) mod tests {
 
         // Load the migrated program to the cache and run checks.
         let entry = roundtrip_bank
-            .load_program(&bpf_loader_v2_program_address, false, upgrade_slot)
+            .load_program(&bpf_loader_v2_program_address, upgrade_slot)
             .unwrap();
 
         let mut program_cache = roundtrip_bank
@@ -2148,6 +2166,7 @@ pub(crate) mod tests {
         program_cache.assign_program(
             &roundtrip_bank.transaction_processor.environments,
             bpf_loader_v2_program_address,
+            upgrade_slot,
             entry,
         );
         // Release the lock on the program cache.

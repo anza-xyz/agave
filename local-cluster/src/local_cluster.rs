@@ -2,10 +2,12 @@ use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient, ValidatorInfo},
         cluster_tests,
-        integration_tests::DEFAULT_NODE_STAKE,
+        integration_tests::{ValidatorKeys, DEFAULT_NODE_STAKE},
         validator_configs::*,
     },
+    agave_feature_set::FeatureSet,
     agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
+    agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     itertools::izip,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -47,8 +49,7 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{
-        TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
-        DEFAULT_VOTE_USE_QUIC,
+        TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC,
     },
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
@@ -70,6 +71,16 @@ use {
 pub const DEFAULT_MINT_LAMPORTS: u64 = 10_000_000 * LAMPORTS_PER_SOL;
 const DUMMY_SNAPSHOT_CONFIG_PATH_MARKER: &str = "dummy";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlpenglowMode {
+    /// No alpenglow
+    Disabled,
+    /// Full alpenglow - creates vote accounts w/ bls pubkeys and activates alpenglow feature and set GenesisCertificate
+    Enabled,
+    /// Pre-migration mode - creates V4 vote accounts w/ bls pubkeys but does NOT activate alpenglow feature or set GenesisCertificate
+    PreMigration,
+}
+
 pub struct ClusterConfig {
     /// The validator config that should be applied to every node in the cluster
     pub validator_configs: Vec<ValidatorConfig>,
@@ -80,11 +91,9 @@ pub struct ClusterConfig {
     //  will be inserted into the genesis block instead of warming up through
     // creating the vote accounts. The first validator (bootstrap leader) automatically
     // is assumed to be `in_genesis` == true.
-    pub validator_keys: Option<Vec<(Arc<Keypair>, bool)>>,
+    pub validator_keys: Option<Vec<(ValidatorKeys, bool)>>,
     /// The stakes of each node
     pub node_stakes: Vec<u64>,
-    /// Optional vote keypairs to use for each node
-    pub node_vote_keys: Option<Vec<Arc<Keypair>>>,
     /// The number of lamports in the mint account
     pub mint_lamports: u64,
     pub ticks_per_slot: u64,
@@ -123,7 +132,6 @@ impl Default for ClusterConfig {
             num_listeners: 0,
             validator_keys: None,
             node_stakes: vec![],
-            node_vote_keys: None,
             mint_lamports: DEFAULT_MINT_LAMPORTS,
             ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
             slots_per_epoch: DEFAULT_DEV_SLOTS_PER_EPOCH,
@@ -191,6 +199,25 @@ impl LocalCluster {
     }
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::Disabled)
+    }
+
+    pub fn new_alpenglow(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::Enabled)
+    }
+
+    pub fn new_pre_migration_alpenglow(
+        config: &mut ClusterConfig,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
+        Self::init(config, socket_addr_space, AlpenglowMode::PreMigration)
+    }
+
+    pub fn init(
+        config: &mut ClusterConfig,
+        socket_addr_space: SocketAddrSpace,
+        alpenglow_mode: AlpenglowMode,
+    ) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
         let quic_connection_cache_config = {
@@ -229,18 +256,7 @@ impl LocalCluster {
                 assert_eq!(config.validator_configs.len(), keys.len());
                 keys.clone()
             } else {
-                iter::repeat_with(|| (Arc::new(Keypair::new()), false))
-                    .take(config.validator_configs.len())
-                    .collect()
-            }
-        };
-
-        let vote_keys = {
-            if let Some(ref node_vote_keys) = config.node_vote_keys {
-                assert_eq!(config.validator_configs.len(), node_vote_keys.len());
-                node_vote_keys.clone()
-            } else {
-                iter::repeat_with(|| Arc::new(Keypair::new()))
+                iter::repeat_with(|| (ValidatorKeys::new(), false))
                     .take(config.validator_configs.len())
                     .collect()
             }
@@ -262,8 +278,11 @@ impl LocalCluster {
             validator_keys
                 .iter()
                 .zip(&config.node_stakes)
-                .zip(&vote_keys)
-                .filter_map(|(((node_keypair, in_genesis), stake), vote_keypair)| {
+                .filter_map(|((validator_keys, in_genesis), stake)| {
+                    let ValidatorKeys {
+                        node_keypair,
+                        vote_keypair,
+                    } = validator_keys;
                     info!(
                         "STARTING LOCAL CLUSTER: key {} vote_key {} has {} stake",
                         node_keypair.pubkey(),
@@ -297,6 +316,8 @@ impl LocalCluster {
         let leader_pubkey = leader_keypair.pubkey();
         let leader_node = Node::new_localhost_with_pubkey(&leader_pubkey);
 
+        let feature_set = FeatureSet::all_enabled();
+
         let GenesisConfigInfo {
             mut genesis_config,
             mint_keypair,
@@ -306,8 +327,18 @@ impl LocalCluster {
             &keys_in_genesis,
             stakes_in_genesis,
             config.cluster_type,
-            false,
+            &feature_set,
+            !matches!(alpenglow_mode, AlpenglowMode::Disabled), /* is_alpenglow */
         );
+
+        // Remove the alpenglow feature and genesis certificate for PreMigration mode
+        if alpenglow_mode == AlpenglowMode::PreMigration {
+            genesis_config
+                .accounts
+                .remove(&agave_feature_set::alpenglow::id());
+            genesis_config.accounts.remove(&GENESIS_CERTIFICATE_ACCOUNT);
+        }
+
         genesis_config.accounts.extend(
             config
                 .additional_accounts
@@ -336,16 +367,6 @@ impl LocalCluster {
         let leader_keypair = Arc::new(leader_keypair.insecure_clone());
         let leader_vote_keypair = Arc::new(leader_vote_keypair.insecure_clone());
 
-        let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
-            .into_iter()
-            .map(|keypairs| {
-                (
-                    keypairs.node_keypair.pubkey(),
-                    Arc::new(keypairs.vote_keypair.insecure_clone()),
-                )
-            })
-            .collect();
-
         // Check if we should start validators in parallel in order to enable WFSM
         let wait_for_supermajority = config
             .validator_configs
@@ -369,11 +390,15 @@ impl LocalCluster {
                 shred_version: leader_node.info.shred_version(),
             };
 
+            let validator_keys = validator_keys
+                .into_iter()
+                .map(|(keys, _)| keys)
+                .collect::<Vec<ValidatorKeys>>();
+
             // Start all validators in parallel
             cluster.start_all_validators_parallel(
                 &config.validator_configs,
                 &validator_keys,
-                &node_pubkey_to_vote_key,
                 socket_addr_space,
                 (
                     leader_pubkey,
@@ -419,10 +444,10 @@ impl LocalCluster {
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
-                // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
                 // to use the same QUIC ports due to SO_REUSEPORT.
-                ValidatorTpuConfig::new_for_tests(true),
+                ValidatorTpuConfig::new_for_tests(),
                 Arc::new(RwLock::new(None)),
+                None,
             )
             .expect("assume successful validator start");
 
@@ -453,16 +478,17 @@ impl LocalCluster {
                 shred_version: leader_contact_info.shred_version(),
             };
 
-            for (stake, validator_config, (key, _)) in izip!(
+            for (stake, validator_config, (keys, in_genesis)) in izip!(
                 config.node_stakes[1..].iter(),
                 config.validator_configs[1..].iter(),
                 validator_keys[1..].iter(),
             ) {
+                let should_setup_accounts = !*in_genesis;
                 cluster.add_validator(
                     validator_config,
                     *stake,
-                    key.clone(),
-                    node_pubkey_to_vote_key.get(&key.pubkey()).cloned(),
+                    keys,
+                    should_setup_accounts,
                     socket_addr_space,
                 );
             }
@@ -476,8 +502,8 @@ impl LocalCluster {
             cluster.add_validator_listener(
                 &listener_config,
                 0,
-                Arc::new(Keypair::new()),
-                None,
+                &ValidatorKeys::new(),
+                true, // should_setup_accounts
                 socket_addr_space,
             );
         });
@@ -528,16 +554,16 @@ impl LocalCluster {
         &mut self,
         validator_config: &ValidatorConfig,
         stake: u64,
-        validator_keypair: Arc<Keypair>,
-        voting_keypair: Option<Arc<Keypair>>,
+        validator_keys: &ValidatorKeys,
+        should_setup_accounts: bool,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         self.do_add_validator(
             validator_config,
             true,
             stake,
-            validator_keypair,
-            voting_keypair,
+            validator_keys,
+            should_setup_accounts,
             socket_addr_space,
         )
     }
@@ -547,16 +573,16 @@ impl LocalCluster {
         &mut self,
         validator_config: &ValidatorConfig,
         stake: u64,
-        validator_keypair: Arc<Keypair>,
-        voting_keypair: Option<Arc<Keypair>>,
+        validator_keys: &ValidatorKeys,
+        should_setup_accounts: bool,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         self.do_add_validator(
             validator_config,
             false,
             stake,
-            validator_keypair,
-            voting_keypair,
+            validator_keys,
+            should_setup_accounts,
             socket_addr_space,
         )
     }
@@ -566,8 +592,8 @@ impl LocalCluster {
         validator_config: &ValidatorConfig,
         is_listener: bool,
         stake: u64,
-        validator_keypair: Arc<Keypair>,
-        mut voting_keypair: Option<Arc<Keypair>>,
+        validator_keys: &ValidatorKeys,
+        should_setup_accounts: bool,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         let client = self
@@ -575,12 +601,10 @@ impl LocalCluster {
             .expect("tpu_client");
 
         // Must have enough tokens to fund vote account and set delegate
-        let should_create_vote_pubkey = voting_keypair.is_none();
-        if voting_keypair.is_none() {
-            voting_keypair = Some(Arc::new(Keypair::new()));
-        }
+        let validator_keypair = validator_keys.node_keypair.clone();
+        let voting_keypair = validator_keys.vote_keypair.clone();
         let validator_pubkey = validator_keypair.pubkey();
-        let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
+        let validator_node = Node::new_localhost_with_pubkey(&validator_pubkey);
         let contact_info = validator_node.info.clone();
         let (ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
             &self.genesis_config,
@@ -591,7 +615,7 @@ impl LocalCluster {
         if is_listener {
             // setup as a listener
             info!("listener {validator_pubkey} ",);
-        } else if should_create_vote_pubkey {
+        } else if should_setup_accounts {
             Self::transfer_with_client(
                 &client,
                 &self.funding_keypair,
@@ -606,7 +630,7 @@ impl LocalCluster {
             info!("validator {validator_pubkey} balance {validator_balance}");
             Self::setup_vote_and_stake_accounts(
                 &client,
-                voting_keypair.as_ref().unwrap(),
+                &voting_keypair,
                 &validator_keypair,
                 stake,
             )
@@ -619,7 +643,6 @@ impl LocalCluster {
             validator_node.info.rpc_pubsub().unwrap(),
         ));
         Self::sync_ledger_path_across_nested_config_fields(&mut config, &ledger_path);
-        let voting_keypair = voting_keypair.unwrap();
         let validator_server = Validator::new(
             validator_node,
             validator_keypair.clone(),
@@ -632,8 +655,9 @@ impl LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
+            None,
         )
         .expect("assume successful validator start");
 
@@ -659,8 +683,7 @@ impl LocalCluster {
     fn start_all_validators_parallel(
         &mut self,
         validator_configs: &[ValidatorConfig],
-        validator_keys: &[(Arc<Keypair>, bool)],
-        node_pubkey_to_vote_key: &HashMap<Pubkey, Arc<Keypair>>,
+        validator_keys: &[ValidatorKeys],
         socket_addr_space: SocketAddrSpace,
         leader_data: (
             Pubkey,
@@ -698,8 +721,9 @@ impl LocalCluster {
                 None, // rpc_to_plugin_manager_receiver
                 Arc::new(RwLock::new(ValidatorStartProgress::default())),
                 socket_addr_space,
-                ValidatorTpuConfig::new_for_tests(true),
+                ValidatorTpuConfig::new_for_tests(),
                 Arc::new(RwLock::new(None)),
+                None,
             )
             .unwrap_or_else(|e| panic!("Cluster leader failed to start: {e:?}"));
 
@@ -720,16 +744,13 @@ impl LocalCluster {
         handles.push(handle);
 
         // Start remaining validators
-        for (i, ((key, _), validator_config)) in validator_keys[1..]
+        for (i, (keys, validator_config)) in validator_keys[1..]
             .iter()
             .zip(validator_configs[1..].iter())
             .enumerate()
         {
-            let validator_keypair = key.clone();
-            let voting_keypair = node_pubkey_to_vote_key
-                .get(&validator_keypair.pubkey())
-                .expect("All vote accounts must be setup in genesis for WFSM")
-                .clone();
+            let validator_keypair = keys.node_keypair.clone();
+            let voting_keypair = keys.vote_keypair.clone();
             let validator_config = safe_clone_config(validator_config);
             let genesis_config = self.genesis_config.clone();
             let entry_points = vec![self.entry_point_info.clone()];
@@ -764,8 +785,9 @@ impl LocalCluster {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     socket_addr_space,
-                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+                    ValidatorTpuConfig::new_for_tests(),
                     Arc::new(RwLock::new(None)),
+                    None,
                 )
                 .unwrap_or_else(|e| panic!("Validator {i} failed to start: {e:?}"));
 
@@ -873,6 +895,46 @@ impl LocalCluster {
         info!("{test_name} done waiting for roots");
     }
 
+    pub fn check_for_new_processed(
+        &self,
+        num_new_processed: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+    ) {
+        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        info!("{test_name} looking for new processed slots on all nodes");
+        cluster_tests::check_for_new_processed(
+            num_new_processed,
+            &alive_node_contact_infos,
+            &self.connection_cache,
+            test_name,
+        );
+        info!("{test_name} done waiting for processed slots");
+    }
+
+    pub fn check_for_new_notarized_votes(
+        &self,
+        num_new_notarized_votes: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+        vote_listener_addr: std::net::UdpSocket,
+        validator_keys: &[Arc<Keypair>],
+        node_stakes: &[u64],
+    ) {
+        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        info!("{test_name} looking for new notarized votes on all nodes");
+        cluster_tests::check_for_new_notarized_votes(
+            num_new_notarized_votes,
+            &alive_node_contact_infos,
+            &self.connection_cache,
+            test_name,
+            vote_listener_addr,
+            validator_keys,
+            node_stakes,
+        );
+        info!("{test_name} done waiting for notarized votes");
+    }
+
     pub fn check_no_new_roots(
         &self,
         num_slots_to_wait: usize,
@@ -905,10 +967,11 @@ impl LocalCluster {
     }
 
     /// Poll RPC to see if transaction was processed. Return an error if unable
-    /// determine if the transaction was processed before its blockhash expires.
-    /// Return Ok(Some(())) if the transaction was processed, Ok(None) if the
-    /// transaction was not processed.
-    pub fn poll_for_processed_transaction(
+    /// to determine if the transaction was processed before its blockhash
+    /// expires or if the transaction execution result was an error. Return
+    /// Ok(Some(())) if the transaction was processed successfully. Return
+    /// Ok(None) if the transaction was not processed.
+    pub fn poll_for_successfully_processed_transaction(
         client: &QuicTpuClient,
         transaction: &Transaction,
     ) -> std::result::Result<Option<()>, TransportError> {
@@ -921,8 +984,13 @@ impl LocalCluster {
                 CommitmentConfig::processed(),
             )?;
 
-            if status.is_some() {
-                return Ok(Some(()));
+            if let Some(tx_result) = status {
+                match tx_result {
+                    Ok(_) => return Ok(Some(())),
+                    Err(e) => {
+                        return Err(TransportError::TransactionError(e));
+                    }
+                }
             }
 
             if !client.rpc_client().is_blockhash_valid(
@@ -953,7 +1021,7 @@ impl LocalCluster {
         // in LocalCluster integration tests
         for attempt in 1..=attempts {
             client.send_transaction_to_upcoming_leaders(transaction)?;
-            if Self::poll_for_processed_transaction(client, transaction)?.is_some() {
+            if Self::poll_for_successfully_processed_transaction(client, transaction)?.is_some() {
                 return Ok(());
             }
 
@@ -1317,8 +1385,9 @@ impl Cluster for LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
+            None,
         )
         .expect("assume successful validator start");
         cluster_validator_info.validator = Some(restarted_node);

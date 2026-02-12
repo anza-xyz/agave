@@ -83,12 +83,24 @@ impl ClusterSlotsService {
         let mut cluster_slots_service_timing = ClusterSlotsServiceTiming::default();
         let mut last_stats = Instant::now();
         let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
+        let migration_status = bank_forks.read().unwrap().migration_status();
 
         // initialize cluster slots with the current root bank
         let root_bank = bank_forks.read().unwrap().root_bank();
         cluster_slots.update(&root_bank, &cluster_info);
 
         while !exit.load(Ordering::Relaxed) {
+            if migration_status.is_full_alpenglow_epoch() {
+                // Once we are in a full Alpenglow epoch, we can fully shutdown the cluster slots service.
+                // It is important to keep running while in the mixed migration epoch, as EpochSlots can
+                // still be useful for the TowerBFT slots.
+                info!(
+                    "ClusterSlotsService has stopped because we have finished the alpenglow \
+                     migration epoch"
+                );
+                break;
+            }
+
             let slots = match cluster_slots_update_receiver.recv_timeout(Duration::from_millis(200))
             {
                 Ok(slots) => Some(slots),

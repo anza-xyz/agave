@@ -23,6 +23,7 @@ const SIGNER_SOURCE_FILEPATH: &str = "file";
 const SIGNER_SOURCE_USB: &str = "usb";
 const SIGNER_SOURCE_STDIN: &str = "stdin";
 const SIGNER_SOURCE_PUBKEY: &str = "pubkey";
+const SIGNER_SOURCE_BASE58_KEYPAIR: &str = "base58_keypair";
 
 #[derive(Debug, Error)]
 pub enum SignerSourceError {
@@ -45,6 +46,7 @@ pub enum SignerSourceKind {
     Usb(RemoteWalletLocator),
     Stdin,
     Pubkey(Pubkey),
+    Base58Keypair(String),
 }
 
 impl AsRef<str> for SignerSourceKind {
@@ -55,6 +57,7 @@ impl AsRef<str> for SignerSourceKind {
             Self::Usb(_) => SIGNER_SOURCE_USB,
             Self::Stdin => SIGNER_SOURCE_STDIN,
             Self::Pubkey(_) => SIGNER_SOURCE_PUBKEY,
+            Self::Base58Keypair(_) => SIGNER_SOURCE_BASE58_KEYPAIR,
         }
     }
 }
@@ -217,6 +220,19 @@ impl SignerSource {
                 source.to_string()
             }
         };
+
+        // If the user supplies a base-58 encoded keypair accept it as a valid SignerSource
+        // A keypair is 64 bytes: 32 bytes secret key + 32 bytes public key
+        // We validate that the bytes form a valid keypair (public key matches secret key derivation)
+        {
+            let mut bytes = [0u8; 64];
+            if five8::decode_64(&source, &mut bytes).is_ok()
+                && Keypair::try_from(bytes.as_ref()).is_ok()
+            {
+                return Ok(SignerSource::new(SignerSourceKind::Base58Keypair(source)));
+            }
+        }
+
         match uriparse::URIReference::try_from(source.as_str()) {
             Err(_) => Err(SignerSourceError::UnrecognizedSource),
             Ok(uri) => {
@@ -274,6 +290,7 @@ pub struct SignerSourceParserBuilder {
     allow_usb: bool,
     allow_stdin: bool,
     allow_pubkey: bool,
+    allow_base58_keypair: bool,
     allow_legacy: bool,
 }
 
@@ -285,6 +302,7 @@ impl SignerSourceParserBuilder {
         self.allow_stdin = true;
         self.allow_pubkey = true;
         self.allow_legacy = true;
+        self.allow_base58_keypair = true;
         self
     }
 
@@ -318,6 +336,11 @@ impl SignerSourceParserBuilder {
         self
     }
 
+    pub fn allow_base58_keypair(mut self) -> Self {
+        self.allow_base58_keypair = true;
+        self
+    }
+
     pub fn build(self) -> ValueParser {
         ValueParser::from(
             move |arg: &str| -> Result<SignerSource, SignerSourceError> {
@@ -331,6 +354,9 @@ impl SignerSourceParserBuilder {
                     SignerSourceKind::Usb(_) if self.allow_usb => Ok(signer_source),
                     SignerSourceKind::Stdin if self.allow_stdin => Ok(signer_source),
                     SignerSourceKind::Pubkey(_) if self.allow_pubkey => Ok(signer_source),
+                    SignerSourceKind::Base58Keypair(_) if self.allow_base58_keypair => {
+                        Ok(signer_source)
+                    }
                     _ => Err(SignerSourceError::UnsupportedSource),
                 }
             },
@@ -1047,5 +1073,112 @@ mod tests {
             .try_get_matches_from(vec!["test", "--signer", "usb://ledger"])
             .unwrap_err();
         assert_eq!(matches_error.kind, clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn test_parse_base58_keypair_signer_source() {
+        // Create a valid keypair and get its base58 encoding
+        let keypair = Keypair::new();
+        let keypair_base58 = keypair.to_base58_string();
+
+        // Test SignerSource::parse directly recognizes base58 keypairs
+        let signer_source = SignerSource::parse(&keypair_base58).unwrap();
+        assert!(matches!(
+            signer_source,
+            SignerSource {
+                kind: SignerSourceKind::Base58Keypair(ref s),
+                derivation_path: None,
+                legacy: false,
+            }
+            if s == &keypair_base58
+        ));
+
+        // Test with SignerSourceParserBuilder that allows base58 keypairs
+        let command = Command::new("test").arg(
+            Arg::new("keypair")
+                .long("keypair")
+                .takes_value(true)
+                .value_parser(
+                    SignerSourceParserBuilder::default()
+                        .allow_base58_keypair()
+                        .build(),
+                ),
+        );
+
+        let matches = command
+            .clone()
+            .try_get_matches_from(vec!["test", "--keypair", &keypair_base58])
+            .unwrap();
+        let signer_source = matches.get_one::<SignerSource>("keypair").unwrap();
+        assert!(matches!(
+            signer_source,
+            SignerSource {
+                kind: SignerSourceKind::Base58Keypair(ref s),
+                derivation_path: None,
+                legacy: false,
+            }
+            if s == &keypair_base58
+        ));
+
+        // Test that base58 keypair is rejected when not allowed
+        let command_no_base58 = Command::new("test").arg(
+            Arg::new("keypair")
+                .long("keypair")
+                .takes_value(true)
+                .value_parser(
+                    SignerSourceParserBuilder::default()
+                        .allow_file_path()
+                        .allow_prompt()
+                        .build(),
+                ),
+        );
+
+        let matches_error = command_no_base58
+            .clone()
+            .try_get_matches_from(vec!["test", "--keypair", &keypair_base58])
+            .unwrap_err();
+        assert_eq!(matches_error.kind, clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn test_base58_keypair_validation() {
+        // Valid keypair should be parsed as Base58Keypair
+        let keypair = Keypair::new();
+        let valid_base58 = keypair.to_base58_string();
+        let source = SignerSource::parse(&valid_base58).unwrap();
+        assert!(matches!(source.kind, SignerSourceKind::Base58Keypair(_)));
+
+        // Invalid base58 string that decodes to 64 bytes but is not a valid keypair
+        // (public key doesn't match derived public key from secret key)
+        // This should NOT be parsed as a Base58Keypair
+        // We create this by taking a valid keypair and corrupting the pubkey portion
+        let mut invalid_bytes = keypair.to_bytes();
+        // Corrupt the public key portion (bytes 32-63) by flipping bits
+        invalid_bytes[32] ^= 0xFF;
+        invalid_bytes[33] ^= 0xFF;
+        // Encode to base58 using a buffer
+        let mut encoded_buf = [0u8; 88];
+        let len = five8::encode_64(&invalid_bytes, &mut encoded_buf);
+        let encoded = std::str::from_utf8(&encoded_buf[..len as usize]).unwrap();
+
+        // This should fail to parse as a Base58Keypair since the pubkey doesn't match
+        let source = SignerSource::parse(encoded);
+        assert!(
+            source.is_err()
+                || !matches!(
+                    source.as_ref().unwrap().kind,
+                    SignerSourceKind::Base58Keypair(_)
+                ),
+            "Invalid keypair bytes should not be parsed as Base58Keypair"
+        );
+
+        // Short base58 strings (like pubkeys) should not be parsed as keypairs
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource::parse(pubkey.to_string()).unwrap();
+        assert!(matches!(source.kind, SignerSourceKind::Pubkey(_)));
+
+        // The "ASK" keyword should not be parsed as a keypair
+        let source = SignerSource::parse("ASK").unwrap();
+        assert!(matches!(source.kind, SignerSourceKind::Prompt));
     }
 }

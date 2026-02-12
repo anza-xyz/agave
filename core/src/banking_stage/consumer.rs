@@ -28,6 +28,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
+    solana_vote::vote_parser,
     std::num::Saturating,
 };
 
@@ -144,8 +145,15 @@ impl Consumer {
             bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
         let check_results: Vec<_> = check_results
             .into_iter()
-            .map(|result| match result {
-                Ok(_) => Ok(()),
+            .zip(txs.iter())
+            .map(|(result, tx)| match result {
+                Ok(_) => {
+                    if bank.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(tx) {
+                        Err(TransactionError::SanitizeFailure)
+                    } else {
+                        Ok(())
+                    }
+                }
                 Err(err) => Err(err),
             })
             .collect();
@@ -337,7 +345,7 @@ impl Consumer {
                 &mut error_counters,
                 TransactionProcessingConfig {
                     account_overrides: None,
-                    check_program_modification_slot: bank.check_program_modification_slot(),
+                    check_program_deployment_slot: bank.check_program_deployment_slot(),
                     log_messages_bytes_limit: self.log_messages_bytes_limit,
                     limit_to_load_programs: true,
                     recording_config: ExecutionRecordingConfig::new_single_setting(
@@ -1443,6 +1451,8 @@ mod tests {
             &ReservedAccountKeys::empty_key_set(),
             bank.feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::id()),
+            bank.feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::id()),
         )
         .unwrap();
         let batch_transactions_inner = [&sanitized_tx]

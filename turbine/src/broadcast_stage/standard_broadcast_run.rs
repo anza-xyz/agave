@@ -6,16 +6,17 @@ use {
         *,
     },
     crate::cluster_nodes::ClusterNodesCache,
+    agave_votor::event::VotorEventSender,
+    agave_votor_messages::migration::MigrationStatus,
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder, MAX_CODE_SHREDS_PER_SLOT,
-        MAX_DATA_SHREDS_PER_SLOT,
+        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
+        Shred, ShredType, Shredder,
     },
     solana_time_utils::AtomicInterval,
     std::{borrow::Cow, sync::RwLock},
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 #[derive(Clone)]
@@ -38,6 +39,8 @@ pub struct StandardBroadcastRun {
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
+    migration_status: Arc<MigrationStatus>,
+    votor_event_sender: VotorEventSender,
 }
 
 #[derive(Debug)]
@@ -46,7 +49,11 @@ enum BroadcastError {
 }
 
 impl StandardBroadcastRun {
-    pub(super) fn new(shred_version: u16) -> Self {
+    pub(super) fn new(
+        shred_version: u16,
+        migration_status: Arc<MigrationStatus>,
+        votor_event_sender: VotorEventSender,
+    ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -68,6 +75,8 @@ impl StandardBroadcastRun {
             num_batches: 0,
             cluster_nodes_cache,
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
+            migration_status,
+            votor_event_sender,
         }
     }
 
@@ -159,7 +168,6 @@ impl StandardBroadcastRun {
         blockstore: &Blockstore,
         receive_results: ReceiveResults,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (bsend, brecv) = unbounded();
         let (ssend, srecv) = unbounded();
@@ -172,13 +180,7 @@ impl StandardBroadcastRun {
             &mut ProcessShredsStats::default(),
         )?;
         // Data and coding shreds are sent in a single batch.
-        let _ = self.transmit(
-            &srecv,
-            cluster_info,
-            BroadcastSocket::Udp(sock),
-            bank_forks,
-            quic_endpoint_sender,
-        );
+        let _ = self.transmit(&srecv, cluster_info, BroadcastSocket::Udp(sock), bank_forks);
         let _ = self.record(&brecv, blockstore);
         Ok(())
     }
@@ -197,8 +199,6 @@ impl StandardBroadcastRun {
             bank,
             last_tick_height,
         } = receive_results;
-
-        inc_new_counter_info!("broadcast_service-entries_received", entries.len());
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
 
@@ -286,16 +286,16 @@ impl StandardBroadcastRun {
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L132-L142
         // By contrast Self::insert skips the 1st data shred with index zero:
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L367-L373
-        if let Some(shred) = shreds.iter().find(|shred| shred.is_data()) {
-            if shred.index() == 0 {
-                blockstore
-                    .insert_cow_shreds(
-                        [Cow::Borrowed(shred)],
-                        None, // leader_schedule
-                        true, // is_trusted
-                    )
-                    .expect("Failed to insert shreds in blockstore");
-            }
+        if let Some(shred) = shreds.iter().find(|shred| shred.is_data())
+            && shred.index() == 0
+        {
+            blockstore
+                .insert_cow_shreds(
+                    [Cow::Borrowed(shred)],
+                    None, // leader_schedule
+                    true, // is_trusted
+                )
+                .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
 
@@ -329,6 +329,15 @@ impl StandardBroadcastRun {
         if last_tick_height == bank.max_tick_height() {
             self.report_and_reset_stats(false);
             self.completed = true;
+
+            // Populate the block id and send for voting
+            // The block id is the merkle root of the last FEC set which is now the chained merkle root
+            broadcast_utils::set_block_id_and_send(
+                &self.migration_status,
+                &self.votor_event_sender,
+                bank,
+                self.chained_merkle_root,
+            )?;
         }
 
         Ok(())
@@ -380,7 +389,6 @@ impl StandardBroadcastRun {
         shreds: Arc<Vec<Shred>>,
         broadcast_shred_batch_info: Option<BroadcastShredBatchInfo>,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         trace!("Broadcasting {:?} shreds", shreds.len());
         let mut transmit_stats = TransmitShredsStats {
@@ -401,7 +409,6 @@ impl StandardBroadcastRun {
             cluster_info,
             bank_forks,
             cluster_info.socket_addr_space(),
-            quic_endpoint_sender,
         )?;
         transmit_time.stop();
 
@@ -468,17 +475,9 @@ impl BroadcastRun for StandardBroadcastRun {
         cluster_info: &ClusterInfo,
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
-        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (shreds, batch_info) = receiver.recv()?;
-        self.broadcast(
-            sock,
-            cluster_info,
-            shreds,
-            batch_info,
-            bank_forks,
-            quic_endpoint_sender,
-        )
+        self.broadcast(sock, cluster_info, shreds, batch_info, bank_forks)
     }
     fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {
         let (shreds, slot_start_ts) = receiver.recv()?;
@@ -491,6 +490,7 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
+        crossbeam_channel::unbounded,
         rand::Rng,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
@@ -501,9 +501,9 @@ mod test {
             blockstore::Blockstore,
             genesis_utils::create_genesis_config,
             get_tmp_ledger_path,
-            shred::{max_ticks_per_n_shreds, DATA_SHREDS_PER_FEC_BLOCK},
+            shred::{DATA_SHREDS_PER_FEC_BLOCK, max_ticks_per_n_shreds},
         },
-        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{ops::Deref, sync::Arc, time::Duration},
@@ -555,14 +555,16 @@ mod test {
     #[test]
     fn test_interrupted_slot_last_shred() {
         let keypair = Arc::new(Keypair::new());
-        let mut run = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         assert!(run.completed);
 
         // Set up the slot to be interrupted
         let next_shred_index = 10;
         let slot = 1;
         let parent = 0;
-        run.chained_merkle_root = Hash::new_from_array(rand::thread_rng().gen());
+        run.chained_merkle_root = Hash::new_from_array(rand::rng().random());
         run.next_shred_index = next_shred_index;
         run.next_code_index = 17;
         run.slot = slot;
@@ -592,8 +594,6 @@ mod test {
         let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
-        let (quic_endpoint_sender, _quic_endpoint_receiver) =
-            tokio::sync::mpsc::channel(/*capacity:*/ 128);
 
         // Insert 1 less than the number of ticks needed to finish the slot
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
@@ -604,7 +604,9 @@ mod test {
         };
 
         // Step 1: Make an incomplete transmission for slot 0
-        let mut standard_broadcast_run = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -613,7 +615,6 @@ mod test {
                 &blockstore,
                 receive_results,
                 &bank_forks,
-                &quic_endpoint_sender,
             )
             .unwrap();
         assert_eq!(
@@ -680,7 +681,6 @@ mod test {
                 &blockstore,
                 receive_results,
                 &bank_forks,
-                &quic_endpoint_sender,
             )
             .unwrap();
 
@@ -700,18 +700,22 @@ mod test {
         );
 
         // Broadcast stats for interrupted slot should be cleared
-        assert!(standard_broadcast_run
-            .transmit_shreds_stats
-            .lock()
-            .unwrap()
-            .get(interrupted_slot)
-            .is_none());
-        assert!(standard_broadcast_run
-            .insert_shreds_stats
-            .lock()
-            .unwrap()
-            .get(interrupted_slot)
-            .is_none());
+        assert!(
+            standard_broadcast_run
+                .transmit_shreds_stats
+                .lock()
+                .unwrap()
+                .get(interrupted_slot)
+                .is_none()
+        );
+        assert!(
+            standard_broadcast_run
+                .insert_shreds_stats
+                .lock()
+                .unwrap()
+                .get(interrupted_slot)
+                .is_none()
+        );
 
         // Try to fetch the incomplete ticks from blockstore, should succeed
         assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
@@ -728,8 +732,10 @@ mod test {
             setup(num_shreds_per_slot);
         let (bsend, brecv) = unbounded();
         let (ssend, _srecv) = unbounded();
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
         let mut last_tick_height = 0;
-        let mut standard_broadcast_run = StandardBroadcastRun::new(0);
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
             last_tick_height += (ticks.len() - 1) as u64;
@@ -779,8 +785,6 @@ mod test {
         let num_shreds_per_slot = 2;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
-        let (quic_endpoint_sender, _quic_endpoint_receiver) =
-            tokio::sync::mpsc::channel(/*capacity:*/ 128);
 
         // Insert complete slot of ticks needed to finish the slot
         let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
@@ -790,7 +794,9 @@ mod test {
             last_tick_height: ticks.len() as u64,
         };
 
-        let mut standard_broadcast_run = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -799,7 +805,6 @@ mod test {
                 &blockstore,
                 receive_results,
                 &bank_forks,
-                &quic_endpoint_sender,
             )
             .unwrap();
         assert!(standard_broadcast_run.completed)
@@ -809,7 +814,9 @@ mod test {
     fn entries_to_shreds_max() {
         agave_logger::setup();
         let keypair = Keypair::new();
-        let mut bs = StandardBroadcastRun::new(0);
+        let (votor_event_sender, _votor_event_receiver) = unbounded();
+        let mut bs =
+            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
         bs.slot = 1;
         bs.parent = 0;
         let entries = create_ticks(10_000, 1, solana_hash::Hash::default());

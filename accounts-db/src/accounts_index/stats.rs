@@ -179,20 +179,6 @@ impl Stats {
         self.count.load(Ordering::Relaxed)
     }
 
-    /// This is an estimate of the # of items in mem that are awaiting flushing to disk.
-    /// returns (# items in mem) - (# items we intend to hold in mem for performance heuristics)
-    /// The result is also an estimate because 'held_in_mem' is based on a stat that is swapped out when stats are reported.
-    pub fn get_remaining_items_to_flush_estimate(&self) -> usize {
-        let in_mem = self.count_in_mem.load(Ordering::Relaxed) as u64;
-        // Note, `held_in_mem.clean` is purposely not included in this
-        // summation because clean items do not need to be flushed.
-        let held_in_mem = self.held_in_mem.slot_list_cached.load(Ordering::Relaxed)
-            + self.held_in_mem.slot_list_len.load(Ordering::Relaxed)
-            + self.held_in_mem.ref_count.load(Ordering::Relaxed)
-            + self.held_in_mem.age.load(Ordering::Relaxed);
-        in_mem.saturating_sub(held_in_mem) as usize
-    }
-
     pub fn report_stats<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
         &self,
         storage: &BucketMapHolder<T, U>,
@@ -228,9 +214,8 @@ impl Stats {
         let capacity_in_mem = self.capacity_in_mem.load(Ordering::Relaxed);
 
         // sum of elapsed time in each thread
-        let mut thread_time_elapsed_ms = elapsed_ms * storage.threads as u64;
+        let thread_time_elapsed_ms = elapsed_ms * storage.threads as u64;
         let datapoint_name = if startup || was_startup {
-            thread_time_elapsed_ms *= 2; // more threads are allocated during startup
             "accounts_index_startup"
         } else {
             "accounts_index"
@@ -478,30 +463,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "disk_index_index_file_size",
+                    "disk_index_file_size",
                     disk.map(|disk| disk.stats.index.total_file_size.load(Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "index_exceptional_entry",
-                    disk.map(|disk| disk
-                        .stats
-                        .index
-                        .index_uses_uncommon_slot_list_len_or_refcount
-                        .load(Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "disk_index_data_file_size",
-                    disk.map(|disk| disk.stats.data.total_file_size.load(Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "disk_index_data_file_count",
-                    disk.map(|disk| disk.stats.data.file_count.load(Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64
                 ),
@@ -518,6 +481,28 @@ impl Stats {
                 (
                     "disk_index_flush_mmap_us",
                     disk.map(|disk| disk.stats.index.mmap_us.swap(0, Ordering::Relaxed))
+                        .unwrap_or_default(),
+                    i64
+                ),
+                (
+                    "index_exceptional_entry",
+                    disk.map(|disk| disk
+                        .stats
+                        .index
+                        .index_uses_uncommon_slot_list_len_or_refcount
+                        .load(Ordering::Relaxed))
+                        .unwrap_or_default(),
+                    i64
+                ),
+                (
+                    "disk_data_file_size",
+                    disk.map(|disk| disk.stats.data.total_file_size.load(Ordering::Relaxed))
+                        .unwrap_or_default(),
+                    i64
+                ),
+                (
+                    "disk_data_file_count",
+                    disk.map(|disk| disk.stats.data.file_count.load(Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64
                 ),

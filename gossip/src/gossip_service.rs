@@ -8,10 +8,10 @@ use {
         epoch_specs::EpochSpecs,
     },
     crossbeam_channel::Sender,
-    rand::{thread_rng, Rng},
+    rand::{Rng, rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
-    solana_net_utils::{SocketAddrSpace, DEFAULT_IP_ECHO_SERVER_THREADS},
+    solana_net_utils::{DEFAULT_IP_ECHO_SERVER_THREADS, SocketAddrSpace},
     solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -26,10 +26,10 @@ use {
         collections::HashSet,
         net::{SocketAddr, TcpListener, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -71,7 +71,6 @@ impl GossipService {
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,
-            None,
             false,
         );
         let (consume_sender, listen_receiver) =
@@ -242,7 +241,7 @@ pub fn get_client(
     nodes: &[ContactInfo],
     connection_cache: Arc<ConnectionCache>,
 ) -> TpuClientWrapper {
-    let select = thread_rng().gen_range(0..nodes.len());
+    let select = rng().random_range(0..nodes.len());
 
     let rpc_pubsub_url = format!("ws://{}/", nodes[select].rpc_pubsub().unwrap());
     let rpc_url = format!("http://{}", nodes[select].rpc().unwrap());
@@ -385,7 +384,7 @@ mod tests {
     use {
         super::*,
         crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
-        std::sync::{atomic::AtomicBool, Arc},
+        std::sync::{Arc, atomic::AtomicBool},
     };
 
     #[test]

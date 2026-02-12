@@ -3,17 +3,19 @@
 use {
     crate::{
         addr_cache::AddrCache,
-        cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
+        cluster_nodes::{
+            ClusterNodes, ClusterNodesCache, DATA_PLANE_FANOUT, Error, MAX_NUM_TURBINE_HOPS,
+        },
         xdp::XdpSender,
     },
     agave_votor::event::VotorEvent,
-    bytes::Bytes,
-    crossbeam_channel::{Receiver, RecvError, Sender, TryRecvError},
+    agave_votor_messages::migration::MigrationStatus,
+    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
     lru::LruCache,
     rand::Rng,
-    rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::Slot,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
+    solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ShredFlags, ShredId, ShredType},
@@ -31,7 +33,7 @@ use {
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
     },
-    solana_streamer::sendmmsg::{multi_target_send, SendPktsError},
+    solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
     std::{
         borrow::Cow,
@@ -39,13 +41,12 @@ use {
         net::{SocketAddr, UdpSocket},
         ops::AddAssign,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 const MAX_DUPLICATE_COUNT: usize = 2;
@@ -291,7 +292,6 @@ fn retransmit(
     cluster_info: &ClusterInfo,
     retransmit_receiver: &Receiver<Vec<shred::Payload>>,
     retransmit_sockets: &[UdpSocket],
-    quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     xdp_sender: Option<&XdpSender>,
     stats: &mut RetransmitStats,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
@@ -301,8 +301,9 @@ fn retransmit(
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
     shred_buf: &mut Vec<Vec<shred::Payload>>,
-    votor_event_sender: Option<&Sender<VotorEvent>>,
-) -> Result<(), RecvError> {
+    votor_event_sender: &Sender<VotorEvent>,
+    migration_status: &MigrationStatus,
+) -> Result<(), ()> {
     // Try to receive shreds from the channel without blocking. If the channel
     // is empty precompute turbine trees speculatively. If no cache updates are
     // made then block on the channel until some shreds are received.
@@ -310,7 +311,7 @@ fn retransmit(
         Ok(shreds) => {
             shred_buf.push(shreds);
         }
-        Err(TryRecvError::Disconnected) => return Err(RecvError),
+        Err(TryRecvError::Disconnected) => return Err(()),
         Err(TryRecvError::Empty) => {
             if cache_retransmit_addrs(
                 thread_pool,
@@ -322,7 +323,7 @@ fn retransmit(
             ) {
                 return Ok(());
             }
-            shred_buf.push(retransmit_receiver.recv()?);
+            shred_buf.push(retransmit_receiver.recv().map_err(|_| ())?);
         }
     };
     // now the batch has started
@@ -351,7 +352,7 @@ fn retransmit(
 
     let mut epoch_cache_update = Measure::start("retransmit_epoch_cache_update");
     shred_deduper.maybe_reset(
-        &mut rand::thread_rng(),
+        &mut rand::rng(),
         DEDUPER_FALSE_POSITIVE_RATE,
         DEDUPER_RESET_CYCLE,
     );
@@ -378,7 +379,7 @@ fn retransmit(
             };
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader, cluster_nodes)))
+            Some((slot, (slot_leader.id, cluster_nodes)))
         })
         .collect();
     let socket_addr_space = cluster_info.socket_addr_space();
@@ -397,7 +398,6 @@ fn retransmit(
             addr_cache,
             socket_addr_space,
             socket,
-            quic_endpoint_sender,
             stats,
         )
     };
@@ -436,8 +436,9 @@ fn retransmit(
         addr_cache,
         rpc_subscriptions,
         slot_status_notifier,
+        migration_status,
         votor_event_sender,
-    );
+    )?;
     timer_start.stop();
     stats.total_time += timer_start.as_us();
     stats.maybe_submit(
@@ -459,7 +460,6 @@ fn retransmit_shred(
     addr_cache: &AddrCache,
     socket_addr_space: &SocketAddrSpace,
     socket: RetransmitSocket<'_>,
-    quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     stats: &RetransmitStats,
 ) -> Option<RetransmitShredOutput> {
     let key = shred::layout::get_shred_id(shred.as_ref())?;
@@ -471,7 +471,7 @@ fn retransmit_shred(
     }
     let mut compute_turbine_peers = Measure::start("turbine_start");
     let (root_distance, addrs) =
-        get_retransmit_addrs(&key, root_bank, cache, addr_cache, socket_addr_space, stats)?;
+        get_retransmit_addrs(&key, cache, addr_cache, socket_addr_space, stats)?;
     compute_turbine_peers.stop();
     stats
         .compute_turbine_peers_total
@@ -481,42 +481,33 @@ fn retransmit_shred(
         .unwrap_or_default();
     let mut retransmit_time = Measure::start("retransmit_to");
     let num_addrs = addrs.len();
-    let num_nodes = match cluster_nodes::get_broadcast_protocol(&key) {
-        Protocol::QUIC => {
-            let shred = shred.bytes;
-            addrs
-                .iter()
-                .filter_map(|&addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
-                .count()
+    let num_nodes = match socket {
+        RetransmitSocket::Xdp(sender) => {
+            let mut sent = num_addrs;
+            if num_addrs > 0
+                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred)
+            {
+                log::warn!("xdp channel full: {e:?}");
+                stats
+                    .num_shreds_dropped_xdp_full
+                    .fetch_add(num_addrs, Ordering::Relaxed);
+                sent = 0;
+            }
+            sent
         }
-        Protocol::UDP => match socket {
-            RetransmitSocket::Xdp(sender) => {
-                let mut sent = num_addrs;
-                if num_addrs > 0 {
-                    if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
-                        log::warn!("xdp channel full: {e:?}");
-                        stats
-                            .num_shreds_dropped_xdp_full
-                            .fetch_add(num_addrs, Ordering::Relaxed);
-                        sent = 0;
-                    }
-                }
-                sent
-            }
-            RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
-                let socket = socket.get_socket();
-                match multi_target_send(socket, shred, &addrs) {
-                    Ok(()) => num_addrs,
-                    Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                        error!(
-                            "retransmit_to multi_target_send error: {ioerr:?}, \
-                             {num_failed}/{num_addrs} packets failed"
-                        );
-                        num_addrs - num_failed
-                    }
+        RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
+            let socket = socket.get_socket();
+            match multi_target_send(socket, shred, &addrs) {
+                Ok(()) => num_addrs,
+                Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                    error!(
+                        "retransmit_to multi_target_send error: {ioerr:?}, \
+                         {num_failed}/{num_addrs} packets failed"
+                    );
+                    num_addrs - num_failed
                 }
             }
-        },
+        }
     };
     retransmit_time.stop();
     stats
@@ -540,7 +531,6 @@ fn retransmit_shred(
 
 fn get_retransmit_addrs<'a>(
     shred: &ShredId,
-    root_bank: &Bank,
     cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
     addr_cache: &'a AddrCache,
     socket_addr_space: &SocketAddrSpace,
@@ -551,9 +541,8 @@ fn get_retransmit_addrs<'a>(
         return Some((root_distance, Cow::Borrowed(addrs)));
     }
     let (slot_leader, cluster_nodes) = cache.get(&shred.slot())?;
-    let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), root_bank);
     let (root_distance, addrs) = cluster_nodes
-        .get_retransmit_addrs(slot_leader, shred, data_plane_fanout, socket_addr_space)
+        .get_retransmit_addrs(slot_leader, shred, DATA_PLANE_FANOUT, socket_addr_space)
         .inspect_err(|err| match err {
             Error::Loopback { .. } => {
                 stats.num_loopback_errs.fetch_add(1, Ordering::Relaxed);
@@ -592,7 +581,7 @@ fn cache_retransmit_addrs(
             let slot_leader = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))?;
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader, cluster_nodes)))
+            Some((slot, (slot_leader.id, cluster_nodes)))
         })
         .collect();
     if cache.is_empty() {
@@ -600,10 +589,9 @@ fn cache_retransmit_addrs(
     }
     let socket_addr_space = cluster_info.socket_addr_space();
     let get_retransmit_addrs = |shred: ShredId| {
-        let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), &root_bank);
         let (slot_leader, cluster_nodes) = cache.get(&shred.slot())?;
         let (root_distance, addrs) = cluster_nodes
-            .get_retransmit_addrs(slot_leader, &shred, data_plane_fanout, socket_addr_space)
+            .get_retransmit_addrs(slot_leader, &shred, DATA_PLANE_FANOUT, socket_addr_space)
             .ok()?;
         Some((shred, (root_distance, addrs.into_boxed_slice())))
     };
@@ -649,19 +637,19 @@ impl RetransmitStage {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         cluster_info: Arc<ClusterInfo>,
         retransmit_sockets: Arc<Vec<UdpSocket>>,
-        quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         retransmit_receiver: Receiver<Vec<shred::Payload>>,
         max_slots: Arc<MaxSlots>,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         xdp_sender: Option<XdpSender>,
-        votor_event_sender: Option<Sender<VotorEvent>>,
+        votor_event_sender: Sender<VotorEvent>,
     ) -> Self {
+        let migration_status = bank_forks.read().unwrap().migration_status();
         let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
         );
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut stats = RetransmitStats::new(Instant::now());
         let mut addr_cache = AddrCache::with_capacity(/*capacity:*/ 4);
         let mut shred_deduper = ShredDeduper::new(&mut rng, DEDUPER_NUM_BITS);
@@ -687,7 +675,6 @@ impl RetransmitStage {
                         &cluster_info,
                         &retransmit_receiver,
                         &retransmit_sockets,
-                        &quic_endpoint_sender,
                         xdp_sender.as_ref(),
                         &mut stats,
                         &cluster_nodes_cache,
@@ -697,7 +684,8 @@ impl RetransmitStage {
                         rpc_subscriptions.as_deref(),
                         slot_status_notifier.as_ref(),
                         &mut shred_buf,
-                        votor_event_sender.as_ref(),
+                        &votor_event_sender,
+                        &migration_status,
                     )
                     .is_ok()
                     {}
@@ -781,8 +769,9 @@ impl RetransmitStats {
         addr_cache: &mut AddrCache,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: Option<&SlotStatusNotifier>,
-        votor_event_sender: Option<&Sender<VotorEvent>>,
-    ) {
+        migration_status: &MigrationStatus,
+        votor_event_sender: &Sender<VotorEvent>,
+    ) -> Result<(), ()> {
         for (slot, mut slot_stats) in feed {
             addr_cache.record(slot, &mut slot_stats);
             match self.slot_stats.get_mut(&slot) {
@@ -793,8 +782,9 @@ impl RetransmitStats {
                             slot_stats.outset,
                             rpc_subscriptions,
                             slot_status_notifier,
+                            migration_status,
                             votor_event_sender,
-                        );
+                        )?;
                     }
                     self.slot_stats.put(slot, slot_stats);
                 }
@@ -812,6 +802,7 @@ impl RetransmitStats {
                 None => break,
             }
         }
+        Ok(())
     }
 }
 
@@ -887,8 +878,9 @@ fn notify_subscribers(
     timestamp: u64, // When the first shred in the slot was received.
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
-    votor_event_sender: Option<&Sender<VotorEvent>>,
-) {
+    migration_status: &MigrationStatus,
+    votor_event_sender: &Sender<VotorEvent>,
+) -> Result<(), ()> {
     if let Some(rpc_subscriptions) = rpc_subscriptions {
         let slot_update = SlotUpdate::FirstShredReceived { slot, timestamp };
         rpc_subscriptions.notify_slot_update(slot_update);
@@ -900,14 +892,24 @@ fn notify_subscribers(
             .unwrap()
             .notify_first_shred_received(slot);
     }
-    if let Some(votor_event_sender) = votor_event_sender {
-        if let Err(err) = votor_event_sender.send(VotorEvent::FirstShred(slot)) {
-            warn!(
-                "Sending {:?} failed as channel became disconnected.  Ignoring.",
-                err.into_inner()
-            );
+
+    if migration_status.should_send_votor_event(slot) {
+        match votor_event_sender.try_send(VotorEvent::FirstShred(slot)) {
+            Ok(()) => (),
+            Err(TrySendError::Full(event)) => {
+                error!(
+                    "Votor event channel is backed up len {}, something is wrong, blocking",
+                    votor_event_sender.len(),
+                );
+                let _ = votor_event_sender.send(event);
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                info!("Votor event channel disconnectioned, we are shutting down")
+            }
         }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -945,7 +947,7 @@ mod tests {
                 &entries,
                 true,
                 // chained_merkle_root
-                Hash::new_from_array(rand::thread_rng().gen()),
+                Hash::new_from_array(rand::rng().random()),
                 0,
                 code_index,
                 &rsc,

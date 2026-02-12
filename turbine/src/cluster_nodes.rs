@@ -3,7 +3,7 @@ use {
     agave_feature_set::{self as feature_set},
     itertools::Either,
     lazy_lru::LruCache,
-    rand::{seq::SliceRandom, Rng, RngCore, SeedableRng},
+    rand::{Rng, RngCore, SeedableRng, seq::SliceRandom},
     rand_chacha::{ChaCha8Rng, ChaChaRng},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
@@ -44,7 +44,7 @@ thread_local! {
     );
 }
 
-const DATA_PLANE_FANOUT: usize = 200;
+pub(crate) const DATA_PLANE_FANOUT: usize = 200;
 pub(crate) const MAX_NUM_TURBINE_HOPS: usize = 4;
 
 #[derive(Debug, Error)]
@@ -68,7 +68,6 @@ enum NodeId {
 pub(crate) struct ContactInfo {
     pubkey: Pubkey,
     wallclock: u64,
-    tvu_quic: Option<SocketAddr>,
     tvu_udp: Option<SocketAddr>,
 }
 
@@ -140,7 +139,7 @@ impl ContactInfo {
     #[inline]
     pub(crate) fn tvu(&self, protocol: Protocol) -> Option<SocketAddr> {
         match protocol {
-            Protocol::QUIC => self.tvu_quic,
+            Protocol::QUIC => None,
             Protocol::UDP => self.tvu_udp,
         }
     }
@@ -150,9 +149,7 @@ impl ContactInfo {
     #[inline]
     fn remove_tvu_addr(&mut self, protocol: Protocol) {
         match protocol {
-            Protocol::QUIC => {
-                self.tvu_quic = None;
-            }
+            Protocol::QUIC => {}
             Protocol::UDP => {
                 self.tvu_udp = None;
             }
@@ -240,13 +237,6 @@ impl RngCore for TurbineRng {
         match self {
             TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.fill_bytes(dest),
             TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.fill_bytes(dest),
-        }
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
-        match self {
-            TurbineRng::Legacy(cha_cha20_rng) => cha_cha20_rng.try_fill_bytes(dest),
-            TurbineRng::ChaCha8(cha_cha8_rng) => cha_cha8_rng.try_fill_bytes(dest),
         }
     }
 }
@@ -458,7 +448,7 @@ const MAX_NUM_NODES_PER_IP_ADDRESS: usize = 1;
 /// same TVU socket-addr, we only send shreds to one of them.
 /// Additionally limits number of nodes at the same IP address to 1
 fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
-    const TVU_PROTOCOLS: [Protocol; 2] = [Protocol::UDP, Protocol::QUIC];
+    const TVU_PROTOCOLS: [Protocol; 1] = [Protocol::UDP];
     let capacity = nodes.len().saturating_mul(2);
     // Tracks (Protocol, SocketAddr) tuples already observed.
     let mut addrs = HashSet::with_capacity(capacity);
@@ -654,7 +644,6 @@ impl From<&GossipContactInfo> for ContactInfo {
         Self {
             pubkey: *node.pubkey(),
             wallclock: node.wallclock(),
-            tvu_quic: node.tvu(Protocol::QUIC),
             tvu_udp: node.tvu(Protocol::UDP),
         }
     }
@@ -701,15 +690,15 @@ pub fn make_test_cluster<R: Rng>(
     let mut stakes: HashMap<Pubkey, u64> = nodes
         .iter()
         .filter_map(|node| {
-            if rng.gen_ratio(unstaked_numerator, unstaked_denominator) {
+            if rng.random_ratio(unstaked_numerator, unstaked_denominator) {
                 None // No stake for some of the nodes.
             } else {
-                Some((*node.pubkey(), rng.gen_range(0..20)))
+                Some((*node.pubkey(), rng.random_range(0..20)))
             }
         })
         .collect();
     // Add some staked nodes with no contact-info.
-    stakes.extend(repeat_with(|| (Pubkey::new_unique(), rng.gen_range(0..20))).take(100));
+    stakes.extend(repeat_with(|| (Pubkey::new_unique(), rng.random_range(0..20))).take(100));
     let cluster_info = ClusterInfo::new(this_node, keypair, SocketAddrSpace::Unspecified);
     {
         let now = timestamp();
@@ -726,45 +715,6 @@ pub fn make_test_cluster<R: Rng>(
         }
     }
     (nodes, stakes, cluster_info)
-}
-
-pub(crate) fn get_data_plane_fanout(shred_slot: Slot, root_bank: &Bank) -> usize {
-    if check_feature_activation(
-        &feature_set::disable_turbine_fanout_experiments::id(),
-        shred_slot,
-        root_bank,
-    ) {
-        DATA_PLANE_FANOUT
-    } else if check_feature_activation(
-        &feature_set::enable_turbine_extended_fanout_experiments::id(),
-        shred_slot,
-        root_bank,
-    ) {
-        // Allocate ~2% of slots to turbine fanout experiments.
-        match shred_slot % 359 {
-            11 => 1152,
-            61 => 1280,
-            111 => 1024,
-            161 => 1408,
-            211 => 896,
-            261 => 1536,
-            311 => 768,
-            _ => DATA_PLANE_FANOUT,
-        }
-    } else {
-        // feature_set::enable_turbine_fanout_experiments
-        // is already activated on all clusters.
-        match shred_slot % 359 {
-            11 => 64,
-            61 => 768,
-            111 => 128,
-            161 => 640,
-            211 => 256,
-            261 => 512,
-            311 => 384,
-            _ => DATA_PLANE_FANOUT,
-        }
-    }
 }
 
 // Returns true if the feature is effective for the shred slot.
@@ -786,6 +736,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
+        rand::prelude::IndexedRandom as _,
         solana_hash::Hash as SolanaHash,
         solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
         std::{collections::VecDeque, fmt::Debug, hash::Hash},
@@ -798,7 +749,7 @@ mod tests {
     /// of all the nodes with weighted shuffles
     fn test_complete_cluster_coverage(use_cha_cha_8: bool) {
         let fanout = 10;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let (_nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 20, Some((0, 1)));
         let slot_leader = cluster_info.id();
@@ -887,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_cluster_nodes_retransmit() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
         // ClusterInfo::tvu_peers excludes the node itself.
         assert_eq!(
@@ -931,7 +882,7 @@ mod tests {
     #[test_case(true)/*ChaCha8 */]
     #[test_case(false)/*ChaCha20 */]
     fn test_cluster_nodes_broadcast(use_cha_cha_8: bool) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
         // ClusterInfo::tvu_peers excludes the node itself.
         assert_eq!(
@@ -1130,7 +1081,7 @@ mod tests {
     #[test_case(6, 8_778)]
     #[test_case(7, 9_879)]
     fn test_get_retransmit_nodes_round_trip(fanout: usize, size: usize) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut nodes: Vec<_> = (0..size).collect();
         nodes.shuffle(&mut rng);
         // Map node identities to their index within the shuffled tree.
@@ -1160,11 +1111,12 @@ mod tests {
 
     #[test]
     fn test_sort_and_dedup_nodes() {
-        let mut rng = rand::thread_rng();
-        let pubkeys: Vec<Pubkey> = std::iter::repeat_with(|| Pubkey::from(rng.gen::<[u8; 32]>()))
-            .take(50)
-            .collect();
-        let stakes = std::iter::repeat_with(|| rng.gen_range(0..100u64));
+        let mut rng = rand::rng();
+        let pubkeys: Vec<Pubkey> =
+            std::iter::repeat_with(|| Pubkey::from(rng.random::<[u8; 32]>()))
+                .take(50)
+                .collect();
+        let stakes = std::iter::repeat_with(|| rng.random_range(0..100u64));
         let stakes: HashMap<Pubkey, u64> = pubkeys.iter().copied().zip(stakes).collect();
         let mut nodes: Vec<Node> = std::iter::repeat_with(|| {
             let pubkey = pubkeys.choose(&mut rng).copied().unwrap();

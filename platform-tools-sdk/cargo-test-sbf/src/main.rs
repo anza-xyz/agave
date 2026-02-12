@@ -14,7 +14,6 @@ use {
 };
 
 struct Config<'a> {
-    sbf_sdk: Option<String>,
     sbf_out_dir: Option<String>,
     platform_tools_version: Option<String>,
     cargo: PathBuf,
@@ -27,6 +26,8 @@ struct Config<'a> {
     no_default_features: bool,
     no_run: bool,
     offline: bool,
+    skip_tools_install: bool,
+    no_rustup_override: bool,
     verbose: bool,
     workspace: bool,
     jobs: Option<String>,
@@ -36,7 +37,6 @@ struct Config<'a> {
 impl Default for Config<'_> {
     fn default() -> Self {
         Self {
-            sbf_sdk: None,
             sbf_out_dir: None,
             platform_tools_version: None,
             cargo: PathBuf::from("cargo"),
@@ -49,6 +49,8 @@ impl Default for Config<'_> {
             no_default_features: false,
             no_run: false,
             offline: false,
+            skip_tools_install: false,
+            no_rustup_override: false,
             verbose: false,
             workspace: false,
             jobs: None,
@@ -141,10 +143,6 @@ fn test_solana_package(
     }
 
     let mut build_sbf_args = cargo_args.clone();
-    if let Some(sbf_sdk) = config.sbf_sdk.as_ref() {
-        build_sbf_args.push("--sbf-sdk");
-        build_sbf_args.push(sbf_sdk);
-    }
     build_sbf_args.push("--sbf-out-dir");
     build_sbf_args.push(&sbf_out_dir);
 
@@ -154,6 +152,13 @@ fn test_solana_package(
     if let Some(tools_version) = config.platform_tools_version.as_ref() {
         build_sbf_args.push("--tools-version");
         build_sbf_args.push(tools_version);
+    }
+
+    if config.skip_tools_install {
+        build_sbf_args.push("--skip-tools-install");
+    }
+    if config.no_rustup_override {
+        build_sbf_args.push("--no-rustup-override");
     }
 
     if !config.packages.is_empty() {
@@ -171,7 +176,10 @@ fn test_solana_package(
     );
 
     // Pass --sbf-out-dir along to the solana-program-test crate
-    env::set_var("SBF_OUT_DIR", sbf_out_dir);
+    // Safety: cargo-test-sbf doesn't spawn any threads, env is updated one-by-one between spawns
+    unsafe {
+        env::set_var("SBF_OUT_DIR", sbf_out_dir);
+    }
 
     cargo_args.insert(0, "test");
 
@@ -285,7 +293,7 @@ fn main() {
                 .long("sbf-sdk")
                 .value_name("PATH")
                 .takes_value(true)
-                .help("Path to the Solana SBF SDK"),
+                .help("UNUSED: Path to the Solana SBF SDK"),
         )
         .arg(
             Arg::new("features")
@@ -390,6 +398,23 @@ fn main() {
                 .help("All extra arguments are passed through to cargo test"),
         )
         .arg(
+            Arg::new("skip_tools_install")
+                .long("skip-tools-install")
+                .takes_value(false)
+                .help(
+                    "Passed through to cargo-build-sbf. Skip downloading and installing \
+                     platform-tools",
+                ),
+        )
+        .arg(
+            Arg::new("no_rustup_override")
+                .long("no-rustup-override")
+                .takes_value(false)
+                .help(
+                    "Passed through to cargo-build-sbf. Do not use rustup to manage the toolchain",
+                ),
+        )
+        .arg(
             Arg::new("tools_version")
                 .long("tools-version")
                 .value_name("STRING")
@@ -401,8 +426,13 @@ fn main() {
         )
         .get_matches_from(args);
 
+    if matches.is_present("sbf_sdk") {
+        println!(
+            "--sbf-sdk ignored, argument has been deprecated and will be removed in a future \
+             release."
+        );
+    }
     let mut config = Config {
-        sbf_sdk: matches.value_of_t("sbf_sdk").ok(),
         sbf_out_dir: matches.value_of_t("sbf_out_dir").ok(),
         extra_cargo_test_args: matches
             .values_of_t("extra_cargo_test_args")
@@ -416,6 +446,8 @@ fn main() {
         no_default_features: matches.is_present("no_default_features"),
         no_run: matches.is_present("no_run"),
         offline: matches.is_present("offline"),
+        skip_tools_install: matches.is_present("skip_tools_install"),
+        no_rustup_override: matches.is_present("no_rustup_override"),
         verbose: matches.is_present("verbose"),
         workspace: matches.is_present("workspace"),
         jobs: matches.value_of_t("jobs").ok(),

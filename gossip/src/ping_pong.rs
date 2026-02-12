@@ -6,7 +6,7 @@ use {
     serde_big_array::BigArray,
     siphasher::sip::SipHasher24,
     solana_hash::Hash,
-    solana_keypair::{signable::Signable, Keypair},
+    solana_keypair::{Keypair, signable::Signable},
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
@@ -166,7 +166,7 @@ impl<const N: usize> PingCache<N> {
         Self {
             ttl,
             rate_limit_delay,
-            hashers: std::array::from_fn(|_| SipHasher24::new_with_key(&rng.gen())),
+            hashers: std::array::from_fn(|_| SipHasher24::new_with_key(&rng.random())),
             key_refresh: now,
             pings: LruCache::new(cap),
             pongs: LruCache::new(cap),
@@ -187,18 +187,18 @@ impl<const N: usize> PingCache<N> {
             return false;
         };
         self.pongs.put(remote_node, now);
-        if let Some(sent_time) = self.ping_times.pop(&socket.ip()) {
-            if should_report_message_signature(
+        if let Some(sent_time) = self.ping_times.pop(&socket.ip())
+            && should_report_message_signature(
                 pong.signature(),
                 PONG_SIGNATURE_SAMPLE_LEADING_ZEROS,
-            ) {
-                let rtt = now.saturating_duration_since(sent_time);
-                datapoint_info!(
-                    "ping_rtt",
-                    ("peer_ip", socket.ip().to_string(), String),
-                    ("rtt_us", rtt.as_micros() as i64, i64),
-                );
-            }
+            )
+        {
+            let rtt = now.saturating_duration_since(sent_time);
+            datapoint_info!(
+                "ping_rtt",
+                ("peer_ip", socket.ip().to_string(), String),
+                ("rtt_us", rtt.as_micros() as i64, i64),
+            );
         }
         true
     }
@@ -248,10 +248,12 @@ impl<const N: usize> PingCache<N> {
                 // Pop if the pong message has expired.
                 if age > self.ttl {
                     self.pongs.pop(&remote_node);
+                    (false, true)
+                } else {
+                    // If the pong message is not too recent, generate a new ping
+                    // message to extend remote node verification.
+                    (true, age > self.ttl / 4)
                 }
-                // If the pong message is not too recent, generate a new ping
-                // message to extend remote node verification.
-                (true, age > self.ttl / 8)
             }
         };
         let ping = should_ping
@@ -262,7 +264,7 @@ impl<const N: usize> PingCache<N> {
 
     fn maybe_refresh_key<R: Rng + CryptoRng>(&mut self, rng: &mut R, now: Instant) {
         if now.checked_duration_since(self.key_refresh) > Some(KEY_REFRESH_CADENCE) {
-            let hasher = SipHasher24::new_with_key(&rng.gen());
+            let hasher = SipHasher24::new_with_key(&rng.random());
             self.hashers[1] = std::mem::replace(&mut self.hashers[0], hasher);
             self.key_refresh = now;
         }
@@ -304,9 +306,9 @@ mod tests {
 
     #[test]
     fn test_ping_pong() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
-        let ping = Ping::<32>::new(rng.gen(), &keypair);
+        let ping = Ping::<32>::new(rng.random(), &keypair);
         assert!(ping.verify());
         assert!(ping.sanitize().is_ok());
 
@@ -322,27 +324,23 @@ mod tests {
     #[test]
     fn test_ping_cache() {
         let now = Instant::now();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let ttl = Duration::from_millis(256);
         let delay = ttl / 64;
         let mut cache = PingCache::new(&mut rng, Instant::now(), ttl, delay, /*cap=*/ 1000);
         let this_node = Keypair::new();
-        let keypairs: Vec<_> = repeat_with(Keypair::new).take(8).collect();
-        let sockets: Vec<_> = repeat_with(|| {
-            SocketAddr::V4(SocketAddrV4::new(
-                Ipv4Addr::new(rng.gen(), rng.gen(), rng.gen(), rng.gen()),
-                rng.gen(),
-            ))
-        })
-        .take(8)
-        .collect();
-        let remote_nodes: Vec<(&Keypair, SocketAddr)> = repeat_with(|| {
-            let keypair = &keypairs[rng.gen_range(0..keypairs.len())];
-            let socket = sockets[rng.gen_range(0..sockets.len())];
-            (keypair, socket)
-        })
-        .take(128)
-        .collect();
+        let sockets: Vec<_> = (1u8..=3)
+            .map(|i| {
+                SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::new(i, i, i, i),
+                    8000 + i as u16,
+                ))
+            })
+            .collect();
+        let keypairs: Vec<_> = repeat_with(Keypair::new).take(sockets.len()).collect();
+        let remote_nodes: Vec<(&Keypair, SocketAddr)> = (0..sockets.len() * 2)
+            .map(|i| (&keypairs[i % sockets.len()], sockets[i % sockets.len()]))
+            .collect();
 
         // Initially all checks should fail. The first observation of each node
         // should create a ping packet.
@@ -385,7 +383,7 @@ mod tests {
             assert!(ping.is_none());
         }
 
-        let now = now + ttl / 8;
+        let now = now + ttl / 4 + Duration::from_millis(1);
         // All nodes still have a valid pong packet, but the cache will create
         // a new ping packet to extend verification.
         seen_nodes.clear();
@@ -407,16 +405,19 @@ mod tests {
         }
 
         let now = now + ttl;
-        // Pong packets are still valid but expired. The first observation of
-        // each node will remove the pong packet from cache and create a new
-        // ping packet.
+        // Pong packets have expired. The first observation of each node will
+        // remove the expired pong packet from cache and create a new ping packet.
+        // check should be false because the pong is expired
         seen_nodes.clear();
         for (keypair, socket) in &remote_nodes {
             let node = (keypair.pubkey(), *socket);
             let (check, ping) = cache.check(&mut rng, &this_node, now, node);
             if seen_nodes.insert(node) {
-                assert!(check);
-                assert!(ping.is_some());
+                assert!(!check, "Expired pong should return check=false");
+                assert!(
+                    ping.is_some(),
+                    "Should generate ping to re-verify expired node"
+                );
             } else {
                 assert!(!check);
                 assert!(ping.is_none());
@@ -443,5 +444,37 @@ mod tests {
             assert!(!check);
             assert_eq!(seen_nodes.insert(node), ping.is_some());
         }
+    }
+
+    #[test]
+    fn test_expired_pong_returns_check_false() {
+        let mut rng = rand::rng();
+        let this_node = Keypair::new();
+        let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 10, 10, 10), 8000));
+        let remote_node_keypair = Keypair::new();
+        let remote_node = (remote_node_keypair.pubkey(), remote_socket);
+        let ttl = Duration::from_secs(20 * 60); // 20 minutes
+        let delay = ttl / 64;
+        let mut now = Instant::now();
+        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+
+        // Add a pong for the remote node
+        cache.mock_pong(remote_node.0, remote_node.1, now);
+
+        // Verify the pong is valid. `check` should return true
+        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        assert!(check, "Pong should be valid immediately after adding");
+        assert!(ping.is_none(), "Should not generate ping for recent pong");
+
+        // Advance time past TTL to expire the pong
+        now = now + ttl + Duration::from_secs(1);
+
+        // After expiration, check should return false but should_ping should be true (to re-verify)
+        let (check, ping) = cache.check(&mut rng, &this_node, now, remote_node);
+        assert!(!check, "Expired pong should return check=false");
+        assert!(
+            ping.is_some(),
+            "Should generate ping to re-verify expired node"
+        );
     }
 }

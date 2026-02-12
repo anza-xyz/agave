@@ -116,7 +116,7 @@ The identity public key can now be viewed by running:
 solana-keygen pubkey ~/validator-keypair.json
 ```
 
-> Note: The "validator-keypair.json” file is also your \(ed25519\) private key.
+> Note: The "validator-keypair.json" file is also your \(ed25519\) private key.
 
 ### Paper Wallet identity
 
@@ -168,7 +168,7 @@ VALIDATOR if you lose access to it. If this happens, YOU WILL LOSE YOUR
 ALLOCATION OF SOL TOO.
 
 To back-up your validator identify keypair, **back-up your
-"validator-keypair.json” file or your seed phrase to a secure location.**
+"validator-keypair.json" file or your seed phrase to a secure location.**
 
 ## More Solana CLI Configuration
 
@@ -235,7 +235,7 @@ solana-keygen new -o ~/authorized-withdrawer-keypair.json
 
 If you haven’t already done so, create a vote-account keypair and create the
 vote account on the network. If you have completed this step, you should see the
-“vote-account-keypair.json” in your Solana runtime directory:
+"vote-account-keypair.json" in your Solana runtime directory:
 
 ```bash
 solana-keygen new -o ~/vote-account-keypair.json

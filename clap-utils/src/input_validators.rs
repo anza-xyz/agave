@@ -276,6 +276,27 @@ where
         })
 }
 
+pub fn is_valid_basis_points<T>(basis_points: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    basis_points
+        .as_ref()
+        .parse::<u16>()
+        .map_err(|e| {
+            format!("Unable to parse input basis points, provided: {basis_points}, err: {e}")
+        })
+        .and_then(|v| {
+            if v > 10000 {
+                Err(format!(
+                    "Basis points must be in range of 0 to 10000, provided: {v}"
+                ))
+            } else {
+                Ok(())
+            }
+        })
+}
+
 pub fn is_amount<T>(amount: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
@@ -473,5 +494,17 @@ mod tests {
         assert!(is_derivation("4294967296").is_err());
         assert!(is_derivation("a/b").is_err());
         assert!(is_derivation("0/4294967296").is_err());
+    }
+
+    #[test]
+    fn test_is_valid_basis_points() {
+        assert!(is_valid_basis_points("0").is_ok());
+        assert!(is_valid_basis_points("100").is_ok());
+        assert!(is_valid_basis_points("5000").is_ok());
+        assert!(is_valid_basis_points("10000").is_ok());
+        assert!(is_valid_basis_points("10001").is_err());
+        assert!(is_valid_basis_points("65536").is_err());
+        assert!(is_valid_basis_points("-1").is_err());
+        assert!(is_valid_basis_points("abc").is_err());
     }
 }

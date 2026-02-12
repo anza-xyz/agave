@@ -1,0 +1,16 @@
+[workspace]
+members = ["a", "b"]
+
+exclude = ["sub"]
+
+resolver = "2"
+
+[workspace.package]
+version = "1.2.3"
+edition = "2021"
+
+[workspace.dependencies]
+a = { path = "a", version = "=1.2.3" }
+b = { path = "b", version = "=1.2.3" }
+c = { path = "c", version = "=1.2.3" }
+solana-frozen-abi = "3.0.0"

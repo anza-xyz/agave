@@ -20,6 +20,7 @@ use {
         offline::{blockhash_arg, BLOCKHASH_ARG},
     },
     solana_cli_output::{
+        cli_clientid::CliClientId,
         cli_version::CliVersion,
         display::{
             build_balance_message, format_labeled_address, new_spinner_progress_bar,
@@ -258,6 +259,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         .subcommand(
             SubCommand::with_name("ping")
                 .about("Submit transactions sequentially")
+                .setting(AppSettings::Hidden)
                 .arg(
                     Arg::with_name("interval")
                         .short("i")
@@ -403,6 +405,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                             "skip-rate",
                             "stake",
                             "version",
+                            "client-id",
                             "vote-account",
                         ])
                         .default_value("stake")
@@ -679,6 +682,7 @@ pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo,
         "stake" => CliValidatorsSortOrder::Stake,
         "vote-account" => CliValidatorsSortOrder::VoteAccount,
         "version" => CliValidatorsSortOrder::Version,
+        "client-id" => CliValidatorsSortOrder::ClientId,
         _ => unreachable!(),
     };
 
@@ -745,35 +749,37 @@ pub async fn process_catchup(
     progress_bar.set_message("Connecting...");
 
     if let Some(our_localhost_port) = our_localhost_port {
-        let gussed_default = Some(format!("http://localhost:{our_localhost_port}"));
-        if node_json_rpc_url.is_some() && node_json_rpc_url != gussed_default {
-            // go to new line to leave this message on console
-            println!(
-                "Preferring explicitly given rpc ({}) as us, although --our-localhost is given\n",
-                node_json_rpc_url.as_ref().unwrap()
-            );
-        } else {
-            node_json_rpc_url = gussed_default;
+        let gussed_default = format!("http://localhost:{our_localhost_port}");
+        match node_json_rpc_url.as_ref() {
+            Some(node_json_rpc_url) if node_json_rpc_url != &gussed_default => {
+                // go to new line to leave this message on console
+                println!(
+                    "Preferring explicitly given rpc ({node_json_rpc_url}) as us, although \
+                     --our-localhost is given\n"
+                )
+            }
+            _ => {
+                node_json_rpc_url = Some(gussed_default);
+            }
         }
     }
 
     let (node_client, node_pubkey) = if our_localhost_port.is_some() {
         let client = RpcClient::new(node_json_rpc_url.unwrap());
-        let guessed_default = Some(client.get_identity().await?);
+        let guessed_default = client.get_identity().await?;
         (
             client,
-            (if node_pubkey.is_some() && node_pubkey != guessed_default {
-                // go to new line to leave this message on console
-                println!(
-                    "Preferring explicitly given node pubkey ({}) as us, although --our-localhost \
-                     is given\n",
-                    node_pubkey.unwrap()
-                );
-                node_pubkey
-            } else {
-                guessed_default
-            })
-            .unwrap(),
+            (match node_pubkey {
+                Some(node_pubkey) if node_pubkey != guessed_default => {
+                    // go to new line to leave this message on console
+                    println!(
+                        "Preferring explicitly given node pubkey ({node_pubkey}) as us, although \
+                         --our-localhost is given\n"
+                    );
+                    node_pubkey
+                }
+                _ => guessed_default,
+            }),
         )
     } else if let Some(node_pubkey) = node_pubkey {
         if let Some(node_json_rpc_url) = node_json_rpc_url {
@@ -1923,13 +1929,18 @@ pub async fn process_show_stakes(
             let mut pubkeys: HashSet<String> =
                 pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
 
-            let vote_account_pubkeys: HashSet<String> = vote_accounts
+            let vote_account_pubkeys: HashSet<Pubkey> = vote_accounts
                 .current
                 .into_iter()
                 .chain(vote_accounts.delinquent)
                 .filter_map(|vote_acc| {
-                    (pubkeys.remove(&vote_acc.node_pubkey) || pubkeys.remove(&vote_acc.vote_pubkey))
-                        .then_some(vote_acc.vote_pubkey)
+                    if pubkeys.remove(&vote_acc.node_pubkey)
+                        || pubkeys.remove(&vote_acc.vote_pubkey)
+                    {
+                        Pubkey::from_str(&vote_acc.vote_pubkey).ok()
+                    } else {
+                        None
+                    }
                 })
                 .collect();
 
@@ -1942,7 +1953,7 @@ pub async fn process_show_stakes(
             vote_account_progress_bar.finish_and_clear();
             vote_account_pubkeys
         }
-        None => HashSet::new(),
+        None => HashSet::<Pubkey>::new(),
     };
 
     let mut program_accounts_config = RpcProgramAccountsConfig {
@@ -1958,16 +1969,12 @@ pub async fn process_show_stakes(
 
     // Use server-side filtering if only one vote account is provided
     if vote_account_pubkeys.len() == 1 {
+        let filter_pubkey = vote_account_pubkeys.iter().next().unwrap();
         program_accounts_config.filters = Some(vec![
             // Filter by `StakeStateV2::Stake(_, _)`
             RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
             // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
-            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
-                124,
-                Pubkey::from_str(vote_account_pubkeys.iter().next().unwrap())
-                    .unwrap()
-                    .as_ref(),
-            )),
+            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(124, filter_pubkey.as_ref())),
         ]);
     }
 
@@ -2025,7 +2032,7 @@ pub async fn process_show_stakes(
                 }
                 StakeStateV2::Stake(_, stake, _) => {
                     if vote_account_pubkeys.is_empty()
-                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey.to_string())
+                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey)
                     {
                         stake_accounts.push(CliKeyedStakeState {
                             stake_pubkey: stake_pubkey.to_string(),
@@ -2104,13 +2111,18 @@ pub async fn process_show_validators(
 
     progress_bar.set_message("Fetching version information...");
     let mut node_version = HashMap::new();
+    let mut client_id: HashMap<String, CliClientId> = HashMap::new();
     for contact_info in rpc_client.get_cluster_nodes().await? {
         node_version.insert(
-            contact_info.pubkey,
+            contact_info.pubkey.clone(),
             contact_info
                 .version
                 .and_then(|version| CliVersion::from_str(&version).ok())
                 .unwrap_or_else(CliVersion::unknown_version),
+        );
+        client_id.insert(
+            contact_info.pubkey,
+            CliClientId::from(contact_info.client_id),
         );
     }
 
@@ -2141,6 +2153,10 @@ pub async fn process_show_validators(
                     .get(&vote_account.node_pubkey)
                     .cloned()
                     .unwrap_or_else(CliVersion::unknown_version),
+                client_id
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliClientId::unknown),
                 skip_rate.get(&vote_account.node_pubkey).cloned(),
                 &config.address_labels,
             )
@@ -2157,6 +2173,10 @@ pub async fn process_show_validators(
                     .get(&vote_account.node_pubkey)
                     .cloned()
                     .unwrap_or_else(CliVersion::unknown_version),
+                client_id
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliClientId::unknown),
                 skip_rate.get(&vote_account.node_pubkey).cloned(),
                 &config.address_labels,
             )
@@ -2164,6 +2184,8 @@ pub async fn process_show_validators(
         .collect();
 
     let mut stake_by_version: BTreeMap<CliVersion, CliValidatorsStakeByVersion> = BTreeMap::new();
+    let mut stake_by_client_id: BTreeMap<CliClientId, CliValidatorsStakeByClientId> =
+        BTreeMap::new();
     for validator in current_validators.iter() {
         let CliValidatorsStakeByVersion {
             current_validators,
@@ -2171,6 +2193,16 @@ pub async fn process_show_validators(
             ..
         } = stake_by_version
             .entry(validator.version.clone())
+            .or_default();
+        *current_validators = current_validators.saturating_add(1);
+        *current_active_stake = current_active_stake.saturating_add(validator.activated_stake);
+
+        let CliValidatorsStakeByClientId {
+            current_validators,
+            current_active_stake,
+            ..
+        } = stake_by_client_id
+            .entry(validator.client_id.clone())
             .or_default();
         *current_validators = current_validators.saturating_add(1);
         *current_active_stake = current_active_stake.saturating_add(validator.activated_stake);
@@ -2182,6 +2214,17 @@ pub async fn process_show_validators(
             ..
         } = stake_by_version
             .entry(validator.version.clone())
+            .or_default();
+        *delinquent_validators = delinquent_validators.saturating_add(1);
+        *delinquent_active_stake =
+            delinquent_active_stake.saturating_add(validator.activated_stake);
+
+        let CliValidatorsStakeByClientId {
+            delinquent_validators,
+            delinquent_active_stake,
+            ..
+        } = stake_by_client_id
+            .entry(validator.client_id.clone())
             .or_default();
         *delinquent_validators = delinquent_validators.saturating_add(1);
         *delinquent_active_stake =
@@ -2226,6 +2269,7 @@ pub async fn process_show_validators(
         validators_reverse_sort,
         number_validators,
         stake_by_version,
+        stake_by_client_id,
         use_lamports_unit,
     };
     Ok(config.output_format.formatted_string(&cli_validators))
@@ -2297,6 +2341,7 @@ pub async fn process_transaction_history(
                             block_time,
                             slot,
                             transaction: transaction_with_meta,
+                            ..
                         } = confirmed_transaction;
 
                         let decoded_transaction =

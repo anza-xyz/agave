@@ -11,12 +11,14 @@ use {
 #[derive(Debug, Default)]
 pub struct AccountsStats {
     pub last_store_report: AtomicInterval,
-    pub store_accounts: AtomicU64,
+    pub store_accounts_to_cache_us: AtomicU64,
+    pub store_accounts_to_storage_us: AtomicU64,
     pub store_update_index: AtomicU64,
     pub store_handle_reclaims: AtomicU64,
     pub store_append_accounts: AtomicU64,
     pub stakes_cache_check_and_store_us: AtomicU64,
-    pub store_num_accounts: AtomicU64,
+    pub num_store_accounts_to_cache: AtomicU64,
+    pub num_store_accounts_to_storage: AtomicU64,
     pub store_total_data: AtomicU64,
     pub num_reclaims: AtomicU64,
     pub create_store_count: AtomicU64,
@@ -28,6 +30,8 @@ pub struct AccountsStats {
     pub num_obsolete_bytes_removed: AtomicU64,
     pub add_zero_lamport_accounts_us: AtomicU64,
     pub num_zero_lamport_accounts_added: AtomicU64,
+    pub num_ephemeral_accounts_skipped: AtomicU64,
+    pub num_duplicate_accounts_skipped: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -780,4 +784,11 @@ impl Sum<Self> for ObsoleteAccountsStats {
             accumulated_stats
         })
     }
+}
+
+#[derive(Debug, Default)]
+pub struct CacheAccountStoreStats {
+    pub num_accounts_stored: u64,
+    pub num_ephemeral_accounts_skipped: u64,
+    pub num_duplicate_accounts_skipped: u64,
 }

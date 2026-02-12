@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 //! The `net_utils` module assists with networking
 
 // Activate some of the Rust 2024 lints to make the future migration easier.
@@ -30,7 +22,7 @@ pub mod tooling_for_tests;
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     std::{
         io::{self},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
@@ -39,8 +31,7 @@ use {
 };
 pub use {
     ip_echo_server::{
-        ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
-        MINIMUM_IP_ECHO_SERVER_THREADS,
+        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
     },
     socket_addr_space::SocketAddrSpace,
 };
@@ -247,11 +238,6 @@ pub fn is_host_port(string: String) -> Result<(), String> {
 pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
     let config = sockets::SocketConfiguration::default();
     sockets::bind_in_range_with_config(ip_addr, range, config)
-}
-
-pub fn bind_to_localhost() -> io::Result<UdpSocket> {
-    let config = sockets::SocketConfiguration::default();
-    sockets::bind_to_with_config(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, config)
 }
 
 pub fn bind_to_unspecified() -> io::Result<UdpSocket> {

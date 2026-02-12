@@ -1,20 +1,21 @@
 //! Instruction context (input).
 
 use {
-    agave_feature_set::FeatureSet, solana_account::Account, solana_pubkey::Pubkey,
-    solana_stable_layout::stable_instruction::StableInstruction,
+    solana_account::Account, solana_instruction::Instruction, solana_pubkey::Pubkey,
+    solana_svm_feature_set::SVMFeatureSet,
 };
 
 /// Instruction context fixture.
 pub struct InstrContext {
-    pub feature_set: FeatureSet,
+    pub feature_set: SVMFeatureSet,
     pub accounts: Vec<(Pubkey, Account)>,
-    pub instruction: StableInstruction,
+    pub instruction: Instruction,
 }
 
 #[cfg(feature = "fuzz")]
 use {
     crate::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
+    agave_feature_set::FeatureSet,
     solana_instruction::AccountMeta,
 };
 
@@ -30,12 +31,13 @@ impl TryFrom<ProtoInstrContext> for InstrContext {
                 .map_err(FixtureError::InvalidPubkeyBytes)?,
         );
 
-        let feature_set: FeatureSet = value
+        let agave_feature_set: FeatureSet = value
             .epoch_context
             .as_ref()
             .and_then(|epoch_ctx| epoch_ctx.features.as_ref())
             .map(|fs| fs.into())
             .unwrap_or_default();
+        let feature_set = agave_feature_set.runtime_features();
 
         let accounts: Vec<(Pubkey, Account)> = value
             .accounts
@@ -64,9 +66,9 @@ impl TryFrom<ProtoInstrContext> for InstrContext {
             return Err(FixtureError::InvalidFixtureInput);
         }
 
-        let instruction = StableInstruction {
-            accounts: instruction_accounts.into(),
-            data: value.data.into(),
+        let instruction = Instruction {
+            accounts: instruction_accounts,
+            data: value.data,
             program_id,
         };
 

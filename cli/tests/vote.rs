@@ -20,9 +20,9 @@ use {
     test_case::test_case,
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
@@ -55,7 +55,13 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         identity_account: 0,
         authorized_voter: None,
         authorized_withdrawer: config.signers[0].pubkey(),
-        commission: 0,
+        commission: Some(0),
+        use_v2_instruction: false,
+
+        inflation_rewards_commission_bps: None,
+        inflation_rewards_collector: None,
+        block_revenue_commission_bps: None,
+        block_revenue_collector: None,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -111,6 +117,7 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         vote_account_pubkey,
         new_authorized_pubkey: first_withdraw_authority.pubkey(),
         vote_authorize: VoteAuthorize::Withdrawer,
+        use_v2_instruction: false,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -139,6 +146,7 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         vote_account_pubkey,
         new_authorized_pubkey: withdraw_authority.pubkey(),
         vote_authorize: VoteAuthorize::Withdrawer,
+        use_v2_instruction: false,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -160,6 +168,7 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         vote_account_pubkey,
         new_authorized_pubkey: withdraw_authority.pubkey(),
         vote_authorize: VoteAuthorize::Withdrawer,
+        use_v2_instruction: false,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -237,9 +246,9 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     check_balance!(expected_balance, &rpc_client, &destination_account);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
@@ -296,7 +305,13 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         identity_account: 0,
         authorized_voter: None,
         authorized_withdrawer: offline_keypair.pubkey(),
-        commission: 0,
+        commission: Some(0),
+        use_v2_instruction: false,
+
+        inflation_rewards_commission_bps: None,
+        inflation_rewards_collector: None,
+        block_revenue_commission_bps: None,
+        block_revenue_collector: None,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -352,6 +367,7 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         vote_account_pubkey,
         new_authorized_pubkey: withdraw_authority.pubkey(),
         vote_authorize: VoteAuthorize::Withdrawer,
+        use_v2_instruction: false,
         sign_only: true,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Static(blockhash),
@@ -375,6 +391,7 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         vote_account_pubkey,
         new_authorized_pubkey: withdraw_authority.pubkey(),
         vote_authorize: VoteAuthorize::Withdrawer,
+        use_v2_instruction: false,
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::Validated(Source::Cluster, blockhash),

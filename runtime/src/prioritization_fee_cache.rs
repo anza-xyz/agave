@@ -322,8 +322,7 @@ impl PrioritizationFeeCache {
         // block minimum fee.
         let (slot_prioritization_fee, slot_finalize_us) = measure_us!({
             // remove unfinalized slots
-            *unfinalized =
-                unfinalized.split_off(&slot.checked_sub(MAX_UNFINALIZED_SLOTS).unwrap_or_default());
+            *unfinalized = unfinalized.split_off(&slot.saturating_sub(MAX_UNFINALIZED_SLOTS));
 
             let Some(mut slot_prioritization_fee) = unfinalized.remove(&slot) else {
                 return;

@@ -50,7 +50,8 @@ impl TransactionPtr {
         sharable_transaction_region: &SharableTransactionRegion,
         allocator: &Allocator,
     ) -> Self {
-        let ptr = allocator.ptr_from_offset(sharable_transaction_region.offset);
+        // SAFETY: `sharable_transaction_region.offset` was allocated by `allocator`.
+        let ptr = unsafe { allocator.ptr_from_offset(sharable_transaction_region.offset) };
         Self {
             ptr,
             count: sharable_transaction_region.length as usize,
@@ -99,12 +100,15 @@ pub struct TransactionPtrBatch<'a, M = ()> {
 }
 
 impl<'a, M> TransactionPtrBatch<'a, M> {
-    const TX_CORE_SIZE: usize = std::mem::size_of::<SharableTransactionRegion>();
-    const TX_TOTAL_SIZE: usize = Self::TX_CORE_SIZE + std::mem::size_of::<M>();
+    pub const TX_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
+    pub const TX_CORE_END: usize = Self::TX_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+
+    pub const TX_META_START: usize = Self::TX_CORE_END.next_multiple_of(align_of::<M>());
+    pub const TX_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TX_META_END: usize = Self::TX_META_START + Self::TX_META_SIZE;
+
     #[allow(dead_code, reason = "Invariant assertion")]
-    const TX_BATCH_SIZE_ASSERT: () =
-        assert!(Self::TX_TOTAL_SIZE * MAX_TRANSACTIONS_PER_MESSAGE < 4096);
-    const TX_BATCH_META_OFFSET: usize = Self::TX_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+    const TX_BATCH_SIZE_ASSERT: () = assert!(Self::TX_META_END <= 4096);
 
     /// # Safety
     /// - [`SharableTransactionBatchRegion`] must reference a valid offset and length
@@ -116,12 +120,15 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         sharable_transaction_batch_region: &SharableTransactionBatchRegion,
         allocator: &'a Allocator,
     ) -> Self {
-        let base = allocator.ptr_from_offset(sharable_transaction_batch_region.transactions_offset);
+        // SAFETY: `sharable_transaction_batch_region.transactions_offset` was allocated by `allocator`.
+        let base = unsafe {
+            allocator.ptr_from_offset(sharable_transaction_batch_region.transactions_offset)
+        };
         let tx_ptr = base.cast();
         // SAFETY:
         // - Assuming the batch was originally allocated to support `M`, this call will also be
         //   safe.
-        let meta_ptr = unsafe { base.byte_add(Self::TX_BATCH_META_OFFSET).cast() };
+        let meta_ptr = unsafe { base.byte_add(Self::TX_META_START).cast() };
 
         Self {
             tx_ptr,

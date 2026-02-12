@@ -87,14 +87,6 @@ fn verify_reachable_ports(
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
     }
-    if verify_address(&node.info.tpu(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu.iter());
-        udp_sockets.extend(&node.sockets.tpu_quic);
-    }
-    if verify_address(&node.info.tpu_forwards(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu_forwards.iter());
-        udp_sockets.extend(&node.sockets.tpu_forwards_quic);
-    }
     if verify_address(&node.info.tpu_vote(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tpu_vote.iter());
     }
@@ -1034,13 +1026,12 @@ fn retain_peer_snapshot_hashes_that_match_known_snapshot_hashes(
         known_snapshot_hashes
             .get(&peer_snapshot_hash.snapshot_hash.full)
             .map(|known_incremental_hashes| {
-                if peer_snapshot_hash.snapshot_hash.incr.is_none() {
+                if let Some(incr) = peer_snapshot_hash.snapshot_hash.incr.as_ref() {
+                    known_incremental_hashes.contains(incr)
+                } else {
                     // If the peer's full snapshot hashes match, but doesn't have any
                     // incremental snapshots, that's fine; keep 'em!
                     true
-                } else {
-                    known_incremental_hashes
-                        .contains(peer_snapshot_hash.snapshot_hash.incr.as_ref().unwrap())
                 }
             })
             .unwrap_or(false)

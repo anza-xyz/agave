@@ -1,5 +1,7 @@
 use {
     crate::{hardened_unpack::UnpackError, snapshot_hash::SnapshotHash},
+    agave_fs::FileInfo,
+    crossbeam_channel::SendError,
     semver::Version,
     solana_accounts_db::{accounts_db::AccountsFileId, accounts_file::AccountsFileError},
     solana_clock::{Epoch, Slot},
@@ -67,6 +69,9 @@ pub enum SnapshotError {
     #[error("snapshot epoch stakes are invalid: {0}")]
     VerifyEpochStakes(#[from] VerifyEpochStakesError),
 
+    #[error("slot in storages map {0} exceeds snapshot slot: {1}")]
+    MismatchedSnapshotStorageSlot(Slot, Slot),
+
     #[error("bank_snapshot_info new_from_dir failed: {0}")]
     NewFromDir(#[from] SnapshotNewFromDirError),
 
@@ -93,6 +98,12 @@ pub enum SnapshotError {
 
     #[error("failed to rebuild snapshot storages: {0}")]
     RebuildStorages(String),
+}
+
+impl From<SendError<FileInfo>> for SnapshotError {
+    fn from(err: SendError<FileInfo>) -> Self {
+        Self::CrossbeamSend(SendError(err.into_inner().path))
+    }
 }
 
 #[derive(Error, Debug)]

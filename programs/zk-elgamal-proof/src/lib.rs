@@ -1,12 +1,4 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
-)]
+#![cfg(feature = "agave-unstable-api")]
 #![forbid(unsafe_code)]
 
 use {
@@ -92,7 +84,7 @@ where
                 InstructionError::InvalidInstructionData
             })?;
         proof_data.verify_proof().map_err(|err| {
-            ic_msg!(invoke_context, "proof_verification failed: {:?}", err);
+            ic_msg!(invoke_context, "proof verification failed: {:?}", err);
             InstructionError::InvalidInstructionData
         })?;
 

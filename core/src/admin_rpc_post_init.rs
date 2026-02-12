@@ -6,8 +6,8 @@ use {
     },
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
     solana_pubkey::Pubkey,
-    solana_quic_definitions::NotifyKeyUpdate,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
+    solana_tls_utils::NotifyKeyUpdate,
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
@@ -29,6 +29,10 @@ pub enum KeyUpdaterType {
     Forward,
     /// For the RPC service
     RpcService,
+    /// BLS all-to-all streamer key updater
+    Bls,
+    /// BLS all-to-all connection cache key updater
+    BlsConnectionCache,
 }
 
 /// Responsible for managing the updaters for identity key change
@@ -82,4 +86,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub cluster_slots: Arc<ClusterSlots>,
     pub node: Option<Arc<NodeMultihoming>>,
     pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
+    pub snapshot_controller: Arc<SnapshotController>,
 }

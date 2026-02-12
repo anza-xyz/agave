@@ -7,7 +7,7 @@ description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = { workspace = true }
+edition = "2024"
 
 [features]
 agave-unstable-api = []
@@ -15,28 +15,25 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-votor = { workspace = true }
+agave-votor-messages = { workspace = true }
 agave-xdp = { workspace = true }
 arc-swap = { workspace = true }
 bincode = { workspace = true }
-bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
-futures = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
-quinn = { workspace = true }
-rand = "0.8.5"
-rand_chacha = "0.3.1"
+rand = { workspace = true }
+rand_chacha = { workspace = true }
 rayon = { workspace = true }
-rustls = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
+solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
@@ -45,8 +42,6 @@ solana-nohash-hasher = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-quic-client = { workspace = true }
-solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
@@ -59,11 +54,12 @@ solana-tls-utils = { workspace = true }
 solana-transaction-error = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
 wincode = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true }
 caps = { workspace = true }
+core_affinity = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }

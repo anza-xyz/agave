@@ -250,6 +250,7 @@ impl RpcSender for MockSender {
                         }),
                 },
                 block_time: Some(1628633791),
+                transaction_index: Some(0),
             })?,
             "getTransactionCount" => json![1234],
             "getSlot" => json![0],
@@ -396,6 +397,7 @@ impl RpcSender for MockSender {
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),
                 version: Some("1.0.0 c375ce1f".to_string()),
+                client_id: Some(0),
                 feature_set: None,
                 shred_version: None,
             }])?,
@@ -430,6 +432,7 @@ impl RpcSender for MockSender {
                     memo: None,
                     block_time: None,
                     confirmation_status: Some(TransactionConfirmationStatus::Finalized),
+                    transaction_index: Some(0),
                 }])?
             }
             "getBlockTime" => serde_json::to_value(UnixTimestamp::default())?,
@@ -470,6 +473,7 @@ impl RpcSender for MockSender {
                     amount: 2500,
                     post_balance: 499999442500,
                     commission: None,
+                    commission_bps: None,
                 })])?,
             "minimumLedgerSlot" => json![123],
             "getMaxRetransmitSlot" => json![123],

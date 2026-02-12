@@ -75,6 +75,7 @@ impl Shredder {
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> impl Iterator<Item = Shred> + use<> {
+        stats.num_entries += entries.len();
         let now = Instant::now();
         let entries = wincode::serialize(entries).unwrap();
         stats.serialize_elapsed += now.elapsed().as_micros() as u64;

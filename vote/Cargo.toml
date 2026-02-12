@@ -63,7 +63,8 @@ rand = { workspace = true }
 solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
-solana-transaction = { workspace = true, features = ["bincode"] }
+solana-system-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 solana-vote = { path = ".", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 static_assertions = { workspace = true }

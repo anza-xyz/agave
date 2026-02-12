@@ -8,6 +8,7 @@ use {
         repair_response,
         serve_repair::{AncestorHashesResponse, MAX_ANCESTOR_RESPONSES},
     },
+    agave_votor_messages::migration::MigrationStatus,
     bincode::serialize,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -17,6 +18,7 @@ use {
         shred::Nonce,
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
+    solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
     std::{
@@ -152,12 +154,16 @@ impl RepairHandlerType {
         cluster_info: Arc<ClusterInfo>,
         sharable_banks: SharableBanks,
         serve_repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
+        leader_state: SharedLeaderState,
+        migration_status: Arc<MigrationStatus>,
     ) -> ServeRepair {
-        ServeRepair::new(
+        ServeRepair::new_with_leader_state(
             cluster_info,
             sharable_banks,
             serve_repair_whitelist,
             self.to_handler(blockstore),
+            leader_state,
+            migration_status,
         )
     }
 }

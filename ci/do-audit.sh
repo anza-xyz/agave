@@ -18,8 +18,6 @@ while [[ -n $1 ]]; do
 done
 
 cargo_audit_ignores=(
-  # === main repo ===
-  #
   # Crate:     ed25519-dalek
   # Version:   1.0.1
   # Title:     Double Public Key Signing Function Oracle Attack on `ed25519-dalek`
@@ -40,8 +38,6 @@ cargo_audit_ignores=(
   # jsonrpc-core-client v18.0.0 -> jsonrpc-client-transports v18.0.0 -> url v1.7.2 -> idna v0.1.5
   --ignore RUSTSEC-2024-0421
 
-  # === programs/sbf ===
-  #
   # Crate:     curve25519-dalek
   # Version:   3.2.1
   # Title:     Timing variability in `curve25519-dalek`'s `Scalar29::sub`/`Scalar52::sub`

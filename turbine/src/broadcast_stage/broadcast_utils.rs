@@ -1,12 +1,14 @@
 use {
     super::{Error, Result},
+    agave_votor::event::{CompletedBlock, VotorEvent, VotorEventSender},
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, get_data_shred_bytes_per_batch_typical, ProcessShredsStats},
+        shred::{self, ProcessShredsStats, get_data_shred_bytes_per_batch_typical},
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
@@ -195,13 +197,30 @@ pub(super) fn get_chained_merkle_root_from_parent(
     }
 }
 
+/// Set the block id on the bank and send it for consideration in voting
+pub(super) fn set_block_id_and_send(
+    migration_status: &MigrationStatus,
+    votor_event_sender: &VotorEventSender,
+    bank: Arc<Bank>,
+    block_id: Hash,
+) -> Result<()> {
+    bank.set_block_id(Some(block_id));
+    if bank.is_frozen() && migration_status.should_send_votor_event(bank.slot()) {
+        votor_event_sender.send(VotorEvent::Block(CompletedBlock {
+            slot: bank.slot(),
+            bank,
+        }))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crossbeam_channel::unbounded,
         solana_genesis_config::GenesisConfig,
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,

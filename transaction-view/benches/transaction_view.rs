@@ -1,21 +1,21 @@
 use {
     agave_transaction_view::transaction_view::TransactionView,
     criterion::{
-        criterion_group, criterion_main, measurement::Measurement, BenchmarkGroup, Criterion,
-        Throughput,
+        BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main,
+        measurement::Measurement,
     },
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_keypair::Keypair,
     solana_message::{
-        v0::{self, MessageAddressTableLookup},
         Message, MessageHeader, VersionedMessage,
+        v0::{self, MessageAddressTableLookup},
     },
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
     solana_transaction::versioned::{
-        sanitized::SanitizedVersionedTransaction, VersionedTransaction,
+        VersionedTransaction, sanitized::SanitizedVersionedTransaction,
     },
     std::hint::black_box,
 };
@@ -65,8 +65,8 @@ fn bench_transactions_parsing(
     group.bench_function("TransactionView (Sanitized)", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ =
-                    TransactionView::try_new_sanitized(black_box(bytes.as_ref()), true).unwrap();
+                let _ = TransactionView::try_new_sanitized(black_box(bytes.as_ref()), true, true)
+                    .unwrap();
             }
         });
     });
