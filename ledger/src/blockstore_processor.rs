@@ -970,6 +970,9 @@ pub fn process_blockstore_from_root(
 
     info!("Processing ledger from slot {start_slot}...");
     let now = Instant::now();
+    // Track whether final accounts hash calculation has already been executed
+    // to avoid running it multiple times when the option is enabled.
+    let mut final_hash_calc_ran = false;
 
     // Ensure start_slot is rooted for correct replay; also ensure start_slot and
     // qualifying children are marked as connected
@@ -2038,6 +2041,7 @@ fn load_frozen_forks(
             if done_processing {
                 if opts.run_final_accounts_hash_calc {
                     bank.run_final_hash_calc();
+                    final_hash_calc_ran = true;
                 }
                 break;
             }
@@ -2054,6 +2058,7 @@ fn load_frozen_forks(
         }
     } else if opts.run_final_accounts_hash_calc {
         bank_forks.read().unwrap().root_bank().run_final_hash_calc();
+        final_hash_calc_ran = true;
     }
 
     Ok((total_slots_processed, total_rooted_slots))
@@ -2185,6 +2190,12 @@ pub fn process_single_slot(
 
     if let Some(transaction_status_sender) = transaction_status_sender {
         transaction_status_sender.send_transaction_status_freeze_message(bank);
+    }
+
+    // If requested and not yet executed in earlier branches, run the final
+    // accounts hash calculation after processing completes.
+    if opts.run_final_accounts_hash_calc && !final_hash_calc_ran {
+        bank_forks.read().unwrap().root_bank().run_final_hash_calc();
     }
 
     Ok(())
