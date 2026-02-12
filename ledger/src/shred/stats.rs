@@ -21,9 +21,6 @@ pub struct ProcessShredsStats {
     // The number of times entry coalescing exited because the maximum number of
     // bytes was hit.
     pub coalesce_exited_hit_max: u64,
-    // The number of times entry coalescing exited because we were tightly
-    // aligned to an erasure batch boundary.
-    pub coalesce_exited_tightly_packed: u64,
     // The number of times entry coalescing exited because the slot ended.
     pub coalesce_exited_slot_ended: u64,
     // The number of times entry coalescing exited because the maximum coalesce
@@ -116,11 +113,6 @@ impl ProcessShredsStats {
             ("num_data_shreds_64", self.num_data_shreds_hist[4], i64),
             ("coalesce_elapsed", self.coalesce_elapsed, i64),
             ("coalesce_exited_hit_max", self.coalesce_exited_hit_max, i64),
-            (
-                "coalesce_exited_tightly_packed",
-                self.coalesce_exited_tightly_packed,
-                i64
-            ),
             (
                 "coalesce_exited_slot_ended",
                 self.coalesce_exited_slot_ended,
@@ -235,7 +227,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             get_leader_schedule_elapsed,
             coalesce_elapsed,
             coalesce_exited_hit_max,
-            coalesce_exited_tightly_packed,
             coalesce_exited_slot_ended,
             coalesce_exited_rcv_timeout,
             num_data_shreds_hist,
@@ -256,7 +247,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.get_leader_schedule_elapsed += get_leader_schedule_elapsed;
         self.coalesce_elapsed += coalesce_elapsed;
         self.coalesce_exited_hit_max += coalesce_exited_hit_max;
-        self.coalesce_exited_tightly_packed += coalesce_exited_tightly_packed;
         self.coalesce_exited_slot_ended += coalesce_exited_slot_ended;
         self.coalesce_exited_rcv_timeout += coalesce_exited_rcv_timeout;
         self.num_extant_slots += num_extant_slots;
