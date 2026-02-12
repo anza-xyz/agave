@@ -8,8 +8,8 @@ use std::{
 /// Connections consume tokens via [`acquire`]. The system is considered
 /// saturated when the bucket level drops below `burst_capacity / 10`.
 ///
-/// Refills are driven by [`acquire`]: when the level drops below half
-/// capacity, a time-proportional refill is attempted, capped at
+/// Refills are driven by [`acquire`]: when the level drops below
+/// `busrt_capacity / 10`, a time-proportional refill is attempted, capped at
 /// `burst_capacity`.
 ///
 /// NOTE: This is intentionally not a generic rate limiter. The bucket can go
@@ -32,7 +32,10 @@ impl GlobalLoadTrackerTokenBucket {
         burst_capacity: u64,
         refill_interval: Duration,
     ) -> Self {
-        assert!(refill_interval.as_nanos() > 0, "refill_interval must be > 0");
+        assert!(
+            refill_interval.as_nanos() > 0,
+            "refill_interval must be > 0"
+        );
         Self {
             bucket: AtomicI64::new(burst_capacity as i64),
             last_refill_nanos: AtomicU64::new(0),
@@ -116,7 +119,7 @@ impl GlobalLoadTrackerTokenBucket {
         self.bucket.fetch_add(refill, Ordering::Relaxed);
 
         // Cap at burst_capacity. A concurrent acquire() may slip in between
-        // the load and store, losing at most 1 token — negligible.
+        // the load and store, so a small number of tokens can be lost here.
         let level = self.bucket.load(Ordering::Relaxed);
         if level > self.burst_capacity {
             self.bucket.store(self.burst_capacity, Ordering::Relaxed);
@@ -182,6 +185,7 @@ mod tests {
     fn test_refill_adds_tokens() {
         let g = simple(); // 100/s, refill interval 10ms
         acquire_n(&g, 100); // level = 0
+
         // 50ms elapsed at 100/s → refill = 5 tokens
         g.refill_at(50_000_000);
         assert_eq!(g.bucket_level(), 5);
@@ -200,6 +204,7 @@ mod tests {
     #[test]
     fn test_refill_caps_at_burst() {
         let g = simple(); // burst = 100, starts at 100
+
         // Don't consume anything. Refill after 10s → would add 1000.
         g.refill_at(10_000_000_000);
         assert_eq!(g.bucket_level(), 100); // capped
