@@ -3700,25 +3700,19 @@ impl Blockstore {
             .collect()
     }
 
-    /// Helper function to process shreds in `completed_ranges` and apply a transformation
-    /// to the resulting block components.
+    /// Fetch the components corresponding to all of the shred indices in `completed_ranges`
     /// This function takes advantage of the fact that `completed_ranges` are both
     /// contiguous and in sorted order. To clarify, suppose completed_ranges is as follows:
     ///   completed_ranges = [..., (s_i..e_i), (s_i+1..e_i+1), ...]
     /// Then, the following statements are true:
     ///   s_i < e_i == s_i+1 < e_i+1
     /// Note that one range in CompletedRanges corresponds to one BlockComponent.
-    fn process_slot_data_in_block<T, I, F>(
+    fn get_slot_components_in_block(
         &self,
         slot: Slot,
         completed_ranges: &CompletedRanges,
         slot_meta: Option<&SlotMeta>,
-        transform: F,
-    ) -> Result<Vec<T>>
-    where
-        I: IntoIterator<Item = T>,
-        F: Fn(BlockComponent) -> Result<I>,
-    {
+    ) -> Result<Vec<BlockComponent>> {
         debug_assert!(completed_ranges
             .iter()
             .tuple_windows()
@@ -3762,39 +3756,14 @@ impl Blockstore {
                         )))
                     })
                     .and_then(|payload| {
-                        let component = wincode::deserialize(&payload).map_err(|e| {
+                        wincode::deserialize(&payload).map_err(|e| {
                             BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
                                 format!("could not reconstruct block component: {e:?}"),
-                            )))
-                        })?;
-
-                        transform(component).map_err(|e| {
-                            BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                                format!("could not transform block component: {e:?}"),
                             )))
                         })
                     })
             })
-            .flatten_ok()
             .collect()
-    }
-
-    /// Fetch the components corresponding to all of the shred indices in `completed_ranges`
-    /// This function takes advantage of the fact that `completed_ranges` are both
-    /// contiguous and in sorted order. To clarify, suppose completed_ranges is as follows:
-    ///   completed_ranges = [..., (s_i..e_i), (s_i+1..e_i+1), ...]
-    /// Then, the following statements are true:
-    ///   s_i < e_i == s_i+1 < e_i+1
-    /// Note that one range in CompletedRanges corresponds to one BlockComponent.
-    fn get_slot_components_in_block(
-        &self,
-        slot: Slot,
-        completed_ranges: &CompletedRanges,
-        slot_meta: Option<&SlotMeta>,
-    ) -> Result<Vec<BlockComponent>> {
-        self.process_slot_data_in_block(slot, completed_ranges, slot_meta, |c| {
-            Ok(std::iter::once(c))
-        })
     }
 
     /// Fetch the entries corresponding to all of the shred indices in `completed_ranges`
