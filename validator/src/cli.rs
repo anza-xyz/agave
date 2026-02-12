@@ -843,6 +843,19 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      silently ignored",
                 ),
         )
+        .arg(
+            Arg::with_name("preserve_program_transactions")
+                .long("preserve-program-transactions")
+                .value_name("PROGRAM_ID")
+                .takes_value(true)
+                .validator(is_pubkey)
+                .multiple(true)
+                .help(
+                    "Preserve all transaction history for the specified program, preventing it \
+                     from being cleaned up by ledger compaction. May be specified multiple times \
+                     for different programs.",
+                ),
+        )
         .args(&pub_sub_config::args(/*test_validator:*/ true))
 }
 

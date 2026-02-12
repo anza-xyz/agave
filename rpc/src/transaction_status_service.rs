@@ -252,6 +252,24 @@ impl TransactionStatusService {
                             transaction_index,
                             batch,
                         )?;
+
+                        // Track signatures for preserved program transactions
+                        let preserved_programs = blockstore.preserved_programs();
+                        if !preserved_programs.is_empty() {
+                            let should_preserve = message
+                                .account_keys()
+                                .iter()
+                                .any(|key| preserved_programs.contains(&key.to_bytes()));
+                            if should_preserve {
+                                let sig_bytes: [u8; 64] =
+                                    transaction.signature().as_ref().try_into().unwrap();
+                                blockstore
+                                    .preserved_signatures()
+                                    .write()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .insert(sig_bytes);
+                            }
+                        }
                     }
                 }
 

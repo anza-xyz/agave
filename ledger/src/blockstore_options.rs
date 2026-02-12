@@ -1,7 +1,7 @@
 use {
     crate::blockstore_db::{default_num_compaction_threads, default_num_flush_threads},
     rocksdb::{DBCompressionType as RocksCompressionType, DBRecoveryMode},
-    std::num::NonZeroUsize,
+    std::{collections::HashSet, num::NonZeroUsize},
 };
 
 /// The subdirectory under ledger directory where the Blockstore lives
@@ -16,6 +16,9 @@ pub struct BlockstoreOptions {
     pub column_options: LedgerColumnOptions,
     pub num_rocksdb_compaction_threads: NonZeroUsize,
     pub num_rocksdb_flush_threads: NonZeroUsize,
+    /// Program pubkeys (as raw bytes) whose transaction history should be
+    /// preserved from compaction-based cleanup. Only used by the test validator.
+    pub preserved_programs: HashSet<[u8; 32]>,
 }
 
 impl Default for BlockstoreOptions {
@@ -29,6 +32,7 @@ impl Default for BlockstoreOptions {
             column_options: LedgerColumnOptions::default(),
             num_rocksdb_compaction_threads: default_num_compaction_threads(),
             num_rocksdb_flush_threads: default_num_flush_threads(),
+            preserved_programs: HashSet::new(),
         }
     }
 }

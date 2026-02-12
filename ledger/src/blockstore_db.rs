@@ -38,7 +38,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc,
+            Arc, RwLock,
         },
     },
 };
@@ -65,6 +65,13 @@ pub enum IteratorMode<Index> {
 struct OldestSlot {
     slot: Arc<AtomicU64>,
     clean_slot_0: Arc<AtomicBool>,
+    /// Program pubkeys whose transaction history should be preserved from
+    /// compaction-based cleanup (immutable after construction).
+    preserved_programs: Arc<HashSet<[u8; 32]>>,
+    /// Signatures of transactions that involve preserved programs, populated
+    /// during the write path and checked during compaction of
+    /// TransactionStatus and TransactionMemos columns.
+    preserved_signatures: Arc<RwLock<HashSet<[u8; 64]>>>,
 }
 
 impl OldestSlot {
@@ -102,6 +109,7 @@ pub(crate) struct Rocks {
     oldest_slot: OldestSlot,
     column_options: Arc<LedgerColumnOptions>,
     write_batch_perf_status: PerfSamplingStatus,
+    preserved_signatures: Arc<RwLock<HashSet<[u8; 64]>>>,
 }
 
 impl Rocks {
@@ -115,7 +123,13 @@ impl Rocks {
         if let Some(recovery_mode) = recovery_mode {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
-        let oldest_slot = OldestSlot::default();
+        let preserved_programs = Arc::new(options.preserved_programs.clone());
+        let preserved_signatures = Arc::new(RwLock::new(HashSet::new()));
+        let oldest_slot = OldestSlot {
+            preserved_programs,
+            preserved_signatures: preserved_signatures.clone(),
+            ..OldestSlot::default()
+        };
         let cf_descriptors = Self::cf_descriptors(&path, &options, &oldest_slot);
         let column_options = Arc::from(options.column_options);
 
@@ -151,11 +165,30 @@ impl Rocks {
             oldest_slot,
             column_options,
             write_batch_perf_status: PerfSamplingStatus::default(),
+            preserved_signatures,
         };
 
         rocks.configure_compaction();
 
         Ok(rocks)
+    }
+
+    pub(crate) fn preserved_signatures(&self) -> &Arc<RwLock<HashSet<[u8; 64]>>> {
+        &self.preserved_signatures
+    }
+
+    pub(crate) fn preserved_programs(&self) -> &Arc<HashSet<[u8; 32]>> {
+        &self.oldest_slot.preserved_programs
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_oldest_slot_for_tests(&self, slot: Slot) {
+        self.oldest_slot.set(slot);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_clean_slot_0_for_tests(&self, clean: bool) {
+        self.oldest_slot.set_clean_slot_0(clean);
     }
 
     /// Create the column family (CF) descriptors necessary to open the database.
@@ -1035,6 +1068,67 @@ struct PurgedSlotFilter<C: Column + ColumnName> {
     clean_slot_0: bool,
     name: CString,
     _phantom: PhantomData<C>,
+    preserved_programs: Arc<HashSet<[u8; 32]>>,
+    preserved_signatures: Arc<RwLock<HashSet<[u8; 64]>>>,
+}
+
+impl<C: Column + ColumnName> PurgedSlotFilter<C> {
+    /// Check if this key belongs to a preserved program's transaction history
+    /// and should be kept even though its slot is below the cleanup threshold.
+    fn should_preserve(&self, key: &[u8]) -> bool {
+        if self.preserved_programs.is_empty() {
+            return false;
+        }
+
+        if C::NAME == columns::AddressSignatures::NAME {
+            // Current format (108 bytes): pubkey at 0..32
+            // Deprecated format (112 bytes): pubkey at 8..40
+            let pubkey_bytes: Option<[u8; 32]> = if key.len() == 108 {
+                key[0..32].try_into().ok()
+            } else if key.len() == 112 {
+                key[8..40].try_into().ok()
+            } else {
+                None
+            };
+            if let Some(pubkey_bytes) = pubkey_bytes {
+                return self.preserved_programs.contains(&pubkey_bytes);
+            }
+        } else if C::NAME == columns::TransactionStatus::NAME {
+            // Current format (72 bytes): signature at 0..64
+            // Deprecated format (80 bytes): signature at 8..72
+            let sig_bytes: Option<[u8; 64]> = if key.len() == 72 {
+                key[0..64].try_into().ok()
+            } else if key.len() == 80 {
+                key[8..72].try_into().ok()
+            } else {
+                None
+            };
+            if let Some(sig_bytes) = sig_bytes {
+                return self
+                    .preserved_signatures
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .contains(&sig_bytes);
+            }
+        } else if C::NAME == columns::TransactionMemos::NAME {
+            // Current format (72 bytes): signature at 0..64, slot at 64..72
+            // Deprecated format (64 bytes): signature at 0..64
+            let sig_bytes: Option<[u8; 64]> = if key.len() == 72 || key.len() == 64 {
+                key[0..64].try_into().ok()
+            } else {
+                None
+            };
+            if let Some(sig_bytes) = sig_bytes {
+                return self
+                    .preserved_signatures
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .contains(&sig_bytes);
+            }
+        }
+
+        false
+    }
 }
 
 impl<C: Column + ColumnName> CompactionFilter for PurgedSlotFilter<C> {
@@ -1042,7 +1136,10 @@ impl<C: Column + ColumnName> CompactionFilter for PurgedSlotFilter<C> {
         use rocksdb::CompactionDecision::*;
 
         let slot_in_key = C::slot(C::index(key));
-        if slot_in_key >= self.oldest_slot || (slot_in_key == 0 && !self.clean_slot_0) {
+        if slot_in_key >= self.oldest_slot
+            || (slot_in_key == 0 && !self.clean_slot_0)
+            || self.should_preserve(key)
+        {
             Keep
         } else {
             Remove
@@ -1076,6 +1173,8 @@ impl<C: Column + ColumnName> CompactionFilterFactory for PurgedSlotFilterFactory
             ))
             .unwrap(),
             _phantom: PhantomData,
+            preserved_programs: self.oldest_slot.preserved_programs.clone(),
+            preserved_signatures: self.oldest_slot.preserved_signatures.clone(),
         }
     }
 

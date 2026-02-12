@@ -80,6 +80,7 @@ impl FromClapArgMatches for BlockstoreOptions {
             access_type: AccessType::Primary,
             num_rocksdb_compaction_threads: rocksdb_compaction_threads,
             num_rocksdb_flush_threads: rocksdb_flush_threads,
+            preserved_programs: Default::default(),
         })
     }
 }

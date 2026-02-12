@@ -1038,4 +1038,223 @@ pub mod tests {
         let child_slot_meta = blockstore.meta(12).unwrap().unwrap();
         assert_eq!(child_slot_meta.parent_slot.unwrap(), 5);
     }
+
+    /// Simulates the full BlockstoreCleanupService path with preserved programs:
+    /// write data → set_max_expired_slot → compaction → verify preserved data survives
+    /// while normal data is cleaned up.
+    #[test]
+    fn test_cleanup_service_path_with_preserved_programs() {
+        use {
+            crate::blockstore_options::BlockstoreOptions, solana_pubkey::Pubkey,
+            solana_signature::Signature, solana_transaction_status::TransactionStatusMeta,
+        };
+
+        let preserved_program = Pubkey::new_unique();
+        let normal_program = Pubkey::new_unique();
+        let fee_payer = Pubkey::new_unique();
+
+        let options = BlockstoreOptions {
+            preserved_programs: [preserved_program.to_bytes()].into_iter().collect(),
+            ..BlockstoreOptions::default_for_tests()
+        };
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open_with_options(ledger_path.path(), options).unwrap();
+
+        // Write transactions across old slots
+        let num_slots = 10u64;
+        let mut preserved_sigs = Vec::new();
+        let mut normal_sigs = Vec::new();
+
+        for slot in 1..=num_slots {
+            let p_sig = Signature::new_unique();
+            blockstore
+                .write_transaction_status(
+                    slot,
+                    p_sig,
+                    [(&fee_payer, true), (&preserved_program, false)].into_iter(),
+                    TransactionStatusMeta {
+                        fee: 100 + slot,
+                        status: Ok(()),
+                        ..TransactionStatusMeta::default()
+                    },
+                    0,
+                )
+                .unwrap();
+            blockstore
+                .preserved_signatures()
+                .write()
+                .unwrap()
+                .insert(p_sig.as_ref().try_into().unwrap());
+            blockstore
+                .write_transaction_memos(&p_sig, slot, "preserved memo".to_string())
+                .unwrap();
+            preserved_sigs.push((p_sig, slot));
+
+            let n_sig = Signature::new_unique();
+            blockstore
+                .write_transaction_status(
+                    slot,
+                    n_sig,
+                    [(&fee_payer, true), (&normal_program, false)].into_iter(),
+                    TransactionStatusMeta {
+                        fee: 200 + slot,
+                        status: Ok(()),
+                        ..TransactionStatusMeta::default()
+                    },
+                    1,
+                )
+                .unwrap();
+            blockstore
+                .write_transaction_memos(&n_sig, slot, "normal memo".to_string())
+                .unwrap();
+            normal_sigs.push((n_sig, slot));
+        }
+
+        // Sanity: all data present
+        let total_status = blockstore
+            .transaction_status_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .count();
+        assert_eq!(total_status, (num_slots * 2) as usize);
+
+        let total_addr_sigs = blockstore
+            .address_signatures_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .count();
+        // Each tx writes entries for fee_payer + program = 2 keys × 2 txs × num_slots
+        assert_eq!(total_addr_sigs, (num_slots * 4) as usize);
+
+        // === First cleanup cycle (like BlockstoreCleanupService) ===
+        // set_max_expired_slot is what the cleanup service calls after purging shred slots
+        let purge_slot = num_slots + 50;
+        blockstore.set_max_expired_slot(purge_slot);
+
+        // Trigger compaction on the three special CFs
+        blockstore.transaction_status_cf.compact();
+        blockstore.address_signatures_cf.compact();
+        blockstore.transaction_memos_cf.compact();
+
+        // Preserved: TransactionStatus entries survive
+        for (sig, slot) in &preserved_sigs {
+            let status = blockstore.read_transaction_status((*sig, *slot)).unwrap();
+            assert!(
+                status.is_some(),
+                "preserved TransactionStatus lost after 1st cleanup (slot {slot})"
+            );
+            assert_eq!(status.unwrap().fee, 100 + slot);
+        }
+
+        // Preserved: AddressSignatures keyed by preserved_program survive
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((preserved_program, *slot, 0u32, *sig))
+                    .unwrap()
+                    .is_some(),
+                "preserved AddressSignatures lost after 1st cleanup (slot {slot})"
+            );
+        }
+
+        // Preserved: TransactionMemos survive
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .read_transaction_memos(*sig, *slot)
+                    .unwrap()
+                    .is_some(),
+                "preserved TransactionMemos lost after 1st cleanup (slot {slot})"
+            );
+        }
+
+        // Normal: all data cleaned up
+        for (sig, slot) in &normal_sigs {
+            assert!(
+                blockstore
+                    .read_transaction_status((*sig, *slot))
+                    .unwrap()
+                    .is_none(),
+                "normal TransactionStatus survived 1st cleanup (slot {slot})"
+            );
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((normal_program, *slot, 1u32, *sig))
+                    .unwrap()
+                    .is_none(),
+                "normal AddressSignatures survived 1st cleanup (slot {slot})"
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*sig, *slot)
+                    .unwrap()
+                    .is_none(),
+                "normal TransactionMemos survived 1st cleanup (slot {slot})"
+            );
+        }
+
+        // fee_payer entries cleaned up (not a preserved program)
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((fee_payer, *slot, 0u32, *sig))
+                    .unwrap()
+                    .is_none(),
+                "fee_payer AddressSignatures should not be preserved"
+            );
+        }
+
+        // === Second cleanup cycle (higher oldest_slot) ===
+        blockstore.set_max_expired_slot(purge_slot + 500);
+        blockstore.transaction_status_cf.compact();
+        blockstore.address_signatures_cf.compact();
+        blockstore.transaction_memos_cf.compact();
+
+        // Preserved data still survives
+        for (sig, slot) in &preserved_sigs {
+            let status = blockstore.read_transaction_status((*sig, *slot)).unwrap();
+            assert!(
+                status.is_some(),
+                "preserved TransactionStatus lost after 2nd cleanup (slot {slot})"
+            );
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((preserved_program, *slot, 0u32, *sig))
+                    .unwrap()
+                    .is_some(),
+                "preserved AddressSignatures lost after 2nd cleanup (slot {slot})"
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*sig, *slot)
+                    .unwrap()
+                    .is_some(),
+                "preserved TransactionMemos lost after 2nd cleanup (slot {slot})"
+            );
+        }
+
+        // Count remaining entries: only preserved ones
+        let remaining_status = blockstore
+            .transaction_status_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .count();
+        assert_eq!(remaining_status, num_slots as usize);
+
+        // AddressSignatures: only preserved_program entries remain (fee_payer entries purged)
+        let remaining_addr_sigs: Vec<_> = blockstore
+            .address_signatures_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .collect();
+        assert_eq!(remaining_addr_sigs.len(), num_slots as usize);
+        for ((pubkey, _slot, _tx_idx, _sig), _val) in &remaining_addr_sigs {
+            assert_eq!(*pubkey, preserved_program);
+        }
+    }
 }

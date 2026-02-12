@@ -377,6 +377,11 @@ fn main() {
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
 
+    let preserve_transaction_programs: HashSet<Pubkey> =
+        pubkeys_of(&matches, "preserve_program_transactions")
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default();
+
     if TestValidatorGenesis::ledger_exists(&ledger_path) {
         for (name, long) in &[
             ("bpf_program", "--bpf-program"),
@@ -482,7 +487,8 @@ fn main() {
             println!("Error: add_accounts_from_directories failed: {e}");
             exit(1);
         })
-        .deactivate_features(&features_to_deactivate);
+        .deactivate_features(&features_to_deactivate)
+        .preserve_transaction_programs(preserve_transaction_programs);
 
     genesis.rpc_config(JsonRpcConfig {
         enable_rpc_transaction_history: true,

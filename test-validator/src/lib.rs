@@ -40,7 +40,8 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_ledger::{
-        blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
+        blockstore::create_new_ledger,
+        blockstore_options::{BlockstoreOptions, LedgerColumnOptions},
         create_new_tmp_ledger,
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -150,6 +151,9 @@ pub struct TestValidatorGenesis {
     pub transaction_account_lock_limit: Option<usize>,
     pub geyser_plugin_manager: Arc<RwLock<GeyserPluginManager>>,
     admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+    /// Programs whose transaction history should be preserved from ledger
+    /// cleanup (compaction).
+    pub preserve_transaction_programs: HashSet<Pubkey>,
 }
 
 impl Default for TestValidatorGenesis {
@@ -186,6 +190,7 @@ impl Default for TestValidatorGenesis {
             geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::default())),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
+            preserve_transaction_programs: HashSet::<Pubkey>::default(),
         }
     }
 }
@@ -271,6 +276,11 @@ impl TestValidatorGenesis {
 
     pub fn rent(&mut self, rent: Rent) -> &mut Self {
         self.rent = rent;
+        self
+    }
+
+    pub fn preserve_transaction_programs(&mut self, programs: HashSet<Pubkey>) -> &mut Self {
+        self.preserve_transaction_programs = programs;
         self
     }
 
@@ -1220,6 +1230,14 @@ impl TestValidator {
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),
             max_ledger_shreds: config.max_ledger_shreds,
+            blockstore_options: BlockstoreOptions {
+                preserved_programs: config
+                    .preserve_transaction_programs
+                    .iter()
+                    .map(|p| p.to_bytes())
+                    .collect(),
+                ..BlockstoreOptions::default_for_tests()
+            },
             no_wait_for_vote_to_start_leader: true,
             staked_nodes_overrides: config.staked_nodes_overrides.clone(),
             accounts_db_config,

@@ -273,6 +273,12 @@ pub struct Blockstore {
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     pub lowest_cleanup_slot: RwLock<Slot>,
     pub slots_stats: SlotsStats,
+
+    /// Programs whose transaction history is preserved from compaction cleanup.
+    preserved_programs: Arc<HashSet<[u8; 32]>>,
+    /// Signatures of transactions involving preserved programs, shared with
+    /// the compaction filter.
+    preserved_signatures: Arc<RwLock<HashSet<[u8; 64]>>>,
 }
 
 pub struct IndexMetaWorkingSetEntry {
@@ -389,6 +395,9 @@ impl Blockstore {
         info!("Opening blockstore at {blockstore_path:?}");
         let db = Arc::new(Rocks::open(blockstore_path, options)?);
 
+        let preserved_programs = db.preserved_programs().clone();
+        let preserved_signatures = db.preserved_signatures().clone();
+
         let address_signatures_cf = db.column();
         let bank_hash_cf = db.column();
         let block_height_cf = db.column();
@@ -450,11 +459,60 @@ impl Blockstore {
             max_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
             slots_stats: SlotsStats::default(),
+            preserved_programs,
+            preserved_signatures,
         };
         blockstore.cleanup_old_entries()?;
         blockstore.update_highest_primary_index_slot()?;
+        blockstore.rebuild_preserved_signatures();
 
         Ok(blockstore)
+    }
+
+    pub fn preserved_programs(&self) -> &Arc<HashSet<[u8; 32]>> {
+        &self.preserved_programs
+    }
+
+    pub fn preserved_signatures(&self) -> &Arc<RwLock<HashSet<[u8; 64]>>> {
+        &self.preserved_signatures
+    }
+
+    /// On restart, rebuild the set of preserved transaction signatures by
+    /// scanning the AddressSignatures CF for each preserved program pubkey.
+    fn rebuild_preserved_signatures(&self) {
+        if self.preserved_programs.is_empty() {
+            return;
+        }
+
+        let mut count = 0usize;
+        for program_bytes in self.preserved_programs.iter() {
+            let pubkey = Pubkey::from(*program_bytes);
+            // Iterate all AddressSignatures entries for this pubkey
+            let iter = self.address_signatures_cf.iter(IteratorMode::From(
+                (pubkey, 0, 0, Signature::default()),
+                IteratorDirection::Forward,
+            ));
+            if let Ok(iter) = iter {
+                for ((address, _slot, _tx_index, signature), _) in iter {
+                    if address != pubkey {
+                        break;
+                    }
+                    let sig_bytes: [u8; 64] = signature.as_ref().try_into().unwrap();
+                    self.preserved_signatures
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(sig_bytes);
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            info!(
+                "Rebuilt {} preserved transaction signatures for {} programs",
+                count,
+                self.preserved_programs.len()
+            );
+        }
     }
 
     pub fn open_with_signal(
@@ -11873,5 +11931,251 @@ pub mod tests {
             tx_status2.status,
             Err(TransactionError::InsufficientFundsForFee)
         );
+    }
+
+    /// Verify that transactions for a preserved program survive compaction
+    /// while normal program transactions are cleaned up. The ledger stays
+    /// small on disk for non-preserved data (default cleanup behavior) but
+    /// ALL transactions for the preserved program are retained indefinitely.
+    #[test]
+    fn test_preserve_program_transactions_survives_two_gc_passes() {
+        let preserved_program = Pubkey::new_unique();
+        let normal_program = Pubkey::new_unique();
+        let fee_payer = Pubkey::new_unique();
+
+        let options = BlockstoreOptions {
+            preserved_programs: [preserved_program.to_bytes()].into_iter().collect(),
+            ..BlockstoreOptions::default_for_tests()
+        };
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open_with_options(ledger_path.path(), options).unwrap();
+
+        // Write transactions across several old slots for both programs
+        let num_slots: u64 = 5;
+        let mut preserved_sigs = Vec::new();
+        let mut normal_sigs = Vec::new();
+
+        for slot in 1..=num_slots {
+            // -- Transaction involving the preserved program --
+            let p_sig = Signature::new_unique();
+            blockstore
+                .write_transaction_status(
+                    slot,
+                    p_sig,
+                    [(&fee_payer, true), (&preserved_program, false)].into_iter(),
+                    TransactionStatusMeta {
+                        fee: 100 + slot,
+                        status: Ok(()),
+                        ..TransactionStatusMeta::default()
+                    },
+                    0,
+                )
+                .unwrap();
+
+            // Track in preserved_signatures (mirrors TransactionStatusService)
+            blockstore
+                .preserved_signatures()
+                .write()
+                .unwrap()
+                .insert(p_sig.as_ref().try_into().unwrap());
+            preserved_sigs.push((p_sig, slot));
+
+            // Also write memos for the preserved transaction
+            blockstore
+                .write_transaction_memos(&p_sig, slot, "preserved memo".to_string())
+                .unwrap();
+
+            // -- Transaction NOT involving the preserved program --
+            let n_sig = Signature::new_unique();
+            blockstore
+                .write_transaction_status(
+                    slot,
+                    n_sig,
+                    [(&fee_payer, true), (&normal_program, false)].into_iter(),
+                    TransactionStatusMeta {
+                        fee: 200 + slot,
+                        status: Ok(()),
+                        ..TransactionStatusMeta::default()
+                    },
+                    1,
+                )
+                .unwrap();
+            normal_sigs.push((n_sig, slot));
+
+            blockstore
+                .write_transaction_memos(&n_sig, slot, "normal memo".to_string())
+                .unwrap();
+        }
+
+        // Sanity: all data is present before any compaction
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((preserved_program, *slot, 0u32, *sig))
+                    .unwrap()
+                    .is_some(),
+                "preserved AddressSignatures missing before compaction"
+            );
+            assert!(
+                blockstore
+                    .read_transaction_status((*sig, *slot))
+                    .unwrap()
+                    .is_some(),
+                "preserved TransactionStatus missing before compaction"
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*sig, *slot)
+                    .unwrap()
+                    .is_some(),
+                "preserved TransactionMemos missing before compaction"
+            );
+        }
+        for (sig, slot) in &normal_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((normal_program, *slot, 1u32, *sig))
+                    .unwrap()
+                    .is_some(),
+                "normal AddressSignatures missing before compaction"
+            );
+        }
+
+        // ======== First GC pass ========
+        // Set oldest_slot well beyond all written data
+        blockstore.db.set_oldest_slot_for_tests(num_slots + 100);
+        blockstore.db.set_clean_slot_0_for_tests(true);
+
+        // Trigger compaction on the three relevant CFs
+        blockstore.address_signatures_cf.compact();
+        blockstore.transaction_status_cf.compact();
+        blockstore.transaction_memos_cf.compact();
+
+        // Preserved program: AddressSignatures keyed by the program should survive
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((preserved_program, *slot, 0u32, *sig))
+                    .unwrap()
+                    .is_some(),
+                "preserved AddressSignatures lost after 1st GC (slot {slot})"
+            );
+        }
+
+        // Preserved program: TransactionStatus should survive (sig in preserved set)
+        for (sig, slot) in &preserved_sigs {
+            let status = blockstore.read_transaction_status((*sig, *slot)).unwrap();
+            assert!(
+                status.is_some(),
+                "preserved TransactionStatus lost after 1st GC (slot {slot})"
+            );
+            assert_eq!(status.unwrap().fee, 100 + slot);
+        }
+
+        // Preserved program: TransactionMemos should survive
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .read_transaction_memos(*sig, *slot)
+                    .unwrap()
+                    .is_some(),
+                "preserved TransactionMemos lost after 1st GC (slot {slot})"
+            );
+        }
+
+        // Normal program: all data should be cleaned up
+        for (sig, slot) in &normal_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((normal_program, *slot, 1u32, *sig))
+                    .unwrap()
+                    .is_none(),
+                "normal AddressSignatures survived 1st GC (slot {slot})"
+            );
+            assert!(
+                blockstore
+                    .read_transaction_status((*sig, *slot))
+                    .unwrap()
+                    .is_none(),
+                "normal TransactionStatus survived 1st GC (slot {slot})"
+            );
+            assert!(
+                blockstore
+                    .read_transaction_memos(*sig, *slot)
+                    .unwrap()
+                    .is_none(),
+                "normal TransactionMemos survived 1st GC (slot {slot})"
+            );
+        }
+
+        // Fee-payer AddressSignatures entries are NOT preserved
+        // (even for preserved-program transactions)
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((fee_payer, *slot, 0u32, *sig))
+                    .unwrap()
+                    .is_none(),
+                "fee_payer AddressSignatures should not be preserved"
+            );
+        }
+
+        // ======== Second GC pass (higher oldest_slot) ========
+        blockstore.db.set_oldest_slot_for_tests(num_slots + 500);
+
+        blockstore.address_signatures_cf.compact();
+        blockstore.transaction_status_cf.compact();
+        blockstore.transaction_memos_cf.compact();
+
+        // Preserved program data STILL survives after second GC
+        for (sig, slot) in &preserved_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((preserved_program, *slot, 0u32, *sig))
+                    .unwrap()
+                    .is_some(),
+                "preserved AddressSignatures lost after 2nd GC (slot {slot})"
+            );
+            let status = blockstore.read_transaction_status((*sig, *slot)).unwrap();
+            assert!(
+                status.is_some(),
+                "preserved TransactionStatus lost after 2nd GC (slot {slot})"
+            );
+            assert_eq!(status.unwrap().fee, 100 + slot);
+
+            assert!(
+                blockstore
+                    .read_transaction_memos(*sig, *slot)
+                    .unwrap()
+                    .is_some(),
+                "preserved TransactionMemos lost after 2nd GC (slot {slot})"
+            );
+        }
+
+        // Normal program data still gone after second GC
+        for (sig, slot) in &normal_sigs {
+            assert!(
+                blockstore
+                    .address_signatures_cf
+                    .get((normal_program, *slot, 1u32, *sig))
+                    .unwrap()
+                    .is_none(),
+                "normal AddressSignatures reappeared after 2nd GC"
+            );
+            assert!(
+                blockstore
+                    .read_transaction_status((*sig, *slot))
+                    .unwrap()
+                    .is_none(),
+                "normal TransactionStatus reappeared after 2nd GC"
+            );
+        }
     }
 }
