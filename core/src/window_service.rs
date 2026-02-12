@@ -294,7 +294,7 @@ impl WindowService {
             repair_socket,
             ancestor_hashes_socket,
             repair_info,
-            outstanding_repair_requests.clone(),
+            outstanding_repair_requests,
             repair_service_channels,
         );
 

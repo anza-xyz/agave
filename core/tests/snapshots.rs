@@ -634,11 +634,11 @@ fn test_snapshots_with_background_services() {
 
     let exit = Arc::new(AtomicBool::new(false));
     let snapshot_packager_service = SnapshotPackagerService::new(
-        pending_snapshot_packages.clone(),
+        pending_snapshot_packages,
         None,
         exit.clone(),
         None,
-        cluster_info.clone(),
+        cluster_info,
         snapshot_controller.clone(),
         false,
         0,
@@ -789,7 +789,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
     let bank_forks = snapshot_test_config.bank_forks.clone();
 
     let snapshot_controller = Arc::new(SnapshotController::new(
-        snapshot_request_sender.clone(),
+        snapshot_request_sender,
         snapshot_test_config.snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     ));

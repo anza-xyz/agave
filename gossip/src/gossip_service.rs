@@ -98,7 +98,7 @@ impl GossipService {
         );
         let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_sockets.clone(),
+            gossip_sockets,
             cluster_info.bind_ip_addrs(),
             response_receiver,
             socket_addr_space,

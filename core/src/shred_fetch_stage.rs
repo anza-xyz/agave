@@ -293,7 +293,7 @@ impl ShredFetchStage {
             vec![repair_socket],
             exit.clone(),
             sender.clone(),
-            recycler.clone(),
+            recycler,
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",
@@ -309,10 +309,6 @@ impl ShredFetchStage {
         // Repair shreds fetched over QUIC protocol.
         {
             let (packet_sender, packet_receiver) = unbounded();
-            let bank_forks = bank_forks.clone();
-            let exit = exit.clone();
-            let sender = sender.clone();
-            let turbine_disabled = turbine_disabled.clone();
             tvu_threads.extend([
                 Builder::new()
                     .name("solTvuRecvRpr".to_string())

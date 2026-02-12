@@ -283,7 +283,7 @@ impl Tvu {
                     vec![bls_socket],
                     &cluster_info.keypair(),
                     bls_packet_sender,
-                    staked_nodes.clone(),
+                    staked_nodes,
                     quic_server_params,
                     qos_config,
                     cancel,

@@ -1285,7 +1285,7 @@ mod test {
 
         // Send a repair request
         RepairService::request_repair_for_shred_from_address(
-            cluster_info.clone(),
+            cluster_info,
             pubkey,
             address,
             slot,

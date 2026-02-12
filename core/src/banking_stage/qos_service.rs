@@ -714,7 +714,7 @@ mod tests {
             ],
             Some(&keypair.pubkey()),
         ));
-        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(transaction.clone());
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
         let txs: Vec<_> = (0..transaction_count)
             .map(|_| transfer_tx.clone())
             .collect();

@@ -630,7 +630,7 @@ impl ReplayStage {
 
         trace!("replay stage");
 
-        let mut identity_keypair = cluster_info.keypair().clone();
+        let mut identity_keypair = cluster_info.keypair();
         let mut my_pubkey = identity_keypair.pubkey();
 
         let mut highest_frozen_slot = bank_forks
@@ -8250,7 +8250,7 @@ pub(crate) mod tests {
         // 2) The blockheight is still eligible for a refresh
         // This will still not refresh because `MAX_VOTE_REFRESH_INTERVAL_MILLIS` has not expired yet
         let expired_bank_sibling = {
-            let mut parent_bank = bank2.clone();
+            let mut parent_bank = bank2;
             for i in 0..expired_bank_child_slot {
                 let slot = expired_bank_child.slot() + i + 1;
                 parent_bank = Bank::new_from_parent_with_bank_forks(
