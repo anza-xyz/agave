@@ -2563,9 +2563,6 @@ impl AccountsDb {
         stats
             .storage_read_elapsed
             .fetch_add(storage_read_elapsed_us, Ordering::Relaxed);
-        stats
-            .num_duplicated_accounts
-            .fetch_add(result.num_duplicated_accounts as u64, Ordering::Relaxed);
         result
     }
 
