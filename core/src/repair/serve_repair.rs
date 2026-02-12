@@ -2054,8 +2054,6 @@ mod tests {
 
         assert_eq!(shreds[0].slot(), 1);
         assert_eq!(shreds[0].index(), 0);
-        // Packet size check in repair_response_packet_from_bytes is now
-        // covered by test_repair_response_packet_from_bytes_oversized in repair_response.rs
         shreds.retain(|shred| shred.slot() != 1);
         blockstore
             .insert_shreds(shreds, None, false)
