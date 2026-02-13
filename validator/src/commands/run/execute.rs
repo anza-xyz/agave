@@ -899,17 +899,6 @@ pub fn execute(
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
 
-    match validator_config.block_verification_method {
-        BlockVerificationMethod::BlockstoreProcessor => {
-            warn!(
-                "The value \"blockstore-processor\" for --block-verification-method has been \
-                 deprecated. The value \"blockstore-processor\" is still allowed for now, but is \
-                 planned for removal in the near future. To update, either set the value \
-                 \"unified-scheduler\" or remove the --block-verification-method argument"
-            );
-        }
-        BlockVerificationMethod::UnifiedScheduler => {}
-    }
     if matches!(
         validator_config.block_production_method,
         BlockProductionMethod::UnifiedScheduler

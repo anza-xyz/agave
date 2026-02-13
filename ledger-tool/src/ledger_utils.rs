@@ -380,8 +380,7 @@ pub fn load_and_process_ledger(
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     let unified_scheduler_pool = match (&block_verification_method, &block_production_method) {
-        methods @ (BlockVerificationMethod::UnifiedScheduler, _)
-        | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+        methods @ (BlockVerificationMethod::UnifiedScheduler, _) => {
             let no_replay_vote_sender = None;
 
             let pool = DefaultSchedulerPool::new(
@@ -397,16 +396,6 @@ pub fn load_and_process_ledger(
                 .unwrap()
                 .install_scheduler_pool(pool.clone());
             Some(pool)
-        }
-        _ => {
-            info!("no scheduler pool is installed for block verification/production...");
-            if let Some(count) = unified_scheduler_handler_threads {
-                warn!(
-                    "--unified-scheduler-handler-threads={count} is ignored because unified \
-                     scheduler isn't enabled"
-                );
-            }
-            None
         }
     };
 

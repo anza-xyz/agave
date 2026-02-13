@@ -186,7 +186,6 @@ const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
 #[derive(Clone, EnumCount, EnumIter, EnumString, VariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockVerificationMethod {
-    BlockstoreProcessor,
     #[default]
     UnifiedScheduler,
 }
@@ -330,10 +329,6 @@ pub fn supported_scheduling_mode(
         (BlockVerificationMethod::UnifiedScheduler, _) => {
             SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
         }
-        (_, BlockProductionMethod::UnifiedScheduler) => {
-            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction)
-        }
-        _ => unreachable!("seems unified scheduler is disabled"),
     }
 }
 
@@ -1107,8 +1102,7 @@ impl Validator {
             &config.block_verification_method,
             &config.block_production_method,
         ) {
-            methods @ (BlockVerificationMethod::UnifiedScheduler, _)
-            | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+            methods @ (BlockVerificationMethod::UnifiedScheduler, _) => {
                 let scheduler_pool = DefaultSchedulerPool::new(
                     supported_scheduling_mode(methods),
                     config.unified_scheduler_handler_threads,
@@ -1129,15 +1123,6 @@ impl Validator {
                     .write()
                     .unwrap()
                     .install_scheduler_pool(scheduler_pool);
-            }
-            _ => {
-                info!("no scheduler pool is installed for block verification/production...");
-                if let Some(count) = config.unified_scheduler_handler_threads {
-                    warn!(
-                        "--unified-scheduler-handler-threads={count} is ignored because unified \
-                         scheduler isn't enabled"
-                    );
-                }
             }
         }
 
