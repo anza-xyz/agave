@@ -195,3 +195,36 @@ To get more information on the command, use
 For a more detailed explanation of the different keypairs and other related
 operations refer to
 [vote account management](../guides/vote-accounts.md).
+
+## Disable Automatic Updates on Validator Nodes
+
+Unattended package updates can cause unexpected restarts or crashes on validator nodes. To ensure stability, it is strongly recommended to **disable automatic updates** on your validator host.
+
+
+### Disable auto updates
+
+Edit the auto-upgrade configuration file:
+
+```bash
+sudo nano /etc/apt/apt.conf.d/20auto-upgrades
+```
+
+Set the following values:
+
+```
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Unattended-Upgrade "0";
+```
+
+Save and exit. This disables automatic package updates.
+
+### Disable apt timers
+
+Systemd timers may still trigger updates unless explicitly disabled. Run:
+
+```bash
+sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer
+sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer
+```
+
+This prevents background update jobs from running.
