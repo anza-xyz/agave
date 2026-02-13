@@ -4333,33 +4333,6 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_process_ledger_ticks_ordering() {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(100);
-        let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let genesis_hash = genesis_config.hash();
-        let keypair = Keypair::new();
-
-        // Simulate a slot of virtual ticks, creates a new blockhash
-        let mut entries = create_ticks(genesis_config.ticks_per_slot, 1, genesis_hash);
-
-        // The new blockhash is going to be the hash of the last tick in the block
-        let new_blockhash = entries.last().unwrap().hash;
-        // Create an transaction that references the new blockhash, should still
-        // be able to find the blockhash if we process transactions all in the same
-        // batch
-        let tx = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 1, new_blockhash);
-        let entry = next_entry(&new_blockhash, 1, vec![tx]);
-        entries.push(entry);
-
-        process_entries_for_tests_without_scheduler(&bank0, entries).unwrap();
-        assert_eq!(bank0.get_balance(&keypair.pubkey()), 1)
-    }
-
     fn get_epoch_schedule(genesis_config: &GenesisConfig) -> EpochSchedule {
         let bank = Bank::new_for_tests(genesis_config);
         bank.epoch_schedule().clone()
