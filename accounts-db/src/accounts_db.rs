@@ -3582,20 +3582,6 @@ impl AccountsDb {
         self.do_load(ancestors, pubkey, None, load_hint, LoadZeroLamports::None)
     }
 
-    /// load the account with `pubkey` into the read only accounts cache.
-    /// The goal is to make subsequent loads (which caller expects to occur) to find the account quickly.
-    pub fn load_account_into_read_cache(&self, ancestors: &Ancestors, pubkey: &Pubkey) {
-        self.do_load_with_populate_read_cache(
-            ancestors,
-            pubkey,
-            None,
-            LoadHint::Unspecified,
-            true,
-            // no return from this function, so irrelevant
-            LoadZeroLamports::None,
-        );
-    }
-
     /// note this returns None for accounts with zero lamports
     pub fn load_with_fixed_root(
         &self,
@@ -3917,7 +3903,6 @@ impl AccountsDb {
             pubkey,
             max_root,
             load_hint,
-            false,
             load_zero_lamports,
         )
     }
@@ -3983,15 +3968,12 @@ impl AccountsDb {
         Some((account, slot))
     }
 
-    /// if 'load_into_read_cache_only', then return value is meaningless.
-    ///   The goal is to get the account into the read-only cache.
     fn do_load_with_populate_read_cache(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
         max_root: Option<Slot>,
         load_hint: LoadHint,
-        load_into_read_cache_only: bool,
         load_zero_lamports: LoadZeroLamports,
     ) -> Option<(AccountSharedData, Slot)> {
         #[cfg(not(test))]
@@ -4004,25 +3986,13 @@ impl AccountsDb {
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
         let in_write_cache = storage_location.is_cached();
-        if !load_into_read_cache_only {
-            if !in_write_cache {
-                let result = self.read_only_accounts_cache.load(*pubkey, slot);
-                if let Some(account) = result {
-                    if load_zero_lamports == LoadZeroLamports::None && account.is_zero_lamport() {
-                        return None;
-                    }
-                    return Some((account, slot));
+        if !in_write_cache {
+            let result = self.read_only_accounts_cache.load(*pubkey, slot);
+            if let Some(account) = result {
+                if load_zero_lamports == LoadZeroLamports::None && account.is_zero_lamport() {
+                    return None;
                 }
-            }
-        } else {
-            // goal is to load into read cache
-            if in_write_cache {
-                // no reason to load in read cache. already in write cache
-                return None;
-            }
-            if self.read_only_accounts_cache.in_cache(pubkey, slot) {
-                // already in read cache
-                return None;
+                return Some((account, slot));
             }
         }
 

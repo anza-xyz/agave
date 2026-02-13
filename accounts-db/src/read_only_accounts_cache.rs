@@ -133,15 +133,6 @@ impl ReadOnlyAccountsCache {
         }
     }
 
-    /// true if pubkey is in cache at slot
-    pub(crate) fn in_cache(&self, pubkey: &Pubkey, slot: Slot) -> bool {
-        if let Some(entry) = self.cache.get(pubkey) {
-            entry.slot == slot
-        } else {
-            false
-        }
-    }
-
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn load(&self, pubkey: Pubkey, slot: Slot) -> Option<AccountSharedData> {
         let (account, load_us) = measure_us!({
