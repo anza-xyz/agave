@@ -182,8 +182,8 @@ impl SwQos {
         let rtt = rtt.clamp(MIN_RTT, MAX_RTT);
 
         // BDP-scaled generous credit: at REFERENCE_RTT → base_max_streams,
-        // scales linearly with RTT, floored at base_max_streams.
-        let rtt_scale = (rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64()).max(1.0);
+        // scales linearly with RTT.
+        let rtt_scale = rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64();
         let staked_unsat_max = (self.config.base_max_streams as f64 * rtt_scale) as u32;
         let unstaked_unsat_max =
             (self.config.base_max_streams_unstaked as f64 * rtt_scale) as u32;
@@ -685,16 +685,16 @@ pub mod test {
     }
 
     #[test]
-    fn test_unsaturated_low_rtt_floors_at_base() {
+    fn test_unsaturated_low_rtt_scales_down() {
         let swqos = make_swqos(SwQosConfig {
             base_max_streams: 2048,
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
-        // RTT < REFERENCE_RTT: rtt_scale.max(1.0) keeps it at base_max_streams
+        // RTT < REFERENCE_RTT scales down (clamped to MIN_RTT).
         assert_eq!(
             swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(5), false),
-            Some(2048),
+            Some(204),
         );
     }
 
@@ -747,8 +747,8 @@ pub mod test {
     #[test]
     fn test_saturated_quota_capped_by_unsaturated_max() {
         // 100% stake at 50ms RTT: saturated quota = 500K * 0.05 = 25000
-        // but unsaturated max = base_max_streams * 1.0 = 2048
-        // hard cap: min(25000, 2048) = 2048
+        // but unsaturated max = base_max_streams * 0.5 = 1024
+        // hard cap: min(25000, 1024) = 1024
         let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             base_max_streams: 2048,
@@ -757,14 +757,14 @@ pub mod test {
         let ctx = staked_context(1_000_000, 1_000_000, 1);
         assert_eq!(
             swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
-            Some(2048),
+            Some(1024),
         );
     }
 
     #[test]
     fn test_saturated_quota_not_capped_when_below_unsaturated() {
         // 1% stake at 50ms RTT: saturated quota = 5000 * 0.05 = 250
-        // unsaturated max = 2048 → no cap applied
+        // unsaturated max = 1024 → no cap applied
         let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             base_max_streams: 2048,
