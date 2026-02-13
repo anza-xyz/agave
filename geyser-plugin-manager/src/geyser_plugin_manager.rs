@@ -306,12 +306,6 @@ impl GeyserPluginManager {
     }
 }
 
-impl Drop for GeyserPluginManager {
-    fn drop(&mut self) {
-        self.unload();
-    }
-}
-
 // Initialize logging for the plugin
 fn setup_logger_for_plugin(new_plugin: &dyn GeyserPlugin) -> Result<(), jsonrpc_core::Error> {
     new_plugin
