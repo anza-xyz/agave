@@ -5187,8 +5187,7 @@ fn test_ref_account_key_after_program_id() {
 fn test_fuzz_instructions() {
     agave_logger::setup();
     use rand::{rng, Rng};
-    let mut bank = create_simple_test_bank(1_000_000_000);
-    bank.zero_fee_structure_for_tests();
+    let bank = create_simple_test_bank(1_000_000_000);
 
     let max_programs = 5;
     let program_keys: Vec<_> = (0..max_programs)
@@ -9473,9 +9472,12 @@ fn test_call_precomiled_program() {
 
 fn calculate_test_fee(
     message: &impl SVMMessage,
-    _lamports_per_signature: u64,
+    lamports_per_signature: u64,
     fee_structure: &FeeStructure,
 ) -> u64 {
+    if lamports_per_signature == 0 {
+        return 0;
+    }
     let fee_budget_limits = FeeBudgetLimits::from(
         process_compute_budget_instructions(
             message.program_instructions_iter(),
@@ -12596,7 +12598,6 @@ fn test_temporary_account_execute_and_commit() {
 
     let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.zero_fee_structure_for_tests();
     bank.activate_feature(&feature_set::relax_intrabatch_account_locks::ID);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
@@ -12670,7 +12671,6 @@ fn test_temporary_account_recreated_execute_and_commit() {
 
     let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.zero_fee_structure_for_tests();
     bank.activate_feature(&feature_set::relax_intrabatch_account_locks::ID);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 

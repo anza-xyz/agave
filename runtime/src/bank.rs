@@ -1188,14 +1188,6 @@ impl Bank {
         bank.process_genesis_config(genesis_config);
         #[cfg(feature = "dev-context-only-utils")]
         bank.process_genesis_config(genesis_config, leader_id_for_tests, genesis_hash);
-        #[cfg(feature = "dev-context-only-utils")]
-        if genesis_config
-            .fee_rate_governor
-            .target_lamports_per_signature
-            == 0
-        {
-            bank.zero_fee_structure_for_tests();
-        }
 
         bank.compute_and_apply_genesis_features();
 
@@ -1939,14 +1931,6 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
-        #[cfg(feature = "dev-context-only-utils")]
-        if genesis_config
-            .fee_rate_governor
-            .target_lamports_per_signature
-            == 0
-        {
-            bank.zero_fee_structure_for_tests();
-        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -2824,8 +2808,11 @@ impl Bank {
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
         message: &impl SVMMessage,
-        _lamports_per_signature: u64,
+        lamports_per_signature: u64,
     ) -> u64 {
+        if lamports_per_signature == 0 {
+            return 0;
+        }
         let fee_budget_limits = FeeBudgetLimits::from(
             process_compute_budget_instructions(
                 message.program_instructions_iter(),
@@ -5939,15 +5926,6 @@ impl fmt::Debug for Bank {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl Bank {
-    pub fn zero_fee_structure_for_tests(&mut self) {
-        self.fee_structure.lamports_per_signature = 0;
-        self.fee_structure.lamports_per_write_lock = 0;
-        self.fee_structure
-            .compute_fee_bins
-            .iter_mut()
-            .for_each(|fee_bin| fee_bin.fee = 0);
-    }
-
     pub fn wrap_with_bank_forks_for_tests(self) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
         let bank_forks = BankForks::new_rw_arc(self);
         let bank = bank_forks.read().unwrap().root_bank();
