@@ -66,6 +66,9 @@ pub struct SwQosConfig {
     pub max_connections_per_unstaked_peer: usize,
     pub base_max_streams: u32,
     pub base_max_streams_unstaked: u32,
+    /// Low-water threshold (in tokens) for saturation detection. If None, defaults
+    /// to 10% of the burst capacity.
+    pub saturation_threshold_tokens: Option<u64>,
     pub parked_stream_mode: ParkedStreamMode,
     /// Per-peer RTT overrides for quota calculation (testing only).
     /// When a peer's pubkey is in the map, `compute_max_streams` uses
@@ -83,6 +86,7 @@ impl Default for SwQosConfig {
             max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
             base_max_streams: DEFAULT_BASE_MAX_STREAMS,
             base_max_streams_unstaked: DEFAULT_BASE_MAX_STREAMS_UNSTAKED,
+            saturation_threshold_tokens: None,
             parked_stream_mode: ParkedStreamMode::Park,
             rtt_overrides: HashMap::new(),
         }
@@ -142,6 +146,9 @@ impl SwQos {
     ) -> Self {
         let max_streams_per_second = config.max_streams_per_ms * 1000;
         let burst_capacity = max_streams_per_second / 10;
+        let saturation_threshold_tokens = config
+            .saturation_threshold_tokens
+            .unwrap_or(burst_capacity / 10);
 
         Self {
             config,
@@ -149,6 +156,7 @@ impl SwQos {
                 max_streams_per_second,
                 burst_capacity,
                 Duration::from_millis(2),
+                saturation_threshold_tokens,
             )),
             stats,
             staked_nodes,

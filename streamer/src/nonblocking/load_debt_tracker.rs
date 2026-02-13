@@ -6,11 +6,15 @@ use std::{
 /// Global load-debt estimator.
 ///
 /// Connections consume tokens via [`acquire`]. The system is considered
-/// saturated when the bucket level drops below `burst_capacity / 10`.
+/// saturated when the bucket level drops below `saturation_threshold`.
 ///
 /// Refills are driven by [`acquire`]: when the level drops below
-/// `busrt_capacity / 10`, a time-proportional refill is attempted, capped at
+/// `saturation_threshold`, a time-proportional refill is attempted, capped at
 /// `burst_capacity`.
+///
+/// We keep a separate low-water `saturation_threshold` (distinct from 0) to be
+/// conservative about recovery because QUIC flow control credit already issued
+/// cannot be reclaimed.
 ///
 /// NOTE: This is intentionally not a generic rate limiter. The bucket can go
 /// negative to represent debt after bursts, which keeps the system saturated
@@ -24,6 +28,7 @@ pub struct LoadDebtTracker {
     refill_interval_nanos: u64,
     max_streams_per_second: u64,
     burst_capacity: i64,
+    saturation_threshold: i64,
 }
 
 impl LoadDebtTracker {
@@ -31,26 +36,31 @@ impl LoadDebtTracker {
         max_streams_per_second: u64,
         burst_capacity: u64,
         refill_interval: Duration,
+        saturation_threshold_tokens: u64,
     ) -> Self {
+        assert!(refill_interval.as_nanos() > 0, "refill_interval must be > 0");
         assert!(
-            refill_interval.as_nanos() > 0,
-            "refill_interval must be > 0"
+            saturation_threshold_tokens <= burst_capacity,
+            "saturation_threshold_tokens must be <= burst_capacity"
         );
+        let burst_capacity = burst_capacity as i64;
+        let saturation_threshold = saturation_threshold_tokens as i64;
         Self {
-            bucket: AtomicI64::new(burst_capacity as i64),
+            bucket: AtomicI64::new(burst_capacity),
             last_refill_nanos: AtomicU64::new(0),
             epoch: Instant::now(),
             refill_interval_nanos: refill_interval.as_nanos() as u64,
             max_streams_per_second,
-            burst_capacity: burst_capacity as i64,
+            burst_capacity,
+            saturation_threshold,
         }
     }
 
     /// Consume one token. Triggers a refill attempt when the bucket
-    /// drops below `burst_capacity / 10`.
+    /// drops below `saturation_threshold`.
     pub(crate) fn acquire(&self) {
         let prev = self.bucket.fetch_sub(1, Ordering::Relaxed);
-        if prev - 1 < self.burst_capacity / 10 {
+        if prev - 1 < self.saturation_threshold {
             self.try_refill();
         }
     }
@@ -58,14 +68,14 @@ impl LoadDebtTracker {
     /// Return whether the system is saturated.
     ///
     /// The system is saturated when the bucket level is below
-    /// `burst_capacity / 10`. When already below that threshold,
+    /// `saturation_threshold`. When already below that threshold,
     /// a refill is attempted so parked connections can detect recovery
     /// even when no streams are flowing.
     pub fn is_saturated(&self) -> bool {
         let level = self.bucket.load(Ordering::Relaxed);
-        if level < self.burst_capacity / 10 {
+        if level < self.saturation_threshold {
             self.try_refill();
-            self.bucket.load(Ordering::Relaxed) < self.burst_capacity / 10
+            self.bucket.load(Ordering::Relaxed) < self.saturation_threshold
         } else {
             false
         }
@@ -135,9 +145,9 @@ impl LoadDebtTracker {
 mod tests {
     use super::*;
 
-    // 100 tokens/s, burst=100, refill every 10ms (= 1 token per refill).
+    // 100 tokens/s, burst=100, threshold=10, refill every 10ms (= 1 token per refill).
     fn simple() -> LoadDebtTracker {
-        LoadDebtTracker::new(100, 100, Duration::from_millis(10))
+        LoadDebtTracker::new(100, 100, Duration::from_millis(10), 10)
     }
 
     fn acquire_n(g: &LoadDebtTracker, n: u64) {
@@ -150,7 +160,7 @@ mod tests {
     fn test_starts_not_saturated() {
         let g = simple();
         assert_eq!(g.bucket_level(), 100);
-        assert!(!g.is_saturated()); // 100 >= 100/10
+        assert!(!g.is_saturated()); // 100 >= 10
     }
 
     #[test]
@@ -169,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_saturated_below_threshold() {
-        let g = simple(); // threshold = 100/10 = 10
+        let g = simple(); // threshold = 10
         acquire_n(&g, 95); // level = 5 < 10
         assert!(g.is_saturated());
     }
