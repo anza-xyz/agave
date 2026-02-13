@@ -26,16 +26,12 @@ use {
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        ConnectionWorkersScheduler,
+        ConnectionWorkersScheduler, WorkersCacheStrategy,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
-<<<<<<< HEAD
-=======
-        ConnectionWorkersScheduler, WorkersCacheStrategy,
->>>>>>> 9b295b9777 (resolve config-ish stuff)
     },
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransportError,
