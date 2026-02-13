@@ -1,7 +1,7 @@
 use {
     crate::{
         nonblocking::{
-            load_tracker_token_bucket::GlobalLoadTrackerTokenBucket,
+            load_debt_tracker::LoadDebtTracker,
             qos::{ConnectionContext, OpaqueStreamerCounter, ParkedStreamMode, QosController},
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
@@ -102,7 +102,7 @@ impl SwQosConfig {
 
 pub struct SwQos {
     config: SwQosConfig,
-    load_tracker: Arc<GlobalLoadTrackerTokenBucket>,
+    load_tracker: Arc<LoadDebtTracker>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable<SwQosStreamerCounter>>>,
@@ -130,7 +130,7 @@ impl ConnectionContext for SwQosConnectionContext {
 }
 
 impl SwQos {
-    pub fn load_tracker(&self) -> &GlobalLoadTrackerTokenBucket {
+    pub fn load_tracker(&self) -> &LoadDebtTracker {
         &self.load_tracker
     }
 
@@ -145,7 +145,7 @@ impl SwQos {
 
         Self {
             config,
-            load_tracker: Arc::new(GlobalLoadTrackerTokenBucket::new(
+            load_tracker: Arc::new(LoadDebtTracker::new(
                 max_streams_per_second,
                 burst_capacity,
                 Duration::from_millis(2),

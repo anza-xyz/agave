@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Global token-bucket load estimator.
+/// Global load-debt estimator.
 ///
 /// Connections consume tokens via [`acquire`]. The system is considered
 /// saturated when the bucket level drops below `burst_capacity / 10`.
@@ -15,7 +15,7 @@ use std::{
 /// NOTE: This is intentionally not a generic rate limiter. The bucket can go
 /// negative to represent debt after bursts, which keeps the system saturated
 /// longer and helps protect downstream pipeline capacity during slot spikes.
-pub struct GlobalLoadTrackerTokenBucket {
+pub struct LoadDebtTracker {
     /// Current token count. Connections decrement; refill increments.
     bucket: AtomicI64,
     /// Nanos since epoch of the last refill. High bit is a lock.
@@ -26,7 +26,7 @@ pub struct GlobalLoadTrackerTokenBucket {
     burst_capacity: i64,
 }
 
-impl GlobalLoadTrackerTokenBucket {
+impl LoadDebtTracker {
     pub(crate) fn new(
         max_streams_per_second: u64,
         burst_capacity: u64,
@@ -136,11 +136,11 @@ mod tests {
     use super::*;
 
     // 100 tokens/s, burst=100, refill every 10ms (= 1 token per refill).
-    fn simple() -> GlobalLoadTrackerTokenBucket {
-        GlobalLoadTrackerTokenBucket::new(100, 100, Duration::from_millis(10))
+    fn simple() -> LoadDebtTracker {
+        LoadDebtTracker::new(100, 100, Duration::from_millis(10))
     }
 
-    fn acquire_n(g: &GlobalLoadTrackerTokenBucket, n: u64) {
+    fn acquire_n(g: &LoadDebtTracker, n: u64) {
         for _ in 0..n {
             g.acquire();
         }
