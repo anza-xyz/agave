@@ -298,7 +298,7 @@ impl VoteAccounts {
         let staked_nodes = Arc::make_mut(staked_nodes);
         let current_stake = staked_nodes
             .get_mut(node_pubkey)
-            .expect("this should not happen");
+            .expect("node_pubkey must exist in staked_nodes when subtracting stake");
         match (*current_stake).cmp(&stake) {
             Ordering::Less => panic!("subtraction value exceeds node's stake"),
             Ordering::Equal => {
