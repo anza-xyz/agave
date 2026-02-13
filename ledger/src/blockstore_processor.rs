@@ -665,21 +665,7 @@ fn process_entries(
                 // If it's a tick, save it for later
                 tick_hashes.push(hash);
                 if bank.is_block_boundary(bank.tick_height() + tick_hashes.len() as u64) {
-                    // If it's a tick that will cause a new blockhash to be created,
-                    // execute the group and register the tick
-                    process_batches(
-                        bank,
-                        replay_tx_thread_pool,
-                        batches.drain(..),
-                        transaction_status_sender,
-                        replay_vote_sender,
-                        batch_timing,
-                        log_messages_bytes_limit,
-                        prioritization_fee_cache,
-                    )?;
-                    for hash in tick_hashes.drain(..) {
-                        bank.register_tick(&hash);
-                    }
+                    break;
                 }
             }
             EntryType::Transactions(transactions) => {
