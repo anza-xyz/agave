@@ -12,7 +12,15 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{Sender, TrySendError},
-    solana_perf::{packet::PacketBatch, sigverify},
+    solana_measure::measure::Measure,
+    solana_perf::{
+        packet::PacketBatch,
+        sigverify::{self, sigverify_thread_pool},
+    },
+    std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 pub struct TransactionSigVerifier {
@@ -46,32 +54,44 @@ impl TransactionSigVerifier {
 impl SigVerifier for TransactionSigVerifier {
     type SendType = BankingPacketBatch;
 
-    fn send_packets(
+    fn verify_and_send_packets(
         &mut self,
-        packet_batches: Vec<PacketBatch>,
+        batches: Vec<PacketBatch>,
+        valid_packets: usize,
+        total_valid_packets: Arc<AtomicUsize>,
+        total_verify_time_us: Arc<AtomicUsize>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
-        let banking_packet_batch = BankingPacketBatch::new(packet_batches);
-        if let Some(forward_stage_sender) = &self.forward_stage_sender {
-            self.banking_stage_sender
-                .send(banking_packet_batch.clone())?;
-            if let Err(TrySendError::Full(_)) =
-                forward_stage_sender.try_send((banking_packet_batch, self.reject_non_vote))
-            {
-                warn!("forwarding stage channel is full, dropping packets.");
+        let banking_stage_sender = self.banking_stage_sender.clone();
+        let forward_stage_sender = self.forward_stage_sender.clone();
+        let reject_non_vote = self.reject_non_vote;
+
+        sigverify_thread_pool().spawn(move || {
+            let mut verify_time = Measure::start("sigverify_batch_time");
+            let mut batches = batches;
+            sigverify::ed25519_verify(&mut batches, reject_non_vote, valid_packets);
+            verify_time.stop();
+            let num_valid_packets = sigverify::count_valid_packets(&batches);
+
+            let banking_packet_batch = BankingPacketBatch::new(batches);
+            if let Some(forward_stage_sender) = &forward_stage_sender {
+                if let Err(err) = banking_stage_sender.send(banking_packet_batch.clone()) {
+                    error!("sigverify send failed: {err:?}");
+                    return;
+                }
+                if let Err(TrySendError::Full(_)) =
+                    forward_stage_sender.try_send((banking_packet_batch, reject_non_vote))
+                {
+                    warn!("forwarding stage channel is full, dropping packets.");
+                }
+            } else if let Err(err) = banking_stage_sender.send(banking_packet_batch) {
+                error!("sigverify send failed: {err:?}");
+                return;
             }
-        } else {
-            self.banking_stage_sender.send(banking_packet_batch)?;
-        }
+
+            total_valid_packets.fetch_add(num_valid_packets, Ordering::Relaxed);
+            total_verify_time_us.fetch_add(verify_time.as_us() as usize, Ordering::Relaxed);
+        });
 
         Ok(())
-    }
-
-    fn verify_batches(
-        &self,
-        mut batches: Vec<PacketBatch>,
-        valid_packets: usize,
-    ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify(&mut batches, self.reject_non_vote, valid_packets);
-        batches
     }
 }

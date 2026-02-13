@@ -30,6 +30,10 @@ static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::n
         .unwrap()
 });
 
+pub fn sigverify_thread_pool() -> &'static ThreadPool {
+    &PAR_THREAD_POOL
+}
+
 pub type TxOffset = RecycledVec<u32>;
 
 #[derive(Debug, PartialEq, Eq)]
