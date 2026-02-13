@@ -29,7 +29,7 @@ use {
     solana_svm_log_collector::{LogCollector, ic_msg},
     solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_TRANSACTION, instruction::InstructionContext,
@@ -454,47 +454,51 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         Ok(())
     }
 
-    /// Helper to prepare for process_instruction()/process_precompile() when the instruction is
-    /// a top level one
-    pub fn prepare_next_top_level_instruction(
+    /// Prepare the instruction trace with all the top level instructions
+    pub fn prepare_top_level_instructions(
         &mut self,
-        message: &impl SVMMessage,
-        instruction: &SVMInstruction,
-        program_account_index: IndexOfAccount,
-        data: &'ix_data [u8],
-    ) -> Result<(), InstructionError> {
-        // We reference accounts by an u8 index, so we have a total of 256 accounts.
-        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        message: &'ix_data impl SVMMessage,
+        program_indices: &[IndexOfAccount],
+    ) -> Result<(), (u8, InstructionError)> {
+        for (top_level_instruction_index, ((_, instruction), program_account_index)) in message
+            .program_instructions_iter()
+            .zip(program_indices.iter())
+            .enumerate()
+        {
+            let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
 
-        let mut instruction_accounts: Vec<InstructionAccount> =
-            Vec::with_capacity(instruction.accounts.len());
-        for index_in_transaction in instruction.accounts.iter() {
-            debug_assert!((*index_in_transaction as usize) < transaction_callee_map.len());
+            let mut instruction_accounts: Vec<InstructionAccount> =
+                Vec::with_capacity(instruction.accounts.len());
+            for index_in_transaction in instruction.accounts.iter() {
+                debug_assert!((*index_in_transaction as usize) < transaction_callee_map.len());
 
-            let index_in_callee = transaction_callee_map
-                .get_mut(*index_in_transaction as usize)
-                .unwrap();
+                let index_in_callee = transaction_callee_map
+                    .get_mut(*index_in_transaction as usize)
+                    .unwrap();
 
-            if (*index_in_callee as usize) > instruction_accounts.len() {
-                *index_in_callee = instruction_accounts.len() as u16;
+                if (*index_in_callee as usize) > instruction_accounts.len() {
+                    *index_in_callee = instruction_accounts.len() as u16;
+                }
+
+                let index_in_transaction = *index_in_transaction as usize;
+                instruction_accounts.push(InstructionAccount::new(
+                    index_in_transaction as IndexOfAccount,
+                    message.is_signer(index_in_transaction),
+                    message.is_writable(index_in_transaction),
+                ));
             }
 
-            let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount::new(
-                index_in_transaction as IndexOfAccount,
-                message.is_signer(index_in_transaction),
-                message.is_writable(index_in_transaction),
-            ));
+            self.transaction_context
+                .configure_instruction_at_index(
+                    top_level_instruction_index,
+                    *program_account_index,
+                    instruction_accounts,
+                    transaction_callee_map,
+                    Cow::Borrowed(instruction.data),
+                    None,
+                )
+                .map_err(|err| (top_level_instruction_index as u8, err))?;
         }
-
-        self.transaction_context.configure_instruction_at_index(
-            self.transaction_context.get_instruction_trace_length(),
-            program_account_index,
-            instruction_accounts,
-            transaction_callee_map,
-            Cow::Borrowed(data),
-            None,
-        )?;
         Ok(())
     }
 
@@ -1257,27 +1261,27 @@ mod tests {
         );
 
         // To be uncommented when we reorder the trace
-        // transaction_context
-        //     .configure_instruction_at_index(
-        //         0,
-        //         0,
-        //         vec![InstructionAccount::new(0, false, false)],
-        //         vec![u16::MAX; 256],
-        //         Cow::Owned(Vec::new()),
-        //         None,
-        //     )
-        //     .unwrap();
-        //
-        // transaction_context
-        //     .configure_instruction_at_index(
-        //         1,
-        //         0,
-        //         vec![InstructionAccount::new(0, false, false)],
-        //         vec![u16::MAX; 256],
-        //         Cow::Owned(Vec::new()),
-        //         None,
-        //     )
-        //     .unwrap();
+        transaction_context
+            .configure_instruction_at_index(
+                0,
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+
+        transaction_context
+            .configure_instruction_at_index(
+                1,
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![u16::MAX; 256],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
 
         for _ in 0..MAX_INSTRUCTIONS {
             transaction_context.push().unwrap();
@@ -1613,30 +1617,14 @@ mod tests {
             }
         }
 
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized, &[90, 90])
             .unwrap();
 
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
-        invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
-            .unwrap();
+        invoke_context.transaction_context.pop().unwrap();
 
         test_case_2(&invoke_context);
 
@@ -1695,16 +1683,9 @@ mod tests {
         let sanitized =
             SanitizedTransaction::try_from_legacy_transaction(transaction, &HashSet::new())
                 .unwrap();
-        let svm_instruction =
-            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
 
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized,
-                &svm_instruction,
-                90,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized, &[90, 90])
             .unwrap();
 
         {

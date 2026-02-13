@@ -1100,17 +1100,51 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .unwrap_or(true)
             );
 
+            let top_level_ixs_num = transaction_context
+                .get_instruction_trace_length()
+                .saturating_sub(transaction_context.number_of_cpis_in_trace());
+            // This vector is a map between CPI number in trace (not counting top level
+            // instructions) and the top level caller index.
+            // This mapping assumes that the caller instruction is always placed before the callee
+            // instruction in the trace.
+            let mut parent_positions: Vec<usize> =
+                vec![usize::MAX; transaction_context.number_of_cpis_in_trace()];
             let (ix_trace, accounts, ix_data_trace) = transaction_context.take_instruction_trace();
-            let mut outer_instructions = Vec::new();
-            for ((ix_in_trace, ix_data), ix_accounts) in ix_trace
+            let mut outer_instructions: Vec<Vec<InnerInstruction>> =
+                vec![Vec::new(); top_level_ixs_num];
+            for (cpi_num, ((ix_in_trace, ix_data), ix_accounts)) in ix_trace
                 .into_iter()
                 .zip(ix_data_trace.into_iter())
                 .zip(accounts)
+                .skip(top_level_ixs_num)
+                .enumerate()
             {
-                let stack_height = ix_in_trace.nesting_level.saturating_add(1) as usize;
-                if stack_height == TRANSACTION_LEVEL_STACK_HEIGHT {
-                    outer_instructions.push(Vec::new());
-                } else if let Some(inner_instructions) = outer_instructions.last_mut() {
+                let caller_ix = ix_in_trace.index_of_caller_instruction;
+                debug_assert_ne!(caller_ix, u16::MAX, "Instruction is not a CPI");
+
+                // If the caller index is less than the number of top level instructions,
+                // it directly represents a top level instruction index.
+                let outer_index = if (caller_ix as usize) < top_level_ixs_num {
+                    *parent_positions.get_mut(cpi_num).unwrap() = caller_ix as usize;
+                    caller_ix as usize
+                // If the above condition was false, we are dealing with a nested CPI.
+                // The caller_ix represents the CPI index in the instruction trace.
+                // To calculate its cpi_number (i.e. the index in `parent_positions)`
+                // we subtract is from the number of top level instructions.
+                } else if let Some(caller_index) = parent_positions
+                    .get((caller_ix as usize).saturating_sub(top_level_ixs_num))
+                    .copied()
+                    && caller_index != usize::MAX
+                {
+                    *parent_positions.get_mut(cpi_num).unwrap() = caller_index;
+                    caller_index
+                } else {
+                    debug_assert!(false);
+                    usize::MAX
+                };
+
+                if let Some(inner_instructions) = outer_instructions.get_mut(outer_index) {
+                    let stack_height = ix_in_trace.nesting_level.saturating_add(1);
                     let stack_height = u8::try_from(stack_height).unwrap_or(u8::MAX);
                     inner_instructions.push(InnerInstruction {
                         instruction: CompiledInstruction::new_from_raw_parts(
@@ -1216,7 +1250,7 @@ mod tests {
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
-        std::collections::HashMap,
+        std::{borrow::Cow, collections::HashMap},
         test_case::test_case,
     };
 
@@ -1366,25 +1400,21 @@ mod tests {
             4,
         );
 
-        // To be uncommented when we reorder the instruction trace
         // Four top level instructions
-        // for i in 0..4 {
-        //     transaction_context
-        //         .configure_instruction_at_index(
-        //             i,
-        //             0,
-        //             vec![],
-        //             vec![u16::MAX; 256],
-        //             Cow::Owned(vec![i as u8]),
-        //             None,
-        //         )
-        //         .unwrap();
-        // }
+        for i in 0..4 {
+            transaction_context
+                .configure_instruction_at_index(
+                    i,
+                    0,
+                    vec![],
+                    vec![u16::MAX; 256],
+                    Cow::Owned(vec![i as u8]),
+                    None,
+                )
+                .unwrap();
+        }
 
         // Execute ix #0
-        transaction_context
-            .configure_top_level_instruction_for_tests(0, vec![], vec![0])
-            .unwrap();
         transaction_context.push().unwrap();
         // ix #0 does a CPI
         transaction_context
@@ -1395,15 +1425,9 @@ mod tests {
         transaction_context.pop().unwrap();
         transaction_context.pop().unwrap();
         // Execute ix #1
-        transaction_context
-            .configure_top_level_instruction_for_tests(0, vec![], vec![1])
-            .unwrap();
         transaction_context.push().unwrap();
         transaction_context.pop().unwrap();
         // Execute ix #2
-        transaction_context
-            .configure_top_level_instruction_for_tests(0, vec![], vec![2])
-            .unwrap();
         transaction_context.push().unwrap();
         // ix #2 does a CPI
         transaction_context
@@ -1428,9 +1452,6 @@ mod tests {
         transaction_context.pop().unwrap();
         transaction_context.pop().unwrap();
         // Execute ix #3
-        transaction_context
-            .configure_top_level_instruction_for_tests(0, vec![], vec![3])
-            .unwrap();
         transaction_context.push().unwrap();
         // ix #3 does a CPI
         transaction_context
