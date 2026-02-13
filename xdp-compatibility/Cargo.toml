@@ -1,6 +1,6 @@
 [package]
-name = "xdp-compatability"
-description = "Agave XDP host compatability scripts"
+name = "xdp-compatibility"
+description = "Agave XDP host compatibility scripts"
 publish = false
 version = { workspace = true }
 edition = { workspace = true }

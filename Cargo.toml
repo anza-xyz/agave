@@ -134,7 +134,7 @@ members = [
     "watchtower",
     "wen-restart",
     "xdp",
-    "xdp-compatability",
+    "xdp-compatibility",
     "xdp-ebpf",
 ]
 

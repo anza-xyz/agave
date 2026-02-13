@@ -3,7 +3,7 @@ use {
     log::{error, info, warn},
     solana_net_utils::sockets::bind_to,
     std::{net::SocketAddr, process::exit},
-    xdp_compatability::{response_for_request, RESPONSE_LEN},
+    xdp_compatibility::{response_for_request, RESPONSE_LEN},
 };
 
 fn get_clap_app<'ab, 'v>() -> App<'ab, 'v> {

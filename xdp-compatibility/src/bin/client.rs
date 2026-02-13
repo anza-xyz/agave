@@ -25,7 +25,7 @@ mod linux {
             thread,
             time::{Duration, Instant},
         },
-        xdp_compatability::{
+        xdp_compatibility::{
             build_request, expected_response, make_token, response_seq, RESPONSE_PREFIX, SEQ_SIZE,
         },
     };
