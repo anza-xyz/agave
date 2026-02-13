@@ -28,14 +28,6 @@ static_mut_refs = "deny"
 unsafe_attr_outside_unsafe = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 
-[workspace.lints.rust.unexpected_cfgs]
-level = "warn"
-check-cfg = [
-    'cfg(target_os, values("solana"))',
-    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
-    'cfg(target_arch, values("sbf"))',
-]
-
 # Clippy lint configuration that can not be applied in clippy.toml
 [workspace.lints.clippy]
 arithmetic_side_effects = "deny"
