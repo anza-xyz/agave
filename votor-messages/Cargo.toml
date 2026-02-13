@@ -41,6 +41,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true, features = ["serde", "copy", "decode"] }
 solana-pubkey = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }

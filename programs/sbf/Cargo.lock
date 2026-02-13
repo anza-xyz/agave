@@ -426,6 +426,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-hash 4.1.0",
  "solana-pubkey 4.0.0",
+ "wincode 0.4.4",
 ]
 
 [[package]]

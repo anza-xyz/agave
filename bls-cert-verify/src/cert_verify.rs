@@ -120,7 +120,7 @@ fn serialize_vote(vote: &Vote) -> Vec<u8> {
     // `expect` is safe because the `Vote` struct is composed entirely of primitive
     // types (u64, Hash, enums) that are inherently serializable and it is constructed
     // locally within this module.
-    bincode::serialize(vote).expect("Vote serialization should never fail for valid Vote structs")
+    wincode::serialize(vote).expect("Vote serialization should never fail for valid Vote structs")
 }
 
 /// Verifies a signature for a single payload signed by a set of validators.
@@ -238,7 +238,7 @@ mod test {
         rank: usize,
     ) -> VoteMessage {
         let bls_keypair = &bls_keypairs[rank];
-        let payload = bincode::serialize(&vote).expect("Failed to serialize vote");
+        let payload = wincode::serialize(&vote).expect("Failed to serialize vote");
         let signature: BLSSignature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,
