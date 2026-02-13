@@ -1048,6 +1048,7 @@ mod tests {
                 assert_eq!(&*account, original_account);
             }
 
+            invoke_context.pop().unwrap();
             // check serialize_parameters_for_abiv0
             invoke_context
                 .transaction_context

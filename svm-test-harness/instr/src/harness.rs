@@ -17,7 +17,7 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
+    solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_transaction_context::transaction::TransactionContext,
     std::{collections::HashSet, rc::Rc, sync::Arc},
 };
@@ -148,16 +148,10 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         );
 
         let compiled_ix = sanitized_message.instructions().first()?;
-        let svm_instruction = SVMInstruction::from(compiled_ix);
         let program_account_index = compiled_ix.program_id_index as u16;
 
         invoke_context
-            .prepare_next_top_level_instruction(
-                &sanitized_message,
-                &svm_instruction,
-                program_account_index,
-                svm_instruction.data,
-            )
+            .prepare_top_level_instructions(&sanitized_message, &[program_account_index])
             .ok()?;
 
         if invoke_context.is_precompile(&input.instruction.program_id) {
