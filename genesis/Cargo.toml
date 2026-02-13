@@ -35,34 +35,34 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-solana-account = "=3.4.0"
+solana-account = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-clock = "=3.0.0"
-solana-cluster-type = "=3.0.0"
-solana-commitment-config = "=3.1.0"
+solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-entry = { workspace = true }
-solana-epoch-schedule = "=3.0.0"
-solana-feature-gate-interface = "=3.1.0"
-solana-fee-calculator = "=3.0.0"
-solana-genesis-config = "=3.0.0"
+solana-epoch-schedule = { workspace = true }
+solana-feature-gate-interface = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
-solana-inflation = "=3.0.0"
-solana-keypair = "=3.1.0"
+solana-inflation = { workspace = true }
+solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = "6.1.0"
-solana-native-token = "=3.0.0"
-solana-poh-config = "=3.0.0"
-solana-pubkey = { version = "=4.0.0", default-features = false }
-solana-rent = "=3.0.0"
+solana-loader-v3-interface = { workspace = true }
+solana-native-token = { workspace = true }
+solana-poh-config = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk-ids = "=3.1.0"
-solana-signer = "=3.0.0"
-solana-stake-interface = { version = "=2.0.2", features = ["borsh"] }
-solana-time-utils = "3.0.0"
+solana-sdk-ids = { workspace = true }
+solana-signer = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["borsh"] }
+solana-time-utils = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 tempfile = { workspace = true }

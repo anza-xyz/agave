@@ -269,10 +269,7 @@ fn add_validator_accounts(
         rent.minimum_balance(StakeStateV2::size_of()),
     )?;
 
-    loop {
-        let Some(identity_pubkey) = pubkeys_iter.next() else {
-            break;
-        };
+    while let Some(identity_pubkey) = pubkeys_iter.next() {
         let vote_pubkey = pubkeys_iter.next().unwrap();
         let stake_pubkey = pubkeys_iter.next().unwrap();
 

@@ -142,10 +142,7 @@ impl VotingService {
                 );
 
                 info!("AlpenglowVotingService has started");
-                loop {
-                    let Ok(bls_op) = bls_receiver.recv() else {
-                        break;
-                    };
+                while let Ok(bls_op) = bls_receiver.recv() {
                     Self::handle_bls_op(
                         &cluster_info,
                         vote_history_storage.as_ref(),

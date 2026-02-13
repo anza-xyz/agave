@@ -199,7 +199,7 @@ impl Tpu {
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
             keypair,
-            vote_packet_sender.clone(),
+            vote_packet_sender,
             staked_nodes.clone(),
             vote_quic_server_config.quic_streamer_config,
             vote_quic_server_config.qos_config,

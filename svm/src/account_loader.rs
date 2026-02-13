@@ -1886,7 +1886,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
         let load_result = load_transaction(
             &mut account_loader,
-            &sanitized_tx.clone(),
+            &sanitized_tx,
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
@@ -2048,7 +2048,7 @@ mod tests {
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_transaction,
-            validation_result.clone(),
+            validation_result,
             &mut TransactionErrorMetrics::default(),
             &rent,
         );
@@ -2189,7 +2189,7 @@ mod tests {
             .iter()
             .map(|(k, v)| (*k, v.clone()))
             .collect();
-        actual_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        actual_inspected_accounts.sort_unstable_by_key(|a| a.0);
 
         let mut expected_inspected_accounts = vec![
             // *not* key0, since it is loaded during fee payer validation
@@ -2197,7 +2197,7 @@ mod tests {
             (address2, vec![(None, true)]),
             (address3, vec![(Some(account3), false)]),
         ];
-        expected_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        expected_inspected_accounts.sort_unstable_by_key(|a| a.0);
 
         assert_eq!(actual_inspected_accounts, expected_inspected_accounts,);
     }

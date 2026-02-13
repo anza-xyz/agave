@@ -1697,6 +1697,30 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .max_inclusive()
     }
 
+    pub(crate) fn clean_dead_slots<'a>(
+        &'a self,
+        dead_slots_iter: impl Iterator<Item = &'a Slot>,
+    ) -> AccountsIndexRootsStats {
+        let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
+        let mut measure = Measure::start("clean_dead_slot");
+        let mut rooted_cleaned_count = 0;
+        let mut unrooted_cleaned_count = 0;
+        dead_slots_iter.for_each(|slot| {
+            if self.clean_dead_slot(*slot) {
+                rooted_cleaned_count += 1;
+            } else {
+                unrooted_cleaned_count += 1;
+            }
+        });
+        measure.stop();
+        accounts_index_root_stats.clean_dead_slot_us += measure.as_us();
+        self.update_roots_stats(&mut accounts_index_root_stats);
+        accounts_index_root_stats.rooted_cleaned_count += rooted_cleaned_count;
+        accounts_index_root_stats.unrooted_cleaned_count += unrooted_cleaned_count;
+
+        accounts_index_root_stats
+    }
+
     /// Remove the slot when the storage for the slot is freed
     /// Accounts no longer reference this slot.
     /// return true if slot was a root

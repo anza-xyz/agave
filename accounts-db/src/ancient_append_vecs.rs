@@ -22,6 +22,7 @@ use {
     solana_clock::Slot,
     solana_measure::measure_us,
     std::{
+        cmp,
         collections::{HashMap, VecDeque},
         num::{NonZeroU64, Saturating},
         sync::{atomic::Ordering, Arc, Mutex},
@@ -463,7 +464,7 @@ impl AccountsDb {
 
         // Sort highest slot to lowest slot. This way, we will put the multi ref accounts with the highest slots in the highest
         // packed slot.
-        many_refs_newest.sort_unstable_by(|a, b| b.slot.cmp(&a.slot));
+        many_refs_newest.sort_unstable_by_key(|b| cmp::Reverse(b.slot));
         metrics.newest_alive_packed_count += many_refs_newest.len();
 
         if !Self::many_ref_accounts_can_be_moved(
@@ -488,7 +489,7 @@ impl AccountsDb {
         // be re-packed together with other older/colder accounts.
         accounts_to_combine
             .accounts_to_combine
-            .sort_unstable_by(|a, b| a.capacity.cmp(&b.capacity));
+            .sort_unstable_by_key(|a| a.capacity);
 
         // pack the accounts with 1 ref or refs > 1 but the slot we're packing is the highest alive slot for the pubkey.
         // Note the `chain` below combining the 2 types of refs.
@@ -776,7 +777,7 @@ impl AccountsDb {
         mut many_ref_slots: IncludeManyRefSlots,
     ) -> AccountsToCombine<'a> {
         // reverse sort by slot #
-        accounts_per_storage.sort_unstable_by(|a, b| b.0.slot.cmp(&a.0.slot));
+        accounts_per_storage.sort_unstable_by_key(|b| cmp::Reverse(b.0.slot));
         let mut accounts_keep_slots = HashMap::default();
         let len = accounts_per_storage.len();
         let mut target_slots_sorted = Vec::with_capacity(len);

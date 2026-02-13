@@ -63,7 +63,8 @@ impl BLSSigVerifier {
     fn run(mut self, exit: Arc<AtomicBool>, receiver: Receiver<PacketBatch>) {
         info!("BLSSigverifier starting");
         while !exit.load(Ordering::Relaxed) {
-            match streamer::recv_packet_batches(&receiver) {
+            const SOFT_RECEIVE_CAP: usize = 5_000;
+            match streamer::recv_packet_batches(&receiver, SOFT_RECEIVE_CAP) {
                 Ok((batches, _, _)) => {
                     if self.process_batches(batches).is_err() {
                         break;

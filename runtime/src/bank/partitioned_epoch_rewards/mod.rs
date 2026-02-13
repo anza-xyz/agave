@@ -589,7 +589,7 @@ mod tests {
         } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
-        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
+        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
 
@@ -704,7 +704,7 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
 
         // Config stake reward distribution to be 10 per block
-        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
+        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(10);
 

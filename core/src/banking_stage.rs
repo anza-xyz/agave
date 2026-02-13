@@ -553,9 +553,10 @@ impl BankingStage {
         let exit = self.worker_exit_signal.clone();
 
         // Setup receive & buffer.
+        let sharable_banks = self.bank_forks.read().unwrap().sharable_banks();
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver: self.non_vote_receiver.clone(),
-            sharable_banks: self.bank_forks.read().unwrap().sharable_banks(),
+            sharable_banks: sharable_banks.clone(),
         };
 
         // Spawn vote worker.
@@ -606,7 +607,6 @@ impl BankingStage {
             ($scheduler:ident) => {
                 let exit = exit.clone();
                 let shutdown_signal = self.banking_shutdown_signal.clone();
-                let bank_forks = self.bank_forks.clone();
                 threads.push(
                     Builder::new()
                         .name("solBnkTxSched".to_string())
@@ -616,7 +616,7 @@ impl BankingStage {
                                 scheduler_config,
                                 decision_maker,
                                 receive_and_buffer,
-                                bank_forks,
+                                sharable_banks,
                                 $scheduler,
                                 worker_metrics,
                             );

@@ -124,7 +124,7 @@ impl StakedValidatorsCache {
             .collect();
 
         nodes.dedup_by_key(|node| node.alpenglow_socket);
-        nodes.sort_unstable_by(|a, b| a.stake.cmp(&b.stake));
+        nodes.sort_unstable_by_key(|a| a.stake);
 
         let mut alpenglow_sockets = Vec::with_capacity(nodes.len());
         let override_map = self

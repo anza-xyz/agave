@@ -136,9 +136,6 @@ Operate a configured testnet
  startnode/stopnode-specific options:
    -i [ip address]                    - IP Address of the node to start or stop
 
- startnode specific option:
-   --wen-restart [coordinator_pubkey]      - Use given coordinator pubkey and apply wen_restat
-
  startclients-specific options:
    $CLIENT_OPTIONS
 
@@ -342,7 +339,6 @@ startBootstrapLeader() {
          \"$TMPFS_ACCOUNTS\" \
          \"$disableQuic\" \
          \"$enableUdp\" \
-         \"$maybeWenRestart\" \
       "
 
   ) >> "$logFile" 2>&1 || {
@@ -416,7 +412,6 @@ startNode() {
          \"$TMPFS_ACCOUNTS\" \
          \"$disableQuic\" \
          \"$enableUdp\" \
-         \"$maybeWenRestart\" \
       "
   ) >> "$logFile" 2>&1 &
   declare pid=$!
@@ -833,7 +828,6 @@ disableQuic=false
 enableUdp=false
 clientType=tpu-client
 maybeUseUnstakedConnection=""
-maybeWenRestart=""
 
 command=$1
 [[ -n $command ]] || usage
@@ -965,12 +959,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --use-unstaked-connection ]]; then
       maybeUseUnstakedConnection="$1"
       shift 1
-    elif [[ $1 = --wen-restart ]]; then
-      # wen_restart needs tower storage to be there, so set skipSetup to true
-      # to avoid erasing the tower storage on disk.
-      skipSetup=true
-      maybeWenRestart="$2"
-      shift 2
     else
       usage "Unknown long option: $1"
     fi

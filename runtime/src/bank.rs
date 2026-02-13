@@ -174,7 +174,10 @@ use {
         transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+    solana_vote::{
+        vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+        vote_parser,
+    },
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -3151,6 +3154,10 @@ impl Bank {
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
     ) -> Result<()> {
+        if self.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(transaction) {
+            return Err(TransactionError::SanitizeFailure);
+        }
+
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != sanitized_epoch {
@@ -3879,7 +3886,7 @@ impl Bank {
             .accounts_db
             .get_pubkey_account_for_slot(self.slot());
         // Sort the accounts by pubkey to make diff deterministic.
-        accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        accounts.sort_unstable_by_key(|a| a.0);
         accounts
     }
 
@@ -4330,6 +4337,14 @@ impl Bank {
                 .write()
                 .unwrap()
                 .register(new_hard_fork_slot);
+        }
+    }
+
+    pub fn register_hard_forks(&self, new_hard_fork_slots: Option<&Vec<Slot>>) {
+        if let Some(slots) = new_hard_fork_slots {
+            slots
+                .iter()
+                .for_each(|hard_fork_slot| self.register_hard_fork(*hard_fork_slot));
         }
     }
 

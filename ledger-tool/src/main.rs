@@ -832,7 +832,7 @@ fn record_transactions(
     }
 
     for slot in slots.lock().unwrap().iter_mut() {
-        slot.transactions.sort_by(|a, b| a.index.cmp(&b.index));
+        slot.transactions.sort_by_key(|a| a.index);
     }
 }
 
@@ -2383,11 +2383,7 @@ fn main() {
                         // validators
                         let mut bootstrap_validator_pubkeys_iter =
                             bootstrap_validator_pubkeys.iter();
-                        loop {
-                            let Some(identity_pubkey) = bootstrap_validator_pubkeys_iter.next()
-                            else {
-                                break;
-                            };
+                        while let Some(identity_pubkey) = bootstrap_validator_pubkeys_iter.next() {
                             let vote_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
                             let stake_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
 
