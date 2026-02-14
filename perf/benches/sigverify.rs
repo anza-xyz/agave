@@ -19,6 +19,7 @@ const NUM: usize = 256;
 const LARGE_BATCH_PACKET_COUNT: usize = 128;
 
 fn bench_sigverify_simple(b: &mut Bencher) {
+    let threadpool = sigverify::threadpool_for_benches();
     let tx = test_tx();
     let num_packets = NUM;
 
@@ -30,7 +31,7 @@ fn bench_sigverify_simple(b: &mut Bencher) {
 
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 
@@ -51,56 +52,63 @@ fn gen_batches(
 }
 
 fn bench_sigverify_low_packets_small_batch(b: &mut Bencher) {
+    let threadpool = sigverify::threadpool_for_benches();
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE - 1;
     let mut batches = gen_batches(false, 1, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 
 fn bench_sigverify_low_packets_large_batch(b: &mut Bencher) {
+    let threadpool = sigverify::threadpool_for_benches();
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE - 1;
     let mut batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 
 fn bench_sigverify_medium_packets_small_batch(b: &mut Bencher) {
+    let threadpool = sigverify::threadpool_for_benches();
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE * 8;
     let mut batches = gen_batches(false, 1, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 
 fn bench_sigverify_medium_packets_large_batch(b: &mut Bencher) {
+    let threadpool = sigverify::threadpool_for_benches();
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE * 8;
     let mut batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 
 fn bench_sigverify_high_packets_small_batch(b: &mut Bencher) {
+    let threadpool = sigverify::threadpool_for_benches();
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE * 32;
     let mut batches = gen_batches(false, 1, num_packets);
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 
 fn bench_sigverify_high_packets_large_batch(b: &mut Bencher) {
+    let threadpool = sigverify::threadpool_for_benches();
     let num_packets = sigverify::VERIFY_PACKET_CHUNK_SIZE * 32;
     let mut batches = gen_batches(false, LARGE_BATCH_PACKET_COUNT, num_packets);
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 
 fn bench_sigverify_uneven(b: &mut Bencher) {
     agave_logger::setup();
+    let threadpool = sigverify::threadpool_for_benches();
     let simple_tx = test_tx();
     let multi_tx = test_multisig_tx();
     let mut tx;
@@ -138,7 +146,7 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
 
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, false, num_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_packets);
     })
 }
 

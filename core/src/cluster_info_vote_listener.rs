@@ -11,6 +11,7 @@ use {
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Select, Sender},
     log::*,
+    rayon::ThreadPool,
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
@@ -193,6 +194,7 @@ impl ClusterInfoVoteListener {
     pub fn new(
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
+        sigverify_threadpool: Arc<ThreadPool>,
         verified_packets_sender: BankingPacketSender,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -214,6 +216,7 @@ impl ClusterInfoVoteListener {
                     let _ = Self::recv_loop(
                         exit,
                         &cluster_info,
+                        sigverify_threadpool,
                         sharable_banks,
                         verified_packets_sender,
                         verified_vote_transactions_sender,
@@ -258,6 +261,7 @@ impl ClusterInfoVoteListener {
     fn recv_loop(
         exit: Arc<AtomicBool>,
         cluster_info: &ClusterInfo,
+        sigverify_threadpool: Arc<ThreadPool>,
         sharable_banks: SharableBanks,
         verified_packets_sender: BankingPacketSender,
         verified_vote_transactions_sender: VerifiedVoteTransactionsSender,
@@ -267,7 +271,8 @@ impl ClusterInfoVoteListener {
             let votes = cluster_info.get_votes(&mut cursor);
             inc_new_counter_debug!("cluster_info_vote_listener-recv_count", votes.len());
             if !votes.is_empty() {
-                let (vote_txs, packets) = Self::verify_votes(votes, &sharable_banks);
+                let (vote_txs, packets) =
+                    Self::verify_votes(votes, &sigverify_threadpool, &sharable_banks);
                 verified_vote_transactions_sender.send(vote_txs)?;
                 verified_packets_sender.send(BankingPacketBatch::new(packets))?;
             }
@@ -279,12 +284,14 @@ impl ClusterInfoVoteListener {
     #[allow(clippy::type_complexity)]
     fn verify_votes(
         votes: Vec<Transaction>,
+        threadpool: &ThreadPool,
         sharable_banks: &SharableBanks,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
         // Votes should already be filtered by this point.
         sigverify::ed25519_verify(
+            threadpool,
             &mut packet_batches,
             /*reject_non_vote=*/ false,
             votes.len(),
@@ -764,7 +771,7 @@ mod tests {
         itertools::Itertools,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet,
+        solana_perf::{packet, sigverify},
         solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
@@ -785,6 +792,15 @@ mod tests {
             sync::{atomic::AtomicU64, Arc},
         },
     };
+
+    // Convenience wrapper for `ClusterInfoVoteListener::verify_votes()`
+    fn verify_votes(
+        votes: Vec<Transaction>,
+        sharable_banks: &SharableBanks,
+    ) -> (Vec<Transaction>, Vec<PacketBatch>) {
+        let threadpool = sigverify::threadpool_for_tests();
+        ClusterInfoVoteListener::verify_votes(votes, &threadpool, sharable_banks)
+    }
 
     #[test]
     fn test_max_vote_tx_fits() {
@@ -1535,7 +1551,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let votes = vec![];
-        let (vote_txs, packets) = ClusterInfoVoteListener::verify_votes(votes, &sharable_banks);
+        let (vote_txs, packets) = verify_votes(votes, &sharable_banks);
         assert!(vote_txs.is_empty());
         assert!(packets.is_empty());
     }
@@ -1578,7 +1594,7 @@ mod tests {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let vote_tx = test_vote_tx(voting_keypairs.first(), hash);
         let votes = vec![vote_tx];
-        let (vote_txs, packets) = ClusterInfoVoteListener::verify_votes(votes, &sharable_banks);
+        let (vote_txs, packets) = verify_votes(votes, &sharable_banks);
         assert_eq!(vote_txs.len(), 1);
         verify_packets_len(&packets, 1);
     }
@@ -1606,7 +1622,7 @@ mod tests {
         let mut bad_vote = vote_tx.clone();
         bad_vote.signatures[0] = Signature::default();
         let votes = vec![vote_tx.clone(), bad_vote, vote_tx];
-        let (vote_txs, packets) = ClusterInfoVoteListener::verify_votes(votes, &sharable_banks);
+        let (vote_txs, packets) = verify_votes(votes, &sharable_banks);
         assert_eq!(vote_txs.len(), 2);
         verify_packets_len(&packets, 2);
     }

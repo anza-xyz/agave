@@ -140,6 +140,7 @@ impl Tpu {
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        tpu_sigverify_threads: NonZeroUsize,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
@@ -244,8 +245,18 @@ impl Tpu {
         .unwrap();
 
         let (forward_stage_sender, forward_stage_receiver) = bounded(1024);
+
+        let sigverify_threadpool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(tpu_sigverify_threads.get())
+                .thread_name(|i| format!("solSigVerify{i:02}"))
+                .build()
+                .expect("new rayon threadpool"),
+        );
+
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::new(
+                sigverify_threadpool.clone(),
                 non_vote_sender,
                 enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
             );
@@ -254,6 +265,7 @@ impl Tpu {
 
         let vote_sigverify_stage = {
             let verifier = TransactionSigVerifier::new_reject_non_vote(
+                sigverify_threadpool.clone(),
                 tpu_vote_sender,
                 Some(forward_stage_sender),
             );
@@ -268,6 +280,7 @@ impl Tpu {
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
             cluster_info.clone(),
+            sigverify_threadpool,
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),

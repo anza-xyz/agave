@@ -599,6 +599,8 @@ pub struct ValidatorTpuConfig {
     pub tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for Vote
     pub vote_quic_server_config: SimpleQosQuicStreamerConfig,
+    /// Number of threads to use for signature verification
+    pub sigverify_threads: NonZeroUsize,
 }
 
 impl ValidatorTpuConfig {
@@ -633,12 +635,16 @@ impl ValidatorTpuConfig {
             qos_config: SimpleQosConfig::default(),
         };
 
+        // Two threads is reasonable for tests; benches are free to set more
+        let sigverify_threads = NonZeroUsize::new(2).expect("2 is non-zero");
+
         ValidatorTpuConfig {
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
+            sigverify_threads,
         }
     }
 }
@@ -753,6 +759,7 @@ impl Validator {
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
+            sigverify_threads: tpu_sigverify_threads,
         } = tpu_config;
 
         let start_time = Instant::now();
@@ -1761,6 +1768,7 @@ impl Validator {
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
             prioritization_fee_cache,
+            tpu_sigverify_threads,
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
