@@ -366,10 +366,7 @@ fn record_and_complete_block(
 
     // Shutdown and clear any inflight records
     record_receiver.shutdown();
-    while !record_receiver.is_safe_to_restart() {
-        let Ok(record) = record_receiver.recv_timeout(Duration::ZERO) else {
-            continue;
-        };
+    for record in record_receiver.drain() {
         poh_recorder.write().unwrap().record(
             record.bank_id,
             record.mixins,

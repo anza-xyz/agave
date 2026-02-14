@@ -335,9 +335,10 @@ fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut Genes
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
         if (IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id())
-            // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
-            && *feature_id
-                != agave_feature_set::bls_pubkey_management_in_vote_account::id()
+            // TODO: Remove me once SIMD-0464 is no longer hard-coded as `false` in
+            // `FeatureSet::runtime_features` and omitted from `FEATURE_NAMES` in
+            // agave-feature-set.
+            && *feature_id != agave_feature_set::vote_account_initialize_v2::id()
         {
             activate_feature(genesis_config, *feature_id);
         }
@@ -512,8 +513,10 @@ pub fn create_genesis_config_with_leader_ex(
         if *feature_id == agave_feature_set::alpenglow::id() {
             continue;
         }
-        // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
-        if *feature_id == agave_feature_set::bls_pubkey_management_in_vote_account::id() {
+        // TODO: Remove me once SIMD-0464 is no longer hard-coded as `false` in
+        // `FeatureSet::runtime_features` and omitted from `FEATURE_NAMES` in
+        // agave-feature-set.
+        if *feature_id == agave_feature_set::vote_account_initialize_v2::id() {
             continue;
         }
         activate_feature(&mut genesis_config, *feature_id);

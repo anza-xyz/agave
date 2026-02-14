@@ -170,13 +170,6 @@ pub const LEADER_STARTING: u8 = 1;
 /// Transactions can be processed in this state.
 pub const LEADER_READY: u8 = 2;
 
-#[allow(deprecated)]
-#[deprecated(since = "3.1.0", note = "Use NOT_LEADER instead")]
-pub const IS_NOT_LEADER: u8 = NOT_LEADER;
-#[allow(deprecated)]
-#[deprecated(since = "3.1.0", note = "Use LEADER_READY instead")]
-pub const IS_LEADER: u8 = LEADER_READY;
-
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
 #[cfg_attr(

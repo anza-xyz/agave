@@ -7,6 +7,8 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
+#[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
+use solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status};
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
@@ -26,10 +28,7 @@ use {
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
-    solana_loader_v4_interface::{
-        instruction as loader_v4_instruction,
-        state::{LoaderV4State, LoaderV4Status},
-    },
+    solana_loader_v4_interface::instruction as loader_v4_instruction,
     solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -387,7 +386,9 @@ fn test_program_sbf_loader_deprecated() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
+#[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
+// In SBPFv3, we don't have a verification step for undefined syscalls, and we don't do dynamic
+// symbol resolution, so this test would pass.
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     agave_logger::setup();
 
@@ -1741,7 +1742,7 @@ fn assert_instruction_count() {
     {
         programs.extend_from_slice(&[
             ("solana_sbf_rust_128bit", 784),
-            ("solana_sbf_rust_alloc", 4934),
+            ("solana_sbf_rust_alloc", 4940),
             ("solana_sbf_rust_custom_heap", 343),
             ("solana_sbf_rust_dep_crate", 22),
             ("solana_sbf_rust_iter", 1514),
@@ -1751,7 +1752,7 @@ fn assert_instruction_count() {
             ("solana_sbf_rust_noop", 342),
             ("solana_sbf_rust_param_passing", 108),
             ("solana_sbf_rust_rand", 315),
-            ("solana_sbf_rust_sanity", 14223),
+            ("solana_sbf_rust_sanity", 14228),
             ("solana_sbf_rust_secp256k1_recover", 88615),
             ("solana_sbf_rust_sha", 21998),
         ]);

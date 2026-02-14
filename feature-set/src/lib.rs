@@ -170,8 +170,10 @@ impl FeatureSet {
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
             enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
-            custom_commission_collector: self.is_active(&custom_commission_collector::id()),
+            custom_commission_collector: false, // Feature disabled for now.
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
+            block_revenue_sharing: false, // Hard-coded as disabled for now. Not a fully-implemented feature yet.
+            vote_account_initialize_v2: false, // Feature disabled for now.
         }
     }
 }
@@ -1291,6 +1293,14 @@ pub mod limit_instruction_accounts {
     solana_pubkey::declare_id!("DqbnFPASg7tHmZ6qfpdrt2M6MWoSeiicWPXxPhxqFCQ");
 }
 
+pub mod block_revenue_sharing {
+    solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
+}
+
+pub mod vote_account_initialize_v2 {
+    solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1871,7 +1881,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             last_restart_slot_sysvar::id(),
-            "enable new sysvar last_restart_slot",
+            "SIMD-0047: Enable new sysvar last_restart_slot",
         ),
         (
             reduce_stake_warmup_cooldown::id(),
@@ -1946,7 +1956,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             add_new_reserved_account_keys::id(),
-            "add new unwritable reserved accounts #34899",
+            "SIMD-0105: Maintain Dynamic Set of Reserved Account Keys",
         ),
         (
             index_erasure_conflict_duplicate_proofs::id(),
@@ -2271,10 +2281,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0291: Commission rate in basis points",
         ),
         (
-            custom_commission_collector::id(),
-            "SIMD-0232: Custom Commission Collector Account",
-        ),
-        (
             enable_bls12_381_syscall::id(),
             "SIMD-0388: BLS12-381 syscalls",
         ),
@@ -2305,6 +2311,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             limit_instruction_accounts::id(),
             "SIMD-406: Maximum instruction accounts",
+        ),
+        (
+            vote_account_initialize_v2::id(),
+            "SIMD-0464: Vote Account Initialize V2",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

@@ -6,7 +6,7 @@ use {
     rayon::ThreadPool,
     reed_solomon_erasure::{galois_8::ReedSolomon, Error::TooFewDataShards},
     solana_clock::Slot,
-    solana_entry::entry::Entry,
+    solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_rayon_threadlimit::get_thread_count,
@@ -61,6 +61,35 @@ impl Shredder {
                 version,
             })
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn make_merkle_shreds_from_component(
+        &self,
+        keypair: &Keypair,
+        component: &BlockComponent,
+        is_last_in_slot: bool,
+        chained_merkle_root: Hash,
+        next_shred_index: u32,
+        next_code_index: u32,
+        reed_solomon_cache: &ReedSolomonCache,
+        stats: &mut ProcessShredsStats,
+    ) -> impl Iterator<Item = Shred> + use<> {
+        let now = Instant::now();
+        let bytes = wincode::serialize(component).unwrap();
+        stats.serialize_elapsed += now.elapsed().as_micros() as u64;
+        Self::make_shreds_from_data_slice(
+            self,
+            keypair,
+            &bytes,
+            is_last_in_slot,
+            chained_merkle_root,
+            next_shred_index,
+            next_code_index,
+            reed_solomon_cache,
+            stats,
+        )
+        .unwrap()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -141,6 +170,33 @@ impl Shredder {
         self.make_merkle_shreds_from_entries(
             keypair,
             entries,
+            is_last_in_slot,
+            chained_merkle_root,
+            next_shred_index,
+            next_code_index,
+            reed_solomon_cache,
+            stats,
+        )
+        .partition(Shred::is_data)
+    }
+
+    pub fn component_to_merkle_shreds_for_tests(
+        &self,
+        keypair: &Keypair,
+        component: &BlockComponent,
+        is_last_in_slot: bool,
+        chained_merkle_root: Hash,
+        next_shred_index: u32,
+        next_code_index: u32,
+        reed_solomon_cache: &ReedSolomonCache,
+        stats: &mut ProcessShredsStats,
+    ) -> (
+        Vec<Shred>, // data shreds
+        Vec<Shred>, // coding shreds
+    ) {
+        self.make_merkle_shreds_from_component(
+            keypair,
+            component,
             is_last_in_slot,
             chained_merkle_root,
             next_shred_index,
@@ -572,6 +628,71 @@ mod tests {
             .iter()
             .chain(coding_shreds.iter())
             .any(|s| s.version() != version));
+    }
+
+    #[test_matrix([true, false])]
+    fn test_components_single_entry_batch_matches_entries(is_last_in_slot: bool) {
+        let keypair = Keypair::new();
+        let shredder = Shredder::new(100, 95, 5, 42).unwrap();
+
+        let entries = (0..10)
+            .map(|_| {
+                let keypair0 = Keypair::new();
+                let keypair1 = Keypair::new();
+                let tx0 =
+                    system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
+                Entry::new(&Hash::default(), 1, vec![tx0])
+            })
+            .collect_vec();
+
+        let chained_merkle_root = Hash::new_from_array(rand::rng().random());
+        let next_shred_index = 10;
+        let next_code_index = 5;
+
+        // Shred using entries directly
+        let (data_shreds_entries, coding_shreds_entries) = shredder
+            .entries_to_merkle_shreds_for_tests(
+                &keypair,
+                &entries,
+                is_last_in_slot,
+                chained_merkle_root,
+                next_shred_index,
+                next_code_index,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            );
+
+        // Shred using component with EntryBatch
+        let component = BlockComponent::EntryBatch(entries.clone());
+        let (data_shreds_components, coding_shreds_components) = shredder
+            .component_to_merkle_shreds_for_tests(
+                &keypair,
+                &component,
+                is_last_in_slot,
+                chained_merkle_root,
+                next_shred_index,
+                next_code_index,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            );
+
+        // Verify shreds are identical
+        assert_eq!(data_shreds_entries.len(), data_shreds_components.len());
+        assert_eq!(coding_shreds_entries.len(), coding_shreds_components.len());
+
+        for (e, c) in data_shreds_entries
+            .iter()
+            .zip(data_shreds_components.iter())
+        {
+            assert_eq!(e.payload(), c.payload());
+        }
+
+        for (e, c) in coding_shreds_entries
+            .iter()
+            .zip(coding_shreds_components.iter())
+        {
+            assert_eq!(e.payload(), c.payload());
+        }
     }
 
     #[test_matrix([true, false])]

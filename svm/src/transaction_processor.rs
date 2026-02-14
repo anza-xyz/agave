@@ -877,7 +877,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &key,
                     self.slot,
                     execute_timings,
-                    false,
                 )
                 .expect("called load_program_with_pubkey() with nonexistent account");
                 (key, program, last_modification_slot)
@@ -2127,7 +2126,7 @@ mod tests {
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
@@ -2171,7 +2170,7 @@ mod tests {
         let starting_balance = min_balance + transaction_fee - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
@@ -2213,7 +2212,7 @@ mod tests {
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
@@ -2465,7 +2464,7 @@ mod tests {
             .unwrap();
 
             let mut mock_accounts = HashMap::new();
-            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            mock_accounts.insert(*fee_payer_address, fee_payer_account);
             let mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()

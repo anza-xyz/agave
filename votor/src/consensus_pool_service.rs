@@ -449,7 +449,6 @@ mod tests {
             consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
         },
-        crossbeam_channel::Sender,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
         },
@@ -465,176 +464,177 @@ mod tests {
         },
         solana_signer::Signer,
         std::sync::Arc,
-        test_case::test_case,
     };
 
-    struct ConsensusPoolServiceTestComponents {
-        consensus_pool_service: ConsensusPoolService,
-        consensus_message_sender: Sender<ConsensusMessage>,
+    struct TestContext {
+        consensus_pool: ConsensusPool,
+        bls_sender: Sender<BLSOp>,
         bls_receiver: Receiver<BLSOp>,
-        event_receiver: Receiver<VotorEvent>,
+        commitment_sender: Sender<CommitmentAggregationData>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
-        exit: Arc<AtomicBool>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         sharable_banks: SharableBanks,
+        my_pubkey: Pubkey,
+        my_vote_pubkey: Pubkey,
+        blockstore: Arc<Blockstore>,
+        exit: Arc<AtomicBool>,
     }
 
-    fn setup() -> ConsensusPoolServiceTestComponents {
-        let (consensus_message_sender, consensus_message_receiver) = crossbeam_channel::unbounded();
-        let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
-        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
-        let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
-        // Create 10 node validatorvotekeypairs vec
-        let validator_keypairs = (0..10)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-        // Make stake monotonic decreasing so rank is deterministic
-        let stake = (0..validator_keypairs.len())
-            .rev()
-            .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
-            .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stake,
-        );
-        let my_keypair = validator_keypairs[0].node_keypair.insecure_clone();
-        let contact_info = ContactInfo::new_localhost(&my_keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(
-            contact_info,
-            Arc::new(my_keypair),
-            SocketAddrSpace::Unspecified,
-        );
-        let bank0 = Bank::new_for_tests(&genesis.genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank0);
+    impl Default for TestContext {
+        fn default() -> Self {
+            let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
+            let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let exit = Arc::new(AtomicBool::new(false));
-        let leader_schedule_cache =
-            Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
-        let ctx = ConsensusPoolContext {
-            exit: exit.clone(),
-            migration_status: Arc::new(MigrationStatus::post_migration_status()),
-            cluster_info: Arc::new(cluster_info),
-            my_vote_pubkey: Pubkey::new_unique(),
-            blockstore: Arc::new(blockstore),
-            sharable_banks: sharable_banks.clone(),
-            leader_schedule_cache: leader_schedule_cache.clone(),
-            consensus_message_receiver,
-            bls_sender,
-            event_sender,
-            commitment_sender,
-        };
-        ConsensusPoolServiceTestComponents {
-            consensus_pool_service: ConsensusPoolService::new(ctx),
-            consensus_message_sender,
-            bls_receiver,
-            event_receiver,
-            commitment_receiver,
-            validator_keypairs,
-            exit,
-            leader_schedule_cache,
-            sharable_banks,
-        }
-    }
+            // Create 10 node validatorvotekeypairs vec
+            let validator_keypairs = (0..10)
+                .map(|_| ValidatorVoteKeypairs::new_rand())
+                .collect::<Vec<_>>();
+            // Make stake monotonic decreasing so rank is deterministic
+            let stake = (0..validator_keypairs.len())
+                .rev()
+                .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
+                .collect::<Vec<_>>();
+            let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+                1_000_000_000,
+                &validator_keypairs,
+                stake,
+            );
+            let my_keypair = validator_keypairs[0].node_keypair.insecure_clone();
+            let my_pubkey = my_keypair.pubkey();
+            let bank0 = Bank::new_for_tests(&genesis.genesis_config);
+            let bank_forks = BankForks::new_rw_arc(bank0);
 
-    fn wait_for_event<T>(receiver: &Receiver<T>, condition: impl Fn(&T) -> bool) {
-        let start = Instant::now();
-        let mut event_received = false;
-        while start.elapsed() < Duration::from_secs(5) {
-            let recv = receiver.recv_timeout(Duration::from_millis(500));
-            if let Ok(event) = recv {
-                if condition(&event) {
-                    event_received = true;
-                    break;
-                }
+            let ledger_path = get_tmp_ledger_path_auto_delete!();
+            let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+            let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+            let leader_schedule_cache =
+                Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
+
+            let root_bank = sharable_banks.root();
+            let consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
+            let my_vote_pubkey = Pubkey::new_unique();
+
+            TestContext {
+                consensus_pool,
+                bls_sender,
+                bls_receiver,
+                commitment_sender,
+                commitment_receiver,
+                validator_keypairs,
+                leader_schedule_cache,
+                sharable_banks,
+                my_pubkey,
+                my_vote_pubkey,
+                blockstore,
+                exit: Arc::new(AtomicBool::new(false)),
             }
         }
-        assert!(event_received);
     }
 
-    fn test_send_and_receive<T>(
-        consensus_message_sender: &Sender<ConsensusMessage>,
-        messages_to_send: Vec<ConsensusMessage>,
-        receiver: &Receiver<T>,
-        condition: impl Fn(&T) -> bool,
-    ) {
-        for message in messages_to_send {
-            consensus_message_sender.send(message).unwrap();
-        }
-        wait_for_event(receiver, condition);
-    }
-
+    /// Test the full consensus message flow:
+    /// 1. Validators 0-7 send notarize votes for slot 2. After processing all
+    ///    votes, we expect a notarize/finalize certificate to be produced and
+    ///    forwarded via the BLS channel, a finalized event to be emitted, and a
+    ///    commitment update to be sent.
+    /// 2. A skip certificate is then sent for slot 3 and we verify it is
+    ///    immediately forwarded via the BLS channel.
     #[test]
     fn test_receive_and_send_consensus_message() {
         agave_logger::setup();
-        let setup_result = setup();
+        let mut ctx = TestContext::default();
 
         // validator 0 to 7 send Notarize on slot 2
         let block_id = Hash::new_unique();
         let target_slot = 2;
         let notarize_vote = Vote::new_notarization_vote(target_slot, block_id);
-        let messages_to_send = (0..8)
-            .map(|my_rank| {
-                let vote_keypair = &setup_result.validator_keypairs[my_rank].vote_keypair;
-                let bls_keypair =
-                    BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
-                let vote_serialized = bincode::serialize(&notarize_vote).unwrap();
-                ConsensusMessage::Vote(VoteMessage {
-                    vote: notarize_vote,
-                    signature: bls_keypair.sign(&vote_serialized).into(),
-                    rank: my_rank as u16,
-                })
-            })
-            .collect();
-        test_send_and_receive(
-            &setup_result.consensus_message_sender,
-            messages_to_send,
-            &setup_result.bls_receiver,
-            |event| {
-                if let BLSOp::PushCertificate { certificate } = event {
-                    assert_eq!(certificate.cert_type.slot(), target_slot);
-                    assert!(
-                        matches!(certificate.cert_type, CertificateType::Notarize(_, _))
-                            || matches!(certificate.cert_type, CertificateType::FinalizeFast(_, _))
-                            || matches!(
-                                certificate.cert_type,
-                                CertificateType::NotarizeFallback(_, _)
-                            )
-                    );
-                    true
-                } else {
-                    false
-                }
-            },
-        );
-        // Verify that we received a finalized slot event
-        wait_for_event(&setup_result.event_receiver, |event| {
-            if let VotorEvent::Finalized((slot, receivied_block_id), is_fast_finalized) = event {
-                assert_eq!(*slot, target_slot);
-                assert_eq!(*receivied_block_id, block_id);
-                assert!(*is_fast_finalized);
-                true
-            } else {
-                false
+
+        let mut events = vec![];
+        let root_bank = ctx.sharable_banks.root();
+
+        // Process votes from validators 0-7
+        for my_rank in 0..8 {
+            let vote_keypair = &ctx.validator_keypairs[my_rank].vote_keypair;
+            let bls_keypair =
+                BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+            let vote_serialized = bincode::serialize(&notarize_vote).unwrap();
+            let message = ConsensusMessage::Vote(VoteMessage {
+                vote: notarize_vote,
+                signature: bls_keypair.sign(&vote_serialized).into(),
+                rank: my_rank as u16,
+            });
+
+            let result = ConsensusPoolService::add_message_and_maybe_update_commitment(
+                &root_bank,
+                &ctx.my_pubkey,
+                &ctx.my_vote_pubkey,
+                message,
+                &mut ctx.consensus_pool,
+                &mut events,
+                &ctx.commitment_sender,
+            );
+            assert!(result.is_ok());
+
+            let (new_finalized_slot, new_certificates_to_send) = result.unwrap();
+            let mut stats = ConsensusPoolServiceStats::new();
+            let mut standstill_timer = Instant::now();
+
+            // Send certificates if any were produced
+            if !new_certificates_to_send.is_empty() || new_finalized_slot.is_some() {
+                ConsensusPoolService::maybe_update_root_and_send_new_certificates(
+                    &mut ctx.consensus_pool,
+                    &ctx.sharable_banks,
+                    &ctx.bls_sender,
+                    new_finalized_slot,
+                    new_certificates_to_send,
+                    &mut standstill_timer,
+                    &mut stats,
+                )
+                .unwrap();
             }
+        }
+
+        // Verify that we received certificates via the bls channel
+        let mut found_certificate = false;
+        while let Ok(event) = ctx.bls_receiver.try_recv() {
+            if let BLSOp::PushCertificate { certificate } = event {
+                assert_eq!(certificate.cert_type.slot(), target_slot);
+                assert!(
+                    matches!(certificate.cert_type, CertificateType::Notarize(_, _))
+                        || matches!(certificate.cert_type, CertificateType::FinalizeFast(_, _))
+                        || matches!(
+                            certificate.cert_type,
+                            CertificateType::NotarizeFallback(_, _)
+                        )
+                );
+                found_certificate = true;
+            }
+        }
+        assert!(found_certificate, "Should have received a certificate");
+
+        // Verify that we received a finalized slot event
+        let finalized_event = events.iter().find(|event| {
+            matches!(
+                event,
+                VotorEvent::Finalized((slot, received_block_id), is_fast_finalized)
+                    if *slot == target_slot && *received_block_id == block_id && *is_fast_finalized
+            )
         });
-        // Verify that we received a commitment update
-        wait_for_event(
-            &setup_result.commitment_receiver,
-            |CommitmentAggregationData {
-                 commitment_type,
-                 slot,
-                 ..
-             }| {
-                assert_eq!(*commitment_type, CommitmentType::Finalized);
-                assert_eq!(*slot, target_slot);
-                true
-            },
+        assert!(
+            finalized_event.is_some(),
+            "Should have received a finalized event"
         );
+
+        // Verify that we received a commitment update
+        let commitment = ctx.commitment_receiver.try_recv();
+        assert!(commitment.is_ok());
+        let CommitmentAggregationData {
+            commitment_type,
+            slot,
+            ..
+        } = commitment.unwrap();
+        assert_eq!(commitment_type, CommitmentType::Finalized);
+        assert_eq!(slot, target_slot);
 
         // Now send a Skip certificate on slot 3, should be forwarded immediately
         let target_slot = 3;
@@ -643,119 +643,219 @@ mod tests {
             signature: BLSSignature::default(),
             bitmap: vec![],
         };
-        test_send_and_receive(
-            &setup_result.consensus_message_sender,
-            vec![ConsensusMessage::Certificate(skip_certificate)],
-            &setup_result.bls_receiver,
-            |event| {
-                if let BLSOp::PushCertificate { certificate } = event {
-                    matches!(certificate.cert_type, CertificateType::Skip(slot) if slot == target_slot)
-                } else {
-                    false
-                }
-            },
+        events.clear();
+
+        let result = ConsensusPoolService::add_message_and_maybe_update_commitment(
+            &root_bank,
+            &ctx.my_pubkey,
+            &ctx.my_vote_pubkey,
+            ConsensusMessage::Certificate(skip_certificate),
+            &mut ctx.consensus_pool,
+            &mut events,
+            &ctx.commitment_sender,
         );
-        setup_result.exit.store(true, Ordering::Relaxed);
-        setup_result.consensus_pool_service.join().unwrap();
+        assert!(result.is_ok());
+
+        let (new_finalized_slot, new_certificates_to_send) = result.unwrap();
+        let mut stats = ConsensusPoolServiceStats::new();
+        let mut standstill_timer = Instant::now();
+
+        ConsensusPoolService::maybe_update_root_and_send_new_certificates(
+            &mut ctx.consensus_pool,
+            &ctx.sharable_banks,
+            &ctx.bls_sender,
+            new_finalized_slot,
+            new_certificates_to_send,
+            &mut standstill_timer,
+            &mut stats,
+        )
+        .unwrap();
+
+        // Verify skip certificate was forwarded
+        let mut found_skip = false;
+        while let Ok(event) = ctx.bls_receiver.try_recv() {
+            if let BLSOp::PushCertificate { certificate } = event {
+                if matches!(certificate.cert_type, CertificateType::Skip(slot) if slot == target_slot)
+                {
+                    found_skip = true;
+                }
+            }
+        }
+        assert!(found_skip, "Should have received the skip certificate");
     }
 
     #[test]
     fn test_send_produce_block_event() {
-        let setup_result = setup();
+        let mut ctx = TestContext::default();
+
         // Find when is the next leader slot for me (validator 0)
-        let my_pubkey = setup_result.validator_keypairs[0].node_keypair.pubkey();
-        let next_leader_slot = setup_result
+        let next_leader_slot = ctx
             .leader_schedule_cache
-            .next_leader_slot(
-                &my_pubkey,
-                0,
-                &setup_result.sharable_banks.root(),
-                None,
-                1000000,
-            )
+            .next_leader_slot(&ctx.my_pubkey, 0, &ctx.sharable_banks.root(), None, 1000000)
             .expect("Should find a leader slot");
+
+        let root_bank = ctx.sharable_banks.root();
+        let mut events = vec![];
+
         // Send skip certificates for all slots up to the next leader slot
-        let messages_to_send = (1..next_leader_slot.0)
-            .map(|slot| {
-                let skip_certificate = Certificate {
-                    cert_type: CertificateType::Skip(slot),
-                    signature: BLSSignature::default(),
-                    bitmap: vec![],
-                };
-                ConsensusMessage::Certificate(skip_certificate)
-            })
-            .collect();
-        test_send_and_receive(
-            &setup_result.consensus_message_sender,
-            messages_to_send,
-            &setup_result.event_receiver,
-            |event| {
-                if let VotorEvent::ProduceWindow(LeaderWindowInfo { start_slot, .. }) = event {
-                    assert_eq!(*start_slot, next_leader_slot.0);
-                    true
-                } else {
-                    false
-                }
-            },
-        );
-        setup_result.exit.store(true, Ordering::Relaxed);
-        setup_result.consensus_pool_service.join().unwrap();
-    }
-
-    #[test]
-    fn test_send_standstill() {
-        let setup_result = setup();
-        // Do nothing for a little more than DELTA_STANDSTILL
-        thread::sleep(DELTA_STANDSTILL + Duration::from_millis(100));
-        // Verify that we received a standstill event
-        wait_for_event(
-            &setup_result.event_receiver,
-            |event| matches!(event, VotorEvent::Standstill(slot) if *slot == 0),
-        );
-        setup_result.exit.store(true, Ordering::Relaxed);
-        setup_result.consensus_pool_service.join().unwrap();
-    }
-
-    #[test_case("consensus_message_receiver")]
-    #[test_case("bls_receiver")]
-    #[test_case("votor_event_receiver")]
-    #[test_case("commitment_receiver")]
-    fn test_channel_disconnection(channel_name: &str) {
-        let setup_result = setup();
-        // A lot of the receiver needs a finalize certificate to trigger an exit
-        if channel_name != "consensus_message_receiver" {
-            let finalize_certificate = Certificate {
-                cert_type: CertificateType::FinalizeFast(2, Hash::new_unique()),
+        for slot in 1..next_leader_slot.0 {
+            let skip_certificate = Certificate {
+                cert_type: CertificateType::Skip(slot),
                 signature: BLSSignature::default(),
                 bitmap: vec![],
             };
-            setup_result
-                .consensus_message_sender
-                .send(ConsensusMessage::Certificate(finalize_certificate))
-                .unwrap();
+
+            let result = ConsensusPoolService::add_message_and_maybe_update_commitment(
+                &root_bank,
+                &ctx.my_pubkey,
+                &ctx.my_vote_pubkey,
+                ConsensusMessage::Certificate(skip_certificate),
+                &mut ctx.consensus_pool,
+                &mut events,
+                &ctx.commitment_sender,
+            );
+            assert!(result.is_ok());
         }
-        match channel_name {
-            "consensus_message_receiver" => {
-                drop(setup_result.consensus_message_sender);
-            }
-            "bls_receiver" => {
-                drop(setup_result.bls_receiver);
-            }
-            "votor_event_receiver" => {
-                drop(setup_result.event_receiver);
-            }
-            "commitment_receiver" => {
-                drop(setup_result.commitment_receiver);
-            }
-            _ => panic!("Unknown channel name"),
+
+        // Now call add_produce_block_event to generate ProduceWindow event
+        let mut highest_parent_ready = root_bank.slot();
+        let mut pool_ctx = ConsensusPoolContext {
+            exit: ctx.exit.clone(),
+            migration_status: Arc::new(MigrationStatus::post_migration_status()),
+            cluster_info: Arc::new(ClusterInfo::new(
+                ContactInfo::new_localhost(&ctx.my_pubkey, 0),
+                Arc::new(ctx.validator_keypairs[0].node_keypair.insecure_clone()),
+                SocketAddrSpace::Unspecified,
+            )),
+            my_vote_pubkey: ctx.my_vote_pubkey,
+            blockstore: ctx.blockstore.clone(),
+            sharable_banks: ctx.sharable_banks.clone(),
+            leader_schedule_cache: ctx.leader_schedule_cache.clone(),
+            consensus_message_receiver: crossbeam_channel::unbounded().1,
+            bls_sender: ctx.bls_sender.clone(),
+            event_sender: crossbeam_channel::unbounded().0,
+            commitment_sender: ctx.commitment_sender.clone(),
+        };
+        let mut stats = ConsensusPoolServiceStats::new();
+
+        // Add a ParentReady event for the slot before our leader slot
+        events.push(VotorEvent::ParentReady {
+            slot: next_leader_slot.0,
+            parent_block: (next_leader_slot.0 - 1, Hash::new_unique()),
+        });
+
+        ConsensusPoolService::add_produce_block_event(
+            &mut highest_parent_ready,
+            &ctx.consensus_pool,
+            &ctx.my_pubkey,
+            &mut pool_ctx,
+            &mut events,
+            &mut stats,
+        );
+
+        // Verify that we received a ProduceWindow event
+        let produce_event = events.iter().find(|event| {
+            matches!(
+                event,
+                VotorEvent::ProduceWindow(LeaderWindowInfo { start_slot, .. })
+                    if *start_slot == next_leader_slot.0
+            )
+        });
+        assert!(
+            produce_event.is_some(),
+            "Should have received a ProduceWindow event"
+        );
+    }
+
+    #[test]
+    fn test_send_certificates() {
+        let ctx = TestContext::default();
+
+        let certificates = vec![
+            Arc::new(Certificate {
+                cert_type: CertificateType::Skip(1),
+                signature: BLSSignature::default(),
+                bitmap: vec![],
+            }),
+            Arc::new(Certificate {
+                cert_type: CertificateType::Skip(2),
+                signature: BLSSignature::default(),
+                bitmap: vec![],
+            }),
+        ];
+
+        let mut stats = ConsensusPoolServiceStats::new();
+        let result = ConsensusPoolService::send_certificates(
+            &ctx.bls_sender,
+            certificates.clone(),
+            &mut stats,
+        );
+        assert!(result.is_ok());
+        assert_eq!(stats.certificates_sent.0, 2);
+
+        // Verify certificates were received
+        let cert1 = ctx.bls_receiver.try_recv();
+        assert!(cert1.is_ok());
+        if let BLSOp::PushCertificate { certificate } = cert1.unwrap() {
+            assert!(matches!(certificate.cert_type, CertificateType::Skip(1)));
         }
-        // Verify that the consensus pool service exits within 5 seconds
-        let start = Instant::now();
-        while !setup_result.exit.load(Ordering::Relaxed) && start.elapsed() < Duration::from_secs(5)
-        {
-            thread::sleep(Duration::from_millis(100));
+
+        let cert2 = ctx.bls_receiver.try_recv();
+        assert!(cert2.is_ok());
+        if let BLSOp::PushCertificate { certificate } = cert2.unwrap() {
+            assert!(matches!(certificate.cert_type, CertificateType::Skip(2)));
         }
-        assert!(setup_result.exit.load(Ordering::Relaxed));
-        setup_result.consensus_pool_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_send_certificates_channel_disconnected() {
+        let ctx = TestContext::default();
+        drop(ctx.bls_receiver); // Disconnect channel
+
+        let certificates = vec![Arc::new(Certificate {
+            cert_type: CertificateType::Skip(1),
+            signature: BLSSignature::default(),
+            bitmap: vec![],
+        })];
+
+        let mut stats = ConsensusPoolServiceStats::new();
+        let result =
+            ConsensusPoolService::send_certificates(&ctx.bls_sender, certificates, &mut stats);
+
+        assert!(matches!(result, Err(AddVoteError::ChannelDisconnected(_))));
+    }
+
+    #[test]
+    fn test_maybe_update_root_and_send_new_certificates() {
+        let mut ctx = TestContext::default();
+
+        let certificates = vec![Arc::new(Certificate {
+            cert_type: CertificateType::Skip(1),
+            signature: BLSSignature::default(),
+            bitmap: vec![],
+        })];
+
+        let mut stats = ConsensusPoolServiceStats::new();
+        let mut standstill_timer = Instant::now();
+
+        // Test with new_finalized_slot = Some
+        let result = ConsensusPoolService::maybe_update_root_and_send_new_certificates(
+            &mut ctx.consensus_pool,
+            &ctx.sharable_banks,
+            &ctx.bls_sender,
+            Some(5), // new finalized slot
+            certificates,
+            &mut standstill_timer,
+            &mut stats,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(stats.new_finalized_slot.0, 1);
+        assert_eq!(stats.prune_old_state_called.0, 1);
+        assert_eq!(stats.certificates_sent.0, 1);
+
+        // Verify certificate was sent
+        let received = ctx.bls_receiver.try_recv();
+        assert!(received.is_ok());
     }
 }

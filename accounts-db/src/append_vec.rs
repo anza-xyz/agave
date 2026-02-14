@@ -89,16 +89,16 @@ pub enum AppendVecError {
 /// A slice whose contents are known to be valid.
 /// The slice contains no undefined bytes.
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct ValidSlice<'a>(&'a [u8]);
+struct ValidSlice<'a>(&'a [u8]);
 
 impl<'a> ValidSlice<'a> {
     #[inline(always)]
-    pub(crate) fn new(data: &'a [u8]) -> Self {
+    fn new(data: &'a [u8]) -> Self {
         Self(data)
     }
 
     #[inline(always)]
-    pub(crate) fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.0.len()
     }
 }
@@ -1175,11 +1175,7 @@ impl AppendVec {
             AppendVecFileBacking::Mmap(mmap) => {
                 let mut offset = 0;
                 let slice = self.get_valid_slice_from_mmap(mmap);
-                loop {
-                    let Some((stored_meta, next)) = Self::get_type::<StoredMeta>(slice, offset)
-                    else {
-                        break;
-                    };
+                while let Some((stored_meta, next)) = Self::get_type::<StoredMeta>(slice, offset) {
                     let Some((account_meta, _)) = Self::get_type::<AccountMeta>(slice, next) else {
                         break;
                     };

@@ -1,12 +1,16 @@
 use {
     crate::{
-        netlink::{parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket},
+        netlink::{
+            parse_rtm_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage,
+            NetlinkSocket,
+        },
         route::Router,
     },
     arc_swap::ArcSwap,
     libc::{
-        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_NEIGH,
-        RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWNEIGH, RTM_NEWROUTE,
+        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_LINK,
+        RTMGRP_NEIGH, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
+        RTM_NEWROUTE,
     },
     log::*,
     std::{
@@ -23,7 +27,7 @@ use {
 pub struct RouteMonitor;
 
 impl RouteMonitor {
-    /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH multicast groups
+    /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK multicast groups
     /// Waits for updates to arrive on the netlink socket
     /// Publishes the updated routing table every `update_interval` if needed
     pub fn start<F: FnOnce() + Send + Sync + 'static>(
@@ -121,6 +125,16 @@ impl RouteMonitor {
                         }
                     }
                 }
+                RTM_NEWLINK => {
+                    if let Some(interface_info) = parse_rtm_ifinfomsg(m) {
+                        dirty |= router.upsert_interface(interface_info);
+                    }
+                }
+                RTM_DELLINK => {
+                    if let Some(interface_info) = parse_rtm_ifinfomsg(m) {
+                        dirty |= router.remove_interface(interface_info.if_index);
+                    }
+                }
                 _ => {}
             }
         }
@@ -139,7 +153,7 @@ impl RouteMonitorState {
     /// Creates a new RouteMonitorState with a bounded netlink socket
     fn new(router: Router) -> Self {
         Self {
-            sock: NetlinkSocket::bind((RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH) as u32)
+            sock: NetlinkSocket::bind((RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK) as u32)
                 .expect("error creating netlink socket"),
             router,
             dirty: false,
@@ -150,7 +164,11 @@ impl RouteMonitorState {
     /// Resets the route monitor state by creating a new router and reinitializing
     /// the netlink socket. Used when errors occur to recover to a clean state
     fn reset(&mut self, atomic_router: &Arc<ArcSwap<Router>>) {
-        atomic_router.store(Arc::new(Router::new().expect("error creating Router")));
+        let mut router = Router::new().expect("error creating Router");
+        if let Err(e) = router.build_caches() {
+            log::warn!("failed to build router caches on reset: {e:?}");
+        }
+        atomic_router.store(Arc::new(router));
         *self = Self::new(Arc::unwrap_or_clone(atomic_router.load_full()));
     }
 
@@ -162,7 +180,11 @@ impl RouteMonitorState {
         update_interval: Duration,
     ) {
         if self.dirty && self.last_publish.elapsed() >= update_interval {
-            atomic_router.store(Arc::new(self.router.clone()));
+            let mut router = self.router.clone();
+            if let Err(e) = router.build_caches() {
+                log::warn!("failed to build router caches before publish: {e:?}");
+            }
+            atomic_router.store(Arc::new(router));
             self.last_publish = Instant::now();
             self.dirty = false;
         }

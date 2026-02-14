@@ -14,7 +14,8 @@ use {
             consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
             transaction_scheduler::{
-                receive_and_buffer::ReceivingStats, transaction_state_container::StateContainer,
+                receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
+                transaction_state_container::StateContainer,
             },
             TOTAL_BUFFERED_PACKETS,
         },
@@ -23,17 +24,19 @@ use {
     solana_clock::MAX_PROCESSING_AGE,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
+            Arc,
         },
         time::{Duration, Instant},
     },
 };
+
+const CHECK_CHUNK: usize = 128;
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -65,7 +68,7 @@ where
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
-    bank_forks: Arc<RwLock<BankForks>>,
+    sharable_banks: SharableBanks,
     /// Container for transaction state.
     /// Shared resource between `packet_receiver` and `scheduler`.
     container: R::Container,
@@ -81,6 +84,10 @@ where
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     /// Detailed scheduling metrics.
     scheduling_details: SchedulingDetails,
+    /// Cursor for incremental recheck sweep of the priority queue.
+    recheck_cursor: Option<TransactionPriorityId>,
+    /// Recheck IDs scratch space.
+    recheck_chunk: Vec<TransactionPriorityId>,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -93,7 +100,7 @@ where
         config: SchedulerConfig,
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
-        bank_forks: Arc<RwLock<BankForks>>,
+        sharable_banks: SharableBanks,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     ) -> Self {
@@ -102,13 +109,15 @@ where
             config,
             decision_maker,
             receive_and_buffer,
-            bank_forks,
+            sharable_banks,
             container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
             scheduler,
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
             scheduling_details: SchedulingDetails::default(),
+            recheck_cursor: None,
+            recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
         }
     }
 
@@ -175,7 +184,13 @@ where
             }
 
             self.receive_completed()?;
-            self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
+            let scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
+            if scheduled == 0 {
+                let (_, clean_time_us) = measure_us!(self.incremental_recheck());
+                self.timing_metrics.update(|timing_metrics| {
+                    timing_metrics.clean_time_us += clean_time_us;
+                });
+            }
             self.receive_and_buffer_packets(&decision).map_err(|_| {
                 SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
             })?;
@@ -205,8 +220,8 @@ where
         decision: &BufferedPacketsDecision,
         cost_pacer: Option<&CostPacer>,
         now: &Instant,
-    ) -> Result<(), SchedulerError> {
-        match decision {
+    ) -> Result<usize, SchedulerError> {
+        let scheduled = match decision {
             BufferedPacketsDecision::Consume(bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
@@ -236,23 +251,22 @@ where
                     timing_metrics.schedule_time_us += schedule_time_us;
                 });
                 self.scheduling_details.update(&scheduling_summary);
+
+                scheduling_summary.num_scheduled
             }
             BufferedPacketsDecision::Forward => {
                 let (_, clear_time_us) = measure_us!(self.clear_container());
                 self.timing_metrics.update(|timing_metrics| {
                     timing_metrics.clear_time_us += clear_time_us;
                 });
-            }
-            BufferedPacketsDecision::ForwardAndHold => {
-                let (_, clean_time_us) = measure_us!(self.clean_queue());
-                self.timing_metrics.update(|timing_metrics| {
-                    timing_metrics.clean_time_us += clean_time_us;
-                });
-            }
-            BufferedPacketsDecision::Hold => {}
-        }
 
-        Ok(())
+                0
+            }
+            BufferedPacketsDecision::ForwardAndHold => 0,
+            BufferedPacketsDecision::Hold => 0,
+        };
+
+        Ok(scheduled)
     }
 
     fn pre_graph_filter(
@@ -295,65 +309,68 @@ where
         });
     }
 
-    /// Clean unprocessable transactions from the queue. These will be transactions that are
-    /// expired, already processed, or are no longer sanitizable.
-    /// This only clears pending transactions, and does **not** clear in-flight transactions.
-    fn clean_queue(&mut self) {
-        // Clean up any transactions that have already been processed, are too old, or do not have
-        // valid nonce accounts.
-        const MAX_TRANSACTION_CHECKS: usize = 10_000;
-        let mut transaction_ids = Vec::with_capacity(MAX_TRANSACTION_CHECKS);
+    /// Incrementally recheck queued transactions for validity. A cursor walks the
+    /// priority queue from highest to lowest priority. When the cursor reaches the end it
+    /// wraps back to the top, continuously sweeping the queue.
+    fn incremental_recheck(&mut self) {
+        let bank = self.sharable_banks.working();
 
-        while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
-            let Some(id) = self.container.pop() else {
+        // Walk the cursor to collect up to one chunk of valid IDs.
+        self.recheck_chunk.clear();
+        let mut last_seen = None;
+        for id in self.container.recheck_iter(self.recheck_cursor.as_ref()) {
+            last_seen = Some(*id);
+
+            self.recheck_chunk.push(*id);
+            if self.recheck_chunk.len() >= CHECK_CHUNK {
                 break;
-            };
-            transaction_ids.push(id);
+            }
         }
 
-        let bank = self.bank_forks.read().unwrap().working_bank();
+        // Update cursor: if we hit the chunk limit, continue from last seen;
+        // otherwise we exhausted the range, so wrap back to start.
+        self.recheck_cursor = if self.recheck_chunk.len() >= CHECK_CHUNK {
+            last_seen
+        } else {
+            None
+        };
 
-        const CHUNK_SIZE: usize = 128;
+        // Bail if no work to do (should only happen if container is empty).
+        if self.recheck_chunk.is_empty() {
+            return;
+        }
+
+        // Build our recheck batch & feed it through bank.
+        let txs = {
+            // NB: Always allocate a the same size chunk to help jemalloc predict us.
+            let mut txs = Vec::with_capacity(CHECK_CHUNK);
+            txs.extend(self.recheck_chunk.iter().map(|pid| {
+                self.container
+                    .get_transaction(pid.id)
+                    .expect("transaction must exist")
+            }));
+
+            txs
+        };
+        let lock_results = vec![Ok(()); txs.len()];
         let mut error_counters = TransactionErrorMetrics::default();
-        let mut num_dropped_on_clean = Saturating::<usize>(0);
-        for chunk in transaction_ids.chunks(CHUNK_SIZE) {
-            let lock_results = vec![Ok(()); chunk.len()];
-            let sanitized_txs: Vec<_> = chunk
-                .iter()
-                .map(|id| {
-                    self.container
-                        .get_transaction(id.id)
-                        .expect("transaction must exist")
-                })
-                .collect();
+        let results = bank.check_transactions::<R::Transaction>(
+            &txs,
+            &lock_results,
+            MAX_PROCESSING_AGE,
+            &mut error_counters,
+        );
 
-            let check_results = bank.check_transactions::<R::Transaction>(
-                &sanitized_txs,
-                &lock_results,
-                MAX_PROCESSING_AGE,
-                &mut error_counters,
-            );
-
-            // Remove errored transactions
-            for (result, id) in check_results.iter().zip(chunk.iter()) {
-                if result.is_err() {
-                    num_dropped_on_clean += 1;
-                    self.container.remove_by_id(id.id);
-                }
+        let mut num_dropped = Saturating(0usize);
+        for (result, pid) in results.iter().zip(self.recheck_chunk.iter()) {
+            if result.is_err() {
+                num_dropped += 1;
+                self.container.remove_by_id(pid.id);
             }
-
-            // Push non-errored transaction into queue.
-            self.container.push_ids_into_queue(
-                check_results
-                    .into_iter()
-                    .zip(chunk.iter())
-                    .filter(|(r, _)| r.is_ok())
-                    .map(|(_, id)| *id),
-            );
         }
 
         self.count_metrics.update(|count_metrics| {
-            count_metrics.num_dropped_on_clean += num_dropped_on_clean;
+            count_metrics.num_dropped_on_clean += num_dropped;
         });
     }
 
@@ -473,7 +490,7 @@ mod tests {
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
@@ -489,6 +506,8 @@ mod tests {
     // such that our tests can be more easily set up and run.
     struct TestFrame<Tx> {
         bank: Arc<Bank>,
+        #[allow(dead_code)]
+        bank_forks: Arc<RwLock<BankForks>>,
         mint_keypair: Keypair,
         banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
         shared_leader_state: SharedLeaderState,
@@ -535,6 +554,7 @@ mod tests {
 
         let test_frame = TestFrame {
             bank,
+            bank_forks: bank_forks.clone(),
             mint_keypair,
             shared_leader_state,
             banking_packet_sender,
@@ -553,7 +573,7 @@ mod tests {
             SchedulerConfig::default(),
             decision_maker,
             receive_and_buffer,
-            bank_forks,
+            bank_forks.read().unwrap().sharable_banks(),
             scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
         );

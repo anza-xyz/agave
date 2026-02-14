@@ -521,7 +521,7 @@ impl TpuClientNextClient {
     ) -> Self {
         // For now use large channel, the more suitable size to be found later.
         let (sender, receiver) = mpsc::channel(128);
-        let leader_updater = forward_address_getter.clone();
+        let leader_updater = forward_address_getter;
 
         let config = Self::create_config(bind_socket, stake_identity);
         let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
@@ -535,7 +535,7 @@ impl TpuClientNextClient {
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "forwarding-stage-tpu-client",
             METRICS_REPORTING_INTERVAL,
-            cancel.clone(),
+            cancel,
         ));
         let _handle = runtime_handle.spawn(scheduler.run(config));
         Self {

@@ -19,7 +19,10 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, ScanFilter},
+        accounts_index::{
+            AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, IndexLimitThreshold,
+            ScanFilter, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
+        },
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -40,7 +43,7 @@ use {
         tpu::MAX_VOTES_PER_SECOND,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            SchedulerPacing, Validator, ValidatorConfig, ValidatorError, ValidatorStartProgress,
+            SchedulerPacing, Validator, ValidatorConfig, ValidatorStartProgress,
             ValidatorTpuConfig,
         },
     },
@@ -528,18 +531,34 @@ pub fn execute(
 
     let accounts_index_limit =
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
-    let index_limit = match accounts_index_limit.as_str() {
-        "minimal" => IndexLimit::Minimal,
-        "25GB" => IndexLimit::Threshold(25_000_000_000),
-        "50GB" => IndexLimit::Threshold(50_000_000_000),
-        "100GB" => IndexLimit::Threshold(100_000_000_000),
-        "200GB" => IndexLimit::Threshold(200_000_000_000),
-        "400GB" => IndexLimit::Threshold(400_000_000_000),
-        "800GB" => IndexLimit::Threshold(800_000_000_000),
-        "unlimited" => IndexLimit::InMemOnly,
-        x => {
-            // clap will enforce only the above values are possible
-            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+    let index_limit = {
+        enum CliIndexLimit {
+            Minimal,
+            Unlimited,
+            Threshold(u64),
+        }
+        let cli_index_limit = match accounts_index_limit.as_str() {
+            "minimal" => CliIndexLimit::Minimal,
+            "unlimited" => CliIndexLimit::Unlimited,
+            "25GB" => CliIndexLimit::Threshold(25_000_000_000),
+            "50GB" => CliIndexLimit::Threshold(50_000_000_000),
+            "100GB" => CliIndexLimit::Threshold(100_000_000_000),
+            "200GB" => CliIndexLimit::Threshold(200_000_000_000),
+            "400GB" => CliIndexLimit::Threshold(400_000_000_000),
+            "800GB" => CliIndexLimit::Threshold(800_000_000_000),
+            x => {
+                // clap will enforce only the above values are possible
+                unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+            }
+        };
+        match cli_index_limit {
+            CliIndexLimit::Minimal => IndexLimit::Minimal,
+            CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
+            CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
+                num_bytes,
+                num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
+                num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
+            }),
         }
     };
     // Note: need to still handle --enable-accounts-disk-index until it is removed
@@ -821,8 +840,6 @@ pub fn execute(
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
-        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
-        wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         turbine_disabled: Arc::<AtomicBool>::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
@@ -859,6 +876,11 @@ pub fn execute(
         )]
         .into(),
         voting_service_test_override: None,
+        snapshot_packager_niceness_adj: value_t_or_exit!(
+            matches,
+            "snapshot_packager_niceness_adj",
+            i8
+        ),
     };
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
@@ -969,10 +991,6 @@ pub fn execute(
         .collect::<Vec<_>>();
 
     if restricted_repair_only_mode {
-        if validator_config.wen_restart_proto_path.is_some() {
-            Err("--restricted-repair-only-mode is not compatible with --wen_restart".to_string())?;
-        }
-
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -1103,7 +1121,7 @@ pub fn execute(
         },
     };
 
-    let validator = match Validator::new_with_exit(
+    let validator = Validator::new_with_exit(
         node,
         identity_keypair,
         &ledger_path,
@@ -1125,24 +1143,8 @@ pub fn execute(
         admin_service_post_init,
         maybe_xdp_retransmit_builder,
         exit,
-    ) {
-        Ok(validator) => Ok(validator),
-        Err(err) => {
-            if matches!(
-                err.downcast_ref(),
-                Some(&ValidatorError::WenRestartFinished)
-            ) {
-                // 200 is a special error code, see
-                // https://github.com/solana-foundation/solana-improvement-documents/pull/46
-                error!(
-                    "Please remove --wen_restart and use --wait_for_supermajority as instructed \
-                     above"
-                );
-                std::process::exit(200);
-            }
-            Err(format!("{err:?}"))
-        }
-    }?;
+    )
+    .map_err(|err| format!("{err:?}"))?;
 
     if let Some(filename) = init_complete_file {
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
@@ -1366,9 +1368,6 @@ fn new_snapshot_config(
         NonZeroUsize
     );
 
-    let snapshot_packager_niceness_adj =
-        value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
-
     let snapshot_config = SnapshotConfig {
         usage: if full_snapshot_archive_interval == SnapshotInterval::Disabled {
             SnapshotUsage::LoadOnly
@@ -1384,7 +1383,6 @@ fn new_snapshot_config(
         snapshot_version,
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain,
-        packager_thread_niceness_adj: snapshot_packager_niceness_adj,
     };
 
     if !is_snapshot_config_valid(&snapshot_config) {

@@ -38,9 +38,6 @@ use {
             PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
             Protocol, PruneData, split_gossip_messages,
         },
-        restart_crds_values::{
-            RestartHeaviestFork, RestartLastVotedForkSlots, RestartLastVotedForkSlotsError,
-        },
         weighted_shuffle::WeightedShuffle,
     },
     arc_swap::ArcSwap,
@@ -135,9 +132,6 @@ pub const MINIMUM_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).u
 pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIVE_SOCKETS;
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
-
-/// Minimum stake required for a node to bypass the initial ping check when joining gossip.
-pub(crate) const MIN_STAKE_TO_SKIP_PING: u64 = 10_000 * solana_native_token::LAMPORTS_PER_SOL;
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
@@ -516,7 +510,7 @@ impl ClusterInfo {
                 }
                 let rpc_addr = node_rpc.ip();
                 Some(format!(
-                    "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}| {:5}| {}\n",
+                    "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}| {:5}| {}\n",
                     rpc_addr.to_string(),
                     if node.pubkey() == &my_pubkey {
                         "me"
@@ -539,9 +533,9 @@ impl ClusterInfo {
 
         format!(
             "RPC Address       |Age(ms)| Node identifier                              \
-             | Version | RPC  |PubSub|ShredVer\n\
+             |       Version       | RPC  |PubSub|ShredVer\n\
              ------------------+-------+----------------------------------------------\
-             +---------+------+------+--------\n\
+             +---------------------+------+------+--------\n\
              {}\
              RPC Enabled Nodes: {}",
             nodes.join(""),
@@ -575,7 +569,7 @@ impl ClusterInfo {
                     }
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5} | {:5}| {:5}| {:5}| {:5}| \
+                        "{:15} {:2}| {:5} | {:44} |{:^21}| {:5}|  {:5} | {:5}| {:5}| {:5}| {:5}| \
                          {:5}| {}\n",
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
@@ -617,8 +611,8 @@ impl ClusterInfo {
 
         format!(
             // this is using an oversized raw string to simplify lining up the columns
-            r#"IP Address        |Age(ms)| Node identifier                              | Version |Gossip|TPUvote | TPU  |TPUfwd| TVU  |ServeR|Alpeng|ShredVer
-------------------+-------+----------------------------------------------+---------+------+--------+------+------+------+------+------+----------
+            r#"IP Address        |Age(ms)| Node identifier                              |       Version       |Gossip|TPUvote | TPU  |TPUfwd| TVU  |ServeR|Alpeng|ShredVer
+------------------+-------+----------------------------------------------+---------------------+------+--------+------+------+------+------+------+----------
 {}Nodes: {}{}{}"#,
             nodes.join(""),
             nodes.len().saturating_sub(shred_spy_nodes),
@@ -722,48 +716,6 @@ impl ClusterInfo {
                 error!("push_epoch_slots failed: {err:?}");
             }
         }
-    }
-
-    pub fn push_restart_last_voted_fork_slots(
-        &self,
-        fork: &[Slot],
-        last_vote_bankhash: Hash,
-    ) -> Result<(), RestartLastVotedForkSlotsError> {
-        let now = timestamp();
-        let self_keypair = self.keypair();
-        let last_voted_fork_slots = RestartLastVotedForkSlots::new(
-            self_keypair.pubkey(),
-            now,
-            fork,
-            last_vote_bankhash,
-            self.my_shred_version(),
-        )?;
-        self.push_message(CrdsValue::new(
-            CrdsData::RestartLastVotedForkSlots(last_voted_fork_slots),
-            &self_keypair,
-        ));
-        Ok(())
-    }
-
-    pub fn push_restart_heaviest_fork(
-        &self,
-        last_slot: Slot,
-        last_slot_hash: Hash,
-        observed_stake: u64,
-    ) {
-        let self_keypair = self.keypair();
-        let restart_heaviest_fork = RestartHeaviestFork {
-            from: self_keypair.pubkey(),
-            wallclock: timestamp(),
-            last_slot,
-            last_slot_hash,
-            observed_stake,
-            shred_version: self.my_shred_version(),
-        };
-        self.push_message(CrdsValue::new(
-            CrdsData::RestartHeaviestFork(restart_heaviest_fork),
-            &self_keypair,
-        ));
     }
 
     fn time_gossip_read_lock<'a>(
@@ -1000,39 +952,6 @@ impl ClusterInfo {
                 CrdsData::EpochSlots(_, slots) => slots.clone(),
                 _ => panic!("this should not happen!"),
             })
-            .collect()
-    }
-
-    pub fn get_restart_last_voted_fork_slots(
-        &self,
-        cursor: &mut Cursor,
-    ) -> Vec<RestartLastVotedForkSlots> {
-        let self_shred_version = self.my_shred_version();
-        let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get_entries(cursor)
-            .filter_map(|entry| {
-                let CrdsData::RestartLastVotedForkSlots(slots) = entry.value.data() else {
-                    return None;
-                };
-                (slots.shred_version == self_shred_version).then_some(slots)
-            })
-            .cloned()
-            .collect()
-    }
-
-    pub fn get_restart_heaviest_fork(&self, cursor: &mut Cursor) -> Vec<RestartHeaviestFork> {
-        let self_shred_version = self.my_shred_version();
-        let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get_entries(cursor)
-            .filter_map(|entry| {
-                let CrdsData::RestartHeaviestFork(fork) = entry.value.data() else {
-                    return None;
-                };
-                (fork.shred_version == self_shred_version).then_some(fork)
-            })
-            .cloned()
             .collect()
     }
 
@@ -1648,10 +1567,10 @@ impl ClusterInfo {
     where
         R: Rng + CryptoRng,
     {
-        let mut cache = HashMap::<SocketAddr, bool>::new();
+        let mut cache = HashMap::<(Pubkey, SocketAddr), bool>::new();
         let mut ping_cache = self.ping_cache.lock().unwrap();
-        let mut hard_check = move |node: (Pubkey, SocketAddr)| {
-            let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node.1);
+        let mut hard_check = move |node| {
+            let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node);
             if let Some(ping) = ping {
                 let ping = Protocol::PingMessage(ping);
                 if let Some(pkt) = make_gossip_packet(node.1, &ping, &self.stats) {
@@ -1671,7 +1590,7 @@ impl ClusterInfo {
         move |request| {
             ContactInfo::is_valid_address(&request.addr, &self.socket_addr_space) && {
                 let node = (request.pubkey, request.addr);
-                *cache.entry(node.1).or_insert_with(|| hard_check(node))
+                *cache.entry(node).or_insert_with(|| hard_check(node))
             }
         }
     }
@@ -2019,7 +1938,6 @@ impl ClusterInfo {
                 &mut rng,
                 &self_keypair,
                 value,
-                stakes,
                 &self.socket_addr_space,
                 &self.ping_cache,
                 &mut pings,
@@ -2500,7 +2418,6 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     rng: &mut R,
     keypair: &Keypair,
     value: &CrdsValue,
-    stakes: &HashMap<Pubkey, u64>,
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
     pings: &mut Vec<(SocketAddr, Ping)>,
@@ -2509,17 +2426,14 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
         _ => return true, // If not a contact-info, nothing to verify.
     };
-    // For (sufficiently) staked nodes, don't bother with ping/pong.
-    if stakes.get(pubkey).copied() >= Some(MIN_STAKE_TO_SKIP_PING) {
-        return true;
-    }
     // Invalid addresses are not verifiable.
     let Some(addr) = addr.filter(|addr| socket_addr_space.check(addr)) else {
         return false;
     };
     let (out, ping) = {
+        let node = (*pubkey, addr);
         let mut ping_cache = ping_cache.lock().unwrap();
-        ping_cache.check(rng, keypair, Instant::now(), addr)
+        ping_cache.check(rng, keypair, Instant::now(), node)
     };
     if let Some(ping) = ping {
         pings.push((addr, ping));
@@ -2683,20 +2597,17 @@ mod tests {
             this_node.clone(),
             SocketAddrSpace::Unspecified,
         );
-        let mut remote_nodes = Vec::with_capacity(128);
-        let mut remote_ips = HashSet::with_capacity(128);
-        while remote_nodes.len() < 128 {
-            let node = new_rand_remote_node(&mut rng);
-            if remote_ips.insert(node.1.ip()) {
-                remote_nodes.push(node);
-            }
-        }
+        let remote_nodes: Vec<(Keypair, SocketAddr)> =
+            repeat_with(|| new_rand_remote_node(&mut rng))
+                .take(128)
+                .collect();
         let pings: Vec<_> = {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
             remote_nodes
                 .iter()
-                .map(|(_, socket)| {
-                    let (check, ping) = ping_cache.check(&mut rng, &this_node, now, *socket);
+                .map(|(keypair, socket)| {
+                    let node = (keypair.pubkey(), *socket);
+                    let (check, ping) = ping_cache.check(&mut rng, &this_node, now, node);
                     // Assert that initially remote nodes will not pass the
                     // ping/pong check.
                     assert!(!check);
@@ -2714,21 +2625,18 @@ mod tests {
         // Assert that remote nodes now pass the ping/pong check.
         {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
-            for (_, socket) in &remote_nodes {
-                let (check, _) = ping_cache.check(&mut rng, &this_node, now, *socket);
+            for (keypair, socket) in &remote_nodes {
+                let node = (keypair.pubkey(), *socket);
+                let (check, _) = ping_cache.check(&mut rng, &this_node, now, node);
                 assert!(check);
             }
         }
         // Assert that a new random remote node still will not pass the check.
         {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
-            let socket = loop {
-                let (_keypair, socket) = new_rand_remote_node(&mut rng);
-                if !remote_ips.contains(&socket.ip()) {
-                    break socket;
-                }
-            };
-            let (check, _) = ping_cache.check(&mut rng, &this_node, now, socket);
+            let (keypair, socket) = new_rand_remote_node(&mut rng);
+            let node = (keypair.pubkey(), socket);
+            let (check, _) = ping_cache.check(&mut rng, &this_node, now, node);
             assert!(!check);
         }
     }
@@ -2939,11 +2847,11 @@ mod tests {
             SocketAddrSpace::Unspecified,
         );
         let stakes = HashMap::<Pubkey, u64>::default();
-        cluster_info
-            .ping_cache
-            .lock()
-            .unwrap()
-            .mock_pong(peer.gossip().unwrap(), Instant::now());
+        cluster_info.ping_cache.lock().unwrap().mock_pong(
+            *peer.pubkey(),
+            peer.gossip().unwrap(),
+            Instant::now(),
+        );
         cluster_info.insert_info(peer);
         cluster_info.gossip.refresh_push_active_set(
             &cluster_info.keypair(),
@@ -3033,7 +2941,7 @@ mod tests {
         let refresh_ix = vote_instruction::vote(
             &Pubkey::new_unique(), // vote_pubkey
             &Pubkey::new_unique(), // authorized_voter_pubkey
-            refresh_vote.clone(),
+            refresh_vote,
         );
         let refresh_tx = Transaction::new_with_payer(
             &[refresh_ix], // instructions
@@ -3050,7 +2958,7 @@ mod tests {
         let refresh_ix = vote_instruction::vote(
             &Pubkey::new_unique(), // vote_pubkey
             &Pubkey::new_unique(), // authorized_voter_pubkey
-            refresh_vote.clone(),
+            refresh_vote,
         );
         let refresh_tx = Transaction::new_with_payer(
             &[refresh_ix], // instructions
@@ -3092,7 +3000,7 @@ mod tests {
         // Now construct vote for the slot to be refreshed later.
         let refresh_slot = unrefresh_slot + 1;
         let refresh_tower = vec![1, 3, unrefresh_slot, refresh_slot];
-        let refresh_vote = Vote::new(refresh_tower.clone(), Hash::new_unique());
+        let refresh_vote = Vote::new(refresh_tower, Hash::new_unique());
         let refresh_ix = vote_instruction::vote(
             &Pubkey::new_unique(), // vote_pubkey
             &Pubkey::new_unique(), // authorized_voter_pubkey
@@ -3405,11 +3313,11 @@ mod tests {
         let other_node_pubkey = solana_pubkey::new_rand();
         let other_node = ContactInfo::new_localhost(&other_node_pubkey, timestamp());
         assert_ne!(other_node.gossip().unwrap(), entrypoint.gossip().unwrap());
-        cluster_info
-            .ping_cache
-            .lock()
-            .unwrap()
-            .mock_pong(other_node.gossip().unwrap(), Instant::now());
+        cluster_info.ping_cache.lock().unwrap().mock_pong(
+            *other_node.pubkey(),
+            other_node.gossip().unwrap(),
+            Instant::now(),
+        );
         cluster_info.insert_info(other_node.clone());
         stakes.insert(other_node_pubkey, 10);
 
@@ -3640,163 +3548,12 @@ mod tests {
     }
 
     #[test]
-    fn test_push_restart_last_voted_fork_slots() {
-        let keypair = Arc::new(Keypair::new());
-        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
-        let slots = cluster_info.get_restart_last_voted_fork_slots(&mut Cursor::default());
-        assert!(slots.is_empty());
-        let mut update: Vec<Slot> = vec![0];
-        for i in 0..81 {
-            for j in 0..1000 {
-                update.push(i * 1050 + j);
-            }
-        }
-        assert!(
-            cluster_info
-                .push_restart_last_voted_fork_slots(&update, Hash::default())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-
-        let mut cursor = Cursor::default();
-        let slots = cluster_info.get_restart_last_voted_fork_slots(&mut cursor);
-        assert_eq!(slots.len(), 1);
-        let retrieved_slots = slots[0].to_slots(0);
-        assert!(retrieved_slots[0] < 69000);
-        assert_eq!(retrieved_slots.last(), Some(84999).as_ref());
-
-        let slots = cluster_info.get_restart_last_voted_fork_slots(&mut cursor);
-        assert!(slots.is_empty());
-
-        // Test with different shred versions.
-        let mut rng = rand::rng();
-        let node_pubkey = Pubkey::new_unique();
-        let mut node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
-        node.set_shred_version(42);
-        let mut slots = RestartLastVotedForkSlots::new_rand(&mut rng, Some(node_pubkey));
-        slots.shred_version = 42;
-        let entries = vec![
-            CrdsValue::new_unsigned(CrdsData::from(node)),
-            CrdsValue::new_unsigned(CrdsData::RestartLastVotedForkSlots(slots)),
-        ];
-        {
-            let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
-            for entry in entries {
-                assert!(
-                    gossip_crds
-                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                        .is_ok()
-                );
-            }
-        }
-        // Should exclude other node's last-voted-fork-slot because of different
-        // shred-version.
-        let slots = cluster_info.get_restart_last_voted_fork_slots(&mut Cursor::default());
-        assert_eq!(slots.len(), 1);
-        assert_eq!(slots[0].from, cluster_info.id());
-
-        // Match shred versions.
-        {
-            let mut node = cluster_info.my_contact_info.write().unwrap();
-            node.set_shred_version(42);
-        }
-        assert!(
-            cluster_info
-                .push_restart_last_voted_fork_slots(&update, Hash::default())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-        // Should now include both slots.
-        let slots = cluster_info.get_restart_last_voted_fork_slots(&mut Cursor::default());
-        assert_eq!(slots.len(), 2);
-        assert_eq!(slots[0].from, node_pubkey);
-        assert_eq!(slots[1].from, cluster_info.id());
-    }
-
-    #[test]
-    fn test_push_restart_heaviest_fork() {
-        agave_logger::setup();
-        let keypair = Arc::new(Keypair::new());
-        let pubkey = keypair.pubkey();
-        let contact_info = ContactInfo::new_localhost(&pubkey, 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
-
-        // make sure empty crds is handled correctly
-        let mut cursor = Cursor::default();
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut cursor);
-        assert_eq!(heaviest_forks, vec![]);
-
-        // add new message
-        let slot1 = 53;
-        let hash1 = Hash::new_unique();
-        let stake1 = 15_000_000;
-        cluster_info.push_restart_heaviest_fork(slot1, hash1, stake1);
-        cluster_info.flush_push_queue();
-
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut cursor);
-        assert_eq!(heaviest_forks.len(), 1);
-        let fork = &heaviest_forks[0];
-        assert_eq!(fork.last_slot, slot1);
-        assert_eq!(fork.last_slot_hash, hash1);
-        assert_eq!(fork.observed_stake, stake1);
-        assert_eq!(fork.from, pubkey);
-
-        // Test with different shred versions.
-        let mut rng = rand::rng();
-        let pubkey2 = Pubkey::new_unique();
-        let mut new_node = ContactInfo::new_rand(&mut rng, Some(pubkey2));
-        new_node.set_shred_version(42);
-        let slot2 = 54;
-        let hash2 = Hash::new_unique();
-        let stake2 = 23_000_000;
-        let entries = vec![
-            CrdsValue::new_unsigned(CrdsData::from(new_node)),
-            CrdsValue::new_unsigned(CrdsData::RestartHeaviestFork(RestartHeaviestFork {
-                from: pubkey2,
-                wallclock: timestamp(),
-                last_slot: slot2,
-                last_slot_hash: hash2,
-                observed_stake: stake2,
-                shred_version: 42,
-            })),
-        ];
-        {
-            let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
-            for entry in entries {
-                assert!(
-                    gossip_crds
-                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                        .is_ok()
-                );
-            }
-        }
-        // Should exclude other node's heaviest_fork because of different
-        // shred-version.
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut Cursor::default());
-        assert_eq!(heaviest_forks.len(), 1);
-        assert_eq!(heaviest_forks[0].from, pubkey);
-        // Match shred versions.
-        {
-            let mut node = cluster_info.my_contact_info.write().unwrap();
-            node.set_shred_version(42);
-        }
-        cluster_info.refresh_my_gossip_contact_info();
-        cluster_info.flush_push_queue();
-
-        // Should now include the previous heaviest_fork from the other node.
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut Cursor::default());
-        assert_eq!(heaviest_forks.len(), 1);
-        assert_eq!(heaviest_forks[0].from, pubkey2);
-    }
-
-    #[test]
     fn test_contact_trace() {
         agave_logger::setup();
         // If you change the format of cluster_info_trace or rpc_info_trace, please make sure
         // you read the actual output so the headers line up with the output.
-        const CLUSTER_INFO_TRACE_LENGTH: usize = 436;
-        const RPC_INFO_TRACE_LENGTH: usize = 335;
+        const CLUSTER_INFO_TRACE_LENGTH: usize = 472;
+        const RPC_INFO_TRACE_LENGTH: usize = 371;
         let keypair43 = Arc::new(
             Keypair::try_from(
                 [

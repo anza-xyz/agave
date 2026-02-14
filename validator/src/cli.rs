@@ -255,8 +255,6 @@ pub struct DefaultArgs {
     pub banking_trace_dir_byte_limit: String,
     pub block_production_pacing_fill_time_millis: String,
 
-    pub wen_restart_path: String,
-
     pub thread_args: DefaultThreadArgs,
 }
 
@@ -308,7 +306,6 @@ impl DefaultArgs {
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
-            wen_restart_path: "wen_restart_progress.proto".to_string(),
             thread_args: DefaultThreadArgs::default(),
         }
     }

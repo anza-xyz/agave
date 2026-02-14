@@ -176,7 +176,7 @@ pub fn get_closest_completion(
             }
         }
     }
-    slot_dists.sort_by(|(_, d1), (_, d2)| d1.cmp(d2));
+    slot_dists.sort_by_key(|(_, d)| *d);
 
     let mut visited = HashSet::from([root_slot]);
     let mut repairs = Vec::new();

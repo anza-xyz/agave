@@ -546,7 +546,7 @@ mod tests {
             .collect();
 
         let mut expected_delta_lt_hash = LtHash::identity();
-        let mut expected_accounts_lt_hash = prev_accounts_lt_hash.clone();
+        let mut expected_accounts_lt_hash = prev_accounts_lt_hash;
         let mut updater =
             |address: &Pubkey, prev: Option<AccountSharedData>, post: Option<AccountSharedData>| {
                 // if there was an alive account, mix out
@@ -930,7 +930,7 @@ mod tests {
             .iter()
             .map(|entry| (*entry.key(), entry.value().clone()))
             .collect();
-        actual_cache.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        actual_cache.sort_unstable_by_key(|a| a.0);
         assert_eq!(expected_cache, actual_cache.as_slice());
     }
 

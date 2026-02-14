@@ -719,21 +719,33 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             // these only encapsulate prefixes 1-9 and A-H.  If the user is searching
             // for a keypair that starts with a prefix of J-Z or a-z, then there is no
             // reason to waste time searching for a keypair that will never match
-            let skip_len_44_pubkeys = grind_matches
-                .iter()
-                .map(|g| {
-                    let target_key = if ignore_case {
-                        g.starts.to_ascii_uppercase()
-                    } else {
-                        g.starts.clone()
-                    };
-                    let target_key =
-                        target_key + &(0..44 - g.starts.len()).map(|_| "1").collect::<String>();
-                    bs58::decode(target_key).into_vec()
-                })
-                .filter_map(|s| s.ok())
-                .all(|s| s.len() > 32);
-
+            static BS58_ALPHABET: &str =
+                "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+            let skip_len_44_pubkeys = grind_matches.iter().all(|g| {
+                // If we are ignoring the case, upper-case the search string.
+                // Uppercase letters are always earlier in the alphabet, thus smaller.
+                let target_key = if ignore_case {
+                    g.starts
+                        .chars()
+                        .map(|c| {
+                            let up = c.to_ascii_uppercase();
+                            if BS58_ALPHABET.contains(up) {
+                                up
+                            } else {
+                                c
+                            }
+                        })
+                        .collect()
+                } else {
+                    g.starts.clone()
+                };
+                let target_key =
+                    target_key + &(0..44 - g.starts.len()).map(|_| "1").collect::<String>();
+                match bs58::decode(target_key).into_vec() {
+                    Ok(out) => out.len() > 32,
+                    Err(_) => false,
+                }
+            });
             let grind_matches_thread_safe = Arc::new(grind_matches);
             let attempts = Arc::new(AtomicU64::new(1));
             let found = Arc::new(AtomicU64::new(0));
@@ -794,17 +806,24 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                 total_matches_found += 1;
                                 continue;
                             }
-                            if (!grind_matches_thread_safe[i].starts.is_empty()
-                                && grind_matches_thread_safe[i].ends.is_empty()
-                                && pubkey.starts_with(&grind_matches_thread_safe[i].starts))
-                                || (grind_matches_thread_safe[i].starts.is_empty()
-                                    && !grind_matches_thread_safe[i].ends.is_empty()
-                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends))
-                                || (!grind_matches_thread_safe[i].starts.is_empty()
-                                    && !grind_matches_thread_safe[i].ends.is_empty()
-                                    && pubkey.starts_with(&grind_matches_thread_safe[i].starts)
-                                    && pubkey.ends_with(&grind_matches_thread_safe[i].ends))
-                            {
+
+                            // A check immediately after arg parsing ensures that some keypair
+                            // search criteria is supplied. That is, one of `.starts` or `.ends`
+                            // will be a non-empty `String`. If the search criteria only specifies
+                            // one of these parameters, an empty `String` is used for the other.
+                            //
+                            // `String::starts_with("")` and `String::ends_with("")` return true for
+                            // for all strings so calling those two functions with the match strings
+                            // is sufficient for evaluating a candidate keypair.
+                            //
+                            // Note that the below logic works if no search criteria is given - no
+                            // search criteria means any pubkey will match
+                            let pubkey_matches_start =
+                                pubkey.starts_with(&grind_matches_thread_safe[i].starts);
+                            let pubkey_matches_end =
+                                pubkey.ends_with(&grind_matches_thread_safe[i].ends);
+
+                            if pubkey_matches_start && pubkey_matches_end {
                                 let _found = found.fetch_add(1, Ordering::Relaxed);
                                 grind_matches_thread_safe[i]
                                     .count

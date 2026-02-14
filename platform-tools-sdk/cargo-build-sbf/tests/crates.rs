@@ -12,7 +12,7 @@ fn platform_tools_path() -> PathBuf {
     PathBuf::from(tools_path)
         .join(".cache")
         .join("solana")
-        .join("v1.52")
+        .join("v1.53")
         .join("platform-tools")
 }
 
@@ -240,7 +240,6 @@ fn test_sbpfv2() {
 
 #[test]
 #[serial]
-#[ignore]
 fn test_sbpfv3() {
     let assert_v1 = build_noop_and_readelf("v3");
     assert_v1

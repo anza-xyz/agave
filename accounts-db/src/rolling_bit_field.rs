@@ -353,7 +353,7 @@ impl RollingBitField {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {super::*, log::*, solana_measure::measure::Measure, std::collections::HashSet};
 
     impl RollingBitField {

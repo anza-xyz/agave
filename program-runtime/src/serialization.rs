@@ -1508,7 +1508,10 @@ mod tests {
             .store::<u32>(0, account_start_offsets[0])
             .unwrap_err();
 
-        // Writing to shared writable account makes it unique (CoW logic)
+        // Writing to shared writable account makes it unique (CoW logic.)
+        // It has been previously been made non-unique at the beginning of
+        // the test through a clone.
+        let _shared_account_ref = shared_account;
         assert!(
             transaction_context
                 .accounts()

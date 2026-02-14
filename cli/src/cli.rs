@@ -6,7 +6,6 @@ use {
     clap::{crate_description, crate_name, value_t_or_exit, ArgMatches, Shell},
     num_traits::FromPrimitive,
     serde_json::{self, Value},
-    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_utils::{self, input_parsers::*, keypair::*},
     solana_cli_config::ConfigInput,
     solana_cli_output::{
@@ -329,9 +328,8 @@ pub enum CliCommand {
         authorized_withdrawer: Pubkey,
         // VoteInit (v1) args.
         commission: Option<u8>,
-        // VoteInitV2 args (SIMD-0387).
+        // VoteInitV2 args (SIMD-0464).
         use_v2_instruction: bool,
-        bls_keypair: Option<BLSKeypair>,
         inflation_rewards_commission_bps: Option<u16>,
         inflation_rewards_collector: Option<Pubkey>,
         block_revenue_commission_bps: Option<u16>,
@@ -379,6 +377,7 @@ pub enum CliCommand {
         vote_account_pubkey: Pubkey,
         new_authorized_pubkey: Pubkey,
         vote_authorize: VoteAuthorize,
+        use_v2_instruction: bool,
         sign_only: bool,
         dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
@@ -870,16 +869,16 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         println_name_value("Commitment:", &config.commitment.commitment.to_string());
     }
 
-    let rpc_client = if config.rpc_client.is_none() {
+    let rpc_client = if let Some(rpc_client) = config.rpc_client.as_ref() {
+        // Primarily for testing
+        rpc_client.clone()
+    } else {
         Arc::new(RpcClient::new_with_timeouts_and_commitment(
             config.json_rpc_url.to_string(),
             config.rpc_timeout,
             config.commitment,
             config.confirm_transaction_initial_timeout,
         ))
-    } else {
-        // Primarily for testing
-        config.rpc_client.as_ref().unwrap().clone()
     };
 
     match &config.command {
@@ -1581,7 +1580,6 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             authorized_withdrawer,
             commission,
             use_v2_instruction,
-            bls_keypair,
             inflation_rewards_commission_bps,
             inflation_rewards_collector,
             block_revenue_commission_bps,
@@ -1605,7 +1603,6 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 *authorized_withdrawer,
                 *commission,
                 *use_v2_instruction,
-                bls_keypair.as_ref(),
                 *inflation_rewards_commission_bps,
                 inflation_rewards_collector.as_ref(),
                 *block_revenue_commission_bps,
@@ -1695,6 +1692,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             vote_account_pubkey,
             new_authorized_pubkey,
             vote_authorize,
+            use_v2_instruction,
             sign_only,
             dump_transaction_message,
             blockhash_query,
@@ -1712,6 +1710,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 vote_account_pubkey,
                 new_authorized_pubkey,
                 *vote_authorize,
+                *use_v2_instruction,
                 *authorized,
                 *new_authorized,
                 *sign_only,
@@ -2309,7 +2308,7 @@ mod tests {
             }),
         });
         // Use MocksMap to queue multiple GetAccountInfo responses:
-        // 1. SIMD-0387 feature account (returns null = feature inactive)
+        // 1. SIMD-0464 feature account (returns null = feature inactive)
         // 2. Vote account
         let mut mocks = MocksMap::default();
         mocks.insert(RpcRequest::GetAccountInfo, feature_check_response);
@@ -2327,7 +2326,7 @@ mod tests {
             authorized_withdrawer: bob_pubkey,
             commission: Some(0),
             use_v2_instruction: false,
-            bls_keypair: None,
+
             inflation_rewards_commission_bps: None,
             inflation_rewards_collector: None,
             block_revenue_commission_bps: None,
@@ -2373,6 +2372,7 @@ mod tests {
             vote_account_pubkey: bob_pubkey,
             new_authorized_pubkey,
             vote_authorize: VoteAuthorize::Withdrawer,
+            use_v2_instruction: false,
             sign_only: false,
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2612,7 +2612,7 @@ mod tests {
             authorized_withdrawer: bob_pubkey,
             commission: Some(0),
             use_v2_instruction: false,
-            bls_keypair: None,
+
             inflation_rewards_commission_bps: None,
             inflation_rewards_collector: None,
             block_revenue_commission_bps: None,
@@ -2633,6 +2633,7 @@ mod tests {
             vote_account_pubkey: bob_pubkey,
             new_authorized_pubkey: bob_pubkey,
             vote_authorize: VoteAuthorize::Voter,
+            use_v2_instruction: false,
             sign_only: false,
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::Rpc(Source::Cluster),

@@ -21,7 +21,7 @@ pub(crate) struct RewardsMetrics {
     pub(crate) calculate_points_us: AtomicU64,
     pub(crate) redeem_rewards_us: u64,
     pub(crate) store_stake_accounts_us: AtomicU64,
-    pub(crate) store_vote_accounts_us: AtomicU64,
+    pub(crate) store_commission_accounts_us: AtomicU64,
 }
 
 pub(crate) struct NewBankTimings {
@@ -90,8 +90,8 @@ pub(crate) fn report_new_epoch_metrics(
             i64
         ),
         (
-            "store_vote_accounts_us",
-            metrics.store_vote_accounts_us.load(Relaxed),
+            "store_commission_accounts_us",
+            metrics.store_commission_accounts_us.load(Relaxed),
             i64
         ),
     );

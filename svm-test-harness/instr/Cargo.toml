@@ -13,6 +13,7 @@ publish = false
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
+metrics = ["solana-program-runtime/metrics", "solana-svm/metrics"]
 fuzz = [
     "dep:agave-feature-set",
     "dep:agave-precompiles",
@@ -36,6 +37,7 @@ solana-epoch-schedule = { workspace = true, features = ["sysvar"] }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-last-restart-slot = { workspace = true, features = ["sysvar"] }
+solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true }
