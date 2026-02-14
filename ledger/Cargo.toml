@@ -107,7 +107,7 @@ solana-stake-interface = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-streamer = { workspace = true }
-solana-svm = { workspace = true }
+solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }

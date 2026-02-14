@@ -16,7 +16,6 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-votor-messages = { workspace = true }
-bincode = { workspace = true }
 bitvec = { workspace = true }
 qualifier_attr = { workspace = true }
 rayon = { workspace = true }
@@ -24,6 +23,7 @@ serde = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["parallel"] }
 solana-signer-store = { workspace = true }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 # See order-crates-for-publishing.py for using this unusual `path = "."`

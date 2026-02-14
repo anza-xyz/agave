@@ -470,7 +470,7 @@ solana-ledger = { path = "ledger", version = "=4.0.0-alpha.0", features = ["agav
 solana-loader-v2-interface = "3.0.0"
 solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
-solana-loader-v4-program = { path = "programs/loader-v4", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-loader-v4-program = { path = "programs/loader-v4", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-local-cluster = { path = "local-cluster", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-measure = { path = "measure", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
