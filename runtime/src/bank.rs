@@ -44,7 +44,8 @@ use {
         },
         bank_forks::BankForks,
         epoch_stakes::{
-            DeserializableVersionedEpochStakes, NodeVoteAccounts, VersionedEpochStakes,
+            BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
+            VersionedEpochStakes,
         },
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
@@ -2096,6 +2097,18 @@ impl Bank {
                 .saturating_mul(self.ns_per_slot)
                 .saturating_div(1_000_000_000) as i64,
         )
+    }
+
+    /// Returns a reference to the [`VersionedEpochStakes`] corresponding to the given [`Slot`].
+    fn epoch_stakes_from_slot(&self, slot: Slot) -> Option<&VersionedEpochStakes> {
+        let epoch = self.epoch_schedule().get_epoch(slot);
+        self.epoch_stakes(epoch)
+    }
+
+    /// Returns a reference to [`BLSPubkeyToRankMap`] for the given `slot`.
+    pub fn get_rank_map(&self, slot: Slot) -> Option<&Arc<BLSPubkeyToRankMap>> {
+        self.epoch_stakes_from_slot(slot)
+            .map(|stake| stake.bls_pubkey_to_rank_map())
     }
 
     fn update_sysvar_account<F>(&self, pubkey: &Pubkey, updater: F)

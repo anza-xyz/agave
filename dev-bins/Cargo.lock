@@ -441,6 +441,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-hash 4.2.0",
  "solana-pubkey 4.0.0",
+ "solana-signer-store",
  "thiserror 2.0.18",
  "wincode 0.4.4",
 ]
@@ -7817,6 +7818,7 @@ dependencies = [
  "rayon",
  "solana-account",
  "solana-accounts-db",
+ "solana-bls-signatures",
  "solana-client",
  "solana-client-traits",
  "solana-clock",
