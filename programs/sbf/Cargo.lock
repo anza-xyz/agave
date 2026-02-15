@@ -6059,6 +6059,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-account-view"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f37ca34c37f92ee341b73d5ce7c8ef5bb38e9a87955b4bd343c63fa18b149215"
+dependencies = [
+ "solana-address 2.1.0",
+ "solana-program-error",
+]
+
+[[package]]
 name = "solana-accounts-db"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -7366,6 +7376,18 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_derive",
+ "solana-program-error",
+]
+
+[[package]]
+name = "solana-instruction-view"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60147e4d0a4620013df40bf30a86dd299203ff12fcb8b593cd51014fce0875d8"
+dependencies = [
+ "solana-account-view",
+ "solana-address 2.1.0",
+ "solana-define-syscall 4.0.1",
  "solana-program-error",
 ]
 
@@ -8790,6 +8812,15 @@ dependencies = [
  "solana-sbf-rust-invoke-dep",
  "solana-sbf-rust-realloc-dep",
  "solana-sdk-ids",
+]
+
+[[package]]
+name = "solana-sbf-rust-direct-account-pointers"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "pinocchio",
+ "solana-cpi",
+ "solana-program-entrypoint",
 ]
 
 [[package]]
