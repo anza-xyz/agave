@@ -345,7 +345,7 @@ pub fn new_cluster_nodes<T: 'static>(
     stakes: &HashMap<Pubkey, u64>,
     use_cha_cha_8: bool,
 ) -> ClusterNodes<T> {
-    let self_pubkey = cluster_info.id();
+    let self_pubkey = cluster_info.turbine_id();
     let nodes = get_nodes(cluster_info, cluster_type, stakes);
     let index: HashMap<_, _> = nodes
         .iter()
@@ -375,15 +375,16 @@ fn get_nodes(
     cluster_type: ClusterType,
     stakes: &HashMap<Pubkey, u64>,
 ) -> Vec<Node> {
-    let self_pubkey = cluster_info.id();
+    let turbine_ci = cluster_info.turbine_contact_info();
+    let self_pubkey = *turbine_ci.pubkey();
     let should_dedup_tvu_addrs = match cluster_type {
         ClusterType::Development => false,
         ClusterType::Devnet | ClusterType::Testnet | ClusterType::MainnetBeta => true,
     };
     let mut nodes: Vec<Node> = std::iter::once({
-        // The local node itself.
+        // The local node itself (uses block-producer identity if configured).
         let stake = stakes.get(&self_pubkey).copied().unwrap_or_default();
-        let node = ContactInfo::from(&cluster_info.my_contact_info());
+        let node = ContactInfo::from(&turbine_ci);
         let node = NodeId::from(node);
         Node { node, stake }
     })

@@ -735,7 +735,7 @@ impl ReplayStage {
             if !migration_status.is_alpenglow_enabled() {
                 // This reset is handled in block creation loop for alpenglow
                 Self::reset_poh_recorder(
-                    &my_pubkey,
+                    &cluster_info.turbine_id(),
                     &blockstore,
                     working_bank,
                     &mut poh_controller,
@@ -750,6 +750,11 @@ impl ReplayStage {
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
+
+                // Read block-producer identity once per iteration so it's
+                // consistent across all leader-schedule checks in this loop.
+                // Updated dynamically via ClusterInfo::set_block_producer_keypair.
+                let block_producer_id = cluster_info.turbine_id();
 
                 let mut generate_new_bank_forks_time =
                     Measure::start("generate_new_bank_forks_time");
@@ -778,7 +783,7 @@ impl ReplayStage {
                 let new_frozen_slots = Self::replay_active_banks(
                     &blockstore,
                     &bank_forks,
-                    &my_pubkey,
+                    &block_producer_id,
                     &vote_account,
                     &mut progress,
                     transaction_status_sender.as_ref(),
@@ -1175,7 +1180,7 @@ impl ReplayStage {
 
                             if !poh_controller.has_pending_message() {
                                 Self::reset_poh_recorder(
-                                    &my_pubkey,
+                                    &block_producer_id,
                                     &blockstore,
                                     reset_bank.clone(),
                                     &mut poh_controller,
@@ -1247,7 +1252,7 @@ impl ReplayStage {
                     drop(descendants);
                     if !tpu_has_bank && !poh_controller.has_pending_message() {
                         if let Some(poh_slot) = Self::maybe_start_leader(
-                            &my_pubkey,
+                            &block_producer_id,
                             &bank_forks,
                             &poh_recorder,
                             &mut poh_controller,
@@ -1265,7 +1270,7 @@ impl ReplayStage {
                                 &my_pubkey,
                                 poh_slot,
                                 &mut current_leader,
-                                &my_pubkey,
+                                &block_producer_id,
                             );
                         }
                     }
