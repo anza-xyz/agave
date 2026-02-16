@@ -3532,7 +3532,7 @@ impl Blockstore {
         slot: Slot,
         start_index: u64,
         allow_dead_slots: bool,
-    ) -> Result<(CompletedRanges, SlotMeta, u64)> {
+    ) -> Result<Option<(CompletedRanges, SlotMeta, u64)>> {
         let (completed_ranges, slot_meta) = self.get_completed_ranges(slot, start_index)?;
 
         // Check if the slot is dead *after* fetching completed ranges to avoid a race
@@ -3542,7 +3542,7 @@ impl Blockstore {
         if self.is_dead(slot) && !allow_dead_slots {
             return Err(BlockstoreError::DeadSlot);
         } else if completed_ranges.is_empty() {
-            return Err(BlockstoreError::SlotUnavailable);
+            return Ok(None);
         }
 
         let slot_meta = slot_meta.unwrap();
@@ -3551,7 +3551,7 @@ impl Blockstore {
             .map(|&Range { end, .. }| u64::from(end) - start_index)
             .unwrap_or(0);
 
-        Ok((completed_ranges, slot_meta, num_shreds))
+        Ok(Some((completed_ranges, slot_meta, num_shreds)))
     }
 
     /// Returns the entry vector for the slot starting with `shred_start_index`, the number of
@@ -3562,14 +3562,13 @@ impl Blockstore {
         start_index: u64,
         allow_dead_slots: bool,
     ) -> Result<(Vec<Entry>, u64, bool)> {
-        let (completed_ranges, slot_meta, num_shreds) =
-            match self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots) {
-                Ok(data) => data,
-                Err(BlockstoreError::SlotUnavailable) => return Ok((vec![], 0, false)),
-                Err(e) => return Err(e),
-            };
+        let Some((completed_ranges, slot_meta, num_shreds)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], 0, false));
+        };
 
-        let entries = self.get_slot_entries_in_block(slot, completed_ranges, Some(&slot_meta))?;
+        let entries = self.get_slot_entries_in_block(slot, &completed_ranges, Some(&slot_meta))?;
         Ok((entries, num_shreds, slot_meta.is_full()))
     }
 
@@ -3582,12 +3581,11 @@ impl Blockstore {
         start_index: u64,
         allow_dead_slots: bool,
     ) -> Result<(Vec<BlockComponent>, Vec<Range<u32>>, bool)> {
-        let (completed_ranges, slot_meta, _) =
-            match self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots) {
-                Ok(data) => data,
-                Err(BlockstoreError::SlotUnavailable) => return Ok((vec![], vec![], false)),
-                Err(e) => return Err(e),
-            };
+        let Some((completed_ranges, slot_meta, _)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], vec![], false));
+        };
 
         let components =
             self.get_slot_components_in_block(slot, &completed_ranges, Some(&slot_meta))?;
@@ -3698,12 +3696,68 @@ impl Blockstore {
             .collect()
     }
 
-    /// Fetch the components corresponding to all of the shred indices in `completed_ranges`
+    /// Fetch the data corresponding to all of the shred indices in `completed_ranges`
     /// This function takes advantage of the fact that `completed_ranges` are both
     /// contiguous and in sorted order. To clarify, suppose completed_ranges is as follows:
     ///   completed_ranges = [..., (s_i..e_i), (s_i+1..e_i+1), ...]
     /// Then, the following statements are true:
     ///   s_i < e_i == s_i+1 < e_i+1
+    fn get_slot_data_in_block<T>(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+        mut deserialize: impl FnMut(Vec<u8>) -> Result<Vec<T>>,
+    ) -> Result<Vec<T>> {
+        debug_assert!(completed_ranges
+            .iter()
+            .tuple_windows()
+            .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end));
+        let maybe_panic = |index: u64| {
+            if let Some(slot_meta) = slot_meta {
+                if slot > self.lowest_cleanup_slot() {
+                    panic!("Missing shred. slot: {slot}, index: {index}, slot meta: {slot_meta:?}");
+                }
+            }
+        };
+        let Some((&Range { start, .. }, &Range { end, .. })) =
+            completed_ranges.first().zip(completed_ranges.last())
+        else {
+            return Ok(vec![]);
+        };
+        let indices = u64::from(start)..u64::from(end);
+        let keys = indices.clone().map(|index| (slot, index));
+        let keys = self.data_shred_cf.multi_get_keys(keys);
+        let mut shreds =
+            self.data_shred_cf
+                .multi_get_bytes(&keys)
+                .zip(indices)
+                .map(|(shred, index)| {
+                    shred?.ok_or_else(|| {
+                        maybe_panic(index);
+                        BlockstoreError::MissingShred(slot, index)
+                    })
+                });
+        completed_ranges
+            .iter()
+            .map(|Range { start, end }| end - start)
+            .map(|num_shreds| {
+                shreds
+                    .by_ref()
+                    .take(num_shreds as usize)
+                    .process_results(|shreds| Shredder::deshred(shreds))?
+                    .map_err(|e| {
+                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                            format!("could not reconstruct data buffer from shreds: {e:?}"),
+                        )))
+                    })
+                    .and_then(&mut deserialize)
+            })
+            .flatten_ok()
+            .collect()
+    }
+
+    /// Fetch the components corresponding to all of the shred indices in `completed_ranges`.
     /// Note that one range in CompletedRanges corresponds to one BlockComponent.
     fn get_slot_components_in_block(
         &self,
@@ -3711,123 +3765,31 @@ impl Blockstore {
         completed_ranges: &CompletedRanges,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<BlockComponent>> {
-        debug_assert!(completed_ranges
-            .iter()
-            .tuple_windows()
-            .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end));
-        let maybe_panic = |index: u64| {
-            if let Some(slot_meta) = slot_meta {
-                if slot > self.lowest_cleanup_slot() {
-                    panic!("Missing shred. slot: {slot}, index: {index}, slot meta: {slot_meta:?}");
-                }
-            }
-        };
-        let Some((&Range { start, .. }, &Range { end, .. })) =
-            completed_ranges.first().zip(completed_ranges.last())
-        else {
-            return Ok(vec![]);
-        };
-        let indices = u64::from(start)..u64::from(end);
-        let keys = indices.clone().map(|index| (slot, index));
-        let keys = self.data_shred_cf.multi_get_keys(keys);
-        let mut shreds =
-            self.data_shred_cf
-                .multi_get_bytes(&keys)
-                .zip(indices)
-                .map(|(shred, index)| {
-                    shred?.ok_or_else(|| {
-                        maybe_panic(index);
-                        BlockstoreError::MissingShred(slot, index)
-                    })
-                });
-        completed_ranges
-            .iter()
-            .map(|Range { start, end }| end - start)
-            .map(|num_shreds| {
-                shreds
-                    .by_ref()
-                    .take(num_shreds as usize)
-                    .process_results(|shreds| Shredder::deshred(shreds))?
-                    .map_err(|e| {
-                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                            format!("could not reconstruct entries buffer from shreds: {e:?}"),
-                        )))
-                    })
-                    .and_then(|payload| {
-                        wincode::deserialize(&payload).map_err(|e| {
-                            BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                                format!("could not reconstruct block component: {e:?}"),
-                            )))
-                        })
-                    })
-            })
-            .collect()
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            wincode::deserialize(&payload)
+                .map(|component| vec![component])
+                .map_err(|e| {
+                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                        format!("could not reconstruct block component: {e:?}"),
+                    )))
+                })
+        })
     }
 
-    /// Fetch the entries corresponding to all of the shred indices in `completed_ranges`
-    /// This function takes advantage of the fact that `completed_ranges` are both
-    /// contiguous and in sorted order. To clarify, suppose completed_ranges is as follows:
-    ///   completed_ranges = [..., (s_i..e_i), (s_i+1..e_i+1), ...]
-    /// Then, the following statements are true:
-    ///   s_i < e_i == s_i+1 < e_i+1
+    /// Fetch the entries corresponding to all of the shred indices in `completed_ranges`.
     fn get_slot_entries_in_block(
         &self,
         slot: Slot,
-        completed_ranges: CompletedRanges,
+        completed_ranges: &CompletedRanges,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
-        debug_assert!(completed_ranges
-            .iter()
-            .tuple_windows()
-            .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end));
-        let maybe_panic = |index: u64| {
-            if let Some(slot_meta) = slot_meta {
-                if slot > self.lowest_cleanup_slot() {
-                    panic!("Missing shred. slot: {slot}, index: {index}, slot meta: {slot_meta:?}");
-                }
-            }
-        };
-        let Some((&Range { start, .. }, &Range { end, .. })) =
-            completed_ranges.first().zip(completed_ranges.last())
-        else {
-            return Ok(vec![]);
-        };
-        let indices = u64::from(start)..u64::from(end);
-        let keys = indices.clone().map(|index| (slot, index));
-        let keys = self.data_shred_cf.multi_get_keys(keys);
-        let mut shreds =
-            self.data_shred_cf
-                .multi_get_bytes(&keys)
-                .zip(indices)
-                .map(|(shred, index)| {
-                    shred?.ok_or_else(|| {
-                        maybe_panic(index);
-                        BlockstoreError::MissingShred(slot, index)
-                    })
-                });
-        completed_ranges
-            .into_iter()
-            .map(|Range { start, end }| end - start)
-            .map(|num_shreds| {
-                shreds
-                    .by_ref()
-                    .take(num_shreds as usize)
-                    .process_results(|shreds| Shredder::deshred(shreds))?
-                    .map_err(|e| {
-                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                            format!("could not reconstruct entries buffer from shreds: {e:?}"),
-                        )))
-                    })
-                    .and_then(|payload| {
-                        <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
-                            BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                                format!("could not reconstruct entries: {e:?}"),
-                            )))
-                        })
-                    })
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            <WincodeVec<Entry, MaxDataShredsLen>>::deserialize(&payload).map_err(|e| {
+                BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(format!(
+                    "could not reconstruct entries: {e:?}"
+                ))))
             })
-            .flatten_ok()
-            .collect()
+        })
     }
 
     pub fn get_entries_in_data_block(
@@ -3836,7 +3798,7 @@ impl Blockstore {
         range: Range<u32>,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
-        self.get_slot_entries_in_block(slot, vec![range], slot_meta)
+        self.get_slot_entries_in_block(slot, &vec![range], slot_meta)
     }
 
     /// Performs checks on the last fec set of a replayed slot, and returns the block_id.
