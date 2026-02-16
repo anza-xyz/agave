@@ -529,7 +529,7 @@ solana-serialize-utils = "3.1.0"
 solana-sha256-hasher = "3.1.0"
 solana-short-vec = "3.2.0"
 solana-shred-version = "3.0.0"
-solana-signature = { version = "3.2.0", default-features = false }
+solana-signature = { version = "3.3.0", default-features = false }
 solana-signer = "3.0.0"
 solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.0.0"
