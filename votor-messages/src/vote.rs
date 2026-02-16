@@ -3,6 +3,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
+    wincode::{containers::Pod, SchemaRead, SchemaWrite},
 };
 
 /// Enum that clients can use to parse and create the vote
@@ -12,7 +13,9 @@ use {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "AgKoR2cpjUSVCW7Cpihob5nDiPcFt1PXmoPKWJg3zuSB")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead,
+)]
 pub enum Vote {
     /// A notarization vote
     Notarize(NotarizationVote),
@@ -188,11 +191,24 @@ impl From<GenesisVote> for Vote {
     derive(AbiExample),
     frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub struct NotarizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
+    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
 }
 
@@ -202,7 +218,19 @@ pub struct NotarizationVote {
     derive(AbiExample),
     frozen_abi(digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub struct FinalizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -216,7 +244,19 @@ pub struct FinalizationVote {
     derive(AbiExample),
     frozen_abi(digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub struct SkipVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -228,11 +268,24 @@ pub struct SkipVote {
     derive(AbiExample),
     frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub struct NotarizationFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
+    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
 }
 
@@ -242,7 +295,19 @@ pub struct NotarizationFallbackVote {
     derive(AbiExample),
     frozen_abi(digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub struct SkipFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -254,10 +319,23 @@ pub struct SkipFallbackVote {
     derive(AbiExample),
     frozen_abi(digest = "2JAiHmnnKHCzhkyCY3Bej6rAaVkMHsXgRcz1TPCNqAJ9")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub struct GenesisVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
+    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
 }

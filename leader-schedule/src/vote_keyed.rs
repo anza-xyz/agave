@@ -4,7 +4,7 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,
-    std::{collections::HashMap, ops::Index},
+    std::{collections::HashMap, iter, ops::Index},
 };
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
@@ -85,8 +85,7 @@ impl LeaderSchedule {
             }
             _ => {
                 // Empty iterator for pubkeys not in schedule
-                #[allow(clippy::reversed_empty_ranges)]
-                Box::new((1..=0).map(|_| 0))
+                Box::new(iter::empty())
             }
         }
     }

@@ -118,8 +118,9 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
-            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            self, create_bls_pubkey_and_proof_of_possession, create_v4_account_with_authorized,
+            BlockTimestamp, VoteAuthorize, VoteInit, VoteStateV4, VoteStateVersions,
+            VoterWithBLSArgs, MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -10085,12 +10086,17 @@ fn test_rent_state_changes_sysvars() {
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // Ensure transactions with sysvars succeed, even though sysvars appear RentPaying by balance
+    let (bls_pubkey, bls_proof_of_possession) =
+        create_bls_pubkey_and_proof_of_possession(&validator_vote_account_pubkey);
     let tx = Transaction::new_signed_with_payer(
         &[vote_instruction::authorize(
             &validator_vote_account_pubkey,
             &validator_voting_keypair.pubkey(),
             &Pubkey::new_unique(),
-            VoteAuthorize::Voter,
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession,
+            }),
         )],
         Some(&mint_keypair.pubkey()),
         &[&mint_keypair, &validator_voting_keypair],

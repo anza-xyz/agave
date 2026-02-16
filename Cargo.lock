@@ -69,7 +69,6 @@ dependencies = [
  "agave-bls-cert-verify",
  "agave-votor",
  "agave-votor-messages",
- "bincode",
  "bitvec",
  "criterion",
  "qualifier_attr",
@@ -79,6 +78,7 @@ dependencies = [
  "solana-hash 4.1.0",
  "solana-signer-store",
  "thiserror 2.0.18",
+ "wincode 0.4.4",
 ]
 
 [[package]]
@@ -564,6 +564,8 @@ dependencies = [
  "solana-hash 4.1.0",
  "solana-pubkey 4.0.0",
  "tempfile",
+ "thiserror 2.0.18",
+ "wincode 0.4.4",
 ]
 
 [[package]]

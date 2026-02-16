@@ -21,7 +21,7 @@ fn create_bls_keypairs(num_signers: usize) -> Vec<BlsKeypair> {
 
 // Creates vote messages for bench tests
 fn create_signed_vote_message(bls_keypair: &BlsKeypair, vote: Vote, rank: usize) -> VoteMessage {
-    let payload = bincode::serialize(&vote).expect("Failed to serialize vote");
+    let payload = wincode::serialize(&vote).expect("Failed to serialize vote");
     let signature: BlsSignature = bls_keypair.sign(&payload).into();
     VoteMessage {
         vote,

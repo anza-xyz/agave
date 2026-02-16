@@ -13,6 +13,7 @@ publish = false
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
+metrics = ["solana-program-runtime/metrics", "solana-svm/metrics"]
 fuzz = [
     "dep:agave-feature-set",
     "dep:agave-precompiles",

@@ -17,7 +17,9 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [features]
+default = ["metrics"]
 agave-unstable-api = []
+dummy-for-ci-check = ["metrics"]
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "solana-program-runtime/dev-context-only-utils",
@@ -26,6 +28,11 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-program-runtime/frozen-abi",
+]
+metrics = [
+    "solana-bpf-loader-program/metrics",
+    "solana-loader-v4-program/metrics",
+    "solana-program-runtime/metrics",
 ]
 shuttle-test = [
     "solana-bpf-loader-program/shuttle-test",
@@ -61,7 +68,7 @@ solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["metrics"] }
+solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
