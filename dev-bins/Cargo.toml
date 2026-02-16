@@ -136,7 +136,7 @@ solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.0.
 solana-sbpf = { version = "=0.14.4", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.0"
-solana-signature = { version = "3.2.0", default-features = false }
+solana-signature = { version = "3.3.0", default-features = false }
 solana-signer = "3.0.0"
 solana-stake-interface = "2.0.2"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
