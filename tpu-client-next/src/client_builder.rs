@@ -89,6 +89,7 @@ pub struct ClientBuilder {
     report_fn: Option<ReportFn>,
     cancel_scheduler: CancellationToken,
     cancel_reporter: CancellationToken,
+    override_initial_congestion_window: Option<u64>,
 }
 
 impl ClientBuilder {
@@ -108,6 +109,7 @@ impl ClientBuilder {
             report_fn: None,
             cancel_scheduler: CancellationToken::new(),
             cancel_reporter: CancellationToken::new(),
+            override_initial_congestion_window: None,
         }
     }
 
@@ -178,6 +180,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the initial congestion window size in bytes.
+    ///
+    /// If not set, defaults to INITIAL_CONGESTION_WINDOW.
+    pub fn override_initial_congestion_window(mut self, bytes: u64) -> Self {
+        self.override_initial_congestion_window = Some(bytes);
+        self
+    }
+
     /// Set the broadcaster used by the scheduler.
     pub fn broadcaster(mut self, broadcaster: impl WorkersBroadcaster + 'static) -> Self {
         self.broadcaster = Box::new(broadcaster);
@@ -213,6 +223,7 @@ impl ClientBuilder {
                 connect: self.leader_send_fanout.saturating_add(1),
                 send: self.leader_send_fanout,
             },
+            override_initial_congestion_window: self.override_initial_congestion_window,
         };
 
         let scheduler = ConnectionWorkersScheduler::new(

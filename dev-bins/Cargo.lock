@@ -9450,6 +9450,7 @@ dependencies = [
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
+ "solana-packet 4.0.0",
  "solana-pubkey 4.1.0",
  "solana-rpc-client",
  "solana-rpc-client-api",

@@ -11359,6 +11359,7 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
+ "solana-packet 4.0.0",
  "solana-pubkey 4.1.0",
  "solana-pubsub-client",
  "solana-rpc-client",
