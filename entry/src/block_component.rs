@@ -598,4 +598,17 @@ mod tests {
         let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
         assert_eq!(comp, deser);
     }
+
+    #[test]
+    fn large_entry_batch_round_trips() {
+        // Ensure an EntryBatch that exceeds wincode's default 4 MiB prealloc
+        // limit can still round-trip.
+        const DEFAULT_PREALLOC_LIMIT: usize = 4 << 20; // 4 MiB
+        let num_entries = DEFAULT_PREALLOC_LIMIT / std::mem::size_of::<Entry>() + 1;
+
+        let comp = BlockComponent::new_entry_batch(mock_entries(num_entries)).unwrap();
+        let bytes = wincode::serialize(&comp).unwrap();
+        let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(comp, deser);
+    }
 }
