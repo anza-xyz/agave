@@ -157,8 +157,9 @@ impl BuilderType {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
                         assert_eq!(vote_type, vote_types[1]);
-                        let (_, bitmap) = sig_and_bitmap1
-                            .get_or_insert((SignatureProjective::identity(), default_bitvec()));
+                        let (_, bitmap) = sig_and_bitmap1.get_or_insert_with(|| {
+                            (SignatureProjective::identity(), default_bitvec())
+                        });
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
                 }
@@ -188,7 +189,7 @@ impl BuilderType {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
                         assert_eq!(vote_type, vote_types[1]);
-                        let bitmap = bitmap1.get_or_insert(default_bitvec());
+                        let bitmap = bitmap1.get_or_insert_with(default_bitvec);
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
                 }
