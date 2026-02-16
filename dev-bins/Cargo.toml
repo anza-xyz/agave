@@ -64,7 +64,7 @@ clap = "2.33.1"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 dashmap = "5.5.3"
-futures = "0.3.31"
+futures = "0.3.32"
 histogram = "0.6.9"
 itertools = "0.14.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
