@@ -456,7 +456,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=4.0.0-alpha.0", fea
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hard-forks = "3.0.0"
-solana-hash = "4.1.0"
+solana-hash = "4.2.0"
 solana-inflation = "3.0.0"
 solana-instruction = "3.1.0"
 solana-instruction-error = "2.1.0"
