@@ -433,7 +433,8 @@ pub fn port_validator(port: String) -> Result<(), String> {
 
 pub fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
-        let width = end - start + 1;
+        // The port range is half-open: [start, end)
+        let width = end - start;
         if width < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
@@ -750,7 +751,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("MIN_PORT-MAX_PORT")
                 .takes_value(true)
                 .validator(port_range_validator)
-                .help("Range to use for dynamically assigned ports [default: 1024-65535]"),
+                .help("Range to use for dynamically assigned ports. The range is half-open (end exclusive) [default: 1024-65535]"),
         )
         .arg(
             Arg::with_name("bind_address")
