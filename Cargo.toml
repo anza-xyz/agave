@@ -28,6 +28,7 @@ members = [
     "connection-cache",
     "core",
     "cost-model",
+    "cpu-utils",
     "download-utils",
     "entry",
     "faucet",
@@ -190,6 +191,7 @@ Inflector = "0.11.4"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-bls-cert-verify = { path = "bls-cert-verify", features = ["agave-unstable-api"] }
 agave-bls12-381 = { path = "bls12-381", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+agave-cpu-utils = { path = "cpu-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-feature-set = { path = "feature-set", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.0.0-alpha.0" }
@@ -250,7 +252,6 @@ console = "0.16.2"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.35"
-core_affinity = "0.8.3"
 criterion = "0.8.2"
 criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.15"

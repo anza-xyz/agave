@@ -1,7 +1,6 @@
-// re-export since this is needed at validator startup
-pub use agave_xdp::{get_cpu, set_cpu_affinity};
 #[cfg(target_os = "linux")]
 use {
+    agave_cpu_utils::{cpu_count, set_cpu_affinity},
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
@@ -173,15 +172,9 @@ impl XdpRetransmitBuilder {
         }
         let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
-        let reserved_cores = cpus.iter().cloned().collect::<HashSet<_>>();
-        let available_cores = core_affinity::get_core_ids()
-            .expect("linux provide affine cores")
-            .into_iter()
-            .map(|core_affinity::CoreId { id }| id)
-            .collect::<HashSet<_>>();
-        let unreserved_cores = available_cores
-            .difference(&reserved_cores)
-            .cloned()
+        let reserved_cores = cpus.iter().copied().collect::<HashSet<_>>();
+        let unreserved_cores = (0..cpu_count().expect("linux provide online cpu count"))
+            .filter(|core| !reserved_cores.contains(core))
             .collect::<Vec<_>>();
 
         let tx_loop_builders = cpus
