@@ -1680,9 +1680,9 @@ impl AccountsDb {
         );
         let total = pubkey_refcount.len();
         let failed = AtomicBool::default();
-        let threads = quarter_thread_count();
-        let per_batch = total / threads;
-        (0..=threads).into_par_iter().for_each(|attempt| {
+        let num_threads = rayon::current_num_threads();
+        let per_batch = total / num_threads;
+        (0..=num_threads).into_par_iter().for_each(|attempt| {
             pubkey_refcount
                 .iter()
                 .skip(attempt * per_batch)
@@ -5246,7 +5246,7 @@ impl AccountsDb {
             UpdateIndexThreadSelection::PoolWithThreshold,
         ) && len > threshold
         {
-            let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
+            let chunk_size = std::cmp::max(1, len / rayon::current_num_threads()); // # pubkeys/thread
             let batches = 1 + len / chunk_size;
             thread_pool.install(|| {
                 (0..batches)
