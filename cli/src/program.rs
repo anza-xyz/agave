@@ -2432,7 +2432,7 @@ async fn process_close(
 
         let mut closed = vec![];
         for buffer in buffers.buffers.iter() {
-            if close(
+            match close(
                 rpc_client,
                 config,
                 &Pubkey::from_str(&buffer.address)?,
@@ -2441,11 +2441,16 @@ async fn process_close(
                 None,
             )
             .await
-            .is_ok()
             {
-                closed.push(buffer.clone());
+                Ok(()) => {
+                    closed.push(buffer.clone());
+                }
+                Err(err) => {
+                    eprintln!("Failed to close buffer {}: {}", buffer.address, err);
+                }
             }
         }
+
         Ok(config
             .output_format
             .formatted_string(&CliUpgradeableBuffers {
