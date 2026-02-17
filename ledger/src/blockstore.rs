@@ -490,6 +490,8 @@ impl Blockstore {
     ) {
         let mut walk = TreeWalk::from(forks);
         let mut blockhashes = HashMap::new();
+        let mut merkle_roots: HashMap<Slot, Hash> = HashMap::new();
+        let reed_solomon_cache = shred::ReedSolomonCache::default();
         while let Some(visit) = walk.get() {
             let slot = *visit.node().data();
             if self.meta(slot).unwrap().is_some() && self.orphan(slot).unwrap().is_none() {
@@ -504,8 +506,9 @@ impl Blockstore {
                     // `is_orphan == true`
                     .and_then(|parent| blockhashes.get(&parent))
                     .unwrap_or(&starting_hash);
+                let parent_slot = parent.unwrap_or(slot);
                 let mut entries = create_ticks(
-                    num_ticks * (std::cmp::max(1, slot - parent.unwrap_or(slot))),
+                    num_ticks * (std::cmp::max(1, slot - parent_slot)),
                     0,
                     *parent_hash,
                 );
@@ -513,13 +516,27 @@ impl Blockstore {
                 if !is_slot_complete {
                     entries.pop().unwrap();
                 }
-                let shreds = entries_to_test_shreds(
-                    &entries,
-                    slot,
-                    parent.unwrap_or(slot),
-                    is_slot_complete,
-                    0,
-                );
+                let chained_merkle_root = parent
+                    .and_then(|p| merkle_roots.get(&p).copied())
+                    .or_else(|| self.get_final_merkle_root(parent_slot).unwrap())
+                    .unwrap_or_else(|| Hash::new_from_array(rand::rng().random()));
+                let shreds: Vec<shred::Shred> = shred::Shredder::new(slot, parent_slot, 0, 0)
+                    .unwrap()
+                    .make_merkle_shreds_from_entries(
+                        &Keypair::new(),
+                        &entries,
+                        is_slot_complete,
+                        chained_merkle_root,
+                        0,
+                        0,
+                        &reed_solomon_cache,
+                        &mut shred::ProcessShredsStats::default(),
+                    )
+                    .filter(shred::Shred::is_data)
+                    .collect();
+                if let Some(last_shred) = shreds.last() {
+                    merkle_roots.insert(slot, last_shred.merkle_root().unwrap());
+                }
                 self.insert_shreds(shreds, None, false).unwrap();
             }
             walk.forward();
@@ -2275,6 +2292,29 @@ impl Blockstore {
         self.data_shred_cf.get_bytes((slot, index))
     }
 
+    pub fn get_parent_chained_block_id(&self, slot: Slot) -> Result<Option<Hash>> {
+        let Some(shred_bytes) = self.get_data_shred(slot, 0)? else {
+            return Ok(None);
+        };
+        Ok(shred::layout::get_chained_merkle_root(&shred_bytes))
+    }
+
+    pub fn get_final_merkle_root(&self, slot: Slot) -> Result<Option<Hash>> {
+        let Some(meta) = self.meta(slot)? else {
+            return Ok(None);
+        };
+
+        let Some(final_shred_index) = meta.last_index else {
+            return Ok(None);
+        };
+
+        let Some(shred_bytes) = self.get_data_shred(slot, final_shred_index)? else {
+            return Ok(None);
+        };
+
+        Ok(shred::layout::get_merkle_root(&shred_bytes))
+    }
+
     pub fn get_data_shreds_for_slot(&self, slot: Slot, start_index: u64) -> Result<Vec<Shred>> {
         self.slot_data_iterator(slot, start_index)
             .expect("blockstore couldn't fetch iterator")
@@ -2367,7 +2407,10 @@ impl Blockstore {
         let mut all_shreds = vec![];
         let mut slot_entries = vec![];
         let reed_solomon_cache = ReedSolomonCache::default();
-        let mut chained_merkle_root = Hash::new_from_array(rand::rng().random());
+        let mut chained_merkle_root = self
+            .get_final_merkle_root(parent_slot)
+            .unwrap()
+            .unwrap_or_else(|| Hash::new_from_array(rand::rng().random()));
         // Find all the entries for start_slot
         for entry in entries.into_iter() {
             if remaining_ticks_in_slot == 0 {

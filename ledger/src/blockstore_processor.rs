@@ -103,6 +103,16 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
     Ok(())
 }
 
+/// Result of checking a child slot's chained block ID against its parent.
+pub enum ChainedBlockIdCheck {
+    /// Chained block ID matches (or parent has no block ID to compare).
+    Pass,
+    /// Definitive mismatch between child's chained merkle root and parent's block ID.
+    Mismatch,
+    /// Data shred 0 not received yet; cannot determine chained block ID.
+    Unavailable,
+}
+
 // Includes transaction signature for unit-testing
 fn do_get_first_error<T, Tx: SVMTransaction>(
     batch: &TransactionBatch<Tx>,
@@ -811,6 +821,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("user transactions found in vote only mode bank at slot {0}")]
     UserTransactionsInVoteOnlyBank(Slot),
+
+    #[error("invalid parent -> child chained merkle root at slot {0} parent {1}")]
+    ChainedBlockIdFailure(Slot, Slot),
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -2086,6 +2099,39 @@ fn supermajority_root_from_vote_accounts(
     supermajority_root(&roots_stakes, total_epoch_stake)
 }
 
+/// Validates the chained block ID for a child slot against its parent.
+///
+/// Returns:
+/// - `Pass`: chained block ID matches parent's block ID (or parent has no
+///   block ID yet), safe to proceed with replay
+/// - `Mismatch`: definitive mismatch between child's chained merkle root
+///   and parent's block ID
+/// - `Unavailable`: data shred 0 not received yet, cannot validate
+pub fn check_chained_block_id(
+    blockstore: &Blockstore,
+    child_slot: Slot,
+    parent_slot: Slot,
+) -> ChainedBlockIdCheck {
+    let chained_block_id = blockstore.get_parent_chained_block_id(child_slot).unwrap();
+
+    let Some(expected_parent_block_id) = chained_block_id else {
+        // Data shred 0 not received yet; skip and retry next iteration
+        return ChainedBlockIdCheck::Unavailable;
+    };
+
+    if let Some(parent_block_id) = blockstore.get_final_merkle_root(parent_slot).unwrap() {
+        if expected_parent_block_id != parent_block_id {
+            warn!(
+                "Chained merkle root mismatch for slot {child_slot} (parent {parent_slot}): child \
+                 chains to {expected_parent_block_id}, but parent block ID is {parent_block_id}"
+            );
+            return ChainedBlockIdCheck::Mismatch;
+        }
+    }
+
+    ChainedBlockIdCheck::Pass
+}
+
 // Processes and replays the contents of a single slot, returns Error
 // if failed to play the slot
 #[allow(clippy::too_many_arguments)]
@@ -2102,6 +2148,36 @@ pub fn process_single_slot(
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
+    if bank
+        .feature_set
+        .is_active(&agave_feature_set::validate_chained_block_id::id())
+    {
+        match check_chained_block_id(blockstore, slot, bank.parent_slot()) {
+            ChainedBlockIdCheck::Pass => (),
+            ChainedBlockIdCheck::Unavailable => {
+                // no shreds to replay
+                return Ok(());
+            }
+            ChainedBlockIdCheck::Mismatch => {
+                // Mismatch, mark dead
+                if blockstore.is_primary_access() {
+                    blockstore
+                        .set_dead_slot(slot)
+                        .expect("Failed to mark slot as dead in blockstore");
+                } else {
+                    info!(
+                        "Failed slot {slot} won't be marked dead due to being read-only \
+                         blockstore access"
+                    );
+                }
+                return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
+                    slot,
+                    bank.parent_slot(),
+                ));
+            }
+        }
+    }
+
     // Mark corrupt slots as dead so validators don't replay this slot and
     // see AlreadyProcessed errors later in ReplayStage
     confirm_full_slot(
@@ -5323,5 +5399,91 @@ pub mod tests {
         );
         // Adding another None will noop (even though the block is already full)
         assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
+    }
+
+    #[test]
+    fn test_check_chained_block_id() {
+        use crate::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder};
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path())
+                .expect("Expected to be able to open database ledger"),
+        );
+
+        // Helper to create and insert data shreds for a slot with a specific
+        // chained merkle root.
+        let insert_shreds_with_chained_merkle_root =
+            |slot: Slot, parent: Slot, chained_merkle_root: Hash| {
+                let entries = create_ticks(8, 1, Hash::new_unique());
+                let shreds: Vec<Shred> = Shredder::new(slot, parent, 0, 0)
+                    .unwrap()
+                    .make_merkle_shreds_from_entries(
+                        &Keypair::new(),
+                        &entries,
+                        true,
+                        chained_merkle_root,
+                        0,
+                        0,
+                        &ReedSolomonCache::default(),
+                        &mut ProcessShredsStats::default(),
+                    )
+                    .filter(Shred::is_data)
+                    .collect();
+                blockstore.insert_shreds(shreds, None, true).unwrap();
+            };
+
+        // Insert parent shreds so get_final_merkle_root returns the parent's
+        // block ID.
+        let parent_slot = 1;
+        insert_shreds_with_chained_merkle_root(parent_slot, 0, Hash::default());
+        let parent_block_id = blockstore
+            .get_final_merkle_root(parent_slot)
+            .unwrap()
+            .expect("parent should have a merkle root");
+
+        // Case 1: No shreds for child slot — should return Unavailable
+        let empty_child_slot = 10;
+        assert!(matches!(
+            check_chained_block_id(&blockstore, empty_child_slot, parent_slot),
+            ChainedBlockIdCheck::Unavailable
+        ));
+
+        // Case 2: Chained merkle root matches parent block ID — should return
+        // Pass
+        let matching_child_slot = 11;
+        insert_shreds_with_chained_merkle_root(matching_child_slot, parent_slot, parent_block_id);
+        assert!(matches!(
+            check_chained_block_id(&blockstore, matching_child_slot, parent_slot),
+            ChainedBlockIdCheck::Pass
+        ));
+
+        // Case 3: Chained merkle root does NOT match parent block ID — should
+        // return Mismatch
+        let mismatched_child_slot = 12;
+        let wrong_merkle_root = Hash::new_unique();
+        insert_shreds_with_chained_merkle_root(
+            mismatched_child_slot,
+            parent_slot,
+            wrong_merkle_root,
+        );
+        assert!(matches!(
+            check_chained_block_id(&blockstore, mismatched_child_slot, parent_slot),
+            ChainedBlockIdCheck::Mismatch
+        ));
+
+        // Case 4: Parent has no shreds (get_final_merkle_root returns None) —
+        // should return Pass regardless of chained merkle root.
+        let no_shreds_parent_slot = 20;
+        let child_slot_no_parent_id = 21;
+        insert_shreds_with_chained_merkle_root(
+            child_slot_no_parent_id,
+            no_shreds_parent_slot,
+            Hash::new_unique(),
+        );
+        assert!(matches!(
+            check_chained_block_id(&blockstore, child_slot_no_parent_id, no_shreds_parent_slot),
+            ChainedBlockIdCheck::Pass
+        ));
     }
 }

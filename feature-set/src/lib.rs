@@ -1301,6 +1301,10 @@ pub mod vote_account_initialize_v2 {
     solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
 }
 
+pub mod validate_chained_block_id {
+    solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2315,6 +2319,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             vote_account_initialize_v2::id(),
             "SIMD-0464: Vote Account Initialize V2",
+        ),
+        (
+            validate_chained_block_id::id(),
+            "SIMD-0340: Validate chained block ID",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

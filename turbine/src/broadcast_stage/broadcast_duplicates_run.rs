@@ -1,6 +1,8 @@
 use {
     super::*,
     crate::cluster_nodes::ClusterNodesCache,
+    agave_votor::event::VotorEventSender,
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     itertools::Itertools,
     solana_entry::entry::Entry,
@@ -49,10 +51,17 @@ pub(super) struct BroadcastDuplicatesRun {
     original_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
     partition_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
+    migration_status: Arc<MigrationStatus>,
+    votor_event_sender: VotorEventSender,
 }
 
 impl BroadcastDuplicatesRun {
-    pub(super) fn new(shred_version: u16, config: BroadcastDuplicatesConfig) -> Self {
+    pub(super) fn new(
+        shred_version: u16,
+        config: BroadcastDuplicatesConfig,
+        migration_status: Arc<MigrationStatus>,
+        votor_event_sender: VotorEventSender,
+    ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -72,6 +81,8 @@ impl BroadcastDuplicatesRun {
             original_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
             partition_last_data_shreds: Arc::<Mutex<HashSet<Signature>>>::default(),
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
+            migration_status,
+            votor_event_sender,
         }
     }
 }
@@ -238,6 +249,13 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     partition_last_data_shred.len()
                 );
                 self.next_shred_index += u32::try_from(original_last_data_shred.len()).unwrap();
+                // Update chained_merkle_root to the merkle root of the original last FEC set
+                if let Some(shred) = original_last_data_shred
+                    .iter()
+                    .max_by_key(|shred| shred.index())
+                {
+                    self.chained_merkle_root = shred.merkle_root().unwrap();
+                }
                 (original_last_data_shred, partition_last_data_shred)
             });
 
@@ -291,6 +309,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             }
             socket_sender.send((original_last_data_shred, None))?;
             socket_sender.send((partition_last_data_shred, None))?;
+        }
+
+        if last_tick_height == bank.max_tick_height() {
+            broadcast_utils::set_block_id_and_send(
+                &self.migration_status,
+                &self.votor_event_sender,
+                bank,
+                self.chained_merkle_root,
+            )?;
         }
         Ok(())
     }
