@@ -7,8 +7,14 @@ use {
     dashmap::{mapref::entry::Entry, DashMap},
     log::*,
     rand::{
+<<<<<<< HEAD
         seq::{IteratorRandom, SliceRandom},
         thread_rng, Rng,
+=======
+        rngs::SmallRng,
+        seq::{IndexedRandom as _, IteratorRandom},
+        Rng, SeedableRng,
+>>>>>>> 1ffcdcc60 (accounts-db: Use `SmallRng` for LRU eviction sampling (#10640))
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
@@ -287,7 +293,11 @@ impl ReadOnlyAccountsCache {
             .name("solAcctReadCache".to_string())
             .spawn(move || {
                 info!("AccountsReadCacheEvictor has started");
+<<<<<<< HEAD
                 let mut rng = thread_rng();
+=======
+                let mut rng = SmallRng::from_os_rng();
+>>>>>>> 1ffcdcc60 (accounts-db: Use `SmallRng` for LRU eviction sampling (#10640))
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
