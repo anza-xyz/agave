@@ -230,6 +230,24 @@ pub trait AdminRpc {
         require_tower: bool,
     ) -> Result<()>;
 
+    #[rpc(meta, name = "setIdentityAndVoteAccount")]
+    fn set_identity_and_vote_account(
+        &self,
+        meta: Self::Metadata,
+        keypair_file: String,
+        vote_account_pubkey: String,
+        require_tower: bool,
+    ) -> Result<()>;
+
+    #[rpc(meta, name = "setIdentityAndVoteAccountFromBytes")]
+    fn set_identity_and_vote_account_from_bytes(
+        &self,
+        meta: Self::Metadata,
+        identity_keypair: Vec<u8>,
+        vote_account_pubkey: String,
+        require_tower: bool,
+    ) -> Result<()>;
+
     #[rpc(meta, name = "setStakedNodesOverrides")]
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()>;
 
@@ -590,6 +608,64 @@ impl AdminRpc for AdminRpcImpl {
         AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_tower)
     }
 
+    fn set_identity_and_vote_account(
+        &self,
+        meta: Self::Metadata,
+        keypair_file: String,
+        vote_account_pubkey: String,
+        require_tower: bool,
+    ) -> Result<()> {
+        debug!("set_identity_and_vote_account request received");
+
+        let identity_keypair = read_keypair_file(&keypair_file).map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to read identity keypair from {keypair_file}: {err}"
+            ))
+        })?;
+
+        let vote_account = vote_account_pubkey.parse::<Pubkey>().map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to parse vote account pubkey '{vote_account_pubkey}': {err}"
+            ))
+        })?;
+
+        AdminRpcImpl::set_identity_and_vote_account_keypair(
+            meta,
+            identity_keypair,
+            vote_account,
+            require_tower,
+        )
+    }
+
+    fn set_identity_and_vote_account_from_bytes(
+        &self,
+        meta: Self::Metadata,
+        identity_keypair: Vec<u8>,
+        vote_account_pubkey: String,
+        require_tower: bool,
+    ) -> Result<()> {
+        debug!("set_identity_and_vote_account_from_bytes request received");
+
+        let identity_keypair = Keypair::try_from(identity_keypair.as_ref()).map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to read identity keypair from provided byte array: {err}"
+            ))
+        })?;
+
+        let vote_account = vote_account_pubkey.parse::<Pubkey>().map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to parse vote account pubkey '{vote_account_pubkey}': {err}"
+            ))
+        })?;
+
+        AdminRpcImpl::set_identity_and_vote_account_keypair(
+            meta,
+            identity_keypair,
+            vote_account,
+            require_tower,
+        )
+    }
+
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()> {
         let loaded_config = load_staked_nodes_overrides(&path)
             .map_err(|err| {
@@ -944,6 +1020,57 @@ impl AdminRpcImpl {
             Ok(())
         })
     }
+
+    fn set_identity_and_vote_account_keypair(
+        meta: AdminRpcRequestMetadata,
+        identity_keypair: Keypair,
+        new_vote_account: Pubkey,
+        require_tower: bool,
+    ) -> Result<()> {
+        meta.with_post_init(|post_init| {
+            if require_tower {
+                let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
+                    .map_err(|err| {
+                        jsonrpc_core::error::Error::invalid_params(format!(
+                            "Unable to load tower file for identity {}: {}",
+                            identity_keypair.pubkey(),
+                            err
+                        ))
+                    })?;
+            }
+
+            for (key, notifier) in &*post_init.notifies.read().unwrap() {
+                if let Err(err) = notifier.update_key(&identity_keypair) {
+                    error!("Error updating network layer keypair: {err} on {key:?}");
+                }
+            }
+
+            let old_identity = post_init.cluster_info.id();
+            let old_vote_account = *post_init.vote_account.read().unwrap();
+            let new_identity = identity_keypair.pubkey();
+            solana_metrics::set_host_id(new_identity.to_string());
+            datapoint_info!(
+                "validator-set_identity_and_vote_account",
+                ("old_id", old_identity.to_string(), String),
+                ("new_id", new_identity.to_string(), String),
+                ("old_vote_account", old_vote_account.to_string(), String),
+                ("new_vote_account", new_vote_account.to_string(), String),
+                ("version", solana_version::version!(), String),
+            );
+
+            // Update the shared vote account so consumers (ReplayStage,
+            // Votor, ConsensusPoolService) pick up the new value
+            *post_init.vote_account.write().unwrap() = new_vote_account;
+
+            post_init
+                .cluster_info
+                .set_keypair(Arc::new(identity_keypair));
+            warn!(
+                "Identity set to {new_identity}, vote account set to {new_vote_account}"
+            );
+            Ok(())
+        })
+    }
 }
 
 fn rpc_account_index_from_account_index(account_index: &AccountIndex) -> RpcAccountIndex {
@@ -1175,7 +1302,7 @@ mod tests {
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
                     cluster_info,
                     bank_forks: bank_forks.clone(),
-                    vote_account,
+                    vote_account: Arc::new(RwLock::new(vote_account)),
                     repair_whitelist,
                     notifies: Arc::new(RwLock::new(KeyUpdaters::default())),
                     repair_socket: Arc::new(bind_to_localhost_unique().expect("should bind")),

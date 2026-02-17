@@ -30,7 +30,7 @@ use {
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc,
+            Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -44,6 +44,7 @@ pub(crate) struct ConsensusPoolContext {
 
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) my_vote_pubkey: Pubkey,
+    pub(crate) shared_vote_account: Arc<RwLock<Pubkey>>,
     pub(crate) blockstore: Arc<Blockstore>,
     pub(crate) sharable_banks: SharableBanks,
     pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -215,6 +216,17 @@ impl ConsensusPoolService {
                 my_pubkey = new_pubkey;
                 consensus_pool.update_pubkey(my_pubkey);
                 warn!("Certificate pool pubkey updated to {my_pubkey}");
+
+                // Re-read the vote account in case it was changed alongside
+                // identity via set-identity-and-vote-account
+                let new_vote_pubkey = *ctx.shared_vote_account.read().unwrap();
+                if ctx.my_vote_pubkey != new_vote_pubkey {
+                    warn!(
+                        "Certificate pool vote account updated from {} to {new_vote_pubkey}",
+                        ctx.my_vote_pubkey
+                    );
+                    ctx.my_vote_pubkey = new_vote_pubkey;
+                }
             }
 
             // Kick off parent ready event, this either happens:
@@ -728,6 +740,7 @@ mod tests {
                 SocketAddrSpace::Unspecified,
             )),
             my_vote_pubkey: ctx.my_vote_pubkey,
+            shared_vote_account: Arc::new(RwLock::new(ctx.my_vote_pubkey)),
             blockstore: ctx.blockstore.clone(),
             sharable_banks: ctx.sharable_banks.clone(),
             leader_schedule_cache: ctx.leader_schedule_cache.clone(),

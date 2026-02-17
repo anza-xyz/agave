@@ -8,6 +8,7 @@ pub mod repair_shred_from_peer;
 pub mod repair_whitelist;
 pub mod run;
 pub mod set_identity;
+pub mod set_identity_and_vote_account;
 pub mod set_log_filter;
 pub mod set_public_address;
 pub mod staked_nodes_overrides;

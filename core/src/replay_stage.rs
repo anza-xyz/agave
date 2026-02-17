@@ -259,7 +259,7 @@ impl PartitionInfo {
 }
 
 pub struct ReplayStageConfig {
-    pub vote_account: Pubkey,
+    pub vote_account: Arc<RwLock<Pubkey>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub exit: Arc<AtomicBool>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -572,7 +572,7 @@ impl ReplayStage {
         receivers: ReplayReceivers,
     ) -> Result<Self, String> {
         let ReplayStageConfig {
-            vote_account,
+            vote_account: shared_vote_account,
             authorized_voter_keypairs,
             exit,
             leader_schedule_cache,
@@ -597,6 +597,7 @@ impl ReplayStage {
             replay_highest_frozen,
             migration_status,
         } = config;
+        let mut vote_account = *shared_vote_account.read().unwrap();
 
         let ReplaySenders {
             rpc_subscriptions,
@@ -1148,6 +1149,18 @@ impl ReplayStage {
                                 let my_old_pubkey = my_pubkey;
                                 my_pubkey = identity_keypair.pubkey();
                                 migration_status.set_pubkey(my_pubkey);
+
+                                // Re-read the vote account in case it was
+                                // changed alongside identity via
+                                // set-identity-and-vote-account
+                                let old_vote_account = vote_account;
+                                vote_account = *shared_vote_account.read().unwrap();
+                                if old_vote_account != vote_account {
+                                    warn!(
+                                        "Vote account changed from {old_vote_account} \
+                                         to {vote_account}"
+                                    );
+                                }
 
                                 // Load the new identity's tower
                                 tower = match Self::load_tower(
