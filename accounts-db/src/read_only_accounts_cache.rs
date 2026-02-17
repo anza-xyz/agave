@@ -7,9 +7,9 @@ use {
     dashmap::{mapref::entry::Entry, DashMap},
     log::*,
     rand::{
-        rng,
+        rngs::SmallRng,
         seq::{IndexedRandom as _, IteratorRandom},
-        Rng,
+        Rng, SeedableRng,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
@@ -288,7 +288,7 @@ impl ReadOnlyAccountsCache {
             .name("solAcctReadCache".to_string())
             .spawn(move || {
                 info!("AccountsReadCacheEvictor has started");
-                let mut rng = rng();
+                let mut rng = SmallRng::from_os_rng();
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
