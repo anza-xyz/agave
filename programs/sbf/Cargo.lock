@@ -7110,9 +7110,9 @@ dependencies = [
 
 [[package]]
 name = "solana-fee-calculator"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a73cc03ca4bed871ca174558108835f8323e85917bb38b9c81c7af2ab853efe"
+checksum = "4b2a5675b2cf8d407c672dc1776492b1f382337720ddf566645ae43237a3d8c3"
 dependencies = [
  "log",
  "serde",
