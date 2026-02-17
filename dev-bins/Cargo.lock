@@ -8661,6 +8661,7 @@ dependencies = [
  "symlink",
  "tempfile",
  "thiserror 2.0.18",
+ "wincode 0.4.4",
 ]
 
 [[package]]
