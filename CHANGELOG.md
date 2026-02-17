@@ -33,6 +33,7 @@ Release channels have their own copy of this changelog:
   * `--wait-for-exit` (`exit` subcommand)
   * `--tpu-disable-quic`
   * `--tpu-enable-udp`
+* `--block-verification-method blockstore-processor` is no longer supported. Remove the argument or switch to `--block-verification-method unified-scheduler` instead.
 * Removed support for ingestion of transactions via UDP. QUIC is now the only option.
 * All monorepo crates falling outside the
 [backward compatibility policy](https://docs.anza.xyz/backwards-compatibility) are now part
