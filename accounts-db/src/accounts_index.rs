@@ -872,19 +872,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Remove keys from the account index if the key's slot list is empty.
-    /// Returns the keys that were removed from the index. These keys should not be accessed again in the current code path.
-    #[must_use]
     pub fn handle_dead_keys(
         &self,
         dead_keys: &[Pubkey],
         account_indexes: &AccountSecondaryIndexes,
-    ) -> HashSet<Pubkey> {
-        let mut pubkeys_removed_from_accounts_index = HashSet::default();
+    ) {
         if !dead_keys.is_empty() {
             for key in dead_keys.iter() {
                 let w_index = self.get_bin(key);
                 if w_index.remove_if_slot_list_empty(*key) {
-                    pubkeys_removed_from_accounts_index.insert(*key);
                     // Note it's only safe to remove all the entries for this key
                     // because we have the lock for this key's entry in the AccountsIndex,
                     // so no other thread is also updating the index
@@ -892,7 +888,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 }
             }
         }
-        pubkeys_removed_from_accounts_index
     }
 
     /// call func with every pubkey and index visible from a given set of ancestors
@@ -961,20 +956,28 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         pubkey: &Pubkey,
         slots_to_purge: impl for<'a> Contains<'a, Slot>,
-        reclaims: &mut ReclaimsSlotList<T>,
     ) -> bool {
-        self.slot_list_mut(pubkey, |mut slot_list| {
+        self.get_and_then(pubkey, |entry| {
+            if entry.is_none() {
+                return (false, true);
+            }
+            let entry = entry.unwrap();
+            let mut removed_entries = 0;
+            let mut slot_list = entry.slot_list_write_lock();
             slot_list.retain_and_count(|(slot, item)| {
                 let should_purge = slots_to_purge.contains(slot);
                 if should_purge {
-                    reclaims.push((*slot, *item));
+                    if !item.is_cached() {
+                        removed_entries += 1;
+                    }
                     false
                 } else {
                     true
                 }
-            }) == 0
+            });
+            entry.unref_by_count(removed_entries);
+            (false, slot_list.is_empty())
         })
-        .unwrap_or(true)
     }
 
     pub fn min_ongoing_scan_root(&self) -> Option<Slot> {
@@ -3192,13 +3195,9 @@ mod tests {
             1
         );
 
-        index.purge_exact(
-            &account_key,
-            slots.into_iter().collect::<HashSet<Slot>>(),
-            &mut ReclaimsSlotList::new(),
-        );
+        index.purge_exact(&account_key, slots.into_iter().collect::<HashSet<Slot>>());
 
-        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
+        index.handle_dead_keys(&[account_key], secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3655,7 +3654,7 @@ mod tests {
         index.slot_list_mut(&account_key, |mut slot_list| slot_list.clear());
 
         // Everything should be deleted
-        let _ = index.handle_dead_keys(&[account_key], &secondary_indexes);
+        index.handle_dead_keys(&[account_key], &secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3793,9 +3792,8 @@ mod tests {
 
         // Removing the remaining entry for this pubkey in the index should mark the
         // pubkey as dead and finally remove all the secondary indexes
-        let mut reclaims = ReclaimsSlotList::new();
-        index.purge_exact(&account_key, later_slot, &mut reclaims);
-        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
+        index.purge_exact(&account_key, later_slot);
+        index.handle_dead_keys(&[account_key], secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -4112,17 +4110,6 @@ mod tests {
         let slot3 = 3;
         assert!(index.clean_rooted_entries(&key, &mut gc, Some(slot3)));
         assert_eq!(gc, ReclaimsSlotList::from([(slot2, value)]));
-    }
-
-    #[test]
-    fn test_handle_dead_keys_return() {
-        let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-
-        assert_eq!(
-            index.handle_dead_keys(&[key], &AccountSecondaryIndexes::default()),
-            vec![key].into_iter().collect::<HashSet<_>>()
-        );
     }
 
     #[test]

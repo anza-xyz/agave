@@ -1164,37 +1164,6 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
 }
 
 #[test]
-#[should_panic(expected = "ref count expected to be zero")]
-fn test_remove_zero_lamport_multi_ref_accounts_panic() {
-    let accounts = AccountsDb::new_single_for_tests();
-    let pubkey_zero = Pubkey::from([1; 32]);
-    let one_lamport_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-
-    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    let slot = 1;
-
-    accounts.store_for_tests((slot, [(&pubkey_zero, &one_lamport_account)].as_slice()));
-
-    // Flush without cleaning to avoid reclaiming pubkey_zero early
-    accounts.add_root(1);
-    accounts.flush_rooted_accounts_cache_without_clean();
-
-    accounts.store_for_tests((slot + 1, [(&pubkey_zero, &zero_lamport_account)].as_slice()));
-
-    // Flush without cleaning to avoid reclaiming pubkey_zero early
-    accounts.add_root(2);
-    accounts.flush_rooted_accounts_cache_without_clean();
-
-    // This should panic because there are 2 refs for pubkey_zero.
-    accounts.remove_zero_lamport_single_ref_accounts_after_shrink(
-        &[&pubkey_zero],
-        slot,
-        &ShrinkStats::default(),
-        true,
-    );
-}
-
-#[test]
 fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
     for pass in 0..3 {
         let accounts = AccountsDb::new_single_for_tests();
@@ -1244,7 +1213,6 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
             &zero_lamport_single_ref_pubkeys,
             slot,
             &ShrinkStats::default(),
-            true,
         );
 
         accounts.accounts_index.get_and_then(&pubkey_zero, |entry| {
@@ -1976,7 +1944,7 @@ fn test_cleanup_key_not_removed() {
 
     let slots: HashSet<Slot> = vec![1].into_iter().collect();
     let purge_keys = [(key1, slots)];
-    let _ = db.purge_keys_exact(purge_keys);
+    db.purge_keys_exact(purge_keys);
 
     let account2 = AccountSharedData::new(3, 0, &key);
     db.store_for_tests((2, [(&key1, &account2)].as_slice()));
@@ -5068,16 +5036,23 @@ define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts|
     // Simulate adding dirty pubkeys on bank freeze, set root
     accounts.add_root_and_flush_write_cache(slot1);
 
-    // The later rooted zero-lamport update to `shared_key` cannot be cleaned
-    // because it is kept alive by the unrooted slot.
+    // Account is referenced in the zero lamport slot. Since the other copy is in an unrooted slot,
+    // it does not count as a reference.
+    accounts.assert_ref_count(&shared_key, 1);
+
+    // The later rooted zero-lamport update to 'shared_key' can be purged
+    // as there are no rooted ancestors
+    // The key itself cannot be purged as it is still referenced in the unrooted slot
     accounts.clean_accounts_for_tests();
     assert!(accounts.accounts_index.contains(&shared_key));
+
+    // Zero lamport reference was removed
+    accounts.assert_ref_count(&shared_key, 0);
 
     // Simulate purge_slot() all from AccountsBackgroundService
     accounts.purge_slot(slot0, 0, true);
 
-    // Now clean should clean up the remaining key
-    accounts.clean_accounts_for_tests();
+    // Now the key and slot are purged from the index
     assert!(!accounts.accounts_index.contains(&shared_key));
     assert_no_storages_at_slot(&accounts, slot0);
 });
@@ -5784,7 +5759,6 @@ fn test_shrink_collect_simple() {
                                 db.accounts_index.purge_exact(
                                     pubkey,
                                     [slot5].into_iter().collect::<HashSet<_>>(),
-                                    &mut ReclaimsSlotList::new(),
                                 );
                             });
 
@@ -5957,11 +5931,8 @@ fn test_shrink_collect_with_obsolete_accounts() {
             obsolete_pubkeys.push(*pubkey);
         } else if i % 4 == 0 {
             // Purge accounts via clean and ensure that they will be unreffed.
-            db.accounts_index.purge_exact(
-                pubkey,
-                [slot].into_iter().collect::<HashSet<_>>(),
-                &mut ReclaimsSlotList::new(),
-            );
+            db.accounts_index
+                .purge_exact(pubkey, [slot].into_iter().collect::<HashSet<_>>());
             unref_pubkeys.push(*pubkey);
         }
     }
