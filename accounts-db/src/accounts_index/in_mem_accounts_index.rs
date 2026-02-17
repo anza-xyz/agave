@@ -9,7 +9,7 @@ use {
         UpsertReclaim,
     },
     crate::pubkey_bins::PubkeyBinCalculator24,
-    rand::{rng, Rng},
+    rand::{rng, Rng, RngExt as _},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
     solana_measure::measure::Measure,

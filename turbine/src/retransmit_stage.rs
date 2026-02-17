@@ -916,7 +916,7 @@ fn notify_subscribers(
 mod tests {
     use {
         super::*,
-        rand::SeedableRng,
+        rand::{RngExt as _, SeedableRng},
         rand_chacha::ChaChaRng,
         solana_entry::entry::create_ticks,
         solana_hash::Hash,

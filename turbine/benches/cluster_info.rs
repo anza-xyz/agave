@@ -1,6 +1,6 @@
 use {
     bencher::{Bencher, benchmark_group, benchmark_main},
-    rand::{Rng, rng},
+    rand::{RngExt as _, rng},
     solana_entry::entry::Entry,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
     solana_hash::Hash,

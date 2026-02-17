@@ -6,6 +6,7 @@ use {
     bincode::serialized_size,
     bv::BitVec,
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
+    rand::{Rng, RngExt as _},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -358,7 +359,7 @@ impl EpochSlots {
     }
 
     /// New random EpochSlots for tests and simulations.
-    pub(crate) fn new_rand<R: rand::Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+    pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         let now = crds_data::new_rand_timestamp(rng);
         let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
         let mut epoch_slots = Self::new(pubkey, now);
@@ -373,7 +374,7 @@ impl EpochSlots {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, rand::Rng, std::iter::repeat_with};
+    use {super::*, std::iter::repeat_with};
 
     #[test]
     fn test_epoch_slots_max_size() {

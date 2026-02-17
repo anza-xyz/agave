@@ -7,7 +7,7 @@ use {
         legacy_contact_info::LegacyContactInfo,
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
-    rand::Rng,
+    rand::{Rng, RngExt as _},
     serde::{Deserialize, Serialize, de::Deserializer},
     solana_clock::Slot,
     solana_hash::Hash,

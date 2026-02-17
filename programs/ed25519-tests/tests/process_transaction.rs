@@ -1,6 +1,6 @@
 use {
     assert_matches::assert_matches, ed25519_dalek::ed25519::signature::Signer as EdSigner,
-    solana_ed25519_program::new_ed25519_instruction_with_signature,
+    rand::Rng as _, solana_ed25519_program::new_ed25519_instruction_with_signature,
     solana_instruction::error::InstructionError, solana_precompile_error::PrecompileError,
     solana_program_test::*, solana_signer::Signer, solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
@@ -10,7 +10,6 @@ use {
 // copies the `generate` implementation at:
 // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
 fn generate_keypair() -> ed25519_dalek::Keypair {
-    use rand::RngCore;
     let mut rng = rand::rng();
     let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
     rng.fill_bytes(&mut seed);

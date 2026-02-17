@@ -1,7 +1,7 @@
 use {
     crate::{bucket_stats::BucketStats, MaxSearch},
     memmap2::MmapMut,
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     solana_measure::measure::Measure,
     std::{
         fs::{remove_file, OpenOptions},

@@ -943,7 +943,7 @@ impl RepairService {
 
         // Sample a subset of the repair peers weighted by stake.
         let mut rng = rand::rng();
-        let Ok(weighted_sample_repair_peers) = repair_peers.choose_multiple_weighted(
+        let Ok(weighted_sample_repair_peers) = repair_peers.sample_weighted(
             &mut rng,
             NUM_PEERS_TO_SAMPLE_FOR_REPAIRS,
             |(_, _, stake)| *stake,

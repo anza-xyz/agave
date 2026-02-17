@@ -6,7 +6,7 @@ use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
     agave_votor_messages::consensus_message::ConsensusMessage,
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     rayon::{prelude::*, ThreadPool},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},

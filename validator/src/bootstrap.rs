@@ -5,7 +5,7 @@ use {
     },
     itertools::Itertools,
     log::*,
-    rand::{rng, seq::SliceRandom, Rng},
+    rand::{rng, seq::SliceRandom, RngExt as _},
     rayon::prelude::*,
     solana_account::ReadableAccount,
     solana_clock::Slot,

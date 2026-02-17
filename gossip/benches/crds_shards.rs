@@ -1,6 +1,6 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    rand::{Rng, rng},
+    rand::{Rng, RngExt as _, rng},
     solana_gossip::{
         crds::{Crds, GossipRoute, VersionedCrdsValue},
         crds_shards::CrdsShards,

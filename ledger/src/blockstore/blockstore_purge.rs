@@ -918,8 +918,6 @@ pub mod tests {
         let oldest_slot = 5;
 
         fn random_signature() -> Signature {
-            use rand::Rng;
-
             let mut key = [0u8; 64];
             rand::rng().fill(&mut key[..]);
             Signature::from(key)

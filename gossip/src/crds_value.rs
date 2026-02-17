@@ -243,7 +243,7 @@ mod test {
         super::*,
         crate::crds_data::{LowestSlot, Vote},
         bincode::deserialize,
-        rand::SeedableRng as _,
+        rand::{RngExt as _, SeedableRng as _},
         rand_chacha::ChaChaRng,
         solana_keypair::Keypair,
         solana_perf::test_tx::new_test_vote_tx,

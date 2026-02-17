@@ -1,7 +1,7 @@
 //! The `gen_keys` module makes lots of keypairs
 
 use {
-    rand::{Rng, SeedableRng},
+    rand::{RngExt as _, SeedableRng},
     rand_chacha::ChaChaRng,
     rayon::prelude::*,
     solana_keypair::{keypair_from_seed, Keypair},

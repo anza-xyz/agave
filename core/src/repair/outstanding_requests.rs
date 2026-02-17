@@ -1,7 +1,7 @@
 use {
     crate::repair::request_response::RequestResponse,
     lru::LruCache,
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     solana_ledger::shred::Nonce,
 };
 

@@ -780,7 +780,7 @@ mod tests {
     use {
         super::*,
         crate::crds_data::{AccountsHashes, new_rand_timestamp},
-        rand::{Rng, rng},
+        rand::{RngExt as _, rng},
         rayon::ThreadPoolBuilder,
         solana_keypair::Keypair,
         solana_signer::Signer,

@@ -3,7 +3,7 @@
 extern crate test;
 
 use {
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     solana_account::AccountSharedData,
     solana_accounts_db::{
         account_info::AccountInfo,

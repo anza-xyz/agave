@@ -1,6 +1,6 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    rand::{Rng, rng},
+    rand::{RngExt as _, rng},
     rayon::ThreadPoolBuilder,
     solana_gossip::{
         crds::{Crds, GossipRoute},

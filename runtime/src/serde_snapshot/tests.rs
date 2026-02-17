@@ -12,7 +12,7 @@ mod serde_snapshot_tests {
         agave_fs::FileInfo,
         bincode::{serialize_into, Error},
         log::info,
-        rand::{rng, Rng},
+        rand::{rng, RngExt as _},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
             account_storage::AccountStorageMap,

@@ -242,7 +242,7 @@ mod tests {
         super::*,
         agave_random::range::random_u64_range,
         itertools::Itertools,
-        rand::SeedableRng,
+        rand::{RngExt as _, SeedableRng},
         rand_chacha::{ChaCha8Rng, ChaChaRng},
         solana_hash::Hash,
         std::{

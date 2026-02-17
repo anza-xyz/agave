@@ -20,7 +20,7 @@ use {
         protocol::{Ping, PingCache},
     },
     itertools::Itertools,
-    rand::{CryptoRng, Rng},
+    rand::{CryptoRng, Rng, RngExt as _},
     rayon::ThreadPool,
     solana_clock::Slot,
     solana_hash::Hash,

@@ -65,7 +65,7 @@ use {
     bv::BitVec,
     dashmap::{DashMap, DashSet},
     log::*,
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     rayon::{prelude::*, ThreadPool},
     seqlock::SeqLock,
     smallvec::SmallVec,

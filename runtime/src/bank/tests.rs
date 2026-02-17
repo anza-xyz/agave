@@ -27,7 +27,7 @@ use {
     crossbeam_channel::{bounded, unbounded},
     ed25519_dalek::ed25519::signature::Signer as EdSigner,
     itertools::Itertools,
-    rand::Rng,
+    rand::{Rng as _, RngExt as _},
     rayon::{iter::IntoParallelIterator, ThreadPool, ThreadPoolBuilder},
     serde::{Deserialize, Serialize},
     solana_account::{
@@ -5187,7 +5187,7 @@ fn test_ref_account_key_after_program_id() {
 #[test]
 fn test_fuzz_instructions() {
     agave_logger::setup();
-    use rand::{rng, Rng};
+    use rand::{rng, RngExt as _};
     let bank = create_simple_test_bank(1_000_000_000);
 
     let max_programs = 5;
@@ -9398,7 +9398,6 @@ fn test_call_precomiled_program() {
     // copies the `random` implementation at:
     // https://docs.rs/libsecp256k1/latest/src/libsecp256k1/lib.rs.html#430
     let secp_privkey = {
-        use rand::RngCore;
         let mut rng = rand::rng();
         loop {
             let mut ret = [0u8; libsecp256k1::util::SECRET_KEY_SIZE];
@@ -9438,7 +9437,6 @@ fn test_call_precomiled_program() {
     // copies the `generate` implementation at:
     // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
     let privkey = {
-        use rand::RngCore;
         let mut rng = rand::rng();
         let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
         rng.fill_bytes(&mut seed);

@@ -31,7 +31,7 @@ use {
     dashmap::DashSet,
     itertools::Itertools,
     log::*,
-    rand::Rng,
+    rand::RngExt as _,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::{DBRawIterator, LiveFile},
     solana_account::ReadableAccount,

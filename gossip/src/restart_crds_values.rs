@@ -2,7 +2,7 @@ use {
     crate::crds_data::{new_rand_timestamp, sanitize_wallclock},
     bv::BitVec,
     itertools::Itertools,
-    rand::Rng,
+    rand::{Rng, RngExt as _},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,

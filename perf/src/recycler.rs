@@ -1,5 +1,5 @@
 use {
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, Weak,

@@ -427,7 +427,7 @@ mod tests {
 
     #[inline(always)]
     fn rand_bytes<const N: usize>() -> [u8; N] {
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         std::array::from_fn(|_| rng.random::<u8>())
     }

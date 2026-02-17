@@ -63,7 +63,7 @@ mod tests {
                 sequential_file_reader::SequentialFileReaderBuilder,
             },
         },
-        rand::RngCore,
+        rand::TryRng,
         std::{
             fs::File,
             io::{Cursor, Read},
@@ -95,7 +95,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_handle = Arc::new(File::open(temp_dir.path()).unwrap());
         let mut write_bytes = vec![0; 2 << 20];
-        rand::rng().fill_bytes(&mut write_bytes);
+        rand::rng().try_fill_bytes(&mut write_bytes).unwrap();
 
         let file_path1 = temp_dir.path().join("test-1.txt");
         let file_path2 = temp_dir.path().join("test-2.txt");

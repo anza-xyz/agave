@@ -151,7 +151,7 @@ mod tests {
             hot::{HotAccountOffset, HOT_ACCOUNT_ALIGNMENT},
         },
         memmap2::MmapOptions,
-        rand::Rng,
+        rand::RngExt as _,
         std::fs::OpenOptions,
         tempfile::TempDir,
     };

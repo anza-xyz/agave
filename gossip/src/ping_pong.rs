@@ -1,7 +1,7 @@
 use {
     crate::cluster_info_metrics::should_report_message_signature,
     lru::LruCache,
-    rand::{CryptoRng, Rng},
+    rand::{CryptoRng, Rng, RngExt as _},
     serde::{Deserialize, Serialize},
     serde_big_array::BigArray,
     siphasher::sip::SipHasher24,

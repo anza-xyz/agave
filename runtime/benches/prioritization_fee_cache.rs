@@ -2,7 +2,7 @@
 extern crate test;
 
 use {
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_message::Message,
     solana_pubkey::Pubkey,

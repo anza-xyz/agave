@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     criterion::{criterion_group, criterion_main, Criterion},
-    rand::Rng,
+    rand::{Rng, RngExt as _},
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,

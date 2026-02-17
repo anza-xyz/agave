@@ -1,7 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 use {
     log::*,
-    rand::Rng,
+    rand::RngExt as _,
     solana_perf::{packet::BytesPacket, sigverify::PacketError},
     solana_short_vec::decode_shortu16_len,
     solana_signature::SIGNATURE_BYTES,

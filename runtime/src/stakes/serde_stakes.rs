@@ -193,7 +193,7 @@ mod tests {
     use {
         super::*,
         crate::{stake_utils, stakes::StakesCache},
-        rand::Rng,
+        rand::RngExt as _,
         serde::Deserialize,
         solana_rent::Rent,
         solana_stake_interface::state::Delegation,

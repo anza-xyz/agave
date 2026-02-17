@@ -5,7 +5,7 @@ use {
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     solana_account::from_account,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,

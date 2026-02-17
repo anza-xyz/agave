@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        rand::Rng,
+        rand::RngExt as _,
         solana_account::AccountSharedData,
         solana_clock::Clock,
         solana_instruction::Instruction,

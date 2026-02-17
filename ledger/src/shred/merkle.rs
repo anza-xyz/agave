@@ -1338,7 +1338,7 @@ mod test {
         crate::shred::{merkle_tree::get_proof_size, ShredFlags, ShredId},
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::{seq::SliceRandom, CryptoRng, Rng},
+        rand::{seq::SliceRandom, CryptoRng, Rng, RngExt as _},
         rayon::ThreadPoolBuilder,
         reed_solomon_erasure::Error::TooFewShardsPresent,
         solana_keypair::Keypair,

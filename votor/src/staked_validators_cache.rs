@@ -227,7 +227,7 @@ mod tests {
     use {
         super::StakedValidatorsCache,
         crate::voting_service::AlpenglowPortOverride,
-        rand::Rng,
+        rand::RngExt as _,
         solana_gossip::{
             cluster_info::ClusterInfo, contact_info::ContactInfo, crds::GossipRoute,
             crds_data::CrdsData, crds_value::CrdsValue, node::Node,

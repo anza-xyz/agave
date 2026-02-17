@@ -1584,6 +1584,7 @@ mod tests {
         Vec<(Pubkey, AccountSharedData)>,
         TempFile,
     ) {
+        use rand::RngExt as _;
         let mut rng = rng();
         let mut create_account = |data_len: usize| -> (Pubkey, AccountSharedData) {
             let pubkey = Pubkey::new_from_array(rng.random());

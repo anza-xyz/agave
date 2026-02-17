@@ -11,7 +11,7 @@ use {
 };
 #[cfg(not(feature = "shuttle-test"))]
 use {
-    rand::{rng, Rng},
+    rand::{rng, RngExt as _},
     std::sync::{Arc, Mutex},
 };
 

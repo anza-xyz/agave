@@ -3,7 +3,7 @@ extern crate test;
 
 use {
     bincode::serialize,
-    rand::{rngs::SmallRng, Rng, SeedableRng},
+    rand::{rngs::SmallRng, RngExt as _, SeedableRng},
     solana_accounts_db::ancestors::Ancestors,
     solana_hash::{Hash, HASH_BYTES},
     solana_runtime::{bank::BankStatusCache, status_cache::*},

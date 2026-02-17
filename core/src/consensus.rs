@@ -337,7 +337,7 @@ impl Tower {
     #[cfg(test)]
     pub fn new_random(node_pubkey: Pubkey) -> Self {
         use {
-            rand::Rng,
+            rand::RngExt as _,
             solana_vote_program::vote_state::{LandedVote, VoteStateV4},
         };
 

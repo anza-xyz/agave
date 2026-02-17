@@ -409,7 +409,7 @@ mod tests {
             accounts_db::get_temp_accounts_paths,
             accounts_file::AccountsFileProvider,
         },
-        rand::Rng,
+        rand::RngExt as _,
         solana_account::{accounts_equal, AccountSharedData},
         std::sync::Arc,
     };

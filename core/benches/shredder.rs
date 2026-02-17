@@ -2,7 +2,7 @@
 
 use {
     bencher::{benchmark_group, benchmark_main, Bencher},
-    rand::Rng,
+    rand::RngExt as _,
     solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
