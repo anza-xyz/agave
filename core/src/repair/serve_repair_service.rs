@@ -10,10 +10,7 @@ use {
     },
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
-            Arc,
-        },
+        sync::{atomic::AtomicBool, Arc},
         thread::{self, Builder, JoinHandle},
         time::Duration,
     },
@@ -25,6 +22,25 @@ pub struct ServeRepairService {
 }
 
 pub(crate) const REQUEST_CHANNEL_SIZE: usize = 4096;
+
+#[derive(Default)]
+struct ServeRepairStats {
+    dropped_batches: i64,
+    dropped_packets: i64,
+}
+
+impl ServeRepairStats {
+    const CADENCE: std::time::Duration = std::time::Duration::from_secs(5);
+    fn report(&mut self) {
+        let dropped_batches = std::mem::replace(&mut self.dropped_batches, 0);
+        let dropped_packets = std::mem::replace(&mut self.dropped_packets, 0);
+        datapoint_info!(
+            "adapt-repair-request-packets",
+            ("dropped_packets", dropped_packets, i64),
+            ("dropped_batches", dropped_batches, i64),
+        );
+    }
+}
 
 impl ServeRepairService {
     pub(crate) fn new(
@@ -84,32 +100,14 @@ impl ServeRepairService {
     }
 }
 
-static DROPPED_PACKETS: AtomicUsize = AtomicUsize::new(0);
-static DROPPED_BATCHES: AtomicUsize = AtomicUsize::new(0);
-static PACKET_CHANNEL_SIZE_MAX: AtomicUsize = AtomicUsize::new(0);
-static REMOTE_REQUEST_CHANNEL_SIZE_MAX: AtomicUsize = AtomicUsize::new(0);
-pub(crate) fn report_stats() {
-    let dropped_batches = DROPPED_BATCHES.load(Ordering::Relaxed);
-    let dropped_packets = DROPPED_PACKETS.load(Ordering::Relaxed);
-    let max_packets = PACKET_CHANNEL_SIZE_MAX.fetch_min(0, Ordering::Relaxed);
-    let max_requests = REMOTE_REQUEST_CHANNEL_SIZE_MAX.fetch_min(0, Ordering::Relaxed);
-    datapoint_info!(
-        "adapt-repair-request-packets",
-        ("dropped_packets_total", dropped_packets as i64, i64),
-        ("dropped_batches_total", dropped_batches as i64, i64),
-        ("current_max_packets", max_packets as i64, i64),
-        ("current_max_requests", max_requests as i64, i64),
-    );
-}
-
 // Adapts incoming UDP repair requests into RemoteRequest struct.
 pub(crate) fn adapt_repair_requests_packets(
     packets_receiver: Receiver<PacketBatch>,
     remote_request_sender: Sender<RemoteRequest>,
 ) {
+    let mut stats = ServeRepairStats::default();
+    let mut last_report = std::time::Instant::now();
     'recv_batch: for packets in packets_receiver.clone() {
-        PACKET_CHANNEL_SIZE_MAX.fetch_max(packets_receiver.len(), Ordering::Relaxed);
-        REMOTE_REQUEST_CHANNEL_SIZE_MAX.fetch_max(remote_request_sender.len(), Ordering::Relaxed);
         let total_packets = packets.len();
         for (i, packet) in packets.iter().enumerate() {
             let Some(bytes) = packet.data(..).map(Vec::from) else {
@@ -123,12 +121,18 @@ pub(crate) fn adapt_repair_requests_packets(
             match remote_request_sender.try_send(request) {
                 Ok(_) => {}
                 Err(crossbeam_channel::TrySendError::Full(_)) => {
-                    DROPPED_BATCHES.fetch_add(1, Ordering::Relaxed);
-                    DROPPED_PACKETS.fetch_add(total_packets - i, Ordering::Relaxed);
+                    stats.dropped_batches += 1;
+                    stats.dropped_packets += total_packets.saturating_sub(i) as i64;
                     continue 'recv_batch;
                 }
                 Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
             }
         }
+        let now = std::time::Instant::now();
+        if last_report.duration_since(now) > ServeRepairStats::CADENCE {
+            last_report = now;
+            stats.report();
+        }
     }
+    stats.report();
 }
