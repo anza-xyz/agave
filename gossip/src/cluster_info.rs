@@ -1404,7 +1404,6 @@ impl ClusterInfo {
                 let mut last_push = 0;
                 let mut last_contact_info_trace = timestamp();
                 let mut last_contact_info_save = timestamp();
-                let mut entrypoints_processed = false;
                 let recycler = PacketBatchRecycler::default();
 
                 for gossip_round in 0usize.. {
@@ -1450,7 +1449,7 @@ impl ClusterInfo {
                         .map(EpochSpecs::epoch_duration)
                         .unwrap_or(DEFAULT_EPOCH_DURATION);
                     self.handle_purge(&thread_pool, epoch_duration, &stakes);
-                    entrypoints_processed = entrypoints_processed || self.process_entrypoints();
+                    self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
                     if start - last_push > CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2 {
