@@ -293,12 +293,11 @@ impl LocalCluster {
                         stake
                     );
                     if *in_genesis {
+                        let node_keypair = node_keypair.insecure_clone();
+                        let vote_keypair = vote_keypair.insecure_clone();
+                        let stake_keypair = Keypair::new();
                         Some((
-                            ValidatorVoteKeypairs {
-                                node_keypair: node_keypair.insecure_clone(),
-                                vote_keypair: vote_keypair.insecure_clone(),
-                                stake_keypair: Keypair::new(),
-                            },
+                            ValidatorVoteKeypairs::new(node_keypair, vote_keypair, stake_keypair),
                             stake,
                         ))
                     } else {

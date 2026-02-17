@@ -70,23 +70,26 @@ pub struct ValidatorVoteKeypairs {
     pub node_keypair: Keypair,
     pub vote_keypair: Keypair,
     pub stake_keypair: Keypair,
+    pub bls_keypair: BLSKeypair,
 }
 
 impl ValidatorVoteKeypairs {
     pub fn new(node_keypair: Keypair, vote_keypair: Keypair, stake_keypair: Keypair) -> Self {
+        let bls_keypair =
+            BLSKeypair::derive_from_signer(&vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         Self {
             node_keypair,
             vote_keypair,
             stake_keypair,
+            bls_keypair,
         }
     }
 
     pub fn new_rand() -> Self {
-        Self {
-            node_keypair: Keypair::new(),
-            vote_keypair: Keypair::new(),
-            stake_keypair: Keypair::new(),
-        }
+        let node_keypair = Keypair::new();
+        let vote_keypair = Keypair::new();
+        let stake_keypair = Keypair::new();
+        Self::new(node_keypair, vote_keypair, stake_keypair)
     }
 }
 
@@ -155,12 +158,13 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
 
     let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
     let validator_bls_pubkey = if is_alpenglow {
-        let bls_keypair = BLSKeypair::derive_from_signer(
-            &voting_keypairs[0].borrow().vote_keypair,
-            BLS_KEYPAIR_DERIVE_SEED,
+        Some(
+            voting_keypairs[0]
+                .borrow()
+                .bls_keypair
+                .public
+                .to_bytes_compressed(),
         )
-        .unwrap();
-        Some(bls_keypair.public.to_bytes_compressed())
     } else {
         None
     };
@@ -199,12 +203,11 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
         let bls_pubkey_compressed = if is_alpenglow {
-            let bls_keypair = BLSKeypair::derive_from_signer(
-                &validator_voting_keypairs.borrow().vote_keypair,
-                BLS_KEYPAIR_DERIVE_SEED,
-            )
-            .unwrap();
-            bls_keypair.public.to_bytes_compressed()
+            validator_voting_keypairs
+                .borrow()
+                .bls_keypair
+                .public
+                .to_bytes_compressed()
         } else {
             [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
         };
