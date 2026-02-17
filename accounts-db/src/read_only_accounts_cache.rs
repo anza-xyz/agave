@@ -29,6 +29,13 @@ use {
 const CACHE_ENTRY_SIZE: usize =
     size_of::<ReadOnlyAccountCacheEntry>() + size_of::<ReadOnlyCacheKey>();
 
+/// Number of cache shards. Using 2^16 (65 536) shards keeps the count a power
+/// of two and roughly matches the number of cached accounts we observe on
+/// mainnet-beta. The average load is still ~1 account per shard (collisions are
+/// common), but compared with the default `num_cpus * 4` shards - where we saw
+/// hot shards carrying ~200 accounts - this dramatically lowers contention.
+const NUM_SHARDS: usize = 65536;
+
 type ReadOnlyCacheKey = Pubkey;
 
 #[derive(Debug)]
@@ -104,7 +111,10 @@ impl ReadOnlyAccountsCache {
     ) -> Self {
         assert!(max_data_size_lo <= max_data_size_hi);
         assert!(evict_sample_size > 0);
-        let cache = Arc::new(DashMap::with_hasher(AHashRandomState::default()));
+        let cache = Arc::new(DashMap::with_hasher_and_shard_amount(
+            AHashRandomState::default(),
+            NUM_SHARDS,
+        ));
         let data_size = Arc::new(AtomicUsize::default());
         let stats = Arc::new(AtomicReadOnlyCacheStats::default());
         let timer = Instant::now();
