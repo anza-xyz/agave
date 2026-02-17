@@ -1348,9 +1348,7 @@ impl SchedulingStateMachine {
         //`::validate_account_locks()` regardless of whether unified-scheduler
         // is enabled or not at the blockstore
         // (`Bank::prepare_sanitized_batch()` is called in
-        // `process_entries()`). This verification will be hoisted for
-        // optimization when removing
-        // `--block-verification-method=blockstore-processor`.
+        // `process_entries()`).
         //
         // As for `banking_stage` with unified scheduler, it will need to run
         // `validate_account_locks()` at least once somewhere in the code path.
