@@ -5068,17 +5068,17 @@ define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts|
     // Simulate adding dirty pubkeys on bank freeze, set root
     accounts.add_root_and_flush_write_cache(slot1);
 
-    // Account is referenced in the zero lamport slot. Since the other copy is in an unrooted slot,
+    // Account is referenced in the zero lamport slot. Since the other copy is in an unflushed slot,
     // it does not count as a reference.
     accounts.assert_ref_count(&shared_key, 1);
 
     // The later rooted zero-lamport update to 'shared_key' can be purged
     // as there are no rooted ancestors
-    // The key itself cannot be purged as it is still referenced in the unrooted slot
+    // The key itself cannot be purged as it is still contained in the unrooted slot
     accounts.clean_accounts_for_tests();
     assert!(accounts.accounts_index.contains(&shared_key));
 
-    // Zero lamport reference was removed
+    // Account now has a reference count of zero as it is not contained in any storages
     accounts.assert_ref_count(&shared_key, 0);
 
     // Simulate purge_slot() all from AccountsBackgroundService
