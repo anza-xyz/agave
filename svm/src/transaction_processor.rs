@@ -1369,7 +1369,11 @@ mod tests {
             }
             if stack_height > transaction_context.get_instruction_stack_height() {
                 transaction_context
-                    .configure_next_instruction_for_tests(0, vec![], vec![index_in_trace as u8])
+                    .configure_top_level_instruction_for_tests(
+                        0,
+                        vec![],
+                        vec![index_in_trace as u8],
+                    )
                     .unwrap();
                 transaction_context.push().unwrap();
             }

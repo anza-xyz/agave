@@ -68,7 +68,7 @@ macro_rules! with_mock_invoke_context {
         );
         $invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(1, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(1, instruction_accounts, vec![])
             .unwrap();
         $invoke_context.push().unwrap();
     };

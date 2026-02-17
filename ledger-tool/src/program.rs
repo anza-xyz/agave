@@ -494,7 +494,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     invoke_context
         .transaction_context
-        .configure_next_instruction_for_tests(
+        .configure_top_level_instruction_for_tests(
             program_index.saturating_add(1),
             instruction_accounts,
             instruction_data,

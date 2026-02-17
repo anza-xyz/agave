@@ -1161,7 +1161,7 @@ mod tests {
             1,
         );
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
                 vec![],

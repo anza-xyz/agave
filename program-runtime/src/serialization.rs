@@ -776,18 +776,19 @@ mod tests {
                     let dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
                     invoke_context
                         .transaction_context
-                        .configure_next_instruction(
+                        .configure_instruction_at_index(
+                            0,
                             0,
                             instruction_accounts,
                             dedup_map,
                             Cow::Owned(instruction_data.clone()),
-                            None,
+                            Some(0),
                         )
                         .unwrap();
                 } else {
                     invoke_context
                         .transaction_context
-                        .configure_next_instruction_for_tests(
+                        .configure_top_level_instruction_for_tests(
                             0,
                             instruction_accounts,
                             instruction_data.clone(),
@@ -947,7 +948,7 @@ mod tests {
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(
+                .configure_top_level_instruction_for_tests(
                     0,
                     instruction_accounts.clone(),
                     instruction_data.clone(),
@@ -1046,7 +1047,7 @@ mod tests {
             // check serialize_parameters_unaligned
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(
+                .configure_top_level_instruction_for_tests(
                     7,
                     instruction_accounts,
                     instruction_data.clone(),
@@ -1210,7 +1211,7 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(0, instruction_accounts.clone(), vec![])
+            .configure_top_level_instruction_for_tests(0, instruction_accounts.clone(), vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let instruction_context = invoke_context
@@ -1243,7 +1244,7 @@ mod tests {
         // check serialize_parameters_unaligned
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(7, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(7, instruction_accounts, vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let instruction_context = invoke_context
@@ -1451,7 +1452,7 @@ mod tests {
         let instruction_accounts =
             deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
         transaction_context
-            .configure_next_instruction_for_tests(6, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(6, instruction_accounts, vec![])
             .unwrap();
         transaction_context.push().unwrap();
         let instruction_context = transaction_context

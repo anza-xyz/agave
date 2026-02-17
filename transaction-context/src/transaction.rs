@@ -159,7 +159,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Returns the instruction trace length.
     ///
     /// Not counting the last empty instruction which is always pre-reserved for the next instruction.
-    /// See also `get_next_instruction_context()`.
     pub fn get_instruction_trace_length(&self) -> usize {
         self.instruction_trace.len().saturating_sub(1)
     }
@@ -258,11 +257,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
-    /// Configures the next instruction.
-    ///
-    /// The last InstructionContext is always empty and pre-reserved for the next instruction.
-    pub fn configure_next_instruction(
+    /// Configures an instruction at a specific index in trace.
+    pub fn configure_instruction_at_index(
         &mut self,
+        instruction_index: usize,
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u16>,
@@ -270,13 +268,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
-        let trace_len = self.instruction_trace.len();
-        let instruction_index = trace_len.saturating_sub(1);
 
         let instruction = self
             .instruction_trace
-            .last_mut()
-            .ok_or(InstructionError::CallDepth)?;
+            .get_mut(instruction_index)
+            .ok_or(InstructionError::MaxInstructionTraceLengthExceeded)?;
 
         // If we have a parent index, then we are dealing with a CPI.
         if let Some(caller_index) = caller_index {
@@ -308,14 +304,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(())
     }
 
-    /// A version of `configure_next_instruction` to help creating the deduplication map in tests
-    pub fn configure_next_instruction_for_tests(
-        &mut self,
-        program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
-        instruction_data: Vec<u8>,
-    ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+    /// For tests only
+    fn deduplicate_accounts_for_tests(instruction_accounts: &[InstructionAccount]) -> Vec<u16> {
         let mut dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
@@ -325,13 +315,50 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 *index_in_instruction = idx as u16;
             }
         }
-        self.configure_next_instruction(
+        dedup_map
+    }
+
+    /// A version of `configure_top_level_instruction` to help creating the deduplication map in tests
+    pub fn configure_top_level_instruction_for_tests(
+        &mut self,
+        program_index: IndexOfAccount,
+        instruction_accounts: Vec<InstructionAccount>,
+        instruction_data: Vec<u8>,
+    ) -> Result<(), InstructionError> {
+        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+
+        self.configure_instruction_at_index(
+            self.get_instruction_trace_length(),
             program_index,
             instruction_accounts,
             dedup_map,
             Cow::Owned(instruction_data),
             None,
-        )
+        )?;
+        Ok(())
+    }
+
+    /// A helper function to facilitate creating a CPI in tests
+    pub fn configure_next_cpi_for_tests(
+        &mut self,
+        program_index: IndexOfAccount,
+        instruction_accounts: Vec<InstructionAccount>,
+        instruction_data: Vec<u8>,
+    ) -> Result<(), InstructionError> {
+        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        let caller_index = self.get_current_instruction_index()?;
+        let cpi_index = self.get_instruction_trace_length();
+        self.configure_instruction_at_index(
+            cpi_index,
+            program_index,
+            instruction_accounts,
+            dedup_map,
+            Cow::Owned(instruction_data),
+            Some(caller_index as u16),
+        )?;
+        Ok(())
     }
 
     /// Pushes the next instruction
@@ -655,7 +682,7 @@ mod tests {
         );
 
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 u16::MAX,
                 vec![InstructionAccount::new(0, false, false)],
                 vec![],
@@ -684,7 +711,7 @@ mod tests {
             InstructionAccount::new(3, true, false),
         ];
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 1,
                 instruction_accounts_1.clone(),
                 vec![1, 2, 3, 4],
@@ -698,7 +725,7 @@ mod tests {
             InstructionAccount::new(5, false, false),
         ];
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 1,
                 instruction_accounts_2.clone(),
                 vec![5, 6, 7, 8, 9],
@@ -714,7 +741,11 @@ mod tests {
             InstructionAccount::new(10, false, false),
         ];
         transaction_context
-            .configure_next_instruction_for_tests(1, instruction_accounts_3.clone(), vec![10, 11])
+            .configure_top_level_instruction_for_tests(
+                1,
+                instruction_accounts_3.clone(),
+                vec![10, 11],
+            )
             .unwrap();
         transaction_context.push().unwrap();
 
@@ -811,7 +842,8 @@ mod tests {
         );
 
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                0,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
                 vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
@@ -841,7 +873,8 @@ mod tests {
         );
 
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                1,
                 0,
                 vec![InstructionAccount::new(1, false, false)],
                 vec![0; MAX_ACCOUNTS_PER_TRANSACTION],
@@ -866,13 +899,7 @@ mod tests {
         );
 
         transaction_context
-            .configure_next_instruction(
-                0,
-                vec![InstructionAccount::new(2, false, true)],
-                vec![0; 256],
-                Vec::new().into(),
-                Some(2),
-            )
+            .configure_next_cpi_for_tests(0, vec![InstructionAccount::new(2, false, true)], vec![])
             .unwrap();
         assert_eq!(
             transaction_context
@@ -945,7 +972,8 @@ mod tests {
 
         // First top level instruction
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                0,
                 1,
                 vec![
                     InstructionAccount::new(0, false, false),
@@ -965,7 +993,8 @@ mod tests {
 
         // Second top-level instruction
         transaction_context
-            .configure_next_instruction(
+            .configure_instruction_at_index(
+                1,
                 1,
                 vec![
                     InstructionAccount::new(0, false, false),
@@ -984,15 +1013,13 @@ mod tests {
 
         // Simulating a CPI
         transaction_context
-            .configure_next_instruction(
+            .configure_next_cpi_for_tests(
                 1,
                 vec![
                     InstructionAccount::new(0, false, true),
                     InstructionAccount::new(1, false, false),
                 ],
-                vec![u16::MAX; 256],
-                Cow::Owned(Vec::new()),
-                Some(1),
+                Vec::new(),
             )
             .unwrap();
         transaction_context.push().unwrap();
@@ -1003,15 +1030,13 @@ mod tests {
 
         // Yet another CPI
         transaction_context
-            .configure_next_instruction(
+            .configure_next_cpi_for_tests(
                 1,
                 vec![
                     InstructionAccount::new(0, false, true),
                     InstructionAccount::new(1, false, false),
                 ],
-                vec![u16::MAX; 256],
-                Cow::Owned(Vec::new()),
-                Some(2),
+                Vec::new(),
             )
             .unwrap();
         transaction_context.push().unwrap();

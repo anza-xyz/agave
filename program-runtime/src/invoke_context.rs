@@ -288,7 +288,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
-        self.prepare_next_instruction(instruction, signers)?;
+        self.prepare_next_cpi_instruction(instruction, signers)?;
         let mut compute_units_consumed = 0;
         self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
         Ok(())
@@ -296,7 +296,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     /// Helper to prepare for process_instruction() when the instruction is not a top level one,
     /// and depends on `AccountMeta`s
-    pub fn prepare_next_instruction(
+    pub fn prepare_next_cpi_instruction(
         &mut self,
         instruction: Instruction,
         signers: &[Pubkey],
@@ -431,7 +431,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         // This ? operator should not error out because `fn get_current_instruction_index` is also called
         // in `get_current_instruction_context`
         let caller_index = self.transaction_context.get_current_instruction_index()?;
-        self.transaction_context.configure_next_instruction(
+        self.transaction_context.configure_instruction_at_index(
+            self.transaction_context.get_instruction_trace_length(),
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
@@ -474,7 +475,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             ));
         }
 
-        self.transaction_context.configure_next_instruction(
+        self.transaction_context.configure_instruction_at_index(
+            self.transaction_context.get_instruction_trace_length(),
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
@@ -936,7 +938,7 @@ pub fn mock_process_instruction_with_feature_set<
     pre_adjustments(&mut invoke_context);
     invoke_context
         .transaction_context
-        .configure_next_instruction_for_tests(
+        .configure_top_level_instruction_for_tests(
             program_index,
             instruction_accounts,
             instruction_data.to_vec(),
@@ -1076,7 +1078,11 @@ mod tests {
                         );
                         invoke_context
                             .transaction_context
-                            .configure_next_instruction_for_tests(3, instruction_accounts, vec![])
+                            .configure_top_level_instruction_for_tests(
+                                3,
+                                instruction_accounts,
+                                vec![],
+                            )
                             .unwrap();
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
@@ -1148,7 +1154,7 @@ mod tests {
         for _ in 0..invoke_stack.len() {
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(
+                .configure_top_level_instruction_for_tests(
                     one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount,
                     instruction_accounts.clone(),
                     vec![],
@@ -1179,7 +1185,7 @@ mod tests {
         for _ in 0..MAX_INSTRUCTIONS {
             transaction_context.push().unwrap();
             transaction_context
-                .configure_next_instruction_for_tests(
+                .configure_top_level_instruction_for_tests(
                     0,
                     vec![InstructionAccount::new(0, false, false)],
                     vec![],
@@ -1243,7 +1249,7 @@ mod tests {
         // Account modification tests
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(4, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(4, instruction_accounts, vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction =
@@ -1299,7 +1305,7 @@ mod tests {
         let compute_units_to_consume = 10;
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(4, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(4, instruction_accounts, vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
@@ -1311,7 +1317,7 @@ mod tests {
             metas,
         );
         invoke_context
-            .prepare_next_instruction(inner_instruction, &[])
+            .prepare_next_cpi_instruction(inner_instruction, &[])
             .unwrap();
 
         let mut compute_units_consumed = 0;
@@ -1344,7 +1350,7 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(0, vec![], vec![])
+            .configure_top_level_instruction_for_tests(0, vec![], vec![])
             .unwrap();
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
@@ -1384,7 +1390,7 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(2, instruction_accounts, instruction_data)
+            .configure_top_level_instruction_for_tests(2, instruction_accounts, instruction_data)
             .unwrap();
         let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
 
@@ -1539,13 +1545,13 @@ mod tests {
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_instruction(instruction_1, &[fee_payer.pubkey()])
+            .prepare_next_cpi_instruction(instruction_1, &[fee_payer.pubkey()])
             .unwrap();
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_instruction(instruction_2, &[fee_payer.pubkey()])
+            .prepare_next_cpi_instruction(instruction_2, &[fee_payer.pubkey()])
             .unwrap();
         test_case_2(&invoke_context);
     }
@@ -1630,7 +1636,7 @@ mod tests {
         );
 
         invoke_context
-            .prepare_next_instruction(instruction, &[fee_payer.pubkey()])
+            .prepare_next_cpi_instruction(instruction, &[fee_payer.pubkey()])
             .unwrap();
         let instruction_context = invoke_context
             .transaction_context

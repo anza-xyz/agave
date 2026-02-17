@@ -102,7 +102,7 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
         TransactionContext::new(transaction_accounts, Rent::default(), 1, 1, 1);
     let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
     transaction_context
-        .configure_next_instruction_for_tests(0, instruction_accounts, instruction_data)
+        .configure_top_level_instruction_for_tests(0, instruction_accounts, instruction_data)
         .unwrap();
     transaction_context.push().unwrap();
     transaction_context
