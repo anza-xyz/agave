@@ -412,6 +412,9 @@ pub struct ValidatorConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
+    /// Experimental: Don't execute transactions on the leader bank during block production.
+    /// Instead, only record transactions to PoH and defer execution to replay stage.
+    pub experimental_bankless_leader: bool,
     pub voting_service_test_override: Option<VotingServiceOverride>,
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
@@ -495,6 +498,7 @@ impl ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
             delay_leader_block_for_pending_fork: false,
+            experimental_bankless_leader: false,
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
@@ -1678,6 +1682,7 @@ impl Validator {
                 repair_validators: config.repair_validators.clone(),
                 repair_whitelist: config.repair_whitelist.clone(),
                 wait_for_vote_to_start_leader,
+                experimental_bankless_leader: config.experimental_bankless_leader,
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
@@ -1784,6 +1789,7 @@ impl Validator {
             }),
             cancel,
             votor_event_sender,
+            config.experimental_bankless_leader,
         );
 
         datapoint_info!(

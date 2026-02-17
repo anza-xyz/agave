@@ -382,6 +382,8 @@ pub struct BankingStage {
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
+    /// Experimental: Don't execute transactions during block production.
+    experimental_bankless_leader: bool,
 }
 
 impl BankingStage {
@@ -401,6 +403,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        experimental_bankless_leader: bool,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -423,6 +426,7 @@ impl BankingStage {
             committer,
             log_messages_bytes_limit,
             threads: FuturesUnordered::default(),
+            experimental_bankless_leader,
         };
 
         // Spawn the manager thread.
@@ -585,6 +589,7 @@ impl BankingStage {
                 ),
                 finished_work_sender.clone(),
                 self.poh_recorder.read().unwrap().shared_leader_state(),
+                self.experimental_bankless_leader,
             );
 
             worker_metrics.push(consume_worker.metrics_handle());
@@ -1006,6 +1011,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            false, // experimental_bankless_leader
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1070,6 +1076,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            false, // experimental_bankless_leader
         );
         trace!("sending bank");
         drop(non_vote_sender);
@@ -1144,6 +1151,7 @@ mod tests {
             None,
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
+            false, // experimental_bankless_leader
         );
 
         // good tx, and no verify
@@ -1296,6 +1304,7 @@ mod tests {
                 None,
                 bank_forks,
                 None,
+                false, // experimental_bankless_leader
             );
 
             // wait for banking_stage to eat the packets
@@ -1449,6 +1458,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            false, // experimental_bankless_leader
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

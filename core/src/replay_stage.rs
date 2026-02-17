@@ -265,6 +265,8 @@ pub struct ReplayStageConfig {
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     pub wait_for_vote_to_start_leader: bool,
+    /// Experimental: replay leader banks in replay stage instead of during block production.
+    pub experimental_bankless_leader: bool,
     pub tower_storage: Arc<dyn TowerStorage>,
     // Stops voting until this slot has been reached. Should be used to avoid
     // duplicate voting which can lead to slashing.
@@ -578,6 +580,7 @@ impl ReplayStage {
             leader_schedule_cache,
             block_commitment_cache,
             wait_for_vote_to_start_leader,
+            experimental_bankless_leader,
             tower_storage,
             wait_to_vote_slot,
             replay_forks_threads,
@@ -802,6 +805,7 @@ impl ReplayStage {
                     (!migration_status.is_alpenglow_enabled()).then_some(&mut tbft_structs),
                     migration_status.as_ref(),
                     &votor_event_sender,
+                    experimental_bankless_leader,
                 );
                 let did_complete_bank = !new_frozen_slots.is_empty();
                 if migration_status.is_alpenglow_enabled() {
@@ -3098,6 +3102,7 @@ impl ReplayStage {
         active_bank_slots: &[Slot],
         prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         migration_status: &MigrationStatus,
+        experimental_bankless_leader: bool,
     ) -> Vec<ReplaySlotFromBlockstore> {
         // Make mutable shared structures thread safe.
         let progress = RwLock::new(progress);
@@ -3165,7 +3170,10 @@ impl ReplayStage {
                     let replay_progress = bank_progress.replay_progress.clone();
                     drop(progress_lock);
 
-                    if bank.leader_id() != my_pubkey {
+                    // Replay blockstore into bank if:
+                    // 1. We are not the leader, OR
+                    // 2. Bankless leader mode is enabled (replay even our own blocks)
+                    if bank.leader_id() != my_pubkey || experimental_bankless_leader {
                         let mut replay_blockstore_time =
                             Measure::start("replay_blockstore_into_bank");
                         let blockstore_result = Self::replay_blockstore_into_bank(
@@ -3213,6 +3221,7 @@ impl ReplayStage {
         bank_slot: Slot,
         prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         migration_status: &MigrationStatus,
+        experimental_bankless_leader: bool,
     ) -> ReplaySlotFromBlockstore {
         let mut replay_result = ReplaySlotFromBlockstore {
             is_slot_dead: false,
@@ -3255,7 +3264,10 @@ impl ReplayStage {
                 )
             });
 
-            if bank.leader_id() != my_pubkey {
+            // Replay blockstore into bank if:
+            // 1. We are not the leader, OR
+            // 2. Bankless leader mode is enabled (replay even our own blocks)
+            if bank.leader_id() != my_pubkey || experimental_bankless_leader {
                 let mut replay_blockstore_time = Measure::start("replay_blockstore_into_bank");
                 let blockstore_result = Self::replay_blockstore_into_bank(
                     &bank,
@@ -3634,6 +3646,7 @@ impl ReplayStage {
         tbft_structs: Option<&mut TowerBFTStructures>,
         migration_status: &MigrationStatus,
         votor_event_sender: &VotorEventSender,
+        experimental_bankless_leader: bool,
     ) -> Vec<Slot> /* completed slots */ {
         let active_bank_slots = bank_forks.read().unwrap().active_bank_slots();
         let num_active_banks = active_bank_slots.len();
@@ -3661,6 +3674,7 @@ impl ReplayStage {
                     &active_bank_slots,
                     prioritization_fee_cache,
                     migration_status,
+                    experimental_bankless_leader,
                 )
             }
             ForkReplayMode::Serial | ForkReplayMode::Parallel(_) => active_bank_slots
@@ -3681,6 +3695,7 @@ impl ReplayStage {
                         *bank_slot,
                         prioritization_fee_cache,
                         migration_status,
+                        experimental_bankless_leader,
                     )
                 })
                 .collect(),

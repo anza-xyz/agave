@@ -1301,6 +1301,10 @@ pub mod vote_account_initialize_v2 {
     solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
 }
 
+pub mod replay_reorder_by_priority_fee {
+    solana_pubkey::declare_id!("B7jj45dKs5BPzPL6Lk6C3ZtYD4J1LfFHpET3AoVoqJAB");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2315,6 +2319,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             vote_account_initialize_v2::id(),
             "SIMD-0464: Vote Account Initialize V2",
+        ),
+        (
+            replay_reorder_by_priority_fee::id(),
+            "Replay: reorder transactions by priority fee",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

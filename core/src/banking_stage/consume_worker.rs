@@ -42,6 +42,8 @@ pub(crate) struct ConsumeWorker<Tx> {
 
     shared_leader_state: SharedLeaderState,
     metrics: Arc<ConsumeWorkerMetrics>,
+    /// Experimental: Don't execute transactions, only record them for replay stage.
+    experimental_bankless_leader: bool,
 }
 
 impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
@@ -52,6 +54,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         consumer: Consumer,
         consumed_sender: Sender<FinishedConsumeWork<Tx>>,
         shared_leader_state: SharedLeaderState,
+        experimental_bankless_leader: bool,
     ) -> Self {
         Self {
             exit,
@@ -60,6 +63,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             consumed_sender,
             shared_leader_state,
             metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
+            experimental_bankless_leader,
         }
     }
 
@@ -117,12 +121,19 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .num_messages_processed
             .fetch_add(1, Ordering::Relaxed);
 
-        let output = self.consumer.process_and_record_aged_transactions(
-            bank,
-            &work.transactions,
-            &work.max_ages,
-            ExecutionFlags::default(),
-        );
+        let output = if self.experimental_bankless_leader {
+            // In bankless leader mode, only record transactions without executing.
+            // Execution will be handled by replay stage.
+            self.consumer
+                .record_transactions_without_execution(bank, &work.transactions)
+        } else {
+            self.consumer.process_and_record_aged_transactions(
+                bank,
+                &work.transactions,
+                &work.max_ages,
+                ExecutionFlags::default(),
+            )
+        };
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);
 
@@ -2243,6 +2254,7 @@ mod tests {
             consumer,
             consumed_sender,
             shared_leader_state.clone(),
+            false, // experimental_bankless_leader
         );
 
         (

@@ -1174,6 +1174,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("experimental_bankless_leader")
+            .hidden(hidden_unless_forced())
+            .long("experimental-bankless-leader")
+            .takes_value(false)
+            .help(
+                "Experimental: Don't execute transactions on the leader bank during block \
+                 production. Instead, only record transactions to PoH and defer execution to \
+                 replay stage. This allows the leader to produce blocks without maintaining bank \
+                 state during block production.",
+            ),
+    )
+    .arg(
         Arg::with_name("block_verification_method")
             .long("block-verification-method")
             .value_name("METHOD")

@@ -42,7 +42,8 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_signature::Signature,
     solana_svm::{
@@ -652,6 +653,24 @@ fn process_entries(
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&PrioritizationFeeCache>,
 ) -> Result<()> {
+    // Check if we should reorder transactions by priority fee
+    if bank
+        .feature_set
+        .is_active(&agave_feature_set::replay_reorder_by_priority_fee::id())
+    {
+        return process_entries_with_priority_reorder(
+            bank,
+            replay_tx_thread_pool,
+            entries,
+            transaction_status_sender,
+            replay_vote_sender,
+            batch_timing,
+            log_messages_bytes_limit,
+            prioritization_fee_cache,
+        );
+    }
+
+    // Original entry processing logic
     // accumulator for entries that can be processed in parallel
     let mut batches = vec![];
     let mut tick_hashes = vec![];
@@ -718,6 +737,85 @@ fn process_entries(
     for hash in tick_hashes {
         bank.register_tick(&hash);
     }
+    Ok(())
+}
+
+/// Process entries with transactions reordered by priority fee (highest first).
+/// All transactions are flattened, sorted by compute_unit_price descending, and then processed.
+/// Ticks are registered at the end.
+#[allow(clippy::too_many_arguments)]
+fn process_entries_with_priority_reorder(
+    bank: &BankWithScheduler,
+    replay_tx_thread_pool: &ThreadPool,
+    entries: Vec<ReplayEntry>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+    replay_vote_sender: Option<&ReplayVoteSender>,
+    batch_timing: &mut BatchExecutionTiming,
+    log_messages_bytes_limit: Option<usize>,
+    prioritization_fee_cache: Option<&PrioritizationFeeCache>,
+) -> Result<()> {
+    // Collect all transactions and tick hashes
+    let mut all_transactions: Vec<RuntimeTransaction<SanitizedTransaction>> = vec![];
+    let mut tick_hashes = vec![];
+
+    for ReplayEntry { entry, .. } in entries {
+        match entry {
+            EntryType::Tick(hash) => {
+                tick_hashes.push(hash);
+            }
+            EntryType::Transactions(transactions) => {
+                all_transactions.extend(transactions);
+            }
+        }
+    }
+
+    // Sort transactions by priority fee (compute_unit_price) in descending order
+    all_transactions.sort_by(|a, b| {
+        let a_price = a.compute_budget_instruction_details().compute_unit_price();
+        let b_price = b.compute_budget_instruction_details().compute_unit_price();
+        b_price.cmp(&a_price)
+    });
+
+    // Process all sorted transactions
+    if !all_transactions.is_empty() {
+        let mut batches = vec![];
+        queue_batches_with_lock_retry(
+            bank,
+            0, // starting_index is 0 since we're processing all transactions together
+            all_transactions,
+            &mut batches,
+            |batches| {
+                process_batches(
+                    bank,
+                    replay_tx_thread_pool,
+                    batches,
+                    transaction_status_sender,
+                    replay_vote_sender,
+                    batch_timing,
+                    log_messages_bytes_limit,
+                    prioritization_fee_cache,
+                )
+            },
+        )?;
+
+        // Process any remaining batches
+        process_batches(
+            bank,
+            replay_tx_thread_pool,
+            batches.into_iter(),
+            transaction_status_sender,
+            replay_vote_sender,
+            batch_timing,
+            log_messages_bytes_limit,
+            prioritization_fee_cache,
+        )?;
+    }
+
+    // Register all ticks
+    for hash in tick_hashes {
+        bank.register_tick(&hash);
+    }
+
     Ok(())
 }
 
@@ -3576,6 +3674,8 @@ pub mod tests {
         if !relax_intrabatch_account_locks {
             bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
         }
+        // This test relies on entry-ordered processing for conflicts to happen correctly
+        bank.deactivate_feature(&agave_feature_set::replay_reorder_by_priority_fee::id());
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -3686,6 +3786,8 @@ pub mod tests {
         if !relax_intrabatch_account_locks {
             bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
         }
+        // This test relies on entry-ordered processing
+        bank.deactivate_feature(&agave_feature_set::replay_reorder_by_priority_fee::id());
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -4355,7 +4457,10 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(100);
-        let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank0 = Bank::new_for_tests(&genesis_config);
+        // This test relies on ticks being registered before the transaction is processed
+        bank0.deactivate_feature(&agave_feature_set::replay_reorder_by_priority_fee::id());
+        let (bank0, _bank_forks) = bank0.wrap_with_bank_forks_for_tests();
         let genesis_hash = genesis_config.hash();
         let keypair = Keypair::new();
 
@@ -4870,7 +4975,10 @@ pub mod tests {
             ..
         } = create_genesis_config(100 * LAMPORTS_PER_SOL);
         let genesis_hash = genesis_config.hash();
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        // This test relies on entry-ordered indexing
+        bank.deactivate_feature(&agave_feature_set::replay_reorder_by_priority_fee::id());
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let bank = BankWithScheduler::new_without_scheduler(bank);
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut timing = ConfirmationTiming::default();
