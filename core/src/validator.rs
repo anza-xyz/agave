@@ -408,6 +408,7 @@ pub struct ValidatorConfig {
     pub block_production_scheduler_config: SchedulerConfig,
     pub enable_block_production_forwarding: bool,
     pub enable_scheduler_bindings: bool,
+    pub external_as_thread: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub wen_restart_proto_path: Option<PathBuf>,
@@ -492,6 +493,7 @@ impl ValidatorConfig {
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
             enable_scheduler_bindings: false,
+            external_as_thread: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             wen_restart_proto_path: None,
@@ -1811,6 +1813,7 @@ impl Validator {
                     banking_control_sender.clone(),
                 )
             }),
+            config.external_as_thread,
             cancel,
             votor_event_sender,
         );

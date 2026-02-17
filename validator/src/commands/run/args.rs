@@ -1228,6 +1228,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Enables external processes to connect and manage block production"),
     )
     .arg(
+        Arg::with_name("external_as_thread")
+            .long("external-as-thread")
+            .takes_value(false)
+            .help("Run the external scheduler as an in-process thread (fallback mode)"),
+    )
+    .arg(
         Arg::with_name("unified_scheduler_handler_threads")
             .long("unified-scheduler-handler-threads")
             .value_name("COUNT")

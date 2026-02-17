@@ -42,9 +42,11 @@ frozen-abi = [
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
+agave-bridge = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
+agave-schedulers = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }

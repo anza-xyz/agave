@@ -382,6 +382,7 @@ pub struct BankingStage {
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
+    external_as_thread: bool,
 }
 
 impl BankingStage {
@@ -401,12 +402,29 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        external_as_thread: bool,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
             replay_vote_sender,
             prioritization_fee_cache,
         );
+
+        #[cfg(unix)]
+        let initial_args = match external_as_thread {
+            true => BankingControlMsg::ExternalAsThread,
+            false => BankingControlMsg::Internal {
+                block_production_method,
+                num_workers,
+                config: scheduler_config,
+            },
+        };
+        #[cfg(not(unix))]
+        let initial_args = BankingControlMsg::Internal {
+            block_production_method,
+            num_workers,
+            config: scheduler_config,
+        };
 
         // Setup the manager thread state.
         let banking_shutdown_signal = CancellationToken::new();
@@ -423,6 +441,7 @@ impl BankingStage {
             committer,
             log_messages_bytes_limit,
             threads: FuturesUnordered::default(),
+            external_as_thread,
         };
 
         // Spawn the manager thread.
@@ -433,11 +452,7 @@ impl BankingStage {
                     .enable_all()
                     .build()
                     .unwrap();
-                rt.block_on(manager.run(BankingControlMsg::Internal {
-                    block_production_method,
-                    num_workers,
-                    config: scheduler_config,
-                }))
+                rt.block_on(manager.run(initial_args))
             })
             .unwrap();
 
@@ -499,6 +514,13 @@ impl BankingStage {
     async fn cycle_threads_fallback(&mut self) -> Result<(), ()> {
         error!("Spawning the default block production method as a fallback...");
 
+        #[cfg(unix)]
+        if self.external_as_thread {
+            return self
+                .cycle_threads(BankingControlMsg::ExternalAsThread)
+                .await;
+        }
+
         self.cycle_threads(BankingControlMsg::Internal {
             block_production_method: BlockProductionMethod::default(),
             num_workers: BankingStage::default_num_workers(),
@@ -524,6 +546,8 @@ impl BankingStage {
             },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
+            #[cfg(unix)]
+            BankingControlMsg::ExternalAsThread => self.spawn_external_as_thread(),
         })?;
 
         self.threads.extend(threads.into_iter().map(|handle| {
@@ -732,7 +756,14 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
+        agave_bridge::SchedulerBindings,
+        agave_schedulers::{greedy::GreedyScheduler, shared::PriorityId},
+        agave_scheduling_utils::handshake::{
+            client,
+            server::{AgaveSession, AgaveWorkerSession, Server},
+            ClientLogon,
+        },
+        std::os::fd::AsRawFd,
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -827,6 +858,53 @@ mod external {
 
             Ok(threads)
         }
+
+        pub(super) fn spawn_external_as_thread(&self) -> Result<Vec<JoinHandle<()>>, ()> {
+            info!("Spawning external scheduler as thread");
+
+            let logon = ClientLogon {
+                worker_count: 4,
+                allocator_size: 512 * 1024 * 1024,
+                allocator_handles: 1,
+                tpu_to_pack_capacity: 128,
+                progress_tracker_capacity: 128,
+                pack_to_worker_capacity: 128,
+                worker_to_pack_capacity: 128,
+                flags: 0,
+            };
+
+            // Agave-side session.
+            let (agave_session, files) = Server::setup_session(logon).map_err(|err| {
+                error!("Failed to setup in-process session; err={err}");
+            })?;
+
+            // Sscheduler-side session.
+            let fds: Vec<i32> = files.iter().map(|f| f.as_raw_fd()).collect();
+            let client_session = client::setup_session(&logon, fds).map_err(|err| {
+                error!("Failed to setup client session; err={err}");
+            })?;
+
+            // Spawn Agave-side workers.
+            let mut threads = self.spawn_external(agave_session)?;
+
+            // Spawn the scheduler thread with the external greedy scheduler.
+            threads.push(
+                Builder::new()
+                    .name("solExtSched".to_string())
+                    .spawn(move || {
+                        let mut bridge = SchedulerBindings::<PriorityId>::new(client_session);
+                        let mut scheduler = GreedyScheduler::new(None);
+                        loop {
+                            // TODO: This will panic if agave side goes quiet, need a
+                            // proper graceful shutdown.
+                            scheduler.poll(&mut bridge);
+                        }
+                    })
+                    .unwrap(),
+            );
+
+            Ok(threads)
+        }
     }
 }
 
@@ -852,6 +930,8 @@ pub enum BankingControlMsg {
     External {
         session: agave_scheduling_utils::handshake::server::AgaveSession,
     },
+    #[cfg(unix)]
+    ExternalAsThread,
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -1006,6 +1086,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            false,
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1070,6 +1151,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            false,
         );
         trace!("sending bank");
         drop(non_vote_sender);
@@ -1144,6 +1226,7 @@ mod tests {
             None,
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
+            false,
         );
 
         // good tx, and no verify
@@ -1296,6 +1379,7 @@ mod tests {
                 None,
                 bank_forks,
                 None,
+                false,
             );
 
             // wait for banking_stage to eat the packets
@@ -1449,6 +1533,7 @@ mod tests {
             None,
             bank_forks,
             None,
+            false,
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

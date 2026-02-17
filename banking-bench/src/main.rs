@@ -498,6 +498,7 @@ fn main() {
         None,
         bank_forks.clone(),
         None,
+        false,
     );
 
     // This bench processes transactions, starting from the very first bank, so special-casing is

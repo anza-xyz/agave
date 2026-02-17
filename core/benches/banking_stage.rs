@@ -251,6 +251,7 @@ fn bench_banking(
         None,
         bank_forks,
         None,
+        false,
     );
 
     let chunk_len = verified.len() / CHUNKS;
