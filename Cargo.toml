@@ -445,7 +445,7 @@ solana-example-mocks = "3.0.0"
 solana-faucet = { path = "faucet", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "3.1.0"
 solana-fee = { path = "fee", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-fee-calculator = "3.0.0"
+solana-fee-calculator = "3.1.0"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.0"
 solana-frozen-abi = "3.1.2"
