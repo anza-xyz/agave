@@ -1,8 +1,9 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{stake_weighted_slot_leaders, SlotLeader},
-    itertools::Itertools,
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, iter, ops::Index},
 };
@@ -11,7 +12,7 @@ use {
 pub struct LeaderSchedule {
     slot_leaders: Vec<SlotLeader>,
     // Inverted index from leader id to indices where they are the leader.
-    leader_slots_map: HashMap<Pubkey, Vec<usize>>,
+    leader_slots_map: HashMap<Pubkey, Vec<usize>, PubkeyHasherBuilder>,
 }
 
 impl LeaderSchedule {
@@ -36,23 +37,41 @@ impl LeaderSchedule {
             })
             .collect();
         let slot_leaders = stake_weighted_slot_leaders(slot_leader_stakes, epoch, len, repeat);
-        Self::new_from_schedule(slot_leaders)
+        Self {
+            leader_slots_map: Self::invert_slot_leaders(
+                &slot_leaders,
+                Some(vote_accounts_map.len()),
+            ),
+            slot_leaders,
+        }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub fn new_from_schedule(slot_leaders: Vec<SlotLeader>) -> Self {
-        let leader_slots_map = Self::invert_slot_leaders(&slot_leaders);
+        let leader_slots_map = Self::invert_slot_leaders(&slot_leaders, None);
         Self {
             slot_leaders,
             leader_slots_map,
         }
     }
 
-    fn invert_slot_leaders(slot_leaders: &[SlotLeader]) -> HashMap<Pubkey, Vec<usize>> {
-        slot_leaders
-            .iter()
-            .enumerate()
-            .map(|(i, leader)| (leader.id, i))
-            .into_group_map()
+    fn invert_slot_leaders(
+        slot_leaders: &[SlotLeader],
+        nodes_len: Option<usize>,
+    ) -> HashMap<Pubkey, Vec<usize>, PubkeyHasherBuilder> {
+        let mut grouped_slot_leaders = match nodes_len {
+            Some(nodes_len) => {
+                HashMap::with_capacity_and_hasher(nodes_len, PubkeyHasherBuilder::default())
+            }
+            None => HashMap::with_hasher(PubkeyHasherBuilder::default()),
+        };
+        for (slot, leader) in slot_leaders.iter().enumerate() {
+            grouped_slot_leaders
+                .entry(leader.id)
+                .and_modify(|slots: &mut Vec<usize>| slots.push(slot))
+                .or_insert(vec![slot]);
+        }
+        grouped_slot_leaders
     }
 
     pub fn get_slot_leaders(&self) -> &[SlotLeader] {
