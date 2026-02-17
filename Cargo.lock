@@ -541,6 +541,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.18",
  "tokio-util 0.7.18",
+ "wincode 0.4.4",
 ]
 
 [[package]]

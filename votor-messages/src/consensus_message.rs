@@ -5,6 +5,7 @@ use {
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
+    wincode::{containers::Pod, SchemaRead, SchemaWrite},
 };
 
 /// The seed used to derive the BLS keypair
@@ -18,11 +19,12 @@ pub type Block = (Slot, Hash);
     derive(AbiExample),
     frozen_abi(digest = "5eorzdc18a1sNEUDLAKPgrHCqHmA8ssuTwKSGsZLwBqR")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
     /// The signature.
+    #[wincode(with = "Pod<BLSSignature>")]
     pub signature: BLSSignature,
     /// The rank of the validator.
     pub rank: u16,
@@ -34,20 +36,33 @@ pub struct VoteMessage {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "CazjewshYYizgQuCgBBRv6gzasJpUvFVKoSeEirWRKgA")
 )]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
     /// Fast finalize certificate
-    FinalizeFast(Slot, Hash),
+    FinalizeFast(Slot, #[wincode(with = "Pod<Hash>")] Hash),
     /// Notarize certificate
-    Notarize(Slot, Hash),
+    Notarize(Slot, #[wincode(with = "Pod<Hash>")] Hash),
     /// Notarize fallback certificate
-    NotarizeFallback(Slot, Hash),
+    NotarizeFallback(Slot, #[wincode(with = "Pod<Hash>")] Hash),
     /// Skip certificate
     Skip(Slot),
     /// Genesis certificate
-    Genesis(Slot, Hash),
+    Genesis(Slot, #[wincode(with = "Pod<Hash>")] Hash),
 }
 
 impl CertificateType {
@@ -155,11 +170,12 @@ impl CertificateType {
     derive(AbiExample),
     frozen_abi(digest = "B5NsoWZr2Lpbbjqj8udwEKvae6bA37Pm4R92udZHxwfU")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
     /// The aggregate signature.
+    #[wincode(with = "Pod<BLSSignature>")]
     pub signature: BLSSignature,
     /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.
@@ -172,7 +188,7 @@ pub struct Certificate {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "BdKT6dbkLnTeGNMS8XtQkg6HTeHSQ6Z41Btc1rJ117PB")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
     /// A vote from a single party.
