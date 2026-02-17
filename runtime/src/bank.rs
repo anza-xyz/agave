@@ -129,10 +129,11 @@ use {
         loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_rent::Rent,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader},
+    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader, system_program},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
@@ -190,7 +191,7 @@ use {
                 AtomicBool, AtomicI64, AtomicU64,
                 Ordering::{self, AcqRel, Acquire, Relaxed},
             },
-            Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
+            Arc, LazyLock, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
         },
         time::{Duration, Instant},
     },
@@ -233,6 +234,14 @@ pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 /// This will be guaranteed through the VAT rules,
 /// only the top 2000 validators by stake will be present in vote account structures.
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
+
+/// The off-curve account where we store the Alpenglow clock. The clock sysvar has seconds
+/// resolution while the Alpenglow clock has nanosecond resolution.
+static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
+    let (pubkey, _) =
+        Pubkey::find_program_address(&[b"alpenclock"], &agave_feature_set::alpenglow::id());
+    pubkey
+});
 
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
@@ -2148,6 +2157,52 @@ impl Bank {
     pub fn clock(&self) -> sysvar::clock::Clock {
         from_account(&self.get_account(&sysvar::clock::id()).unwrap_or_default())
             .unwrap_or_default()
+    }
+
+    pub fn update_clock_from_footer(&self, unix_timestamp_nanos: i64) {
+        // On epoch boundaries, update epoch_start_timestamp
+        let epoch_start_timestamp = match (self.slot, self.parent()) {
+            (0, _) => self.unix_timestamp_from_genesis(),
+            (_, Some(parent)) if parent.epoch() != self.epoch() => {
+                unix_timestamp_nanos / 1_000_000_000
+            }
+            _ => self.clock().epoch_start_timestamp,
+        };
+
+        // Update clock sysvar
+        // NOTE: block footer UNIX timestamps are in nanoseconds, but clock sysvar stores timestamps
+        // in seconds
+        let clock = sysvar::clock::Clock {
+            slot: self.slot,
+            epoch_start_timestamp,
+            epoch: self.epoch_schedule().get_epoch(self.slot),
+            leader_schedule_epoch: self.epoch_schedule().get_leader_schedule_epoch(self.slot),
+            unix_timestamp: unix_timestamp_nanos / 1_000_000_000,
+        };
+        self.update_sysvar_account(&sysvar::clock::id(), |account| {
+            create_account(
+                &clock,
+                self.inherit_specially_retained_account_fields(account),
+            )
+        });
+
+        // Update Alpenglow clock
+        let alpenclock_size = wincode::serialized_size(&unix_timestamp_nanos).unwrap();
+        let lamports = Rent::default().minimum_balance(alpenclock_size as usize);
+        let alpenclock_account_data =
+            AccountSharedData::new_data(lamports, &unix_timestamp_nanos, &system_program::ID)
+                .unwrap();
+        self.store_account_and_update_capitalization(
+            &NANOSECOND_CLOCK_ACCOUNT,
+            &alpenclock_account_data,
+        );
+    }
+
+    pub fn get_nanosecond_clock(&self) -> Option<i64> {
+        self.get_account(&NANOSECOND_CLOCK_ACCOUNT).map(|acct| {
+            acct.deserialize_data()
+                .expect("Couldn't deserialize nanosecond resolution clock")
+        })
     }
 
     fn update_clock(&self, parent_epoch: Option<Epoch>) {
