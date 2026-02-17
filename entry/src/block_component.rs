@@ -533,7 +533,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::iter::repeat_n};
+    use {super::*, std::iter::repeat_n, wincode::config::DEFAULT_PREALLOCATION_SIZE_LIMIT};
 
     fn mock_entries(n: usize) -> Vec<Entry> {
         repeat_n(Entry::default(), n).collect()
@@ -603,8 +603,7 @@ mod tests {
     fn large_entry_batch_round_trips() {
         // Ensure an EntryBatch that exceeds wincode's default 4 MiB prealloc
         // limit can still round-trip.
-        const DEFAULT_PREALLOC_LIMIT: usize = 4 << 20; // 4 MiB
-        let num_entries = DEFAULT_PREALLOC_LIMIT / std::mem::size_of::<Entry>() + 1;
+        let num_entries = DEFAULT_PREALLOCATION_SIZE_LIMIT / std::mem::size_of::<Entry>() + 1;
 
         let comp = BlockComponent::new_entry_batch(mock_entries(num_entries)).unwrap();
         let bytes = wincode::serialize(&comp).unwrap();
