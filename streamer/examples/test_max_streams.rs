@@ -311,16 +311,23 @@ async fn main() {
     print_header("Experiment 3: Multi-connection quota sharing");
     println!("  Same staked peer opens 1 vs 4 connections, compare throughput");
 
-    // Parameters chosen so that the staked peer's quota is large enough
-    // to be meaningfully divided among multiple connections:
+    // Uses blast_concurrent with a simulated RTT so that MAX_STREAMS is
+    // the actual bottleneck (streams stay open for hold_duration, hitting
+    // the concurrent limit). Without a hold time, streams close instantly
+    // and the concurrent count never approaches MAX_STREAMS.
+    //
     //   capacity_tps = max_streams_per_ms * 1000 = 10_000
     //   share_tps = capacity_tps * 9B / 10B = 9_000 (90% of capacity)
-    //   quota = share_tps * MIN_RTT = 9_000 * 0.010 = 90 streams
-    //   1 conn: max_streams = 90
-    //   4 conn: max_streams = 90/4 = 22 each → total concurrent = 88 ≈ 90
+    //   simulated_rtt = 20ms
+    //   quota = share_tps * 0.020 = 180 streams
+    //   1 conn: max_streams = 180, throughput ≈ 180 / 0.020 = 9,000/s
+    //   4 conn: max_streams = 180/4 = 45 each, total = 180
+    //           throughput ≈ 180 / 0.020 = 9,000/s (same!)
+    //   Ratio ≈ 1.0 — opening more connections does not help.
     //
     // A background peer (10% stake) keeps the bucket saturated so that
     // compute_max_streams applies the stake-proportional quota.
+    let simulated_rtt3 = Duration::from_millis(20);
     let bg_keypair = Keypair::new();
     let staked_nodes3 = StakedNodes::new(
         Arc::new(HashMap::from([
@@ -329,7 +336,19 @@ async fn main() {
         ])),
         HashMap::<Pubkey, u64>::default(),
     );
-    let server = setup_server(10, 4, staked_nodes3);
+    let rtt_overrides3: HashMap<Pubkey, Duration> = HashMap::from([
+        (staked_keypair.pubkey(), simulated_rtt3),
+        (bg_keypair.pubkey(), simulated_rtt3),
+    ]);
+    let server = setup_server_with_config(
+        staked_nodes3,
+        SwQosConfig {
+            max_streams_per_ms: 10,
+            max_connections_per_staked_peer: 4,
+            rtt_overrides: rtt_overrides3,
+            ..Default::default()
+        },
+    );
     sleep(Duration::from_millis(200)).await;
 
     let measure_duration = Duration::from_secs(3);
@@ -371,21 +390,13 @@ async fn main() {
         lt.bucket_level()
     );
 
-    // Single connection throughput
+    // Single connection throughput (with simulated RTT hold)
     let single_conn = connect(&server.server_address, Some(&staked_keypair)).await;
-    let streams_before = server.stats.total_new_streams();
-    let single_throughput = blast_for_duration(&single_conn, measure_duration).await;
-    let streams_after = server.stats.total_new_streams();
+    let single_throughput = blast_concurrent(&single_conn, measure_duration, simulated_rtt3).await;
     println!(
-        "  1 connection: {single_throughput} streams in {}s (server delta: {})",
+        "  1 connection: {single_throughput} streams in {}s ({:.0}/s)",
         measure_duration.as_secs(),
-        streams_after - streams_before
-    );
-    println!(
-        "  parked after single-conn test: {} saturated={} bucket_level={}",
-        server.stats.parked_streams(),
-        lt.is_saturated(),
-        lt.bucket_level()
+        single_throughput as f64 / measure_duration.as_secs_f64(),
     );
 
     drop(single_conn);
@@ -405,8 +416,9 @@ async fn main() {
     let mut handles = Vec::new();
     for conn in conns {
         let total = multi_total.clone();
+        let rtt = simulated_rtt3;
         handles.push(tokio::spawn(async move {
-            let sent = blast_for_duration(&conn, measure_duration).await;
+            let sent = blast_concurrent(&conn, measure_duration, rtt).await;
             total.fetch_add(sent, Ordering::Relaxed);
             sent
         }));
@@ -423,8 +435,9 @@ async fn main() {
     println!("  background saturator sent: {bg_sent} streams");
 
     println!(
-        "  4 connections: {multi_throughput} streams total in {}s",
-        measure_duration.as_secs()
+        "  4 connections: {multi_throughput} streams total in {}s ({:.0}/s)",
+        measure_duration.as_secs(),
+        multi_throughput as f64 / measure_duration.as_secs_f64(),
     );
     for (i, count) in per_conn_results.iter().enumerate() {
         println!("    conn[{i}]: {count} streams");
@@ -437,14 +450,13 @@ async fn main() {
     };
     println!("  ratio (multi/single): {ratio:.2}x");
 
-    // On localhost, 4 connections = 4 parallel handler tasks, giving
-    // a sqrt(4) ≈ 2x throughput boost even with the same total concurrency
-    // budget. A ratio near 2.0 means the quota sharing is working correctly.
-    // Without sharing, the ratio would be ~4x (each conn gets full quota).
-    if ratio < 2.5 {
-        println!("  PASS: quota sharing limits multi-connection advantage (expected ~sqrt(N) on localhost)");
+    // With quota sharing, 4 connections get the same total concurrent
+    // budget as 1 connection (quota is divided by connection count).
+    // Ratio should be close to 1.0. Allow up to 1.5 for scheduling jitter.
+    if ratio < 1.5 {
+        println!("  PASS: quota sharing prevents multi-connection advantage (ratio ≈ 1.0)");
     } else {
-        println!("  WARN: ratio > 2.5x — quota sharing may not be effective enough");
+        println!("  WARN: ratio > 1.5x — quota sharing may not be effective enough");
     }
 
     print_stats(&server.stats);

@@ -210,9 +210,6 @@ pub struct StreamerStats {
     // opened from a particular IP address.
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
-    pub(crate) stream_load_ema: AtomicUsize, // deprecated
-    pub(crate) stream_load_ema_overflow: AtomicUsize, // deprecated
-    pub(crate) stream_load_capacity_overflow: AtomicUsize, // deprecated
     pub(crate) parked_streams: AtomicUsize,
     pub(crate) process_sampled_packets_us_hist: Mutex<histogram::Histogram>,
     pub(crate) perf_track_overhead_us: AtomicU64,
@@ -476,21 +473,6 @@ impl StreamerStats {
             (
                 "throttled_streams",
                 self.throttled_streams.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "stream_load_ema",
-                self.stream_load_ema.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "stream_load_ema_overflow",
-                self.stream_load_ema_overflow.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "stream_load_capacity_overflow",
-                self.stream_load_capacity_overflow.load(Ordering::Relaxed),
                 i64
             ),
             (

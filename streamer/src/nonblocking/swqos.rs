@@ -45,8 +45,9 @@ const MIN_RTT: Duration = Duration::from_millis(10);
 /// Base max concurrent streams at reference RTT when system is not saturated
 const DEFAULT_BASE_MAX_STREAMS: u32 = 2048;
 
-/// Base max concurrent streams for unstaked peers at reference RTT
-const DEFAULT_BASE_MAX_STREAMS_UNSTAKED: u32 = 128;
+/// Base max concurrent streams for unstaked peers at reference RTT.
+/// Matches the old stream_throttle effective limit of 200 TPS * 100ms = 20.
+const DEFAULT_BASE_MAX_STREAMS_UNSTAKED: u32 = 20;
 
 /// Per-key counter shared by all connections from the same peer (pubkey or IP).
 /// Tracks how many connections currently exist for the key, so that
@@ -106,6 +107,7 @@ impl SwQosConfig {
 
 pub struct SwQos {
     config: SwQosConfig,
+    capacity_tps: u64,
     load_tracker: Arc<LoadDebtTracker>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -152,6 +154,7 @@ impl SwQos {
 
         Self {
             config,
+            capacity_tps: max_streams_per_second,
             load_tracker: Arc::new(LoadDebtTracker::new(
                 max_streams_per_second,
                 burst_capacity,
@@ -192,8 +195,7 @@ impl SwQos {
             match context.peer_type {
                 ConnectionPeerType::Unstaked => Some(0), // park
                 ConnectionPeerType::Staked(stake) => {
-                    let capacity_tps = self.config.max_streams_per_ms * 1000;
-                    let share_tps = capacity_tps
+                    let share_tps = self.capacity_tps
                         .saturating_mul(stake)
                         .checked_div(context.total_stake)
                         .unwrap_or(0);
@@ -328,7 +330,14 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 stream_counter: None,
             },
             |(pubkey, stake, total_stake)| {
-                let peer_type = if stake == 0 {
+                // Demote ultra-low-stake peers to unstaked. The threshold
+                // mirrors the old stream_throttle heuristic: stake must be
+                // large enough to earn at least 1 stream per 100ms throttle
+                // interval at full capacity.
+                let min_stake_ratio =
+                    1_f64 / (self.config.max_streams_per_ms * 100) as f64;
+                let stake_ratio = stake as f64 / total_stake as f64;
+                let peer_type = if stake == 0 || stake_ratio < min_stake_ratio {
                     ConnectionPeerType::Unstaked
                 } else {
                     ConnectionPeerType::Staked(stake)

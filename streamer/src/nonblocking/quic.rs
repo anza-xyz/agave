@@ -641,29 +641,23 @@ async fn handle_connection<Q, C>(
         }
 
         // ── Accept stream ──
-        let mut stream = if recheck_on_timeout {
-            select! {
-                stream = connection.accept_uni() => match stream {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        debug!("stream error: {e:?}");
-                        break;
-                    }
-                },
-                _ = tokio::time::sleep(PARK_RECHECK_INTERVAL) => continue,
-                _ = cancel.cancelled() => break,
+        let recheck = async {
+            if recheck_on_timeout {
+                tokio::time::sleep(PARK_RECHECK_INTERVAL).await;
+            } else {
+                std::future::pending::<()>().await;
             }
-        } else {
-            select! {
-                stream = connection.accept_uni() => match stream {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        debug!("stream error: {e:?}");
-                        break;
-                    }
-                },
-                _ = cancel.cancelled() => break,
-            }
+        };
+        let mut stream = select! {
+            stream = connection.accept_uni() => match stream {
+                Ok(stream) => stream,
+                Err(e) => {
+                    debug!("stream error: {e:?}");
+                    break;
+                }
+            },
+            _ = recheck => continue,
+            _ = cancel.cancelled() => break,
         };
 
         // ── QoS callbacks ──

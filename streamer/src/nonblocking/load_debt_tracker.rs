@@ -38,7 +38,10 @@ impl LoadDebtTracker {
         refill_interval: Duration,
         saturation_threshold_tokens: u64,
     ) -> Self {
-        assert!(refill_interval.as_nanos() > 0, "refill_interval must be > 0");
+        assert!(
+            refill_interval.as_nanos() > 0,
+            "refill_interval must be > 0"
+        );
         assert!(
             saturation_threshold_tokens <= burst_capacity,
             "saturation_threshold_tokens must be <= burst_capacity"
@@ -129,7 +132,8 @@ impl LoadDebtTracker {
         self.bucket.fetch_add(refill, Ordering::Relaxed);
 
         // Cap at burst_capacity. A concurrent acquire() may slip in between
-        // the load and store, so a small number of tokens can be lost here.
+        // the load and store, but the magnitude is bounded by the number of
+        // concurrent threads in that window and is negligible for an approximate load signal.
         let level = self.bucket.load(Ordering::Relaxed);
         if level > self.burst_capacity {
             self.bucket.store(self.burst_capacity, Ordering::Relaxed);
