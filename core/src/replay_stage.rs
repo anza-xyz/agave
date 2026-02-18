@@ -6521,17 +6521,21 @@ pub(crate) mod tests {
 
         // If the root is now set to `parent_slot`, this filters out `previous_leader_slot` from the progress map,
         // which implies confirmation
-        let bank0 = Bank::new_for_tests(&genesis_config::create_genesis_config(10000).0);
-        let parent_slot_bank =
-            Bank::new_from_parent(Arc::new(bank0), &Pubkey::default(), parent_slot);
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config::create_genesis_config(10000).0)
+                .wrap_with_bank_forks_for_tests();
+        let parent_slot_bank = Bank::new_from_parent(bank0, &Pubkey::default(), parent_slot);
         let bank_forks = BankForks::new_rw_arc(parent_slot_bank);
-        let mut bank_forks = bank_forks.write().unwrap();
-        let bank5 =
-            Bank::new_from_parent(bank_forks.get(parent_slot).unwrap(), &Pubkey::default(), 5);
-        bank_forks.insert(bank5);
+        let parent_bank = bank_forks.read().unwrap().get(parent_slot).unwrap();
+        let _bank5 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            parent_bank,
+            &Pubkey::default(),
+            5,
+        );
 
         // Should purge only `previous_leader_slot` from the progress map
-        progress_map.handle_new_root(&bank_forks);
+        progress_map.handle_new_root(&bank_forks.read().unwrap());
 
         // Should succeed
         assert!(ReplayStage::check_propagation_for_start_leader(

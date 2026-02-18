@@ -996,17 +996,21 @@ impl ProgramTest {
             bank.store_account(address, account);
         }
         bank.set_capitalization_for_tests(bank.calculate_capitalization_for_tests());
-        // Advance beyond slot 0 for a slightly more realistic test environment
-        let bank = {
-            let bank = Arc::new(bank);
-            bank.fill_bank_with_ticks_for_tests();
-            let bank = Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
-            debug!("Bank slot: {}", bank.slot());
-            bank
-        };
-        let slot = bank.slot();
-        let last_blockhash = bank.last_blockhash();
+        // Advance beyond slot 0 for a slightly more realistic test environment.
+        // Create BankForks from the genesis bank first so fork_graph is set before creating
+        // the child bank (required for ProgramCache::extract in new_from_parent).
+        bank.fill_bank_with_ticks_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
+        let bank0 = bank_forks.read().unwrap().root_bank();
+        let bank1 = Bank::new_from_parent(bank0.clone(), bank0.leader_id(), bank0.slot() + 1);
+        let bank1 = {
+            let mut bf = bank_forks.write().unwrap();
+            bf.insert(bank1);
+            bf.working_bank()
+        };
+        debug!("Bank slot: {}", bank1.slot());
+        let slot = bank1.slot();
+        let last_blockhash = bank1.last_blockhash();
         let block_commitment_cache = Arc::new(RwLock::new(
             BlockCommitmentCache::new_for_tests_with_slots(slot, slot),
         ));

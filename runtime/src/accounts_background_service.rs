@@ -794,7 +794,8 @@ mod test {
         let mut genesis_config_info = create_genesis_config(10);
         genesis_config_info.genesis_config.epoch_schedule =
             EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
-        let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
+        let (mut bank, _bank_forks) = Bank::new_for_tests(&genesis_config_info.genesis_config)
+            .wrap_with_bank_forks_for_tests();
 
         // We need to get and set accounts-db's latest full snapshot slot to test
         // get_next_snapshot_request().  To workaround potential borrowing issues
@@ -919,7 +920,7 @@ mod test {
             pruned_banks_sender,
         ))));
 
-        let fork0_bank0 = Arc::new(bank);
+        let (fork0_bank0, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let fork0_bank1 = Arc::new(Bank::new_from_parent(
             fork0_bank0.clone(),
             &Pubkey::new_unique(),
@@ -964,6 +965,7 @@ mod test {
         drop(fork2_bank1);
         drop(fork0_bank1);
         drop(fork0_bank0);
+        drop(bank_forks);
         let num_banks_purged = pruned_banks_request_handler.handle_request(&fork0_bank3);
         assert_eq!(num_banks_purged, 7);
     }

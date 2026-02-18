@@ -359,6 +359,19 @@ mod tests {
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> VotingContext {
+        let (voting_context, _) = setup_voting_context_and_bank_forks_with_forks(
+            own_vote_sender,
+            validator_keypairs,
+            my_index,
+        );
+        voting_context
+    }
+
+    fn setup_voting_context_and_bank_forks_with_forks(
+        own_vote_sender: Sender<Vec<ConsensusMessage>>,
+        validator_keypairs: &[ValidatorVoteKeypairs],
+        my_index: usize,
+    ) -> (VotingContext, Arc<RwLock<BankForks>>) {
         // Can't have stake of 0, so start at 1 and go to 10. In descending order, so 0 has largest stake.
         let stakes: Vec<u64> = (1u64..=10).rev().map(|x| x.saturating_mul(100)).collect();
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
@@ -374,7 +387,7 @@ mod tests {
         let bls_sender = unbounded().0;
         let commitment_sender = unbounded().0;
         let consensus_metrics_sender = unbounded().0;
-        VotingContext {
+        let voting_context = VotingContext {
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
             identity_keypair: Arc::new(my_keys.node_keypair.insecure_clone()),
@@ -389,7 +402,8 @@ mod tests {
             wait_to_vote_slot: None,
             sharable_banks,
             consensus_metrics_sender,
-        }
+        };
+        (voting_context, bank_forks)
     }
 
     #[test]
@@ -615,8 +629,11 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
-            setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
+        let (mut voting_context, bank_forks) = setup_voting_context_and_bank_forks_with_forks(
+            own_vote_sender,
+            &validator_keypairs,
+            my_index,
+        );
 
         // Set the stake of my_index to 0 in epoch 2
         // For epoch 2, make validator my_index to be zero stake, others have stake in ascending order, 1 < 2 < ... < 9
@@ -644,7 +661,8 @@ mod tests {
         new_bank.set_epoch_stakes_for_test(2, epoch2_epoch_stakes);
         assert!(new_bank.epoch_stakes(2).is_some());
         new_bank.freeze();
-        let bank_forks = BankForks::new_rw_arc(new_bank);
+        bank_forks.write().unwrap().insert(new_bank);
+        bank_forks.write().unwrap().set_root(1, None, None);
         voting_context.sharable_banks = bank_forks.read().unwrap().sharable_banks();
 
         // If we try to vote for a slot in epoch 1, it should succeed

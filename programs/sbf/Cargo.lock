@@ -8499,6 +8499,7 @@ dependencies = [
  "solana-stake-interface",
  "solana-svm",
  "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-system-interface 3.0.0",

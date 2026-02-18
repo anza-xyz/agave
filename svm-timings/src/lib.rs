@@ -43,7 +43,7 @@ impl ProgramTiming {
 }
 
 /// Used as an index for `Metrics`.
-#[derive(Debug, Sequence)]
+#[derive(Debug, Copy, Clone, Sequence)]
 pub enum ExecuteTimingType {
     CheckUs,
     ValidateFeesUs,
