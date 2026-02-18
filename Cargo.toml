@@ -39,7 +39,7 @@ members = [
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
-    "gossip-bin",
+    "gossip-cli",
     "install",
     "io-uring",
     "keygen",

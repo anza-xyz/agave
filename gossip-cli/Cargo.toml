@@ -1,5 +1,5 @@
 [package]
-name = "solana-gossip-bin"
+name = "solana-gossip-cli"
 version = { workspace = true }
 authors = { workspace = true }
 description = "Binary crate providing the Solana Gossip command-line tool."
