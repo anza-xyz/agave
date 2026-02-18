@@ -488,7 +488,7 @@ solana-poh-config = "3.0.0"
 solana-poseidon = "4.0.0"
 solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
-solana-program = { version = "3.0.0", default-features = false }
+solana-program = { version = "4.0.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.0"
