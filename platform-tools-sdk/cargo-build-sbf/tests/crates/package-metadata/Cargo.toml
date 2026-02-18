@@ -18,7 +18,7 @@ solana-account-info = "=3.1.0"
 solana-package-metadata = "=2.2.1"
 solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.0"
-solana-pubkey = "=4.0.0"
+solana-pubkey = "=4.1.0"
 
 [lib]
 crate-type = ["cdylib"]

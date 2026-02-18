@@ -142,7 +142,7 @@ solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.0"
 solana-program-memory = "=3.1.0"
 solana-program-runtime = { path = "../../program-runtime", version = "=4.0.0-alpha.0" }
-solana-pubkey = { version = "=4.0.0", default-features = false }
+solana-pubkey = { version = "=4.1.0", default-features = false }
 solana-runtime = { path = "../../runtime", version = "=4.0.0-alpha.0" }
 solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.0.0-alpha.0" }
 solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.0.0-alpha.0" }
