@@ -7818,7 +7818,6 @@ dependencies = [
  "rayon",
  "solana-account",
  "solana-accounts-db",
- "solana-bls-signatures",
  "solana-client",
  "solana-client-traits",
  "solana-clock",

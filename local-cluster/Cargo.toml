@@ -34,7 +34,6 @@ rand = { workspace = true }
 rayon = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
-solana-bls-signatures = { workspace = true }
 solana-client = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
