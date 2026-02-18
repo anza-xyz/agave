@@ -6738,7 +6738,7 @@ fn test_write_accounts_to_cache_scenarios(
     batch_accounts: Vec<u64>,
     expected_lamports: Option<u64>,
     expected_ephemeral_skips: u64,
-    expected_ancestors_skipped: u64,
+    expected_ancestors_skips: u64,
     expected_duplicate_skips: u64,
 ) {
     let db = AccountsDb::new_single_for_tests();
@@ -6815,10 +6815,10 @@ fn test_write_accounts_to_cache_scenarios(
 
     let ancestors_zero_lamport = db
         .stats
-        .num_ancestors_zero_skipped
+        .num_ancestors_zero_lamport_skipped
         .load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(
-        ancestors_zero_lamport, expected_ancestors_skipped,
+        ancestors_zero_lamport, expected_ancestors_skips,
         "Wrong number of ancestors zero lamport skips"
     );
 

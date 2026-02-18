@@ -5618,8 +5618,8 @@ impl AccountsDb {
             cache_account_store_stats.num_duplicate_accounts_skipped,
             Ordering::Relaxed,
         );
-        self.stats.num_ancestors_zero_skipped.fetch_add(
-            cache_account_store_stats.num_ancestors_zero_skipped,
+        self.stats.num_ancestors_zero_lamport_skipped.fetch_add(
+            cache_account_store_stats.num_ancestors_zero_lamport_skipped,
             Ordering::Relaxed,
         );
         self.report_store_timings();
@@ -5771,15 +5771,15 @@ impl AccountsDb {
                 }
                 if account.is_zero_lamport() {
                     if ancestors.is_some() {
-                        if let Some(zero_lamport) = self.accounts_index.get_with_and_then(
+                        if let Some(is_zero_lamport) = self.accounts_index.get_with_and_then(
                             pubkey,
                             ancestors,
                             None,
                             true,
                             |(_, account)| account.is_zero_lamport(),
                         ) {
-                            if zero_lamport {
-                                cache_account_store_stats.num_ancestors_zero_skipped += 1;
+                            if is_zero_lamport {
+                                cache_account_store_stats.num_ancestors_zero_lamport_skipped += 1;
                                 return;
                             }
                         } else {
@@ -6070,9 +6070,9 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "num_ancestors_zero_skipped",
+                    "num_ancestors_zero_lamport_skipped",
                     self.stats
-                        .num_ancestors_zero_skipped
+                        .num_ancestors_zero_lamport_skipped
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
