@@ -79,6 +79,7 @@ dependencies = [
 [[package]]
 name = "agave-bridge"
 version = "0.1.0"
+source = "git+https://github.com/OliverNChalk/agave-scheduler#72643eae384ee8fe30fcd9735bddb1d3715ca509"
 dependencies = [
  "agave-feature-set",
  "agave-scheduler-bindings",
@@ -258,6 +259,7 @@ version = "4.0.0-alpha.0"
 [[package]]
 name = "agave-schedulers"
 version = "0.1.0"
+source = "git+https://github.com/OliverNChalk/agave-scheduler#72643eae384ee8fe30fcd9735bddb1d3715ca509"
 dependencies = [
  "agave-bridge",
  "agave-scheduler-bindings",
@@ -265,6 +267,7 @@ dependencies = [
  "agave-transaction-view",
  "chrono",
  "hashbrown 0.16.1",
+ "indexmap 2.13.0",
  "metrics",
  "min-max-heap",
  "serde",
@@ -1414,7 +1417,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "regex",
