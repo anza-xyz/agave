@@ -119,7 +119,7 @@ solana-nonce = "3.0.0"
 solana-perf = { path = "../perf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "../poh", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-runtime = { path = "../program-runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-pubkey = { version = "4.0.0", default-features = false }
+solana-pubkey = { version = "4.1.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rent = "3.0.0"
 solana-rpc = { path = "../rpc", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
