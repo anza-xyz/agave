@@ -556,18 +556,16 @@ impl ClusterInfoVoteListener {
         }
 
         // Track all vote slots for propagated check (iterates from most recent to oldest)
-        for slot in vote_slots.iter().filter(|slot| **slot > root).rev() {
+        for slot in vote_slots
+            .iter()
+            .filter(|slot| **slot > root && **slot >= *latest_vote_slot)
+            .rev()
+        {
             let slot = *slot;
 
             // If we don't have stake information, ignore it
             let epoch = root_bank.epoch_schedule().get_epoch(slot);
             if root_bank.epoch_stakes(epoch).is_none() {
-                continue;
-            }
-
-            if slot < *latest_vote_slot {
-                // Filter out old slots for the propagated check tracking,
-                // as the propagated check is able to roll up votes for descendants.
                 continue;
             }
 
