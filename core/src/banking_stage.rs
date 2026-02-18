@@ -763,7 +763,7 @@ mod external {
             server::{AgaveSession, AgaveWorkerSession, Server},
             ClientLogon,
         },
-        std::os::fd::AsRawFd,
+        std::os::fd::IntoRawFd,
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -879,7 +879,7 @@ mod external {
             })?;
 
             // Sscheduler-side session.
-            let fds: Vec<i32> = files.iter().map(|f| f.as_raw_fd()).collect();
+            let fds: Vec<_> = files.into_iter().map(|file| file.into_raw_fd()).collect();
             let client_session = client::setup_session(&logon, fds).map_err(|err| {
                 error!("Failed to setup client session; err={err}");
             })?;
