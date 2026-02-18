@@ -11,6 +11,7 @@
 #![warn(unsafe_op_in_unsafe_fn)]
 
 pub mod consensus_message;
+pub mod fraction;
 pub mod migration;
 pub mod reward_certificate;
 pub mod vote;
