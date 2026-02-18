@@ -162,6 +162,7 @@ use {
         },
     },
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_transaction as system_transaction,
@@ -602,6 +603,7 @@ impl PartialEq for Bank {
             expected_bank_hash: _,
             bank_hash_stats: _,
             epoch_rewards_calculation_cache: _,
+            runtime_feature_set: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -946,6 +948,10 @@ pub struct Bank {
     /// This is used to avoid recalculating the same epoch rewards at epoch boundary.
     /// The hashmap is keyed by parent_hash.
     epoch_rewards_calculation_cache: Arc<Mutex<HashMap<Hash, Arc<PartitionedRewardsCalculation>>>>,
+
+    /// Cached SVMFeatureSet, computed once at bank creation to avoid several
+    /// dozen HashMap lookups per transaction batch dispatch.
+    runtime_feature_set: SVMFeatureSet,
 }
 
 #[derive(Debug)]
@@ -1154,6 +1160,7 @@ impl Bank {
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
+            runtime_feature_set: SVMFeatureSet::default(),
         };
 
         bank.transaction_processor =
@@ -1401,6 +1408,7 @@ impl Bank {
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
+            runtime_feature_set: parent.runtime_feature_set,
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1945,6 +1953,7 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
+            runtime_feature_set: SVMFeatureSet::default(),
         };
 
         // Sanity assertions between bank snapshot and genesis config
@@ -3581,7 +3590,7 @@ impl Bank {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
-            feature_set: self.feature_set.runtime_features(),
+            feature_set: self.runtime_feature_set,
             program_runtime_environments_for_execution: self
                 .transaction_processor
                 .environments
@@ -4449,6 +4458,8 @@ impl Bank {
             .unwrap()
             .upcoming_epoch = self.epoch;
         self.transaction_processor.environments = environments;
+
+        self.runtime_feature_set = self.feature_set.runtime_features();
     }
 
     fn create_program_runtime_environments(
@@ -5701,6 +5712,8 @@ impl Bank {
                 );
             }
         }
+
+        self.runtime_feature_set = self.feature_set.runtime_features();
     }
 
     fn apply_new_builtin_program_feature_transitions(
