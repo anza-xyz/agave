@@ -1061,16 +1061,16 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     if let Some(second_level) = entries.get(key) {
                         let mut filter_by_deployment_slot = None;
                         for entry in second_level.iter().rev() {
-                            let deployment_slot = entry.deployment_slot;
                             let required_deployment_slot =
-                                filter_by_deployment_slot.unwrap_or(deployment_slot);
-                            if required_deployment_slot != deployment_slot {
+                                filter_by_deployment_slot.unwrap_or(entry.deployment_slot);
+                            if required_deployment_slot != entry.deployment_slot {
                                 continue;
                             }
-                            let entry_in_same_branch = deployment_slot <= self.latest_root_slot
+                            let entry_in_same_branch = entry.deployment_slot
+                                <= self.latest_root_slot
                                 || matches!(
                                     locked_fork_graph.relationship(
-                                        deployment_slot,
+                                        entry.deployment_slot,
                                         loaded_programs_for_tx_batch.slot
                                     ),
                                     BlockRelation::Equal | BlockRelation::Ancestor
@@ -1091,8 +1091,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                         // program we're looking at in this iteration. We just have to find
                                         // one with the correct environment and can skip entries for any
                                         // other deployment slot while searching further.
-                                        filter_by_deployment_slot =
-                                            filter_by_deployment_slot.or(Some(deployment_slot));
+                                        filter_by_deployment_slot = filter_by_deployment_slot
+                                            .or(Some(entry.deployment_slot));
                                         continue;
                                     }
                                     if !Self::matches_criteria(entry, match_criteria) {
@@ -1111,7 +1111,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
                                     Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counter(
-                                        deployment_slot,
+                                        entry.deployment_slot,
                                         entry.account_owner,
                                         ProgramCacheEntryType::DelayVisibility,
                                         entry.tx_usage_counter.clone(),
