@@ -757,7 +757,10 @@ mod external {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
         agave_bridge::SchedulerBindings,
-        agave_schedulers::{greedy::GreedyScheduler, shared::PriorityId},
+        agave_schedulers::{
+            greedy::{GreedyArgs, GreedyScheduler},
+            shared::PriorityId,
+        },
         agave_scheduling_utils::handshake::{
             client,
             server::{AgaveSession, AgaveWorkerSession, Server},
@@ -893,7 +896,13 @@ mod external {
                     .name("solExtSched".to_string())
                     .spawn(move || {
                         let mut bridge = SchedulerBindings::<PriorityId>::new(client_session);
-                        let mut scheduler = GreedyScheduler::new(None);
+                        let mut scheduler = GreedyScheduler::new(
+                            None,
+                            GreedyArgs {
+                                unchecked_capacity: 2usize.pow(16),
+                                checked_capacity: 2usize.pow(16),
+                            },
+                        );
                         loop {
                             // TODO: This will panic if agave side goes quiet, need a
                             // proper graceful shutdown.
