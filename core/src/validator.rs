@@ -2459,20 +2459,16 @@ fn maybe_warp_slot(
     snapshot_controller: &SnapshotController,
 ) -> Result<(), String> {
     if let Some(warp_slot) = config.warp_slot {
-        let mut bank_forks = bank_forks.write().unwrap();
-
-        let working_bank = bank_forks.working_bank();
-
-        if warp_slot <= working_bank.slot() {
+        let working_slot = bank_forks.read().unwrap().working_bank().slot();
+        if warp_slot <= working_slot {
             return Err(format!(
-                "warp slot ({}) cannot be less than the working bank slot ({})",
-                warp_slot,
-                working_bank.slot()
+                "warp slot ({warp_slot}) cannot be less than the working bank slot \
+                 ({working_slot})",
             ));
         }
         info!("warping to slot {warp_slot}");
 
-        let root_bank = bank_forks.root_bank();
+        let root_bank = bank_forks.read().unwrap().root_bank();
 
         // An accounts hash calculation from storages will occur in warp_from_parent() below.  This
         // requires that the accounts cache has been flushed, which requires the parent slot to be
@@ -2480,17 +2476,17 @@ fn maybe_warp_slot(
         root_bank.squash();
         root_bank.force_flush_accounts_cache();
 
-        bank_forks.insert(Bank::warp_from_parent(
-            root_bank,
-            &Pubkey::default(),
-            warp_slot,
-        ));
-        bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
-        leader_schedule_cache.set_root(&bank_forks.root_bank());
+        let warped = Bank::warp_from_parent(root_bank, &Pubkey::default(), warp_slot);
+        {
+            let mut bank_forks = bank_forks.write().unwrap();
+            bank_forks.insert(warped);
+            bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
+            leader_schedule_cache.set_root(&bank_forks.root_bank());
+        }
 
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(
             ledger_path,
-            &bank_forks.root_bank(),
+            &bank_forks.read().unwrap().root_bank(),
             None,
             &config.snapshot_config.full_snapshot_archives_dir,
             &config.snapshot_config.incremental_snapshot_archives_dir,
@@ -2504,7 +2500,6 @@ fn maybe_warp_slot(
             full_snapshot_archive_info.path().display()
         );
 
-        drop(bank_forks);
         // Process blockstore after warping bank forks to make sure tower and
         // bank forks are in sync.
         process_blockstore.process()?;

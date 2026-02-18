@@ -655,15 +655,14 @@ mod test {
             (transaction, signature)
         };
 
-        let working_bank = bank_forks
-            .write()
-            .unwrap()
-            .insert(Bank::new_from_parent(
-                root_bank.clone(),
-                &Pubkey::default(),
-                2,
-            ))
-            .clone_without_scheduler();
+        let working_bank = {
+            let bank = Bank::new_from_parent(root_bank.clone(), &Pubkey::default(), 2);
+            bank_forks
+                .write()
+                .unwrap()
+                .insert(bank)
+                .clone_without_scheduler()
+        };
 
         let (non_rooted_transaction, non_rooted_signature) = {
             let transaction = system_transaction::transfer(
@@ -946,15 +945,14 @@ mod test {
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
         root_bank.store_account(&nonce_address, &nonce_account);
 
-        let working_bank = bank_forks
-            .write()
-            .unwrap()
-            .insert(Bank::new_from_parent(
-                root_bank.clone(),
-                &Pubkey::default(),
-                2,
-            ))
-            .clone_without_scheduler();
+        let working_bank = {
+            let bank = Bank::new_from_parent(root_bank.clone(), &Pubkey::default(), 2);
+            bank_forks
+                .write()
+                .unwrap()
+                .insert(bank)
+                .clone_without_scheduler()
+        };
 
         let (non_rooted_transaction, non_rooted_signature) = {
             let transaction = system_transaction::transfer(

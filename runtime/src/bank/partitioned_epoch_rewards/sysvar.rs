@@ -107,7 +107,7 @@ mod tests {
     use {
         super::*, crate::bank::tests::create_genesis_config, solana_account::ReadableAccount,
         solana_epoch_schedule::EpochSchedule, solana_native_token::LAMPORTS_PER_SOL,
-        solana_pubkey::Pubkey, std::sync::Arc,
+        solana_pubkey::Pubkey,
     };
 
     /// Test `EpochRewards` sysvar creation, distribution, and burning.
@@ -118,7 +118,8 @@ mod tests {
         let (mut genesis_config, _mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
         let total_rewards = 1_000_000_000;
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
@@ -156,7 +157,12 @@ mod tests {
         // Create a child bank to test parent_blockhash
         let parent_blockhash = bank.last_blockhash();
         let parent_slot = bank.slot();
-        let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), parent_slot + 1);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            &Pubkey::default(),
+            parent_slot + 1,
+        );
         // Also note that running `create_epoch_rewards_sysvar()` against a bank
         // with an existing EpochRewards sysvar clobbers the previous values
         bank.create_epoch_rewards_sysvar(10, 42, num_partitions, &point_value);

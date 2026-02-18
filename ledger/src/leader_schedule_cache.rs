@@ -540,11 +540,14 @@ mod tests {
             target_slot += 1;
         }
 
-        let bank = bank_forks
-            .write()
-            .unwrap()
-            .insert(Bank::new_from_parent(bank, &Pubkey::default(), target_slot))
-            .clone_without_scheduler();
+        let bank = {
+            let new_bank = Bank::new_from_parent(bank, &Pubkey::default(), target_slot);
+            bank_forks
+                .write()
+                .unwrap()
+                .insert(new_bank)
+                .clone_without_scheduler()
+        };
         let mut expected_slot = 0;
         let epoch = bank.get_leader_schedule_epoch(target_slot);
         for i in 0..epoch {
@@ -591,7 +594,7 @@ mod tests {
     #[test]
     fn test_schedule_for_unconfirmed_epoch() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let cache = LeaderScheduleCache::new_from_bank(&bank);
 
         assert_eq!(cache.max_epoch.load(Ordering::Acquire), 1);
@@ -606,16 +609,21 @@ mod tests {
         assert_eq!(bank.get_epoch_and_slot_index(96).0, 2);
         assert!(cache.slot_leader_at(96, Some(&bank)).is_none());
 
-        let bank2 = Bank::new_from_parent(bank, &solana_pubkey::new_rand(), 95);
+        let bank2 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            &solana_pubkey::new_rand(),
+            95,
+        );
         assert!(bank2.epoch_vote_accounts(2).is_some());
 
         // Set root for a slot in epoch 1, so that epoch 2 is now confirmed
-        cache.set_root(&bank2);
+        cache.set_root(bank2.as_ref());
         assert_eq!(cache.max_epoch.load(Ordering::Acquire), 2);
-        assert!(cache.slot_leader_at(96, Some(&bank2)).is_some());
+        assert!(cache.slot_leader_at(96, Some(bank2.as_ref())).is_some());
         assert_eq!(bank2.get_epoch_and_slot_index(223).0, 2);
-        assert!(cache.slot_leader_at(223, Some(&bank2)).is_some());
+        assert!(cache.slot_leader_at(223, Some(bank2.as_ref())).is_some());
         assert_eq!(bank2.get_epoch_and_slot_index(224).0, 3);
-        assert!(cache.slot_leader_at(224, Some(&bank2)).is_none());
+        assert!(cache.slot_leader_at(224, Some(bank2.as_ref())).is_none());
     }
 }
