@@ -588,6 +588,7 @@ impl PartialEq for Bank {
             cache_for_accounts_lt_hash: _,
             stats_for_accounts_lt_hash: _,
             block_id,
+            expected_bank_hash: _,
             bank_hash_stats: _,
             epoch_rewards_calculation_cache: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
@@ -930,6 +931,10 @@ pub struct Bank {
     /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
     block_id: RwLock<Option<Hash>>,
 
+    /// Expected bank hash provided by block footer (if any). Set when processing footer; verified
+    /// later when the bank is frozen.
+    expected_bank_hash: RwLock<Option<Hash>>,
+
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
 
@@ -1143,6 +1148,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
@@ -1390,6 +1396,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
         };
@@ -1933,6 +1940,7 @@ impl Bank {
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
+            expected_bank_hash: RwLock::new(None),
         };
 
         // Sanity assertions between bank snapshot and genesis config
@@ -2575,6 +2583,31 @@ impl Bank {
             *hash = self.hash_internal_state();
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
+    }
+
+    /// Freeze the bank and verify its computed bank hash against the expected bank hash,
+    /// If hashes do not match, return Err with (expected_hash, computed_hash)
+    pub fn freeze_and_verify_bank_hash(&self) -> std::result::Result<(), (Hash, Hash)> {
+        self.freeze();
+        let computed_hash = self.hash();
+
+        if let Some(expected_hash) = self.expected_bank_hash() {
+            if expected_hash != computed_hash {
+                return Err((expected_hash, computed_hash));
+            }
+        }
+        Ok(())
+    }
+
+    /// Set the expected bank hash (from an external footer).  This is stored for later verification
+    /// when the bank is frozen.
+    pub fn set_expected_bank_hash(&self, hash: Hash) {
+        *self.expected_bank_hash.write().unwrap() = Some(hash);
+    }
+
+    /// Returns the expected bank hash if any.
+    pub fn expected_bank_hash(&self) -> Option<Hash> {
+        *self.expected_bank_hash.read().unwrap()
     }
 
     // dangerous; don't use this; this is only needed for ledger-tool's special command

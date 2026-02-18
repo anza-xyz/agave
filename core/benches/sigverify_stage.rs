@@ -20,6 +20,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::{
         packet::{to_packet_batches, PacketBatch},
+        sigverify,
         test_tx::test_tx,
     },
     solana_signer::Signer,
@@ -27,6 +28,7 @@ use {
     std::{
         borrow::Cow,
         hint::black_box,
+        sync::Arc,
         time::{Duration, Instant},
     },
 };
@@ -165,7 +167,8 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     trace!("start");
     let (packet_s, packet_r) = unbounded();
     let (verified_s, verified_r) = BankingTracer::channel_for_test();
-    let verifier = TransactionSigVerifier::new(verified_s, None);
+    let threadpool = Arc::new(sigverify::threadpool_for_benches());
+    let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
     let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerBench", "bench");
 
     bencher.iter(move || {
@@ -239,7 +242,8 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
 fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32) {
     let (batches0, num_valid_packets) = prepare_batches(discard_factor);
     let (verified_s, _verified_r) = BankingTracer::channel_for_test();
-    let verifier = TransactionSigVerifier::new(verified_s, None);
+    let threadpool = Arc::new(sigverify::threadpool_for_benches());
+    let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
 
     let mut c = 0;
     let mut total_shrink_time = 0;

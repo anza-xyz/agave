@@ -2,10 +2,10 @@
 pull_request_rules:
   - name: label changes from community
     conditions:
+      - author≠@agave-external-triage
       - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
-      - author≠@monorepo-triage
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
@@ -16,10 +16,10 @@ pull_request_rules:
           - need:merge-assist
   - name: request review for community changes
     conditions:
+      - author≠@agave-external-triage
       - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
-      - author≠@monorepo-triage
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
@@ -34,7 +34,7 @@ pull_request_rules:
       request_reviews:
         teams:
           - "@anza-xyz/community-pr-subscribers"
-  - name: label changes from monorepo-triage
+  - name: label changes from agave-external-triage
     conditions:
       - author≠@anza
       - author≠mergify[bot]
@@ -42,7 +42,7 @@ pull_request_rules:
       - author≠github-actions[bot]
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
-      - author=@monorepo-triage
+      - author=@agave-external-triage
     actions:
       label:
         add:

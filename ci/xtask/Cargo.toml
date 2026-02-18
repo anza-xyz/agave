@@ -20,7 +20,7 @@ frozen-abi = []
 [dependencies]
 anyhow = "1.0.101"
 cargo_metadata = "0.23.1"
-clap = { version = "4.5.58", features = ["derive"] }
+clap = { version = "4.5.59", features = ["derive"] }
 env_logger = "0.11.9"
 ignore = "0.4.25"
 log = "0.4.28"
@@ -29,7 +29,7 @@ semver = "1.0.27"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.48.0", features = ["full"] }
-toml_edit = { version = "0.25.1", features = ["serde"] }
+toml_edit = { version = "0.25.2", features = ["serde"] }
 walkdir = "2.5.0"
 
 [dev-dependencies]

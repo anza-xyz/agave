@@ -9,6 +9,7 @@ use {
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError},
     itertools::Itertools,
+    rayon::ThreadPool,
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
@@ -20,6 +21,7 @@ use {
     solana_streamer::streamer::{self, StreamerError},
     solana_time_utils as timing,
     std::{
+        sync::Arc,
         thread::{self, Builder, JoinHandle},
         time::Instant,
     },
@@ -59,8 +61,10 @@ pub trait SigVerifier {
     fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
 }
 
-#[derive(Default, Clone)]
-pub struct DisabledSigVerifier {}
+#[derive(Clone)]
+pub struct DisabledSigVerifier {
+    pub thread_pool: Arc<ThreadPool>,
+}
 
 #[derive(Default)]
 struct SigVerifierStats {
@@ -220,7 +224,7 @@ impl SigVerifier for DisabledSigVerifier {
         mut batches: Vec<PacketBatch>,
         _valid_packets: usize,
     ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify_disabled(&mut batches);
+        sigverify::ed25519_verify_disabled(&self.thread_pool, &mut batches);
         batches
     }
 
@@ -442,8 +446,10 @@ mod tests {
         crossbeam_channel::unbounded,
         solana_perf::{
             packet::{to_packet_batches, Packet, RecycledPacketBatch},
+            sigverify,
             test_tx::test_tx,
         },
+        std::sync::Arc,
     };
 
     fn count_non_discard(packet_batches: &[PacketBatch]) -> usize {
@@ -503,7 +509,8 @@ mod tests {
         trace!("start");
         let (packet_s, packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let verifier = TransactionSigVerifier::new(verified_s, None);
+        let threadpool = Arc::new(sigverify::threadpool_for_tests());
+        let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
         let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerTest", "test");
 
         let now = Instant::now();

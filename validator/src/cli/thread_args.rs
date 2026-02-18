@@ -19,6 +19,7 @@ pub struct DefaultThreadArgs {
     pub rayon_global_threads: String,
     pub replay_forks_threads: String,
     pub replay_transactions_threads: String,
+    pub tpu_sigverify_threads: String,
     pub tpu_transaction_forward_receive_threads: String,
     pub tpu_transaction_receive_threads: String,
     pub tpu_vote_transaction_receive_threads: String,
@@ -42,6 +43,7 @@ impl Default for DefaultThreadArgs {
             replay_forks_threads: ReplayForksThreadsArg::bounded_default().to_string(),
             replay_transactions_threads: ReplayTransactionsThreadsArg::bounded_default()
                 .to_string(),
+            tpu_sigverify_threads: TpuSigverifyThreadsArg::bounded_default().to_string(),
             tpu_transaction_forward_receive_threads:
                 TpuTransactionForwardReceiveThreadArgs::bounded_default().to_string(),
             tpu_transaction_receive_threads: TpuTransactionReceiveThreads::bounded_default()
@@ -65,6 +67,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
         new_thread_arg::<RayonGlobalThreadsArg>(&defaults.rayon_global_threads),
         new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
         new_thread_arg::<ReplayTransactionsThreadsArg>(&defaults.replay_transactions_threads),
+        new_thread_arg::<TpuSigverifyThreadsArg>(&defaults.tpu_sigverify_threads),
         new_thread_arg::<TpuTransactionForwardReceiveThreadArgs>(
             &defaults.tpu_transaction_forward_receive_threads,
         ),
@@ -98,6 +101,7 @@ pub struct NumThreadConfig {
     pub rayon_global_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub tpu_sigverify_threads: NonZeroUsize,
     pub tpu_transaction_forward_receive_threads: NonZeroUsize,
     pub tpu_transaction_receive_threads: NonZeroUsize,
     pub tpu_vote_transaction_receive_threads: NonZeroUsize,
@@ -138,6 +142,11 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         replay_transactions_threads: value_t_or_exit!(
             matches,
             ReplayTransactionsThreadsArg::NAME,
+            NonZeroUsize
+        ),
+        tpu_sigverify_threads: value_t_or_exit!(
+            matches,
+            TpuSigverifyThreadsArg::NAME,
             NonZeroUsize
         ),
         tpu_transaction_forward_receive_threads: value_t_or_exit!(
@@ -301,6 +310,18 @@ impl ThreadArg for ReplayTransactionsThreadsArg {
 
     fn default() -> usize {
         num_cpus::get()
+    }
+}
+
+struct TpuSigverifyThreadsArg;
+impl ThreadArg for TpuSigverifyThreadsArg {
+    const NAME: &'static str = "tpu_sigverify_threads";
+    const LONG_NAME: &'static str = "tpu-sigverify-threads";
+    const HELP: &'static str =
+        "Number of threads to use for performing signature verification of received transactions";
+
+    fn default() -> usize {
+        get_thread_count()
     }
 }
 

@@ -64,7 +64,7 @@ clap = "2.33.1"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 dashmap = "5.5.3"
-futures = "0.3.31"
+futures = "0.3.32"
 histogram = "0.6.9"
 itertools = "0.14.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
@@ -108,7 +108,7 @@ solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "../gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-hash = "4.1.0"
+solana-hash = "4.2.0"
 solana-inflation = "3.0.0"
 solana-instruction = "3.1.0"
 solana-keypair = "3.0.1"
@@ -136,7 +136,7 @@ solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.0.
 solana-sbpf = { version = "=0.14.4", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.0"
-solana-signature = { version = "3.2.0", default-features = false }
+solana-signature = { version = "3.3.0", default-features = false }
 solana-signer = "3.0.0"
 solana-stake-interface = "2.0.2"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

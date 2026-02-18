@@ -80,7 +80,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "ahash 0.8.12",
  "solana-epoch-schedule",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-pubkey 4.0.0",
  "solana-sha256-hasher",
@@ -106,7 +106,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "log",
  "solana-clock",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-status",
@@ -140,7 +140,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "dashmap",
- "futures 0.3.31",
+ "futures 0.3.32",
  "histogram",
  "itertools 0.14.0",
  "log",
@@ -169,7 +169,7 @@ dependencies = [
  "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-inflation",
  "solana-instruction",
  "solana-keypair",
@@ -289,7 +289,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-clock",
  "solana-genesis-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-lattice-hash",
  "solana-measure",
  "solana-metrics",
@@ -331,7 +331,7 @@ dependencies = [
  "solana-clock",
  "solana-cpi",
  "solana-curve25519 4.0.0",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keccak-hasher",
  "solana-loader-v3-interface",
@@ -361,7 +361,7 @@ dependencies = [
 name = "agave-transaction-view"
 version = "4.0.0-alpha.0"
 dependencies = [
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-packet 4.0.0",
  "solana-pubkey 4.0.0",
@@ -404,7 +404,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-genesis-config",
  "solana-gossip",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-ledger",
  "solana-measure",
@@ -439,7 +439,7 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-pubkey 4.0.0",
  "thiserror 2.0.18",
  "wincode 0.4.4",
@@ -610,9 +610,9 @@ dependencies = [
 
 [[package]]
 name = "arc-swap"
-version = "1.8.1"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ded5f9a03ac8f24d1b8a25101ee812cd32cdc8c50a4c50237de2c4915850e73"
+checksum = "f9f3647c145568cec02c42054e07bdf9a5a698e15b466fb2341bfc393cd24aa5"
 dependencies = [
  "rustversion",
 ]
@@ -1079,7 +1079,7 @@ checksum = "d18bc4e506fbb85ab7392ed993a7db4d1a452c71b75a246af4a80ab8c9d2dd50"
 dependencies = [
  "assert_matches",
  "aya-obj",
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "bytes",
  "libc",
  "log",
@@ -1206,7 +1206,7 @@ version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
@@ -1226,9 +1226,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.10.0"
+version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
+checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 dependencies = [
  "serde_core",
 ]
@@ -2640,9 +2640,9 @@ checksum = "3a471a38ef8ed83cd6e40aa59c1ffe17db6855c18e3604d9c4ed8c08ebc28678"
 
 [[package]]
 name = "futures"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65bc07b1a8bc7c85c5f2e110c476c7389b4554ba72af57d8445ea63a576b0876"
+checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -2655,9 +2655,9 @@ dependencies = [
 
 [[package]]
 name = "futures-channel"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
+checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -2665,33 +2665,32 @@ dependencies = [
 
 [[package]]
 name = "futures-core"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
+checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
 
 [[package]]
 name = "futures-executor"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e28d1d997f585e54aebc3f97d39e72338912123a67330d723fdbb564d646c9f"
+checksum = "baf29c38818342a3b26b5b923639e7b1f4a61fc5e76102d4b1981c6dc7a7579d"
 dependencies = [
  "futures-core",
  "futures-task",
  "futures-util",
- "num_cpus",
 ]
 
 [[package]]
 name = "futures-io"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
+checksum = "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718"
 
 [[package]]
 name = "futures-macro"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
+checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2700,21 +2699,21 @@ dependencies = [
 
 [[package]]
 name = "futures-sink"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e575fab7d1e0dcb8d0c7bcf9a63ee213816ab51902e6d244a95819acacf1d4f7"
+checksum = "c39754e157331b013978ec91992bde1ac089843443c49cbc7f46150b0fad0893"
 
 [[package]]
 name = "futures-task"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
+checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
 
 [[package]]
 name = "futures-util"
-version = "0.3.31"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
+checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
  "futures 0.1.31",
  "futures-channel",
@@ -2723,9 +2722,9 @@ dependencies = [
  "futures-macro",
  "futures-sink",
  "futures-task",
+ "libc",
  "memchr",
  "pin-project-lite",
- "pin-utils",
  "slab",
 ]
 
@@ -2828,7 +2827,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8af59a261bcf42f45d1b261232847b9b850ba0a1419d6100698246fb66e9240"
 dependencies = [
  "arc-swap",
- "futures 0.3.31",
+ "futures 0.3.32",
  "log",
  "reqwest 0.11.27",
  "serde",
@@ -3150,7 +3149,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca815a891b24fdfb243fa3239c86154392b0953ee584aa1a2a1f66d20cbe75cc"
 dependencies = [
  "bytes",
- "futures 0.3.31",
+ "futures 0.3.32",
  "headers",
  "http 0.2.12",
  "hyper 0.14.32",
@@ -3466,9 +3465,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.18.3"
+version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9375e112e4b463ec1b1c6c011953545c65a30164fbab5b581df32b3abf0dcb88"
+checksum = "25470f23803092da7d239834776d653104d551bc4d7eacaf31e6837854b8e9eb"
 dependencies = [
  "console 0.16.2",
  "portable-atomic",
@@ -3501,7 +3500,7 @@ version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd7bddefd0a8833b88a4b68f90dae22c7450d11b354198baee3874fd811b344"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "cfg-if 1.0.4",
  "libc",
 ]
@@ -3653,7 +3652,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2b99d4207e2a04fb4581746903c2bb7eb376f88de9c699d0f3e10feeac0cd3a"
 dependencies = [
  "derive_more 0.99.20",
- "futures 0.3.31",
+ "futures 0.3.32",
  "jsonrpc-core",
  "jsonrpc-pubsub",
  "log",
@@ -3668,7 +3667,7 @@ version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14f7f76aef2d054868398427f6c54943cf3d1caa9a7ec7d0c38d69df97a965eb"
 dependencies = [
- "futures 0.3.31",
+ "futures 0.3.32",
  "futures-executor",
  "futures-util",
  "log",
@@ -3683,7 +3682,7 @@ version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b51da17abecbdab3e3d4f26b01c5ec075e88d3abe3ab3b05dc9aa69392764ec0"
 dependencies = [
- "futures 0.3.31",
+ "futures 0.3.32",
  "jsonrpc-client-transports",
 ]
 
@@ -3705,7 +3704,7 @@ version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1dea6e07251d9ce6a552abfb5d7ad6bc290a4596c8dcc3d795fae2bbdc1f3ff"
 dependencies = [
- "futures 0.3.31",
+ "futures 0.3.32",
  "hyper 0.14.32",
  "jsonrpc-core",
  "jsonrpc-server-utils",
@@ -3721,7 +3720,7 @@ version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240f87695e6c6f62fb37f05c02c04953cf68d6408b8c1c89de85c7a0125b1011"
 dependencies = [
- "futures 0.3.31",
+ "futures 0.3.32",
  "jsonrpc-core",
  "lazy_static",
  "log",
@@ -3737,7 +3736,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa4fdea130485b572c39a460d50888beb00afb3e35de23ccd7fad8ff19f0e0d4"
 dependencies = [
  "bytes",
- "futures 0.3.31",
+ "futures 0.3.32",
  "globset",
  "jsonrpc-core",
  "lazy_static",
@@ -3820,7 +3819,7 @@ version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "416f7e718bdb06000964960ffa43b4335ad4012ae8b99060261aa4a8088d5ccb"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "libc",
  "redox_syscall 0.5.18",
 ]
@@ -4036,9 +4035,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.9.9"
+version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "744133e4a0e0a658e1374cf3bf8e415c4052a15a111acd372764c55b4177d490"
+checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
 dependencies = [
  "libc",
 ]
@@ -4190,7 +4189,7 @@ version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "225e7cfe711e0ba79a68baeddb2982723e4235247aefce1482f2f16c27865b66"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "cfg-if 1.0.4",
  "cfg_aliases",
  "libc",
@@ -4393,7 +4392,7 @@ version = "0.10.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08838db121398ad17ab8531ce9de97b244589089e290a384c900cb9ff7434328"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "cfg-if 1.0.4",
  "foreign-types",
  "libc",
@@ -4662,9 +4661,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.11.1"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "portable-atomic-util"
@@ -5157,7 +5156,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
 ]
 
 [[package]]
@@ -5441,7 +5440,7 @@ version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
@@ -5454,7 +5453,7 @@ version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "146c9e247ccc180c1f61615433868c99f3de3ae256a30a43b49f67c2d9171f34"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
@@ -5647,7 +5646,7 @@ version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "897b2245f0b511c87893af39b033e5ca9cce68824c4d7e7630b5a1d339658d02"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "libc",
@@ -5660,7 +5659,7 @@ version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3297343eaf830f66ede390ea39da1d462b6b0c1b000f420d0a83f898bbbe6ef"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "core-foundation 0.10.1",
  "core-foundation-sys",
  "libc",
@@ -6030,7 +6029,7 @@ checksum = "2e859df029d160cb88608f5d7df7fb4753fd20fdfb4de5644f3d8b8440841721"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "futures 0.3.31",
+ "futures 0.3.32",
  "httparse",
  "log",
  "rand 0.8.5",
@@ -6137,7 +6136,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "lz4",
- "memmap2 0.9.9",
+ "memmap2 0.9.10",
  "modular-bitfield",
  "num_cpus",
  "num_enum",
@@ -6154,7 +6153,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-genesis-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-lattice-hash",
  "solana-measure",
@@ -6258,7 +6257,7 @@ dependencies = [
  "solana-compute-budget-interface",
  "solana-core",
  "solana-gossip",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-ledger",
  "solana-measure",
@@ -6284,12 +6283,12 @@ name = "solana-banks-client"
 version = "4.0.0-alpha.0"
 dependencies = [
  "borsh",
- "futures 0.3.31",
+ "futures 0.3.32",
  "solana-account",
  "solana-banks-interface",
  "solana-clock",
  "solana-commitment-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-program-pack",
  "solana-pubkey 4.0.0",
@@ -6313,7 +6312,7 @@ dependencies = [
  "solana-account",
  "solana-clock",
  "solana-commitment-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-pubkey 4.0.0",
  "solana-signature",
@@ -6330,13 +6329,13 @@ dependencies = [
  "agave-feature-set",
  "bincode",
  "crossbeam-channel",
- "futures 0.3.31",
+ "futures 0.3.32",
  "solana-account",
  "solana-banks-interface",
  "solana-client",
  "solana-clock",
  "solana-commitment-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-net-utils",
  "solana-pubkey 4.0.0",
@@ -6384,7 +6383,7 @@ dependencies = [
  "solana-genesis",
  "solana-genesis-config",
  "solana-gossip",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
@@ -6450,7 +6449,7 @@ checksum = "7116e1d942a2432ca3f514625104757ab8a56233787e95144c93950029e31176"
 dependencies = [
  "blake3",
  "solana-define-syscall 4.0.1",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
 ]
 
 [[package]]
@@ -6548,7 +6547,7 @@ dependencies = [
  "bv",
  "bytemuck",
  "bytemuck_derive",
- "memmap2 0.9.9",
+ "memmap2 0.9.10",
  "modular-bitfield",
  "num_enum",
  "rand 0.9.2",
@@ -6565,7 +6564,7 @@ dependencies = [
  "agave-feature-set",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-loader-v4-program",
  "solana-program-runtime",
  "solana-pubkey 4.0.0",
@@ -6604,7 +6603,7 @@ dependencies = [
  "solana-cluster-type",
  "solana-commitment-config",
  "solana-derivation-path",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-message",
  "solana-native-token",
@@ -6643,7 +6642,7 @@ dependencies = [
  "clap 2.34.0",
  "console 0.16.2",
  "humantime",
- "indicatif 0.18.3",
+ "indicatif 0.18.4",
  "pretty-hex",
  "semver",
  "serde",
@@ -6655,7 +6654,7 @@ dependencies = [
  "solana-cli-config",
  "solana-clock",
  "solana-epoch-info",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-packet 4.0.0",
  "solana-pubkey 4.0.0",
@@ -6679,10 +6678,10 @@ dependencies = [
  "async-trait",
  "bincode",
  "dashmap",
- "futures 0.3.31",
+ "futures 0.3.32",
  "futures-util",
  "indexmap 2.13.0",
- "indicatif 0.18.3",
+ "indicatif 0.18.4",
  "log",
  "quinn",
  "rayon",
@@ -6691,7 +6690,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-connection-cache",
  "solana-epoch-info",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-measure",
@@ -6884,7 +6883,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "derive_more 2.1.1",
- "futures 0.3.31",
+ "futures 0.3.32",
  "histogram",
  "itertools 0.14.0",
  "libc",
@@ -6931,7 +6930,7 @@ dependencies = [
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-hard-forks",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-leader-schedule",
@@ -7142,7 +7141,7 @@ dependencies = [
  "solana-address 2.1.0",
  "solana-bls-signatures",
  "solana-clock",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-measure",
  "solana-merkle-tree",
  "solana-message",
@@ -7191,7 +7190,7 @@ checksum = "1ee8beac9bff4db9225e57d532d169b0be5e447f1e6601a2f50f27a01bf5518f"
 dependencies = [
  "siphasher 0.3.11",
  "solana-address 2.1.0",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
 ]
 
 [[package]]
@@ -7220,7 +7219,7 @@ dependencies = [
  "solana-clap-utils",
  "solana-cli-config",
  "solana-cli-output",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-message",
@@ -7383,7 +7382,7 @@ dependencies = [
  "log",
  "solana-download-utils",
  "solana-genesis-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-rpc-client",
  "thiserror 2.0.18",
 ]
@@ -7405,7 +7404,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-clock",
  "solana-entry",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-ledger",
  "solana-pubkey 4.0.0",
  "solana-rpc",
@@ -7452,7 +7451,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-entry",
  "solana-epoch-schedule",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-ledger",
  "solana-measure",
@@ -7498,14 +7497,14 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "337c246447142f660f778cf6cb582beba8e28deb05b3b24bfb9ffd7c562e5f41"
 dependencies = [
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
 ]
 
 [[package]]
 name = "solana-hash"
-version = "4.1.0"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b6100d68f90726ddb4d2ac7d00e8b6cf9ce8e4ccdfbb9112b1d766045753241"
+checksum = "8064ea1d591ec791be95245058ca40f4f5345d390c200069d0f79bbf55bfae55"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -7559,7 +7558,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ddf67876c541aa1e21ee1acae35c95c6fbc61119814bfef70579317a5e26955"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "solana-account-info",
  "solana-instruction",
  "solana-instruction-error",
@@ -7579,7 +7578,7 @@ checksum = "ed1c0d16d6fdeba12291a1f068cdf0d479d9bff1141bf44afd7aa9d485f65ef8"
 dependencies = [
  "sha3",
  "solana-define-syscall 4.0.1",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
 ]
 
 [[package]]
@@ -7647,7 +7646,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "bincode",
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "bytes",
  "bzip2",
  "chrono",
@@ -7656,7 +7655,7 @@ dependencies = [
  "dashmap",
  "eager",
  "fs_extra",
- "futures 0.3.31",
+ "futures 0.3.32",
  "itertools 0.14.0",
  "lazy-lru",
  "log",
@@ -7686,7 +7685,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-genesis-config",
  "solana-genesis-utils",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-leader-schedule",
@@ -7831,7 +7830,7 @@ dependencies = [
  "solana-genesis-config",
  "solana-gossip",
  "solana-hard-forks",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-leader-schedule",
  "solana-ledger",
@@ -7880,7 +7879,7 @@ name = "solana-merkle-tree"
 version = "4.0.0-alpha.0"
 dependencies = [
  "fast-math",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-sha256-hasher",
 ]
 
@@ -7896,7 +7895,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-address 2.1.0",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-sanitize",
  "solana-sdk-ids",
@@ -8007,7 +8006,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6edf2f25743c95229ac0fdc32f8f5893ef738dbf332c669e9861d33ddb0f469d"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
 ]
 
 [[package]]
@@ -8017,7 +8016,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d84c0811f3a9ee1d89050d538fcff77445f54449d2e09380a5aeeafe7425e7cc"
 dependencies = [
  "bincode",
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "cfg_eval",
  "serde",
  "serde_derive",
@@ -8040,17 +8039,17 @@ dependencies = [
  "libc",
  "log",
  "nix",
+ "num_cpus",
  "rand 0.9.2",
  "rayon",
  "serde",
  "solana-clock",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-message",
  "solana-metrics",
  "solana-packet 4.0.0",
  "solana-pubkey 4.0.0",
- "solana-rayon-threadlimit",
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
@@ -8076,7 +8075,7 @@ dependencies = [
  "qualifier_attr",
  "solana-clock",
  "solana-entry",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-leader-schedule",
  "solana-ledger",
  "solana-measure",
@@ -8210,7 +8209,7 @@ dependencies = [
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-fee-structure",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
@@ -8264,7 +8263,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-genesis-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
@@ -8348,7 +8347,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "async-lock",
  "async-trait",
- "futures 0.3.31",
+ "futures 0.3.32",
  "itertools 0.14.0",
  "log",
  "quinn",
@@ -8468,7 +8467,7 @@ dependencies = [
  "solana-faucet",
  "solana-genesis-config",
  "solana-gossip",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-ledger",
  "solana-measure",
@@ -8521,8 +8520,8 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "bs58",
- "futures 0.3.31",
- "indicatif 0.18.3",
+ "futures 0.3.32",
+ "indicatif 0.18.4",
  "log",
  "reqwest 0.12.28",
  "reqwest-middleware",
@@ -8537,7 +8536,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-message",
  "solana-pubkey 4.0.0",
@@ -8576,7 +8575,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "solana-account",
  "solana-commitment-config",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-nonce",
  "solana-pubkey 4.0.0",
@@ -8638,7 +8637,7 @@ dependencies = [
  "libc",
  "log",
  "lz4",
- "memmap2 0.9.9",
+ "memmap2 0.9.10",
  "mockall",
  "modular-bitfield",
  "num-derive",
@@ -8683,7 +8682,7 @@ dependencies = [
  "solana-fee-structure",
  "solana-genesis-config",
  "solana-hard-forks",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-inflation",
  "solana-instruction",
  "solana-keypair",
@@ -8754,7 +8753,7 @@ dependencies = [
  "log",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-pubkey 4.0.0",
  "solana-sdk-ids",
@@ -8878,7 +8877,7 @@ dependencies = [
  "log",
  "solana-client",
  "solana-clock",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
@@ -8930,7 +8929,7 @@ checksum = "db7dc3011ea4c0334aaaa7e7128cb390ecf546b28d412e9bf2064680f57f588f"
 dependencies = [
  "sha2 0.10.9",
  "solana-define-syscall 4.0.1",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
 ]
 
 [[package]]
@@ -8955,9 +8954,9 @@ dependencies = [
 
 [[package]]
 name = "solana-signature"
-version = "3.2.0"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4028aeedd443d80f1dccbf64872593a80e6a9676ee9007f6eccb63b65983ebd"
+checksum = "132a93134f1262aa832f1849b83bec6c9945669b866da18661a427943b9e801e"
 dependencies = [
  "ed25519-dalek 2.2.0",
  "five8",
@@ -8965,7 +8964,7 @@ dependencies = [
  "serde-big-array",
  "serde_derive",
  "solana-sanitize",
- "wincode 0.2.5",
+ "wincode 0.4.4",
 ]
 
 [[package]]
@@ -9057,7 +9056,7 @@ dependencies = [
  "bzip2",
  "enum-iterator",
  "flate2",
- "futures 0.3.31",
+ "futures 0.3.32",
  "goauth",
  "http 0.2.12",
  "hyper 0.14.32",
@@ -9095,7 +9094,7 @@ dependencies = [
  "protobuf-src",
  "serde",
  "solana-account-decoder",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-message",
  "solana-pubkey 4.0.0",
@@ -9116,7 +9115,7 @@ dependencies = [
  "bytes",
  "crossbeam-channel",
  "dashmap",
- "futures 0.3.31",
+ "futures 0.3.32",
  "futures-util",
  "histogram",
  "indexmap 2.13.0",
@@ -9164,7 +9163,7 @@ dependencies = [
  "solana-account",
  "solana-clock",
  "solana-fee-structure",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-loader-v3-interface",
@@ -9232,7 +9231,7 @@ dependencies = [
 name = "solana-svm-transaction"
 version = "4.0.0-alpha.0"
 dependencies = [
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-message",
  "solana-pubkey 4.0.0",
  "solana-sdk-ids",
@@ -9333,7 +9332,7 @@ dependencies = [
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-fee-calculator",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-last-restart-slot",
  "solana-program-entrypoint",
@@ -9441,7 +9440,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-connection-cache",
  "solana-epoch-info",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-message",
  "solana-net-utils",
@@ -9468,7 +9467,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.13.0",
- "indicatif 0.18.3",
+ "indicatif 0.18.4",
  "log",
  "rayon",
  "solana-client-traits",
@@ -9496,7 +9495,7 @@ name = "solana-tpu-client-next"
 version = "4.0.0-alpha.0"
 dependencies = [
  "async-trait",
- "futures 0.3.31",
+ "futures 0.3.32",
  "futures-util",
  "log",
  "lru",
@@ -9529,7 +9528,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-address 2.1.0",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-instruction-error",
  "solana-message",
@@ -9598,7 +9597,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-address-lookup-table-interface",
  "solana-clock",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-loader-v2-interface",
  "solana-loader-v3-interface",
@@ -9670,7 +9669,7 @@ dependencies = [
  "solana-cluster-type",
  "solana-entry",
  "solana-gossip",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-keypair",
  "solana-ledger",
  "solana-measure",
@@ -9786,7 +9785,7 @@ dependencies = [
  "solana-account",
  "solana-bincode",
  "solana-clock",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-packet 4.0.0",
@@ -9815,7 +9814,7 @@ dependencies = [
  "serde_derive",
  "serde_with",
  "solana-clock",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-instruction-error",
  "solana-pubkey 4.0.0",
@@ -9842,7 +9841,7 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",
- "solana-hash 4.1.0",
+ "solana-hash 4.2.0",
  "solana-instruction",
  "solana-keypair",
  "solana-packet 4.0.0",
@@ -10338,7 +10337,7 @@ version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cca424247104946a59dacd27eaad296223b7feec3d168a6dd04585183091eb0b"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "byteorder",
  "enum-as-inner",
  "libc",
@@ -10392,7 +10391,7 @@ checksum = "1c38a012bed6fb9681d3bf71ffaa4f88f3b4b9ed3198cda6e4c8462d24d4bb80"
 dependencies = [
  "anyhow",
  "fnv",
- "futures 0.3.31",
+ "futures 0.3.32",
  "humantime",
  "opentelemetry",
  "pin-project",
@@ -10879,7 +10878,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4e6559d53cc268e5031cd8429d05415bc4cb4aefc4aa5d6cc35fbf5b924a1f8"
 dependencies = [
  "async-compression",
- "bitflags 2.10.0",
+ "bitflags 2.11.0",
  "bytes",
  "futures-core",
  "futures-util",

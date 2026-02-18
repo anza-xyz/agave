@@ -130,7 +130,7 @@
 /// └─────────────────────────────────────────┘
 /// ```
 use {
-    crate::entry::Entry,
+    crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::consensus_message::{Certificate, CertificateType},
     solana_bls_signatures::{
         Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
@@ -478,7 +478,9 @@ unsafe impl<C: Config> SchemaWrite<C> for BlockComponent {
 
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
-            Self::EntryBatch(entries) => <Vec<Entry> as SchemaWrite<C>>::size_of(entries),
+            Self::EntryBatch(entries) => {
+                <WincodeVec<Entry, MaxDataShredsLen> as SchemaWrite<C>>::size_of(entries)
+            }
             Self::BlockMarker(marker) => {
                 let marker_size = <VersionedBlockMarker as SchemaWrite<C>>::size_of(marker)?;
                 Ok(Self::ENTRY_COUNT_SIZE + marker_size)
@@ -488,7 +490,9 @@ unsafe impl<C: Config> SchemaWrite<C> for BlockComponent {
 
     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
-            Self::EntryBatch(entries) => <Vec<Entry> as SchemaWrite<C>>::write(writer, entries),
+            Self::EntryBatch(entries) => {
+                <WincodeVec<Entry, MaxDataShredsLen> as SchemaWrite<C>>::write(writer, entries)
+            }
             Self::BlockMarker(marker) => {
                 writer.write(&0u64.to_le_bytes())?;
                 <VersionedBlockMarker as SchemaWrite<C>>::write(writer, marker)
@@ -513,7 +517,8 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
                 C,
             >>::get(reader)?));
         } else {
-            let entries: Vec<Entry> = <Vec<Entry> as SchemaRead<C>>::get(reader)?;
+            let entries: Vec<Entry> =
+                <WincodeVec<Entry, MaxDataShredsLen> as SchemaRead<'de, C>>::get(reader)?;
 
             if entries.len() >= Self::MAX_ENTRIES {
                 return Err(wincode::ReadError::Custom("Too many entries"));
@@ -528,7 +533,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::iter::repeat_n};
+    use {super::*, std::iter::repeat_n, wincode::config::DEFAULT_PREALLOCATION_SIZE_LIMIT};
 
     fn mock_entries(n: usize) -> Vec<Entry> {
         repeat_n(Entry::default(), n).collect()
@@ -589,6 +594,18 @@ mod tests {
         assert_eq!(comp, deser);
 
         let comp = BlockComponent::new_block_marker(marker);
+        let bytes = wincode::serialize(&comp).unwrap();
+        let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(comp, deser);
+    }
+
+    #[test]
+    fn large_entry_batch_round_trips() {
+        // Ensure an EntryBatch that exceeds wincode's default 4 MiB prealloc
+        // limit can still round-trip.
+        let num_entries = DEFAULT_PREALLOCATION_SIZE_LIMIT / std::mem::size_of::<Entry>() + 1;
+
+        let comp = BlockComponent::new_entry_batch(mock_entries(num_entries)).unwrap();
         let bytes = wincode::serialize(&comp).unwrap();
         let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
         assert_eq!(comp, deser);

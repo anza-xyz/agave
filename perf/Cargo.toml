@@ -43,6 +43,7 @@ curve25519-dalek = { workspace = true }
 dlopen2 = { workspace = true }
 fnv = { workspace = true }
 log = { workspace = true }
+num_cpus = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
@@ -59,7 +60,6 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode"] }
 solana-pubkey = { workspace = true, default-features = false }
-solana-rayon-threadlimit = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = ["verify"] }

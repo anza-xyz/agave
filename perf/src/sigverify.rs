@@ -9,11 +9,10 @@ use {
         },
         recycled_vec::RecycledVec,
     },
-    rayon::{prelude::*, ThreadPool},
+    rayon::prelude::*,
     solana_hash::Hash,
     solana_message::{MESSAGE_HEADER_LENGTH, MESSAGE_VERSION_PREFIX},
     solana_pubkey::Pubkey,
-    solana_rayon_threadlimit::get_thread_count,
     solana_short_vec::decode_shortu16_len,
     solana_signature::Signature,
     std::{convert::TryFrom, mem::size_of},
@@ -21,14 +20,6 @@ use {
 
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
-
-static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(get_thread_count())
-        .thread_name(|i| format!("solSigVerify{i:02}"))
-        .build()
-        .unwrap()
-});
 
 pub type TxOffset = RecycledVec<u32>;
 
@@ -462,9 +453,14 @@ pub fn shrink_batches(batches: Vec<PacketBatch>) -> Vec<PacketBatch> {
         .collect()
 }
 
-pub fn ed25519_verify(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
+pub fn ed25519_verify(
+    thread_pool: &rayon::ThreadPool,
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+) {
     debug!("CPU ECDSA for {packet_count}");
-    PAR_THREAD_POOL.install(|| {
+    thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
             if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
                 packet.meta_mut().set_discard(true);
@@ -473,13 +469,14 @@ pub fn ed25519_verify(batches: &mut [PacketBatch], reject_non_vote: bool, packet
     });
 }
 
-pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
+pub fn ed25519_verify_disabled(thread_pool: &rayon::ThreadPool, batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
     debug!("disabled ECDSA for {packet_count}");
-    PAR_THREAD_POOL.install(|| {
+
+    thread_pool.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
             packet.meta_mut().set_discard(false);
-        });
+        })
     });
 }
 
@@ -491,6 +488,26 @@ pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
             }
         }
     }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn threadpool_for_tests() -> rayon::ThreadPool {
+    // Four threads is sufficient for unit tests
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .thread_name(|i| format!("solSigVerTest{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn threadpool_for_benches() -> rayon::ThreadPool {
+    let num_threads = (num_cpus::get() / 2).max(1);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .thread_name(|i| format!("solSigVerBnch{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
 }
 
 #[cfg(test)]
@@ -911,8 +928,9 @@ mod tests {
     }
 
     fn ed25519_verify(batches: &mut [PacketBatch]) {
+        let threadpool = threadpool_for_tests();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(batches, false, packet_count);
+        sigverify::ed25519_verify(&threadpool, batches, false, packet_count);
     }
 
     #[test]
@@ -954,7 +972,7 @@ mod tests {
 
     #[test]
     fn test_verify_large_pass() {
-        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * get_thread_count(), false);
+        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * 32, false);
     }
 
     #[test]
@@ -964,7 +982,7 @@ mod tests {
 
     #[test]
     fn test_verify_large_fail() {
-        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * get_thread_count(), true);
+        test_verify_n(VERIFY_PACKET_CHUNK_SIZE * 32, true);
     }
 
     #[test]

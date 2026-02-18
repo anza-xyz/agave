@@ -75,6 +75,7 @@ pub struct InstructionContext<'a, 'ix_data> {
     // The rest of the fields are redundant shortcuts
     pub(crate) index_in_trace: usize,
     pub(crate) nesting_level: usize,
+    pub(crate) index_of_caller_instruction: usize,
     pub(crate) program_account_index_in_tx: IndexOfAccount,
     pub(crate) instruction_accounts: &'a [InstructionAccount],
     pub(crate) dedup_map: &'a [u16],
@@ -85,6 +86,11 @@ impl<'a> InstructionContext<'a, '_> {
     /// How many Instructions were on the trace before this one was pushed
     pub fn get_index_in_trace(&self) -> usize {
         self.index_in_trace
+    }
+
+    /// Returns the index of the instruction that called into this one.
+    pub fn get_index_of_caller(&self) -> usize {
+        self.index_of_caller_instruction
     }
 
     /// How many Instructions were on the stack after this one was pushed

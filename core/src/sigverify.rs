@@ -13,9 +13,11 @@ use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{Sender, TrySendError},
     solana_perf::{packet::PacketBatch, sigverify},
+    std::sync::Arc,
 };
 
 pub struct TransactionSigVerifier {
+    thread_pool: Arc<rayon::ThreadPool>,
     banking_stage_sender: BankingPacketSender,
     forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
     reject_non_vote: bool,
@@ -23,19 +25,22 @@ pub struct TransactionSigVerifier {
 
 impl TransactionSigVerifier {
     pub fn new_reject_non_vote(
+        thread_pool: Arc<rayon::ThreadPool>,
         packet_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
     ) -> Self {
-        let mut new_self = Self::new(packet_sender, forward_stage_sender);
+        let mut new_self = Self::new(thread_pool, packet_sender, forward_stage_sender);
         new_self.reject_non_vote = true;
         new_self
     }
 
     pub fn new(
+        thread_pool: Arc<rayon::ThreadPool>,
         banking_stage_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
     ) -> Self {
         Self {
+            thread_pool,
             banking_stage_sender,
             forward_stage_sender,
             reject_non_vote: false,
@@ -71,7 +76,12 @@ impl SigVerifier for TransactionSigVerifier {
         mut batches: Vec<PacketBatch>,
         valid_packets: usize,
     ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify(&mut batches, self.reject_non_vote, valid_packets);
+        sigverify::ed25519_verify(
+            &self.thread_pool,
+            &mut batches,
+            self.reject_non_vote,
+            valid_packets,
+        );
         batches
     }
 }
