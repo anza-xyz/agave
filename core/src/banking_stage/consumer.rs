@@ -192,6 +192,51 @@ impl Consumer {
         self.process_and_record_transactions_with_pre_results(bank, txs, pre_results, flags)
     }
 
+    /// Record transactions without executing them. Used in bankless leader mode
+    /// where execution is deferred to replay stage.
+    pub fn record_transactions_without_execution(
+        &self,
+        bank: &Bank,
+        txs: &[impl TransactionWithMeta],
+    ) -> ProcessTransactionBatchOutput {
+        let versioned_transactions: Vec<_> =
+            txs.iter().map(|tx| tx.to_versioned_transaction()).collect();
+
+        let record_transactions_summary = self
+            .transaction_recorder
+            .record_transactions(bank.bank_id(), versioned_transactions);
+
+        // Return empty vec since transactions are not executed/committed in bankless leader mode.
+        // Execution happens later during replay stage.
+        let commit_transactions_result = record_transactions_summary.result.map(|_| vec![]);
+
+        ProcessTransactionBatchOutput {
+            cost_model_throttled_transactions_count: 0,
+            cost_model_us: 0,
+            execute_and_commit_transactions_output: ExecuteAndCommitTransactionsOutput {
+                transaction_counts: LeaderProcessedTransactionCounts {
+                    attempted_processing_count: txs.len() as u64,
+                    processed_count: txs.len() as u64,
+                    processed_with_successful_result_count: 0, // Not executed
+                },
+                retryable_transaction_indexes: vec![],
+                commit_transactions_result,
+                execute_and_commit_timings: LeaderExecuteAndCommitTimings {
+                    record_us: record_transactions_summary
+                        .record_transactions_timings
+                        .poh_record_us
+                        .0,
+                    record_transactions_timings: record_transactions_summary
+                        .record_transactions_timings,
+                    ..LeaderExecuteAndCommitTimings::default()
+                },
+                error_counters: TransactionErrorMetrics::default(),
+                min_prioritization_fees: 0,
+                max_prioritization_fees: 0,
+            },
+        }
+    }
+
     fn process_and_record_transactions_with_pre_results(
         &self,
         bank: &Bank,
