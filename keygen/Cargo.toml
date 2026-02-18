@@ -36,7 +36,7 @@ solana-derivation-path = "=3.0.0"
 solana-instruction = { version = "=3.1.0", features = ["bincode"] }
 solana-keypair = "=3.1.0"
 solana-message = { version = "=3.1.0", features = ["bincode"] }
-solana-pubkey = { version = "=4.0.0", default-features = false }
+solana-pubkey = { version = "=4.1.0", default-features = false }
 solana-remote-wallet = { workspace = true }
 solana-seed-derivable = "=3.0.0"
 solana-signer = "=3.0.0"
