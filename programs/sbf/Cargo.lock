@@ -375,6 +375,7 @@ dependencies = [
  "num-traits",
  "parking_lot 0.12.2",
  "qualifier_attr",
+ "quinn",
  "rayon",
  "serde",
  "serde_bytes",
@@ -384,7 +385,6 @@ dependencies = [
  "solana-bls-signatures",
  "solana-client",
  "solana-clock",
- "solana-connection-cache",
  "solana-entry",
  "solana-epoch-schedule",
  "solana-genesis-config",
@@ -402,11 +402,15 @@ dependencies = [
  "solana-signer-store",
  "solana-streamer",
  "solana-time-utils",
+ "solana-tls-utils",
+ "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
  "solana-vote",
  "solana-vote-program",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]

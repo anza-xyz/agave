@@ -39,6 +39,7 @@ use {
         snapshot_hash::StartingSnapshotHashes, SnapshotInterval,
     },
     agave_votor::{
+        quic_client::VotorQuicClient,
         vote_history::VoteHistory,
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
         voting_service::VotingServiceOverride,
@@ -144,6 +145,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client_next::connection_workers_scheduler::{BindTarget, StakeIdentity},
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
@@ -689,6 +691,10 @@ pub struct Validator {
     // We don't wait for its JoinHandle here because ownership and shutdown
     // are managed elsewhere. This variable is intentionally unused.
     _tpu_client_next_runtime: Option<TokioRuntime>,
+    // This runtime is used to run the QUIC client owned by Votor.
+    // We don't wait for its JoinHandle here because clean shutdown
+    // is not required. This variable is intentionally unused.
+    _votor_runtime: Option<TokioRuntime>,
 }
 
 impl Validator {
@@ -865,7 +871,7 @@ impl Validator {
         timer.stop();
         info!("Cleaning orphaned account snapshot directories done. {timer}");
 
-        // token used to cancel tpu-client-next, streamer and BLS streamer.
+        // token used to cancel tpu-client-next, streamer, BLS streamer and BLS client.
         let cancel = CancellationToken::new();
         {
             let exit = exit.clone();
@@ -1229,31 +1235,6 @@ impl Validator {
             ))
         };
 
-        let bls_connection_cache = Arc::new(ConnectionCache::new_with_client_options(
-            "connection_cache_bls_quic",
-            // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
-            // we wouldn't expect more than a 100 PPS. 1 connection is enough.
-            1, /* connection_pool_size */
-            Some(node.sockets.quic_alpenglow_client),
-            Some((
-                &identity_keypair,
-                node.info
-                    .alpenglow()
-                    .ok_or_else(|| {
-                        ValidatorError::Other(String::from(
-                            "Invalid QUIC address for Alpenglow BLS",
-                        ))
-                    })?
-                    .ip(),
-            )),
-            Some((&staked_nodes, &identity_keypair.pubkey())),
-        ));
-        let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
-        key_notifiers.write().unwrap().add(
-            KeyUpdaterType::BlsConnectionCache,
-            bls_connection_cache.clone(),
-        );
-
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
         // runtime will cause panic at drop. Outside test-validator crate, we
@@ -1269,6 +1250,25 @@ impl Validator {
                 .unwrap()
         });
 
+        let votor_runtime = current_runtime_handle
+            .is_err()
+            .then(|| VotorQuicClient::spawn_runtime().expect("Spawn runtime should succeed"));
+        let votor_runtime_handle = votor_runtime
+            .as_ref()
+            .map(TokioRuntime::handle)
+            .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+        let (votor_quic_client, votor_key_update_handler) = VotorQuicClient::new(
+            votor_runtime_handle.clone(),
+            BindTarget::Socket(node.sockets.quic_alpenglow_client),
+            StakeIdentity::new(&identity_keypair),
+            cancel.clone(),
+        )?;
+
+        let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
+        key_notifiers.write().unwrap().add(
+            KeyUpdaterType::BlsClient,
+            Arc::new(votor_key_update_handler),
+        );
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
         let (
@@ -1707,7 +1707,7 @@ impl Validator {
                 cancel: cancel.clone(),
                 staked_nodes: staked_nodes.clone(),
                 key_notifiers: key_notifiers.clone(),
-                bls_connection_cache,
+                votor_quic_client,
                 voting_service_test_override: config.voting_service_test_override.clone(),
             },
         )
@@ -1852,6 +1852,7 @@ impl Validator {
             repair_quic_endpoints_join_handle,
             xdp_retransmitter,
             _tpu_client_next_runtime: tpu_client_next_runtime,
+            _votor_runtime: votor_runtime,
         })
     }
 
