@@ -188,7 +188,7 @@ use {
         sync::{
             atomic::{
                 AtomicBool, AtomicI64, AtomicU64,
-                Ordering::{self, AcqRel, Acquire, Relaxed},
+                Ordering::{AcqRel, Acquire, Relaxed},
             },
             Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
         },
@@ -1496,8 +1496,7 @@ impl Bank {
                 .transaction_processor
                 .global_program_cache
                 .read()
-                .unwrap()
-                .stats,
+                .unwrap(),
             parent.slot(),
         );
 
@@ -1558,12 +1557,7 @@ impl Bank {
                     self.slot,
                     &mut ExecuteTimings::default(),
                 ) {
-                    recompiled.tx_usage_counter.fetch_add(
-                        program_to_recompile
-                            .tx_usage_counter
-                            .load(Ordering::Relaxed),
-                        Ordering::Relaxed,
-                    );
+                    recompiled.stats.merge_from(&program_to_recompile.stats);
                     let mut program_cache = self
                         .transaction_processor
                         .global_program_cache

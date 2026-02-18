@@ -1,7 +1,7 @@
 use {
     crate::bank::Bank,
     solana_clock::{Epoch, Slot},
-    solana_program_runtime::loaded_programs::ProgramCacheStats,
+    solana_program_runtime::loaded_programs::{ForkGraph, ProgramCache},
     std::sync::atomic::{
         AtomicU64,
         Ordering::{self, Relaxed},
@@ -205,7 +205,8 @@ pub(crate) fn report_partitioned_reward_metrics(bank: &Bank, timings: RewardsSto
 }
 
 /// Logs the measurement values
-pub(crate) fn report_loaded_programs_stats(stats: &ProgramCacheStats, slot: Slot) {
+pub(crate) fn report_loaded_programs_stats<T: ForkGraph>(cache: &ProgramCache<T>, slot: Slot) {
+    let stats = &cache.stats;
     let hits = stats.hits.load(Ordering::Relaxed);
     let misses = stats.misses.load(Ordering::Relaxed);
     let evictions: u64 = stats.evictions.values().sum();
@@ -235,4 +236,5 @@ pub(crate) fn report_loaded_programs_stats(stats: &ProgramCacheStats, slot: Slot
         ("water_level", water_level, i64),
     );
     stats.log();
+    cache.output_entry_stats();
 }
