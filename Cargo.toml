@@ -500,7 +500,7 @@ solana-program-option = "3.0.0"
 solana-program-pack = "3.0.0"
 solana-program-runtime = { path = "program-runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-test = { path = "program-test", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-pubkey = { version = "4.0.0", default-features = false }
+solana-pubkey = { version = "4.1.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=4.0.0-alpha.0" }
 solana-quic-client = { path = "quic-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

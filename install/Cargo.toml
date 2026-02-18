@@ -39,7 +39,7 @@ solana-config-interface = { version = "=2.0.0", features = ["bincode"] }
 solana-hash = "=4.2.0"
 solana-keypair = "=3.1.0"
 solana-message = "=3.1.0"
-solana-pubkey = { version = "=4.0.0", default-features = false }
+solana-pubkey = { version = "=4.1.0", default-features = false }
 solana-rpc-client = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { version = "=3.3.0", default-features = false }
