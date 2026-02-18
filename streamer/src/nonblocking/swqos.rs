@@ -188,14 +188,14 @@ impl SwQos {
         // scales linearly with RTT.
         let rtt_scale = rtt.as_secs_f64() / REFERENCE_RTT.as_secs_f64();
         let staked_unsat_max = (self.config.base_max_streams as f64 * rtt_scale) as u32;
-        let unstaked_unsat_max =
-            (self.config.base_max_streams_unstaked as f64 * rtt_scale) as u32;
+        let unstaked_unsat_max = (self.config.base_max_streams_unstaked as f64 * rtt_scale) as u32;
 
         if saturated {
             match context.peer_type {
                 ConnectionPeerType::Unstaked => Some(0), // park
                 ConnectionPeerType::Staked(stake) => {
-                    let share_tps = self.capacity_tps
+                    let share_tps = self
+                        .capacity_tps
                         .saturating_mul(stake)
                         .checked_div(context.total_stake)
                         .unwrap_or(0);
@@ -226,8 +226,10 @@ impl SwQos {
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable<SwQosStreamerCounter>>,
         conn_context: &SwQosConnectionContext,
-    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<SwQosStreamerCounter>), ConnectionHandlerError>
-    {
+    ) -> Result<
+        (Arc<AtomicU64>, CancellationToken, Arc<SwQosStreamerCounter>),
+        ConnectionHandlerError,
+    > {
         let remote_addr = connection.remote_address();
 
         let max_connections_per_peer = match conn_context.peer_type() {
@@ -296,8 +298,10 @@ impl SwQos {
         connection_table: Arc<Mutex<ConnectionTable<SwQosStreamerCounter>>>,
         max_connections: usize,
         conn_context: &SwQosConnectionContext,
-    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<SwQosStreamerCounter>), ConnectionHandlerError>
-    {
+    ) -> Result<
+        (Arc<AtomicU64>, CancellationToken, Arc<SwQosStreamerCounter>),
+        ConnectionHandlerError,
+    > {
         let stats = self.stats.clone();
         if max_connections > 0 {
             let mut connection_table = connection_table.lock().await;
@@ -334,8 +338,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 // mirrors the old stream_throttle heuristic: stake must be
                 // large enough to earn at least 1 stream per 100ms throttle
                 // interval at full capacity.
-                let min_stake_ratio =
-                    1_f64 / (self.config.max_streams_per_ms * 100) as f64;
+                let min_stake_ratio = 1_f64 / (self.config.max_streams_per_ms * 100) as f64;
                 let stake_ratio = stake as f64 / total_stake as f64;
                 let peer_type = if stake == 0 || stake_ratio < min_stake_ratio {
                     ConnectionPeerType::Unstaked
@@ -518,10 +521,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn on_new_stream(
-        &self,
-        _context: &SwQosConnectionContext,
-    ) -> impl Future<Output = ()> + Send {
+    fn on_new_stream(&self, _context: &SwQosConnectionContext) -> impl Future<Output = ()> + Send {
         async {}
     }
 
@@ -561,7 +561,11 @@ pub mod test {
         }
     }
 
-    fn staked_context(stake: u64, total_stake: u64, num_connections: usize) -> SwQosConnectionContext {
+    fn staked_context(
+        stake: u64,
+        total_stake: u64,
+        num_connections: usize,
+    ) -> SwQosConnectionContext {
         let counter = Arc::new(SwQosStreamerCounter {
             connection_count: AtomicUsize::new(num_connections),
         });
@@ -684,8 +688,12 @@ pub mod test {
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
-        let q100 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(100), false).unwrap();
-        let q200 = swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(200), false).unwrap();
+        let q100 = swqos
+            .compute_max_streams_for_rtt(&ctx, Duration::from_millis(100), false)
+            .unwrap();
+        let q200 = swqos
+            .compute_max_streams_for_rtt(&ctx, Duration::from_millis(200), false)
+            .unwrap();
         // 100ms = 1x ref → ~2048, 200ms = 2x ref → ~4096
         assert!((q100 as i32 - 2048).abs() <= 1, "q100={q100}");
         assert!((q200 as i32 - 4096).abs() <= 1, "q200={q200}");

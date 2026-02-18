@@ -101,11 +101,7 @@ async fn blast_for_duration(conn: &Connection, duration: Duration) -> usize {
 /// Open streams concurrently. Each stream is held open for `hold_duration`
 /// before sending data, simulating network RTT. QUIC's MAX_STREAMS limit
 /// becomes the actual bottleneck, making throughput ≈ quota / hold_duration.
-async fn blast_concurrent(
-    conn: &Connection,
-    duration: Duration,
-    hold_duration: Duration,
-) -> usize {
+async fn blast_concurrent(conn: &Connection, duration: Duration, hold_duration: Duration) -> usize {
     let total = Arc::new(AtomicUsize::new(0));
     let deadline = Instant::now() + duration;
 
@@ -625,8 +621,8 @@ async fn main() {
     // quota = share_tps * rtt, throughput = quota / rtt = share_tps.
     // All three should achieve the same throughput regardless of RTT.
     let rtt_peers: Vec<(Keypair, u64, Duration)> = vec![
-        (Keypair::new(), 3_000_000_000, Duration::from_millis(10)),  // 30%, fast
-        (Keypair::new(), 3_000_000_000, Duration::from_millis(50)),  // 30%, medium
+        (Keypair::new(), 3_000_000_000, Duration::from_millis(10)), // 30%, fast
+        (Keypair::new(), 3_000_000_000, Duration::from_millis(50)), // 30%, medium
         (Keypair::new(), 3_000_000_000, Duration::from_millis(100)), // 30%, slow
     ];
     let bg_keypair5 = Keypair::new();
@@ -644,8 +640,7 @@ async fn main() {
             Duration::from_millis(10),
         )))
         .collect();
-    let staked_nodes5 =
-        StakedNodes::new(Arc::new(stake_map5), HashMap::<Pubkey, u64>::default());
+    let staked_nodes5 = StakedNodes::new(Arc::new(stake_map5), HashMap::<Pubkey, u64>::default());
     let server = setup_server_with_config(
         staked_nodes5,
         SwQosConfig {
@@ -778,8 +773,7 @@ async fn main() {
         .map(|(kp, _, rtt)| (kp.pubkey(), *rtt))
         .collect();
     rtt_overrides6.insert(bg_keypair6.pubkey(), Duration::from_millis(10));
-    let staked_nodes6 =
-        StakedNodes::new(Arc::new(stake_map6), HashMap::<Pubkey, u64>::default());
+    let staked_nodes6 = StakedNodes::new(Arc::new(stake_map6), HashMap::<Pubkey, u64>::default());
     let server = setup_server_with_config(
         staked_nodes6,
         SwQosConfig {
@@ -919,8 +913,7 @@ async fn main() {
         .iter()
         .map(|(kp, rtt)| (kp.pubkey(), *rtt))
         .collect();
-    let staked_nodes7 =
-        StakedNodes::new(Arc::new(stake_map7), HashMap::<Pubkey, u64>::default());
+    let staked_nodes7 = StakedNodes::new(Arc::new(stake_map7), HashMap::<Pubkey, u64>::default());
 
     // High capacity so the system stays unsaturated.
     // 3 peers at ~20K/s each = ~60K/s total << 500K/s capacity.

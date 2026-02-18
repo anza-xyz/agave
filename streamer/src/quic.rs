@@ -243,11 +243,13 @@ impl StreamerStats {
     }
 
     pub fn connection_added_from_staked_peer(&self) -> usize {
-        self.connection_added_from_staked_peer.load(Ordering::Relaxed)
+        self.connection_added_from_staked_peer
+            .load(Ordering::Relaxed)
     }
 
     pub fn connection_added_from_unstaked_peer(&self) -> usize {
-        self.connection_added_from_unstaked_peer.load(Ordering::Relaxed)
+        self.connection_added_from_unstaked_peer
+            .load(Ordering::Relaxed)
     }
 
     pub fn report(&self, name: &'static str) {
