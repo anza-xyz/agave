@@ -40,7 +40,7 @@ const REFERENCE_RTT: Duration = Duration::from_millis(100);
 const MAX_RTT: Duration = Duration::from_millis(200);
 
 /// Min RTT floor
-const MIN_RTT: Duration = Duration::from_millis(10);
+const MIN_RTT: Duration = Duration::from_millis(1);
 
 /// Base max concurrent streams at reference RTT when system is not saturated
 const DEFAULT_BASE_MAX_STREAMS: u32 = 2048;
@@ -700,10 +700,11 @@ pub mod test {
             ..SwQosConfig::default()
         });
         let ctx = staked_context(1_000, 100_000, 1);
-        // RTT < REFERENCE_RTT scales down (clamped to MIN_RTT).
+        // RTT < REFERENCE_RTT scales down (not clamped, 5ms is above MIN_RTT).
+        // 2048 * 5/100 = 102.4 → 102
         assert_eq!(
             swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(5), false),
-            Some(204),
+            Some(102),
         );
     }
 
