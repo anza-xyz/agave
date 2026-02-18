@@ -866,6 +866,62 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
+#[macro_export]
+macro_rules! mock_invoke_context_with_top_level_ixs {
+    (
+        $invoke_context:ident,
+        $transaction_context:ident,
+        $top_level_instructions:literal,
+        $transaction_accounts:expr $(,)?
+    ) => {
+        use {
+            solana_svm_callback::InvokeContextCallback,
+            solana_svm_log_collector::LogCollector,
+            $crate::{
+                __private::{Hash, Rent, TransactionContext},
+                execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+                invoke_context::{EnvironmentConfig, InvokeContext},
+                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+                sysvar_cache::SysvarCache,
+            },
+        };
+
+        let compute_budget = SVMTransactionExecutionBudget::default();
+        let mut $transaction_context = TransactionContext::new(
+            $transaction_accounts,
+            Rent::default(),
+            compute_budget.max_instruction_stack_depth,
+            compute_budget.max_instruction_trace_length,
+            $top_level_instructions,
+        );
+
+        struct MockInvokeContextCallback {}
+        impl InvokeContextCallback for MockInvokeContextCallback {}
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        let sysvar_cache = SysvarCache::default();
+        let envs = ProgramRuntimeEnvironments::default();
+        let feature_set = SVMFeatureSet::default();
+        let config = EnvironmentConfig::new(
+            Hash::default(),
+            0,
+            &MockInvokeContextCallback {},
+            &feature_set,
+            &envs,
+            &envs,
+            &sysvar_cache,
+        );
+
+        let mut $invoke_context = InvokeContext::new(
+            &mut $transaction_context,
+            &mut program_cache_for_tx_batch,
+            config,
+            Some(LogCollector::new_ref()),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
+        );
+    };
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
@@ -1197,6 +1253,57 @@ mod tests {
             transaction_context.push(),
             Err(InstructionError::MaxInstructionTraceLengthExceeded)
         );
+
+        // Hitting the limit with CPIs
+        let mut transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            )],
+            Rent::default(),
+            256,
+            MAX_INSTRUCTIONS,
+            2,
+        );
+
+        // To be uncommented when we reorder the trace
+        // transaction_context
+        //     .configure_instruction_at_index(
+        //         0,
+        //         0,
+        //         vec![InstructionAccount::new(0, false, false)],
+        //         vec![u16::MAX; 256],
+        //         Cow::Owned(Vec::new()),
+        //         None,
+        //     )
+        //     .unwrap();
+        //
+        // transaction_context
+        //     .configure_instruction_at_index(
+        //         1,
+        //         0,
+        //         vec![InstructionAccount::new(0, false, false)],
+        //         vec![u16::MAX; 256],
+        //         Cow::Owned(Vec::new()),
+        //         None,
+        //     )
+        //     .unwrap();
+
+        for _ in 0..MAX_INSTRUCTIONS {
+            transaction_context.push().unwrap();
+            transaction_context
+                .configure_next_cpi_for_tests(
+                    0,
+                    vec![InstructionAccount::new(0, false, false)],
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            transaction_context.push(),
+            Err(InstructionError::MaxInstructionTraceLengthExceeded)
+        );
     }
 
     #[test_case(MockInstruction::NoopSuccess, Ok(()); "NoopSuccess")]
@@ -1438,7 +1545,12 @@ mod tests {
             }
         }
 
-        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        mock_invoke_context_with_top_level_ixs!(
+            invoke_context,
+            transaction_context,
+            2,
+            transaction_accounts
+        );
 
         let instruction_1 = Instruction::new_with_bytes(program_id, &[20], account_metas.clone());
 
