@@ -129,10 +129,11 @@ use {
         loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_rent::Rent,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader},
+    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader, system_program},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
@@ -2897,6 +2898,15 @@ impl Bank {
             acct.deserialize_data()
                 .expect("Programmer error deserializing genesis certificate")
         })
+    }
+
+    /// For use in the first Alpenglow block, set the genesis certificate.
+    pub fn set_alpenglow_genesis_certificate(&self, cert: &Certificate) {
+        let cert_size = wincode::serialized_size(cert).unwrap();
+        let lamports = Rent::default().minimum_balance(cert_size as usize);
+        let cert_acct = AccountSharedData::new_data(lamports, cert, &system_program::ID).unwrap();
+
+        self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
     }
 
     pub fn confirmed_last_blockhash(&self) -> Hash {
