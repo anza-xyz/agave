@@ -507,7 +507,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 .transaction_context
                 .get_current_instruction_context()
                 .unwrap(),
-            false, // stricter_abi_and_runtime_constraints
+            false, // virtual_address_space_adjustments
             false, // account_data_direct_mapping
         )
         .unwrap();
