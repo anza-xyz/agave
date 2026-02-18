@@ -355,17 +355,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let rent = Rent::default();
-    let (
-        default_lamports_per_byte_year,
-        default_rent_exemption_threshold,
-        default_rent_burn_percentage,
-    ) = {
-        (
-            &rent.lamports_per_byte_year.to_string(),
-            &rent.exemption_threshold.to_string(),
-            &rent.burn_percent.to_string(),
-        )
-    };
+    let default_lamports_per_byte = &rent.lamports_per_byte.to_string();
 
     // vote account
     let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
@@ -483,35 +473,15 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         )
         .arg(
-            Arg::with_name("lamports_per_byte_year")
-                .long("lamports-per-byte-year")
+            Arg::with_name("lamports_per_byte")
+                .long("lamports-per-byte")
                 .value_name("LAMPORTS")
                 .takes_value(true)
-                .default_value(default_lamports_per_byte_year)
+                .default_value(default_lamports_per_byte)
                 .help(
-                    "The cost in lamports that the cluster will charge per byte per year for \
-                     accounts with data",
+                    "The cost in lamports that the cluster will charge per byte for accounts with \
+                     data",
                 ),
-        )
-        .arg(
-            Arg::with_name("rent_exemption_threshold")
-                .long("rent-exemption-threshold")
-                .value_name("NUMBER")
-                .takes_value(true)
-                .default_value(default_rent_exemption_threshold)
-                .help(
-                    "amount of time (in years) the balance has to include rent for to qualify as \
-                     rent exempted account",
-                ),
-        )
-        .arg(
-            Arg::with_name("rent_burn_percentage")
-                .long("rent-burn-percentage")
-                .value_name("NUMBER")
-                .takes_value(true)
-                .default_value(default_rent_burn_percentage)
-                .help("percentage of collected rent to burn")
-                .validator(is_valid_percentage),
         )
         .arg(
             Arg::with_name("fee_burn_percentage")
@@ -687,9 +657,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     let rent = Rent {
-        lamports_per_byte_year: value_t_or_exit!(matches, "lamports_per_byte_year", u64),
-        exemption_threshold: value_t_or_exit!(matches, "rent_exemption_threshold", f64),
-        burn_percent: value_t_or_exit!(matches, "rent_burn_percentage", u8),
+        lamports_per_byte: value_t_or_exit!(matches, "lamports_per_byte", u64),
+        ..Rent::default()
     };
 
     let bootstrap_validator_pubkeys = pubkeys_of(&matches, "bootstrap_validator").unwrap();

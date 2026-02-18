@@ -569,7 +569,7 @@ fn main() {
             /* enable_warmup_epochs = */ false,
         ));
 
-        genesis.rent = Rent::with_slots_per_epoch(slots_per_epoch);
+        genesis.rent = Rent::default();
     }
 
     if let Some(inflation_fixed) = inflation_fixed {

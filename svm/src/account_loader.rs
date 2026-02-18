@@ -1205,7 +1205,7 @@ mod tests {
     #[test]
     fn test_validate_fee_payer() {
         let rent = Rent {
-            lamports_per_byte_year: 1,
+            lamports_per_byte: 1,
             ..Rent::default()
         };
         let min_balance = rent.minimum_balance(NonceState::size());
@@ -1281,7 +1281,7 @@ mod tests {
     #[test]
     fn test_validate_nonce_fee_payer_with_checked_arithmetic() {
         let rent = Rent {
-            lamports_per_byte_year: 1,
+            lamports_per_byte: 1,
             ..Rent::default()
         };
 

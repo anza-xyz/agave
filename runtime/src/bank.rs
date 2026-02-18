@@ -2863,6 +2863,7 @@ impl Bank {
         self.store_account_and_update_capitalization(program_id, &account);
     }
 
+    #[allow(deprecated)]
     pub fn set_rent_burn_percentage(&mut self, burn_percent: u8) {
         self.rent_collector.rent.burn_percent = burn_percent;
     }
@@ -5634,22 +5635,20 @@ impl Bank {
         ];
         for (feature_id, lamports_per_byte_year) in rent_feature_gates {
             if new_feature_activations.contains(&feature_id) {
-                self.rent_collector.rent.lamports_per_byte_year = lamports_per_byte_year;
+                self.rent_collector.rent.lamports_per_byte = lamports_per_byte_year;
                 self.update_rent();
             }
         }
 
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
             *self.inflation.write().unwrap() = Inflation::pico();
-            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
-            self.rent_collector.rent.burn_percent = 50; // 50% rent burn
+            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
         if !new_feature_activations.is_disjoint(&self.feature_set.full_inflation_features_enabled())
         {
             *self.inflation.write().unwrap() = Inflation::full();
-            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
-            self.rent_collector.rent.burn_percent = 50; // 50% rent burn
+            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);

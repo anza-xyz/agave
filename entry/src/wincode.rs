@@ -83,6 +83,7 @@ unsafe impl<C: Config> SchemaWrite<C> for VersionedMsg {
             solana_message::VersionedMessage::V0(message) => {
                 Ok(1 + <V0Message as SchemaWrite<C>>::size_of(message)?)
             }
+            solana_message::VersionedMessage::V1(_) => unimplemented!(),
         }
     }
 
@@ -96,6 +97,7 @@ unsafe impl<C: Config> SchemaWrite<C> for VersionedMsg {
                 <u8 as SchemaWrite<C>>::write(writer.by_ref(), &MESSAGE_VERSION_PREFIX)?;
                 <V0Message as SchemaWrite<C>>::write(writer, message)
             }
+            solana_message::VersionedMessage::V1(_) => unimplemented!(),
         }
     }
 }

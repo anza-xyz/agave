@@ -47,8 +47,7 @@ impl RentCollector {
     }
 
     pub(crate) fn deprecate_rent_exemption_threshold(&mut self) {
-        self.rent.lamports_per_byte_year =
-            (self.rent.lamports_per_byte_year as f64 * self.rent.exemption_threshold) as u64;
-        self.rent.exemption_threshold = 1.0;
+        // also resets exemption_threshold to 1.0 and lamports_per_byte
+        self.rent = Rent::with_lamports_per_byte(solana_rent::DEFAULT_LAMPORTS_PER_BYTE);
     }
 }

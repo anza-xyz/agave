@@ -291,9 +291,8 @@ fn test_bank_new() {
     );
 
     genesis_config.rent = Rent {
-        lamports_per_byte_year: 5,
-        exemption_threshold: 1.2,
-        burn_percent: 5,
+        lamports_per_byte: 5,
+        ..Rent::default()
     };
 
     let bank = Bank::new_for_tests(&genesis_config);
@@ -307,9 +306,7 @@ fn test_bank_new() {
     let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
     let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
 
-    assert_eq!(rent.burn_percent, 5);
-    assert_eq!(rent.exemption_threshold, 1.0);
-    assert_eq!(rent.lamports_per_byte_year, 6);
+    assert_eq!(rent.lamports_per_byte, 6);
 }
 
 pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {
@@ -1370,7 +1367,7 @@ fn test_bank_withdraw() {
 #[test]
 fn test_bank_withdraw_from_nonce_account() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-    genesis_config.rent.lamports_per_byte_year = 42;
+    genesis_config.rent.lamports_per_byte = 42;
     let bank = Bank::new_for_tests(&genesis_config);
 
     let min_balance = bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size());
@@ -4018,7 +4015,7 @@ where
     F: FnMut(&mut GenesisConfig),
 {
     let (mut genesis_config, mint_keypair) = create_genesis_config(supply_lamports);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     genesis_cfg_fn(&mut genesis_config);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(feature_set);
@@ -4571,7 +4568,7 @@ fn test_nonce_payer_tx_wide_cap() {
 #[test]
 fn test_nonce_fee_calculator_updates() {
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
     let (mut bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4635,7 +4632,7 @@ fn test_nonce_fee_calculator_updates() {
 #[test]
 fn test_nonce_fee_calculator_updates_tx_wide_cap() {
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
     let (mut bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -7122,7 +7119,7 @@ fn test_block_limits() {
 #[test]
 fn test_simd_0437_rent_feature_gates_epoch_transition() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let rent_feature_gates = [
@@ -7150,7 +7147,7 @@ fn test_simd_0437_rent_feature_gates_epoch_transition() {
     let feature_account_balance =
         std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
 
-    for (feature_id, expected_lamports_per_byte_year) in rent_feature_gates {
+    for (feature_id, expected_lamports_per_byte) in rent_feature_gates {
         assert!(
             !bank.feature_set.is_active(&feature_id),
             "feature should be inactive before activation"
@@ -7169,14 +7166,14 @@ fn test_simd_0437_rent_feature_gates_epoch_transition() {
             "feature should be active after epoch transition"
         );
         assert_eq!(
-            bank.rent_collector.rent.lamports_per_byte_year, expected_lamports_per_byte_year,
+            bank.rent_collector.rent.lamports_per_byte, expected_lamports_per_byte,
             "rent collector should reflect the active gate"
         );
 
         let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
         let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
         assert_eq!(
-            rent.lamports_per_byte_year, expected_lamports_per_byte_year,
+            rent.lamports_per_byte, expected_lamports_per_byte,
             "rent sysvar should be updated after activation"
         );
     }
@@ -7185,7 +7182,7 @@ fn test_simd_0437_rent_feature_gates_epoch_transition() {
 #[test]
 fn test_simd_0437_rent_feature_gate_activation_ordering() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let feature_account_balance =
@@ -7219,7 +7216,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
             .is_active(&feature_set::set_lamports_per_byte_to_2575::id())
     );
     assert_eq!(
-        bank.rent_collector.rent.lamports_per_byte_year,
+        bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
         "lowest activated value should win when multiple activate in one epoch"
     );
@@ -7236,7 +7233,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
             .is_active(&feature_set::set_lamports_per_byte_to_1322::id())
     );
     assert_eq!(
-        bank.rent_collector.rent.lamports_per_byte_year,
+        bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE,
         "first activation should be applied after its epoch boundary"
     );
@@ -7252,7 +7249,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
             .is_active(&feature_set::set_lamports_per_byte_to_5080::id())
     );
     assert_eq!(
-        bank.rent_collector.rent.lamports_per_byte_year,
+        bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE,
         "most recent activation should win even when out of order"
     );
@@ -12434,7 +12431,6 @@ fn test_genesis_deprecate_rent_exemption_enabled() {
 
     assert_eq!(accounts_db_rent, tx_processor_rent);
     assert_eq!(accounts_db_rent, rent_collector_rent);
-    assert!(accounts_db_rent.exemption_threshold == 1.0);
 }
 
 #[test]
@@ -12455,7 +12451,6 @@ fn test_genesis_deprecate_rent_exemption_disabled() {
 
     assert_eq!(accounts_db_rent, tx_processor_rent);
     assert_eq!(accounts_db_rent, rent_collector_rent);
-    assert!(accounts_db_rent.exemption_threshold == 2.0);
 }
 
 #[test]
