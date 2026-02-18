@@ -162,6 +162,17 @@ tempfile = "3.23.0"
 thiserror = "2.0.17"
 tokio = "1.48.0"
 
+[patch."https://github.com/OliverNChalk/agave"]
+agave-feature-set = { path = "../feature-set" }
+agave-scheduler-bindings = { path = "../scheduler-bindings" }
+agave-scheduling-utils = { path = "../scheduling-utils" }
+agave-transaction-view = { path = "../transaction-view" }
+solana-compute-budget-instruction = { path = "../compute-budget-instruction" }
+solana-cost-model = { path = "../cost-model" }
+solana-fee = { path = "../fee" }
+solana-runtime-transaction = { path = "../runtime-transaction" }
+solana-svm-transaction = { path = "../svm-transaction" }
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true

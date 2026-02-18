@@ -870,6 +870,7 @@ impl BankingSimulator {
             None,
             bank_forks.clone(),
             None,
+            false,
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot
