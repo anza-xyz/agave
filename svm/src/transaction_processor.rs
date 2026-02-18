@@ -904,8 +904,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             } else if missing_programs.is_empty() {
                 break;
             } else {
-                // Sleep until the next finish_cooperative_loading_task() call.
-                // Once a task completes we'll wake up and try to load the
+                // Remember: there are multiple transaction processor threads running concurrently
+                // and those other threads may be loading this or other programs.
+                //
+                // So, sleep until some other thread submits a program with their
+                // `finish_cooperative_loading_task` call. We'll then wake up and try to load the
                 // missing programs inside the tx batch again.
                 let _new_cookie = task_waiter.wait(task_cookie);
             }
