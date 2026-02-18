@@ -2128,9 +2128,8 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
 
     // rent minimum needs to be adjusted so fee payer can be deallocated
     let rent = Rent {
-        lamports_per_byte_year: LAMPORTS_PER_SIGNATURE / solana_rent::ACCOUNT_STORAGE_OVERHEAD,
-        exemption_threshold: 1.0,
-        burn_percent: 0,
+        lamports_per_byte: LAMPORTS_PER_SIGNATURE / solana_rent::ACCOUNT_STORAGE_OVERHEAD,
+        ..Rent::default()
     };
     test_entry.set_rent_params(rent);
 

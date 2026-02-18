@@ -5633,8 +5633,7 @@ pub(crate) mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(solana_native_token::LAMPORTS_PER_SOL * 1000);
-        genesis_config.rent.lamports_per_byte_year = 50;
-        genesis_config.rent.exemption_threshold = 2.0;
+        genesis_config.rent.lamports_per_byte = 50;
         let (ledger_path, _) = create_new_tmp_ledger!(&genesis_config);
         {
             let blockstore = Blockstore::open(&ledger_path)

@@ -88,9 +88,6 @@ impl ReadableAccount for AccountForStorage<'_> {
             AccountForStorage::StoredAccountInfo(account) => account.rent_epoch(),
         }
     }
-    fn to_account_shared_data(&self) -> AccountSharedData {
-        self.take_account()
-    }
 }
 
 static DEFAULT_ACCOUNT_SHARED_DATA: std::sync::LazyLock<AccountSharedData> =

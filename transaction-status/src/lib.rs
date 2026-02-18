@@ -562,6 +562,7 @@ impl VersionedTransactionWithStatusMeta {
                 );
                 parse_v0_message_accounts(&loaded_message)
             }
+            VersionedMessage::V1(_) => unimplemented!(),
         };
 
         Ok(EncodedTransactionWithStatusMeta {
@@ -650,6 +651,7 @@ impl EncodableWithMeta for VersionedTransaction {
                     VersionedMessage::V0(message) => {
                         message.encode_with_meta(UiTransactionEncoding::JsonParsed, meta)
                     }
+                    VersionedMessage::V1(_) => unimplemented!(),
                 },
             }),
         }
@@ -660,6 +662,7 @@ impl EncodableWithMeta for VersionedTransaction {
             message: match &self.message {
                 VersionedMessage::Legacy(message) => message.encode(UiTransactionEncoding::Json),
                 VersionedMessage::V0(message) => message.json_encode(),
+                VersionedMessage::V1(_message) => unimplemented!(),
             },
         })
     }
@@ -690,6 +693,7 @@ impl Encodable for VersionedTransaction {
                         VersionedMessage::V0(message) => {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
+                        VersionedMessage::V1(_message) => unimplemented!(),
                     },
                 })
             }

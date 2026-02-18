@@ -350,6 +350,7 @@ impl From<VersionedMessage> for generated::Message {
                     .map(|lookup| lookup.into())
                     .collect(),
             },
+            VersionedMessage::V1(_message) => unimplemented!(),
         }
     }
 }

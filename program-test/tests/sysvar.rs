@@ -31,7 +31,7 @@ fn sysvar_getter_process_instruction(
     assert_eq!(epoch_schedule, EpochSchedule::default());
 
     let rent = Rent::get()?;
-    assert_eq!(rent.exemption_threshold, 1.0);
+    assert_eq!(rent.lamports_per_byte, 1);
 
     Ok(())
 }

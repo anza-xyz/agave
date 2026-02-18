@@ -4142,8 +4142,8 @@ mod tests {
         };
 
         let mut src_rent = create_filled_type::<Rent>(false);
-        src_rent.lamports_per_byte_year = 1;
-        src_rent.exemption_threshold = 2.0;
+        src_rent.lamports_per_byte = 1;
+        src_rent.exemption_threshold = 1.0f64.to_le_bytes();
         src_rent.burn_percent = 3;
 
         let mut src_rewards = create_filled_type::<EpochRewards>(false);
@@ -4386,7 +4386,7 @@ mod tests {
             assert_eq!(got_rent_obj, src_rent);
 
             let mut clean_rent = create_filled_type::<Rent>(true);
-            clean_rent.lamports_per_byte_year = src_rent.lamports_per_byte_year;
+            clean_rent.lamports_per_byte = src_rent.lamports_per_byte;
             clean_rent.exemption_threshold = src_rent.exemption_threshold;
             clean_rent.burn_percent = src_rent.burn_percent;
             assert!(are_bytes_equal(&got_rent_obj, &clean_rent));

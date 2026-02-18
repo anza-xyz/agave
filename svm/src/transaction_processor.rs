@@ -1952,7 +1952,7 @@ mod tests {
             .unwrap()
             .insert(sysvar::fees::id(), fees_account);
 
-        let rent = Rent::with_slots_per_epoch(2048);
+        let rent = Rent::default();
         let rent_account = create_account_shared_data_for_test(&rent);
         mock_bank
             .account_shared_data
@@ -2028,7 +2028,7 @@ mod tests {
             .unwrap()
             .insert(sysvar::fees::id(), fees_account);
 
-        let rent = Rent::with_slots_per_epoch(2048);
+        let rent = Rent::default();
         let rent_account = create_account_shared_data_for_test(&rent);
         mock_bank
             .account_shared_data

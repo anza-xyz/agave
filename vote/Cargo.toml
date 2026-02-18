@@ -50,7 +50,7 @@ solana-serialize-utils = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-transaction = { workspace = true, features = ["bincode"] }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
@@ -64,7 +64,7 @@ solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
-solana-transaction = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
+solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }
 solana-vote = { path = ".", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
