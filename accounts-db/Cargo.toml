@@ -54,7 +54,7 @@ modular-bitfield = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
-rand = { workspace = true }
+rand = { workspace = true, features = ["small_rng"] }
 rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
