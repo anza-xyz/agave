@@ -629,6 +629,10 @@ winreg = "0.55"
 x509-parser = "0.18.1"
 zstd = "0.13.3"
 
+[profile.fast-dev]
+inherits = "dev"
+debug = false
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true
