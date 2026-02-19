@@ -131,6 +131,8 @@ pub struct UiParsedMessage {
     pub instructions: Vec<UiInstruction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_table_lookups: Option<Vec<UiAddressTableLookup>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_config: Option<UiTransactionConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -226,6 +228,27 @@ impl From<&MessageAddressTableLookup> for UiAddressTableLookup {
             account_key: lookup.account_key.to_string(),
             writable_indexes: lookup.writable_indexes.clone(),
             readonly_indexes: lookup.readonly_indexes.clone(),
+        }
+    }
+}
+
+/// A duplicate representation of a TransactionConfig, in raw format, for pretty JSON serialization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiTransactionConfig {
+    pub priority_fee: Option<u64>,
+    pub compute_unit_limit: Option<u32>,
+    pub loaded_accounts_data_size_limit: Option<u32>,
+    pub heap_size: Option<u32>,
+}
+
+impl From<&solana_message::v1::TransactionConfig> for UiTransactionConfig {
+    fn from(config: &solana_message::v1::TransactionConfig) -> Self {
+        Self {
+            priority_fee: config.priority_fee,
+            compute_unit_limit: config.compute_unit_limit,
+            loaded_accounts_data_size_limit: config.loaded_accounts_data_size_limit,
+            heap_size: config.heap_size,
         }
     }
 }
@@ -531,6 +554,8 @@ pub struct UiRawMessage {
     pub instructions: Vec<UiCompiledInstruction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_table_lookups: Option<Vec<UiAddressTableLookup>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_config: Option<UiTransactionConfig>,
 }
 
 /// A duplicate representation of a CompiledInstruction for pretty JSON serialization
