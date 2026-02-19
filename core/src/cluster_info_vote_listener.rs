@@ -220,13 +220,7 @@ impl ClusterInfoVoteListener {
         let process_thread = Builder::new()
             .name("solCiProcVotes".to_string())
             .spawn(move || {
-<<<<<<< HEAD
-                let mut bank_hash_cache = BankHashCache::new(bank_forks);
-                let dumped_slot_subscription = bank_hash_cache.dumped_slot_subscription();
-=======
                 let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-                let migration_status = bank_forks.read().unwrap().migration_status();
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
                 let _ = Self::process_votes_loop(
                     exit,
                     verified_vote_transactions_receiver,
@@ -365,12 +359,6 @@ impl ClusterInfoVoteListener {
                 &duplicate_confirmed_slot_sender,
                 &mut vote_processing_time,
                 &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-                bank_hash_cache,
-                &dumped_slot_subscription,
-=======
-                &migration_status,
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
             );
             match confirmed_slots {
                 Ok(confirmed_slots) => {
@@ -403,12 +391,6 @@ impl ClusterInfoVoteListener {
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
-<<<<<<< HEAD
-        bank_hash_cache: &mut BankHashCache,
-        dumped_slot_subscription: &Mutex<bool>,
-=======
-        migration_status: &MigrationStatus,
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
     ) -> Result<ThresholdConfirmedSlots> {
         let mut sel = Select::new();
         sel.recv(gossip_vote_txs_receiver);
@@ -439,12 +421,6 @@ impl ClusterInfoVoteListener {
                     duplicate_confirmed_slot_sender,
                     vote_processing_time,
                     latest_vote_slot_per_validator,
-<<<<<<< HEAD
-                    bank_hash_cache,
-                    dumped_slot_subscription,
-=======
-                    migration_status,
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
                 ));
             }
             remaining_wait_time = remaining_wait_time.saturating_sub(start.elapsed());
@@ -468,12 +444,6 @@ impl ClusterInfoVoteListener {
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
-<<<<<<< HEAD
-        bank_hash_cache: &mut BankHashCache,
-        dumped_slot_subscription: &Mutex<bool>,
-=======
-        migration_status: &MigrationStatus,
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
     ) {
         if vote.is_empty() {
             return;
@@ -526,7 +496,6 @@ impl ClusterInfoVoteListener {
                     new_optimistic_confirmed_slots.push((last_vote_slot, last_vote_hash));
                     // Notify subscribers about new optimistic confirmation
                     if let Some(sender) = bank_notification_sender {
-<<<<<<< HEAD
                         let dependency_work = sender
                             .dependency_tracker
                             .as_ref()
@@ -534,29 +503,12 @@ impl ClusterInfoVoteListener {
                         sender
                             .sender
                             .send((
-                                BankNotification::OptimisticallyConfirmed(slot),
+                                BankNotification::OptimisticallyConfirmed(last_vote_slot),
                                 dependency_work,
                             ))
                             .unwrap_or_else(|err| {
                                 warn!("bank_notification_sender failed: {err:?}")
                             });
-=======
-                        if migration_status.should_report_commitment_or_root(last_vote_slot) {
-                            let dependency_work = sender
-                                .dependency_tracker
-                                .as_ref()
-                                .map(|s| s.get_current_declared_work());
-                            sender
-                                .sender
-                                .send((
-                                    BankNotification::OptimisticallyConfirmed(last_vote_slot),
-                                    dependency_work,
-                                ))
-                                .unwrap_or_else(|err| {
-                                    warn!("bank_notification_sender failed: {err:?}")
-                                });
-                        }
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
                     }
                 }
 
@@ -623,12 +575,6 @@ impl ClusterInfoVoteListener {
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
-<<<<<<< HEAD
-        bank_hash_cache: &mut BankHashCache,
-        dumped_slot_subscription: &Mutex<bool>,
-=======
-        migration_status: &MigrationStatus,
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
     ) -> ThresholdConfirmedSlots {
         let mut diff: HashMap<Slot, HashMap<Pubkey, bool>> = HashMap::new();
         let mut new_optimistic_confirmed_slots = vec![];
@@ -656,12 +602,6 @@ impl ClusterInfoVoteListener {
                 bank_notification_sender,
                 duplicate_confirmed_slot_sender,
                 latest_vote_slot_per_validator,
-<<<<<<< HEAD
-                bank_hash_cache,
-                dumped_slot_subscription,
-=======
-                migration_status,
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
             );
         }
         gossip_vote_txn_processing_time.stop();
@@ -914,12 +854,6 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         )
         .unwrap();
 
@@ -953,12 +887,6 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         )
         .unwrap();
 
@@ -1049,12 +977,6 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         )
         .unwrap();
 
@@ -1221,12 +1143,6 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         )
         .unwrap();
 
@@ -1337,12 +1253,6 @@ mod tests {
                     &None,
                     &mut None,
                     &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-                    &mut bank_hash_cache,
-                    &Mutex::new(false),
-=======
-                    &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
                 );
             }
             let slot_vote_tracker = vote_tracker.get_slot_vote_tracker(vote_slot).unwrap();
@@ -1435,12 +1345,6 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         );
 
         // Setup next epoch
@@ -1488,12 +1392,6 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         );
     }
 
@@ -1706,12 +1604,6 @@ mod tests {
             &None,
             &None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         );
         assert_eq!(diff.keys().copied().sorted().collect_vec(), vec![1, 2, 6]);
 
@@ -1743,12 +1635,6 @@ mod tests {
             &None,
             &None,
             &mut latest_vote_slot_per_validator,
-<<<<<<< HEAD
-            &mut bank_hash_cache,
-            &Mutex::new(false),
-=======
-            &MigrationStatus::default(),
->>>>>>> 207fb1d00 (consensus: axe the intermediate accumulation pathway for OC (#10594))
         );
         assert_eq!(diff.keys().copied().sorted().collect_vec(), vec![7, 8]);
     }
