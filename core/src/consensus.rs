@@ -20,7 +20,7 @@ use {
         tower_vote_state::TowerVoteState,
     },
     crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
-    agave_votor_messages::migration::GENESIS_VOTE_THRESHOLD,
+    agave_votor_messages::{fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -42,6 +42,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
+        num::NonZeroU64,
         ops::Deref,
     },
     thiserror::Error,
@@ -542,7 +543,8 @@ impl Tower {
 
         debug_assert!(total_stake > 0);
         let parent_is_super_oc = bank_slot == parent_slot + 1
-            && super_oc_stake as f64 / total_stake as f64 > GENESIS_VOTE_THRESHOLD;
+            && Fraction::new(super_oc_stake, NonZeroU64::new(total_stake).unwrap())
+                > GENESIS_VOTE_THRESHOLD;
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).

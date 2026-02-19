@@ -3,8 +3,8 @@ use {
     crate::{
         commitment::CommitmentError,
         common::{
-            certificate_limits_and_vote_types, conflicting_types, vote_to_cert_types, Stake,
-            MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE, MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
+            conflicting_types, vote_to_cert_types, Stake, MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE,
+            MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
         },
         consensus_pool::{
             parent_ready_tracker::ParentReadyTracker,
@@ -16,6 +16,7 @@ use {
     },
     agave_votor_messages::{
         consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        fraction::Fraction,
         migration::MigrationStatus,
         vote::{Vote, VoteType},
     },
@@ -29,6 +30,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap},
+        num::NonZeroU64,
         sync::Arc,
     },
     thiserror::Error,
@@ -208,7 +210,7 @@ impl ConsensusPool {
                 continue;
             }
             // Otherwise check whether the certificate is complete
-            let (limit, vote_types) = certificate_limits_and_vote_types(&cert_type);
+            let (limit, vote_types) = cert_type.limits_and_vote_types();
             let accumulated_stake = vote_types
                 .iter()
                 .filter_map(|vote_type| {
@@ -223,7 +225,8 @@ impl ConsensusPool {
                     })
                 })
                 .sum::<Stake>();
-            if accumulated_stake as f64 / (total_stake as f64) < limit {
+            let total_stake = NonZeroU64::new(total_stake).unwrap();
+            if Fraction::new(accumulated_stake, total_stake) < limit {
                 continue;
             }
             let mut cert_builder = CertificateBuilder::new(cert_type);

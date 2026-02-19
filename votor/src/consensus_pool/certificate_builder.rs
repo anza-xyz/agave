@@ -1,5 +1,4 @@
 use {
-    crate::common::certificate_limits_and_vote_types,
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
@@ -143,7 +142,7 @@ impl BuilderType {
         cert_type: &CertificateType,
         msgs: &[VoteMessage],
     ) -> Result<(), AggregateError> {
-        let vote_types = certificate_limits_and_vote_types(cert_type).1;
+        let vote_types = cert_type.limits_and_vote_types().1;
         match self {
             Self::Skip {
                 signature0,

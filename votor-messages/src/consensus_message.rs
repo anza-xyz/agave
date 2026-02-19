@@ -1,6 +1,10 @@
 //! Put Alpenglow consensus messages here so all clients can agree on the format.
 use {
-    crate::vote::Vote,
+    crate::{
+        fraction::Fraction,
+        migration::GENESIS_VOTE_THRESHOLD,
+        vote::{Vote, VoteType},
+    },
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
@@ -159,6 +163,31 @@ impl CertificateType {
             }
             // Other certificate types do not use Base3 encoding.
             _ => None,
+        }
+    }
+
+    /// Returns the stake fraction required for certificate completion and the
+    /// `VoteType`s that contribute to this certificate.
+    ///
+    /// Must be in sync with `Vote::to_cert_types`
+    pub const fn limits_and_vote_types(&self) -> (Fraction, &'static [VoteType]) {
+        match self {
+            CertificateType::Notarize(_, _) => {
+                (Fraction::from_percentage(60), &[VoteType::Notarize])
+            }
+            CertificateType::NotarizeFallback(_, _) => (
+                Fraction::from_percentage(60),
+                &[VoteType::Notarize, VoteType::NotarizeFallback],
+            ),
+            CertificateType::FinalizeFast(_, _) => {
+                (Fraction::from_percentage(80), &[VoteType::Notarize])
+            }
+            CertificateType::Finalize(_) => (Fraction::from_percentage(60), &[VoteType::Finalize]),
+            CertificateType::Skip(_) => (
+                Fraction::from_percentage(60),
+                &[VoteType::Skip, VoteType::SkipFallback],
+            ),
+            CertificateType::Genesis(_, _) => (GENESIS_VOTE_THRESHOLD, &[VoteType::Genesis]),
         }
     }
 }
