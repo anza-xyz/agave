@@ -4703,7 +4703,7 @@ pub mod tests {
         let to_pubkey = *instruction_context.get_key_of_instruction_account(1)?;
         let owner_pubkey = *instruction_context.get_key_of_instruction_account(2)?;
 
-        invoke_context.native_invoke(
+        invoke_context.native_invoke_signed(
             system_instruction::create_account(
                 &from_pubkey,
                 &to_pubkey,

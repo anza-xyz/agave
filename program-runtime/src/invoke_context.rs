@@ -288,7 +288,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     /// `create_program_address`, mirroring the SBF CPI path. This makes
     /// it structurally impossible for a builtin to vouch for a non-PDA
     /// address (e.g. a user wallet) as a signer.
-    pub fn native_invoke(
+    pub fn native_invoke_signed(
         &mut self,
         instruction: Instruction,
         signer_seeds: &[&[&[u8]]],
@@ -1138,7 +1138,7 @@ mod tests {
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
                         invoke_context
-                            .native_invoke(inner_instruction, &[])
+                            .native_invoke_signed(inner_instruction, &[])
                             .and(invoke_context.pop())?;
                     }
                     MockInstruction::UnbalancedPop => instruction_context
@@ -1360,7 +1360,7 @@ mod tests {
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas);
         let result = invoke_context
-            .native_invoke(inner_instruction, &[])
+            .native_invoke_signed(inner_instruction, &[])
             .and(invoke_context.pop());
         assert_eq!(result, expected_result);
     }
@@ -1759,14 +1759,14 @@ mod tests {
         }
     }
 
-    // Used for native_invoke tests below.
+    // Used for native_invoke_signed tests below.
     const TEST_CALLER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([1u8; 32]);
     const TEST_CALLEE_PROGRAM_ID: Pubkey = Pubkey::new_from_array([2u8; 32]);
     const TEST_WRONG_PROGRAM_ID: Pubkey = Pubkey::new_from_array([3u8; 32]);
     const TEST_MOCK_EXTRA_KEY: Pubkey = Pubkey::new_from_array([4u8; 32]);
     const TEST_ACCOUNT_KEY: Pubkey = Pubkey::new_from_array([5u8; 32]);
 
-    /// Runs a `native_invoke` call with the standard test setup and returns
+    /// Runs a `native_invoke_signed` call with the standard test setup and returns
     /// the result.
     ///
     /// Same layout for all tests:
@@ -1774,7 +1774,7 @@ mod tests {
     ///   1: caller program (executable)
     ///   2: mock extra (satisfies MockBuiltin's 2-account requirement)
     ///   3: callee program (executable)
-    fn run_native_invoke_test(
+    fn run_native_invoke_signed_test(
         target_key: Pubkey,
         target_is_signer: bool,
         inner_instruction: Instruction,
@@ -1810,14 +1810,14 @@ mod tests {
             .unwrap();
         invoke_context.push().unwrap();
 
-        let result = invoke_context.native_invoke(inner_instruction, signer_seeds);
+        let result = invoke_context.native_invoke_signed(inner_instruction, signer_seeds);
         invoke_context.pop().unwrap();
         result
     }
 
     // Valid PDA seeds grant signer privilege to the derived address.
     #[test]
-    fn test_native_invoke_with_valid_pda_signer() {
+    fn test_native_invoke_signed_with_valid_pda_signer() {
         let (pda_key, bump_seed) =
             Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
         let instruction = Instruction::new_with_bincode(
@@ -1829,31 +1829,37 @@ mod tests {
             ],
         );
         let result =
-            run_native_invoke_test(pda_key, false, instruction, &[&[b"seed", &[bump_seed]]]);
+            run_native_invoke_signed_test(pda_key, false, instruction, &[&[b"seed", &[bump_seed]]]);
         assert!(
             result.is_ok(),
             "valid PDA signer should succeed: {result:?}"
         );
     }
 
-    // Oversized seeds (>MAX_SEED_LEN) are rejected with InvalidSeeds.
+    // Oversized seeds (>MAX_SEED_LEN) hit `MaxSeedLengthExceeded`
+    // (discriminant 0) which the broken `as u64` num-traits conversion
+    // maps to `Custom(0)`.
     #[test]
-    fn test_native_invoke_with_invalid_seeds() {
+    fn test_native_invoke_signed_with_invalid_seeds() {
         let instruction = Instruction::new_with_bincode(
             TEST_CALLEE_PROGRAM_ID,
             &MockInstruction::NoopSuccess,
             vec![AccountMeta::new(TEST_ACCOUNT_KEY, true)],
         );
         let oversized_seed = [0u8; 33];
-        let result =
-            run_native_invoke_test(TEST_ACCOUNT_KEY, false, instruction, &[&[&oversized_seed]]);
+        let result = run_native_invoke_signed_test(
+            TEST_ACCOUNT_KEY,
+            false,
+            instruction,
+            &[&[&oversized_seed]],
+        );
         assert_eq!(result, Err(InstructionError::Custom(0)));
     }
 
     // CPI marks an account as signer but caller provides no seeds —
     // signer privilege escalation.
     #[test]
-    fn test_native_invoke_pda_privilege_escalation_without_seeds() {
+    fn test_native_invoke_signed_pda_privilege_escalation_without_seeds() {
         let (pda_key, _bump_seed) =
             Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
         let instruction = Instruction::new_with_bincode(
@@ -1861,14 +1867,14 @@ mod tests {
             &MockInstruction::NoopSuccess,
             vec![AccountMeta::new(pda_key, true)],
         );
-        let result = run_native_invoke_test(pda_key, false, instruction, &[]);
+        let result = run_native_invoke_signed_test(pda_key, false, instruction, &[]);
         assert_eq!(result, Err(InstructionError::PrivilegeEscalation));
     }
 
     // Seeds valid for a different program ID don't grant signer privilege
-    // because native_invoke derives against the caller's own program ID.
+    // because native_invoke_signed derives against the caller's own program ID.
     #[test]
-    fn test_native_invoke_uses_caller_program_id_for_pda() {
+    fn test_native_invoke_signed_uses_caller_program_id_for_pda() {
         let (pda_key, bump_seed) = Pubkey::find_program_address(&[b"seed"], &TEST_WRONG_PROGRAM_ID);
         let instruction = Instruction::new_with_bincode(
             TEST_CALLEE_PROGRAM_ID,
@@ -1876,13 +1882,13 @@ mod tests {
             vec![AccountMeta::new(pda_key, true)],
         );
         let result =
-            run_native_invoke_test(pda_key, false, instruction, &[&[b"seed", &[bump_seed]]]);
+            run_native_invoke_signed_test(pda_key, false, instruction, &[&[b"seed", &[bump_seed]]]);
         assert_eq!(result, Err(InstructionError::PrivilegeEscalation));
     }
 
     // Top-level signer privilege carries through CPI without needing seeds.
     #[test]
-    fn test_native_invoke_top_level_signer_needs_no_seeds() {
+    fn test_native_invoke_signed_top_level_signer_needs_no_seeds() {
         let (pda_key, _bump_seed) =
             Pubkey::find_program_address(&[b"seed"], &TEST_CALLER_PROGRAM_ID);
         let instruction = Instruction::new_with_bincode(
@@ -1893,7 +1899,7 @@ mod tests {
                 AccountMeta::new_readonly(TEST_MOCK_EXTRA_KEY, false),
             ],
         );
-        let result = run_native_invoke_test(pda_key, true, instruction, &[]);
+        let result = run_native_invoke_signed_test(pda_key, true, instruction, &[]);
         assert!(
             result.is_ok(),
             "top-level signer should not need seeds: {result:?}"

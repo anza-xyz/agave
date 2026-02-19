@@ -1014,7 +1014,7 @@ pub fn deposit_delegator_rewards(
     }?;
 
     // CPI to System: Transfer from sender to vote account.
-    invoke_context.native_invoke(
+    invoke_context.native_invoke_signed(
         system_instruction::transfer(&source_address, &vote_address, deposit),
         &[],
     )?;

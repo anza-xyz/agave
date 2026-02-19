@@ -295,7 +295,7 @@ fn process_loader_upgradeable_instruction(
                 .push(AccountMeta::new(buffer_key, false));
 
             invoke_context
-                .native_invoke(instruction, &[&[new_program_id.as_ref(), &[bump_seed]]])?;
+                .native_invoke_signed(instruction, &[&[new_program_id.as_ref(), &[bump_seed]]])?;
 
             // Load and verify the program bits
             let transaction_context = &invoke_context.transaction_context;
@@ -868,7 +868,7 @@ fn process_loader_upgradeable_instruction(
                         )),
                     );
             } else {
-                invoke_context.native_invoke(
+                invoke_context.native_invoke_signed(
                     solana_loader_v4_interface::instruction::set_program_length(
                         &program_address,
                         &provided_authority_address,
@@ -878,7 +878,7 @@ fn process_loader_upgradeable_instruction(
                     &[],
                 )?;
 
-                invoke_context.native_invoke(
+                invoke_context.native_invoke_signed(
                     solana_loader_v4_interface::instruction::copy(
                         &program_address,
                         &provided_authority_address,
@@ -890,7 +890,7 @@ fn process_loader_upgradeable_instruction(
                     &[],
                 )?;
 
-                invoke_context.native_invoke(
+                invoke_context.native_invoke_signed(
                     solana_loader_v4_interface::instruction::deploy(
                         &program_address,
                         &provided_authority_address,
@@ -900,7 +900,7 @@ fn process_loader_upgradeable_instruction(
 
                 if let Some(upgrade_authority_address) = upgrade_authority_address {
                     if migration_authority::check_id(&provided_authority_address) {
-                        invoke_context.native_invoke(
+                        invoke_context.native_invoke_signed(
                             solana_loader_v4_interface::instruction::transfer_authority(
                                 &program_address,
                                 &provided_authority_address,
@@ -910,7 +910,7 @@ fn process_loader_upgradeable_instruction(
                         )?;
                     }
                 } else {
-                    invoke_context.native_invoke(
+                    invoke_context.native_invoke_signed(
                         solana_loader_v4_interface::instruction::finalize(
                             &program_address,
                             &provided_authority_address,
@@ -1059,7 +1059,7 @@ fn common_extend_program(
         min_balance.saturating_sub(balance)
     };
 
-    // Borrowed accounts need to be dropped before native_invoke
+    // Borrowed accounts need to be dropped before native_invoke_signed
     drop(programdata_account);
 
     // Dereference the program ID to prevent overlapping mutable/immutable borrow of invoke context
@@ -1068,7 +1068,7 @@ fn common_extend_program(
         let payer_key =
             *instruction_context.get_key_of_instruction_account(optional_payer_account_index)?;
 
-        invoke_context.native_invoke(
+        invoke_context.native_invoke_signed(
             system_instruction::transfer(&payer_key, &programdata_key, required_payment),
             &[],
         )?;
