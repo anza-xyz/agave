@@ -175,7 +175,7 @@ mod tests {
         let signing_keys = (0..max_validators)
             .map(|index| {
                 keypair_map
-                    .get(&rank_map.get_pubkey(index).unwrap().1)
+                    .get(&rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey)
                     .unwrap()
                     .clone()
             })

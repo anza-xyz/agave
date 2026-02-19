@@ -83,12 +83,13 @@ fn get_key_and_stakes(
     let epoch_stakes = epoch_stakes_map
         .get(&epoch)
         .ok_or(AddVoteError::EpochStakesNotFound(epoch))?;
-    let Some((vote_key, _)) = epoch_stakes
+    let Some(entry) = epoch_stakes
         .bls_pubkey_to_rank_map()
-        .get_pubkey(rank as usize)
+        .get_pubkey_stake_entry(rank as usize)
     else {
         return Err(AddVoteError::InvalidRank(rank));
     };
+    let vote_key = &entry.pubkey;
     let stake = epoch_stakes.vote_account_stake(vote_key);
     if stake == 0 {
         // Since we have a valid rank, this should never happen, there is no rank for zero stake.

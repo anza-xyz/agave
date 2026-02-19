@@ -143,11 +143,11 @@ impl BLSSigVerifier {
         votes
             .into_iter()
             .filter_map(|vote| {
-                let (pubkey, _bls_pubkey) = bank
+                let entry = bank
                     .current_epoch_stakes()
                     .bls_pubkey_to_rank_map()
-                    .get_pubkey(vote.rank as usize)?;
-                Some((vote, *pubkey))
+                    .get_pubkey_stake_entry(vote.rank as usize)?;
+                Some((vote, entry.pubkey))
             })
             .collect()
     }
