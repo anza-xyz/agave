@@ -780,6 +780,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $invoke_context:ident,
         $transaction_context:ident,
         $feature_set:ident,
+        $top_level_instructions:literal,
         $transaction_accounts:expr $(,)?
     ) => {
         use {
@@ -805,7 +806,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
-            /* number_of_top_level_instructions */ 1,
+            $top_level_instructions,
         );
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {
@@ -847,6 +848,20 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             ),
         );
     };
+    (
+        $invoke_context:ident,
+        $transaction_context:ident,
+        $feature_set:ident,
+        $transaction_accounts:expr $(,)?
+    ) => {
+        with_mock_invoke_context_with_feature_set!(
+            $invoke_context,
+            $transaction_context,
+            $feature_set,
+            1,
+            $transaction_accounts
+        );
+    };
 }
 
 #[macro_export]
@@ -854,6 +869,7 @@ macro_rules! with_mock_invoke_context {
     (
         $invoke_context:ident,
         $transaction_context:ident,
+        $top_level_instructions:literal,
         $transaction_accounts:expr $(,)?
     ) => {
         let feature_set = &solana_svm_feature_set::SVMFeatureSet::default();
@@ -861,63 +877,20 @@ macro_rules! with_mock_invoke_context {
             $invoke_context,
             $transaction_context,
             feature_set,
+            $top_level_instructions,
             $transaction_accounts
         )
     };
-}
-
-#[macro_export]
-macro_rules! mock_invoke_context_with_top_level_ixs {
     (
         $invoke_context:ident,
         $transaction_context:ident,
-        $top_level_instructions:literal,
         $transaction_accounts:expr $(,)?
     ) => {
-        use {
-            solana_svm_callback::InvokeContextCallback,
-            solana_svm_log_collector::LogCollector,
-            $crate::{
-                __private::{Hash, Rent, TransactionContext},
-                execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-                invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-                sysvar_cache::SysvarCache,
-            },
-        };
-
-        let compute_budget = SVMTransactionExecutionBudget::default();
-        let mut $transaction_context = TransactionContext::new(
-            $transaction_accounts,
-            Rent::default(),
-            compute_budget.max_instruction_stack_depth,
-            compute_budget.max_instruction_trace_length,
-            $top_level_instructions,
-        );
-
-        struct MockInvokeContextCallback {}
-        impl InvokeContextCallback for MockInvokeContextCallback {}
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
-        let sysvar_cache = SysvarCache::default();
-        let envs = ProgramRuntimeEnvironments::default();
-        let feature_set = SVMFeatureSet::default();
-        let config = EnvironmentConfig::new(
-            Hash::default(),
-            0,
-            &MockInvokeContextCallback {},
-            &feature_set,
-            &envs,
-            &envs,
-            &sysvar_cache,
-        );
-
-        let mut $invoke_context = InvokeContext::new(
-            &mut $transaction_context,
-            &mut program_cache_for_tx_batch,
-            config,
-            Some(LogCollector::new_ref()),
-            SVMTransactionExecutionBudget::default(),
-            SVMTransactionExecutionCost::default(),
+        with_mock_invoke_context!(
+            $invoke_context,
+            $transaction_context,
+            1,
+            $transaction_accounts
         );
     };
 }
@@ -1549,12 +1522,7 @@ mod tests {
             }
         }
 
-        mock_invoke_context_with_top_level_ixs!(
-            invoke_context,
-            transaction_context,
-            2,
-            transaction_accounts
-        );
+        with_mock_invoke_context!(invoke_context, transaction_context, 2, transaction_accounts);
 
         let instruction_1 = Instruction::new_with_bytes(program_id, &[20], account_metas.clone());
 

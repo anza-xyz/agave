@@ -2699,8 +2699,7 @@ mod tests {
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
             memory::address_is_aligned,
-            mock_invoke_context_with_top_level_ixs, with_mock_invoke_context,
-            with_mock_invoke_context_with_feature_set,
+            with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
             aligned_memory::AlignedMemory,
@@ -4988,12 +4987,7 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        mock_invoke_context_with_top_level_ixs!(
-            invoke_context,
-            transaction_context,
-            4,
-            transaction_accounts
-        );
+        with_mock_invoke_context!(invoke_context, transaction_context, 4, transaction_accounts);
 
         /*
         We are testing GetProcessedSiblingInstruction for top level instructions.
@@ -5210,12 +5204,7 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        mock_invoke_context_with_top_level_ixs!(
-            invoke_context,
-            transaction_context,
-            3,
-            transaction_accounts
-        );
+        with_mock_invoke_context!(invoke_context, transaction_context, 3, transaction_accounts);
 
         const VM_BASE_ADDRESS: u64 = 0x100000000;
         const META_OFFSET: usize = 0;
