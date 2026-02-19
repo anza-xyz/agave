@@ -262,7 +262,7 @@ pub fn serialize_parameters(
         .collect::<Vec<_>>();
 
     if is_loader_deprecated {
-        serialize_parameters_unaligned(
+        serialize_parameters_for_abiv0(
             accounts,
             instruction_context.get_instruction_data(),
             &program_id,
@@ -291,7 +291,7 @@ pub fn deserialize_parameters(
         instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
     if is_loader_deprecated {
-        deserialize_parameters_unaligned(
+        deserialize_parameters_for_abiv0(
             instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
@@ -309,7 +309,7 @@ pub fn deserialize_parameters(
     }
 }
 
-fn serialize_parameters_unaligned(
+fn serialize_parameters_for_abiv0(
     accounts: Vec<SerializeAccount>,
     instruction_data: &[u8],
     program_id: &Pubkey,
@@ -401,7 +401,7 @@ fn serialize_parameters_unaligned(
     ))
 }
 
-fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
+fn deserialize_parameters_for_abiv0<I: IntoIterator<Item = usize>>(
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -1044,7 +1044,7 @@ mod tests {
                 assert_eq!(&*account, original_account);
             }
 
-            // check serialize_parameters_unaligned
+            // check serialize_parameters_for_abiv0
             invoke_context
                 .transaction_context
                 .configure_top_level_instruction_for_tests(
@@ -1069,7 +1069,7 @@ mod tests {
             let mut serialized_regions = concat_regions(&regions);
 
             let (de_program_id, de_accounts, de_instruction_data) = unsafe {
-                deserialize_unaligned(
+                deserialize_for_abiv0(
                     if !stricter_abi_and_runtime_constraints {
                         serialized.as_slice_mut()
                     } else {
@@ -1241,7 +1241,7 @@ mod tests {
             }
         }
 
-        // check serialize_parameters_unaligned
+        // check serialize_parameters_for_abiv0
         invoke_context
             .transaction_context
             .configure_top_level_instruction_for_tests(7, instruction_accounts, vec![])
@@ -1262,7 +1262,7 @@ mod tests {
         let mut serialized_regions = concat_regions(&regions);
 
         let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
-            deserialize_unaligned(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
+            deserialize_for_abiv0(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
         };
         for account_info in de_accounts {
             #[allow(deprecated)]
@@ -1274,7 +1274,7 @@ mod tests {
 
     // the old bpf_loader in-program deserializer bpf_loader::id()
     #[deny(unsafe_op_in_unsafe_fn)]
-    unsafe fn deserialize_unaligned<'a>(
+    unsafe fn deserialize_for_abiv0<'a>(
         input: *mut u8,
     ) -> (&'a Pubkey, Vec<AccountInfo<'a>>, &'a [u8]) {
         // this boring boilerplate struct is needed until inline const...

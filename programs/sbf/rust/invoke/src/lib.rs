@@ -1088,7 +1088,7 @@ fn process_instruction<'a>(
             )
             .unwrap();
 
-            // deserialize_parameters_unaligned predates realloc support, and
+            // deserialize_parameters_for_abiv0 predates realloc support, and
             // hardcodes the account data length to the original length.
             if !bpf_loader_deprecated::check_id(realloc_program_owner)
                 && stricter_abi_and_runtime_constraints == 0
