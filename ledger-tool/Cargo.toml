@@ -33,6 +33,7 @@ csv = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
 histogram = { workspace = true }
+indicatif = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }

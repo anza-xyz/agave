@@ -11,6 +11,7 @@ use {
     clap::{
         value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
     },
+    indicatif::{ProgressBar, ProgressStyle},
     itertools::Itertools,
     log::*,
     regex::Regex,
@@ -32,7 +33,7 @@ use {
         borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
-        io::{stdout, BufRead, BufReader, Write},
+        io::{stdout, BufRead, BufReader, IsTerminal, Write},
         path::{Path, PathBuf},
         sync::atomic::AtomicBool,
         time::{Duration, UNIX_EPOCH},
@@ -649,15 +650,50 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 AccessType::PrimaryForMaintenance,
             );
 
+            let use_progress_bar = std::io::stderr().is_terminal();
+            let total_slots = ending_slot.saturating_sub(starting_slot) + 1;
+
+            let progress_bar = if use_progress_bar {
+                let pb = ProgressBar::new(total_slots);
+                pb.enable_steady_tick(Duration::from_millis(100));
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(
+                            "{spinner:.green} {wide_msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                        )
+                        .expect("ProgressStyle::template direct input to be correct")
+                        .progress_chars("=> "),
+                );
+                let prev_log_level = log::max_level();
+                log::set_max_level(log::LevelFilter::Warn);
+                Some((pb, prev_log_level))
+            } else {
+                None
+            };
+
+            let mut last_slot = starting_slot.saturating_sub(1);
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
                     break;
                 }
+                if let Some((ref pb, _)) = progress_bar {
+                    pb.set_message(format!(
+                        "Copying slots {starting_slot}-{ending_slot} (current {slot})"
+                    ));
+                    pb.inc(slot.saturating_sub(last_slot));
+                }
+                last_slot = slot;
+
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
                 if target.insert_cow_shreds(shreds, None, true).is_err() {
                     warn!("error inserting shreds for slot {slot}");
                 }
+            }
+
+            if let Some((pb, prev_log_level)) = progress_bar {
+                pb.finish_and_clear();
+                log::set_max_level(prev_log_level);
             }
         }
         ("dead-slots", Some(arg_matches)) => {
