@@ -899,6 +899,9 @@ mod external {
                         let mut scheduler = GreedyScheduler::new(
                             None,
                             GreedyArgs {
+                                // TODO: Do we let the operator set this or remove
+                                // num_workers from CLI?
+                                workers: 5,
                                 unchecked_capacity: 2usize.pow(16),
                                 checked_capacity: 2usize.pow(16),
                             },

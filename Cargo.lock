@@ -79,7 +79,7 @@ dependencies = [
 [[package]]
 name = "agave-bridge"
 version = "0.1.0"
-source = "git+https://github.com/OliverNChalk/agave-scheduler#72643eae384ee8fe30fcd9735bddb1d3715ca509"
+source = "git+https://github.com/OliverNChalk/agave-scheduler#626cea38021fde498a2c4b2f1e951a4d8b0bef4c"
 dependencies = [
  "agave-feature-set",
  "agave-scheduler-bindings",
@@ -259,7 +259,7 @@ version = "4.0.0-alpha.0"
 [[package]]
 name = "agave-schedulers"
 version = "0.1.0"
-source = "git+https://github.com/OliverNChalk/agave-scheduler#72643eae384ee8fe30fcd9735bddb1d3715ca509"
+source = "git+https://github.com/OliverNChalk/agave-scheduler#626cea38021fde498a2c4b2f1e951a4d8b0bef4c"
 dependencies = [
  "agave-bridge",
  "agave-scheduler-bindings",
