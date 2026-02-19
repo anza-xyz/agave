@@ -63,6 +63,7 @@ use {
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
+    agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
     agave_feature_set::{
         self as feature_set, increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8,
         relax_programdata_account_check_migration, FeatureSet,
@@ -5161,6 +5162,29 @@ impl Bank {
     /// Get the EpochStakes for a given epoch
     pub fn epoch_stakes(&self, epoch: Epoch) -> Option<&VersionedEpochStakes> {
         self.epoch_stakes.get(&epoch)
+    }
+
+    /// Verify a BLS certificate's signature using this bank's epoch stakes.
+    ///
+    /// Returns (stake present in certificate, total stake in validator set) on success.
+    pub fn verify_certificate(
+        &self,
+        cert: &Certificate,
+    ) -> std::result::Result<(u64, u64), CertVerifyError> {
+        let slot = cert.cert_type.slot();
+        let epoch_stakes = self
+            .epoch_stakes_from_slot(slot)
+            .ok_or(CertVerifyError::MissingRankMap)?;
+        let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+        let total_stake = epoch_stakes.total_stake();
+
+        let stake = cert_verify::verify_certificate(cert, key_to_rank_map.len(), |rank| {
+            key_to_rank_map
+                .get_pubkey_and_stake(rank)
+                .map(|(_, bls_pubkey, stake)| (*stake, *bls_pubkey))
+        })?;
+
+        Ok((stake, total_stake))
     }
 
     pub fn epoch_stakes_map(&self) -> &HashMap<Epoch, VersionedEpochStakes> {

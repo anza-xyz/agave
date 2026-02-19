@@ -28,7 +28,8 @@ wincode = { workspace = true }
 [dev-dependencies]
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-agave-votor = { workspace = true }
+# See order-crates-for-publishing.py for using this unusual `path`
+agave-votor = { path = "../votor" }
 criterion = { workspace = true }
 solana-hash = { workspace = true }
 

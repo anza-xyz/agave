@@ -63,6 +63,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-bls-cert-verify"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-votor-messages",
+ "bitvec",
+ "qualifier_attr",
+ "rayon",
+ "serde",
+ "solana-bls-signatures",
+ "solana-signer-store",
+ "thiserror 2.0.18",
+ "wincode",
+]
+
+[[package]]
 name = "agave-bls12-381"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -6300,6 +6315,7 @@ dependencies = [
  "group",
  "pairing",
  "rand 0.8.5",
+ "rayon",
  "serde",
  "serde_json",
  "serde_with",
@@ -8386,6 +8402,7 @@ dependencies = [
 name = "solana-runtime"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-bls-cert-verify",
  "agave-feature-set",
  "agave-fs",
  "agave-precompiles",
