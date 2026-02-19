@@ -1,12 +1,12 @@
 [package]
 name = "solana-gossip-cli"
+documentation = "https://docs.rs/solana-gossip-cli"
 version = { workspace = true }
 authors = { workspace = true }
 description = "Binary crate providing the Solana Gossip command-line tool."
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-publish = false
 edition = { workspace = true }
 
 [[bin]]
