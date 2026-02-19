@@ -67,7 +67,7 @@ solana-signer = { workspace = true, optional = true }
 solana-system-interface = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true, optional = true }
+solana-transaction = { workspace = true, optional = true, features = ["serde"] }
 solana-transaction-context = { workspace = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
