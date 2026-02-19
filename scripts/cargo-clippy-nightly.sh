@@ -24,6 +24,7 @@ source "$here/../ci/rust-version.sh" nightly
 #   ref: https://github.com/rust-lang/rust/issues/66287
 "$here/cargo-for-all-lock-files.sh" -- \
   "+${rust_nightly}" clippy \
+  --profile=fast-dev \
   --workspace --all-targets --features dummy-for-ci-check,frozen-abi -- \
   --deny=warnings \
   --deny=clippy::default_trait_access \
