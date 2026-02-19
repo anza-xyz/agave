@@ -121,7 +121,7 @@ pub struct Entry {
     /// An unordered list of transactions that were observed before the Entry ID was
     /// generated. They may have been observed before a previous Entry ID but were
     /// pushed back into this list to ensure deterministic interpretation of the ledger.
-    #[wincode(with = "WincodeVec<crate::wincode::VersionedTransaction, MaxDataShredsLen>")]
+    #[wincode(with = "WincodeVec<VersionedTransaction, MaxDataShredsLen>")]
     pub transactions: Vec<VersionedTransaction>,
 }
 
