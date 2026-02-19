@@ -120,8 +120,7 @@ fn test_bench_tps_test_validator(config: Config) {
     let test_validator = TestValidatorGenesis::default()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
+            lamports_per_byte: 1,
             ..Rent::default()
         })
         .faucet_addr(Some(faucet_addr))
