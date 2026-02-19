@@ -51,7 +51,6 @@ frozen-abi = [
 shuttle-test = ["dep:shuttle"]
 
 [dependencies]
-agave-bls-cert-verify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
 agave-precompiles = { workspace = true }
