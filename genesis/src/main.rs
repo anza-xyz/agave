@@ -42,6 +42,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
+        bank::VAT_TO_BURN_PER_EPOCH,
         genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
         stake_utils,
     },
@@ -64,9 +65,9 @@ use {
     },
 };
 
-// In order to satisfy the VAT we need to fund all vote accounts
-// This corresponds to 100 epochs worth of VAT
-const VAT_MINIMUM_LAMPORTS: u64 = 1_600_000_000_000; // 1600 SOL
+/// In order to satisfy the VAT we need to fund all vote accounts
+/// This corresponds to 100 epochs worth of VAT
+const VAT_MINIMUM_LAMPORTS: u64 = VAT_TO_BURN_PER_EPOCH * 100;
 
 pub enum AccountFileFormat {
     Pubkey,
