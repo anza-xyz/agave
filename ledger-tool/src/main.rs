@@ -2205,10 +2205,6 @@ fn main() {
                         let mut child_bank =
                             Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
 
-                        if let Ok(rent_burn_percentage) = rent_burn_percentage {
-                            child_bank.set_rent_burn_percentage(rent_burn_percentage);
-                        }
-
                         if let Some(hashes_per_tick) = hashes_per_tick {
                             child_bank.set_hashes_per_tick(match hashes_per_tick {
                                 // Note: Unlike `solana-genesis`, "auto" is not supported here.
