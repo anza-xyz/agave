@@ -1226,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn test_max_instruction_trace_length() {
+    fn test_max_instruction_trace_length_top_level() {
         const MAX_INSTRUCTIONS: usize = 8;
         let mut transaction_context = TransactionContext::new(
             vec![(
@@ -1253,8 +1253,12 @@ mod tests {
             transaction_context.push(),
             Err(InstructionError::MaxInstructionTraceLengthExceeded)
         );
+    }
 
+    #[test]
+    fn test_max_instruction_trace_length_cpi() {
         // Hitting the limit with CPIs
+        const MAX_INSTRUCTIONS: usize = 8;
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
