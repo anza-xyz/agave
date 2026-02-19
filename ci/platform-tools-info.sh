@@ -10,7 +10,7 @@ here="$(dirname "$0")"
 PLATFORM_TOOLS_VERSION=unknown
 
 cargo_build_sbf_main="${here}/../cargo-build-sbf"
-version=$(${cargo_build_sbf_main} --version | grep platform-tools | sed 's/^platform-tools\s*//')
+version=$(${cargo_build_sbf_main} --version | grep platform-tools | sed 's/^platform-tools[[:space:]]*//')
 if [[ ${version} != '' ]]; then
     PLATFORM_TOOLS_VERSION="${version}"
 else
