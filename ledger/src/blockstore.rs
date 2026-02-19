@@ -2019,10 +2019,10 @@ impl Blockstore {
         let fec_set_index = shred.fec_set_index();
 
         if fec_set_index == 0 {
-            // Although the first fec set chains to the last fec set of the parent block,
-            // if this chain is incorrect we do not know which block is the duplicate until votes
-            // are received. We instead delay this check until the block reaches duplicate
-            // confirmation.
+            // The first fec set chains to the last fec set of the parent block.
+            // Cross-slot chaining is validated during replay via
+            // check_chained_block_id, so this function only handles
+            // intra-slot chaining consistency.
             return true;
         }
 
@@ -2292,11 +2292,15 @@ impl Blockstore {
         self.data_shred_cf.get_bytes((slot, index))
     }
 
-    pub fn get_parent_chained_block_id(&self, slot: Slot) -> Result<Option<Hash>> {
-        let Some(shred_bytes) = self.get_data_shred(slot, 0)? else {
-            return Ok(None);
-        };
-        Ok(shred::layout::get_chained_merkle_root(&shred_bytes))
+    /// Retrieves the chained merkle root from the first data shred (index 0)
+    /// of the given slot. Per SIMD-0340, this is expected to match the merkle
+    /// root of the parent slot's last FEC set (the parent's block ID).
+    pub fn get_parent_chained_block_id(&self, slot: Slot) -> Result<Hash> {
+        let shred_bytes = self
+            .get_data_shred(slot, 0)?
+            .ok_or(BlockstoreError::MissingShred(slot, 0))?;
+        shred::layout::get_chained_merkle_root(&shred_bytes)
+            .ok_or(BlockstoreError::LegacyShred(slot, 0))
     }
 
     pub fn get_final_merkle_root(&self, slot: Slot) -> Result<Option<Hash>> {
