@@ -2125,7 +2125,7 @@ pub fn check_chained_block_id(blockstore: &Blockstore, bank: &Bank) -> ChainedBl
         return ChainedBlockIdCheck::Unavailable;
     };
 
-    match blockstore.get_block_merkle_root(parent_slot) {
+    match blockstore.get_last_shred_merkle_root(parent_slot) {
         Ok(parent_block_id) => {
             if expected_parent_block_id != parent_block_id {
                 warn!(

@@ -518,7 +518,7 @@ impl Blockstore {
                 }
                 let chained_merkle_root = parent
                     .and_then(|p| merkle_roots.get(&p).copied())
-                    .or_else(|| self.get_final_merkle_root(parent_slot).unwrap())
+                    .or_else(|| self.get_last_shred_merkle_root(parent_slot).ok())
                     .unwrap_or_else(|| Hash::new_from_array(rand::rng().random()));
                 let shreds: Vec<Shred> = Shredder::new(slot, parent_slot, 0, 0)
                     .unwrap()
@@ -2303,20 +2303,19 @@ impl Blockstore {
             .ok_or(BlockstoreError::LegacyShred(slot, 0))
     }
 
-    pub fn get_final_merkle_root(&self, slot: Slot) -> Result<Option<Hash>> {
-        let Some(meta) = self.meta(slot)? else {
-            return Ok(None);
-        };
-
-        let Some(final_shred_index) = meta.last_index else {
-            return Ok(None);
-        };
-
-        let Some(shred_bytes) = self.get_data_shred(slot, final_shred_index)? else {
-            return Ok(None);
-        };
-
-        Ok(shred::layout::get_merkle_root(&shred_bytes))
+    /// Retrieves the merkle root of the last data shred in the given slot,
+    /// which serves as the slot's block ID for chained merkle root validation
+    /// in child slots (SIMD-0340).
+    pub fn get_last_shred_merkle_root(&self, slot: Slot) -> Result<Hash> {
+        let meta = self.meta(slot)?.ok_or(BlockstoreError::SlotUnavailable)?;
+        let last_index = meta
+            .last_index
+            .ok_or(BlockstoreError::UnknownLastIndex(slot))?;
+        let shred_bytes = self
+            .get_data_shred(slot, last_index)?
+            .ok_or(BlockstoreError::MissingShred(slot, last_index))?;
+        shred::layout::get_merkle_root(&shred_bytes)
+            .ok_or(BlockstoreError::MissingMerkleRoot(slot, last_index))
     }
 
     pub fn get_data_shreds_for_slot(&self, slot: Slot, start_index: u64) -> Result<Vec<Shred>> {
@@ -2412,9 +2411,8 @@ impl Blockstore {
         let mut slot_entries = vec![];
         let reed_solomon_cache = ReedSolomonCache::default();
         let mut chained_merkle_root = self
-            .get_final_merkle_root(parent_slot)
-            .unwrap()
-            .unwrap_or_else(|| Hash::new_from_array(rand::rng().random()));
+            .get_last_shred_merkle_root(parent_slot)
+            .unwrap_or_else(|_| Hash::new_from_array(rand::rng().random()));
         // Find all the entries for start_slot
         for entry in entries.into_iter() {
             if remaining_ticks_in_slot == 0 {
