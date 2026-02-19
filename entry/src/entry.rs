@@ -22,11 +22,7 @@ use {
         sync::{Arc, Once, OnceLock},
         time::Instant,
     },
-    wincode::{
-        containers::{Pod, Vec as WincodeVec},
-        len::BincodeLen,
-        SchemaRead, SchemaWrite,
-    },
+    wincode::{containers::Vec as WincodeVec, len::BincodeLen, SchemaRead, SchemaWrite},
 };
 
 pub type EntrySender = Sender<Vec<Entry>>;
@@ -119,7 +115,6 @@ pub struct Entry {
     pub num_hashes: u64,
 
     /// The SHA-256 hash `num_hashes` after the previous Entry ID.
-    #[wincode(with = "Pod<Hash>")]
     pub hash: Hash,
 
     /// An unordered list of transactions that were observed before the Entry ID was

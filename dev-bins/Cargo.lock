@@ -7449,6 +7449,7 @@ dependencies = [
  "serde_derive",
  "solana-atomic-u64",
  "solana-sanitize",
+ "wincode",
 ]
 
 [[package]]
@@ -8680,6 +8681,7 @@ dependencies = [
  "symlink",
  "tempfile",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]

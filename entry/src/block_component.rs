@@ -204,7 +204,6 @@ pub enum BlockComponentError {
 /// Block production metadata. User agent is capped at 255 bytes.
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockFooterV1 {
-    #[wincode(with = "Pod<Hash>")]
     pub bank_hash: Hash,
     pub block_producer_time_nanos: u64,
     #[wincode(with = "WincodeVec<u8, FixIntLen<u8>>")]
@@ -217,14 +216,12 @@ pub struct BlockFooterV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockHeaderV1 {
     pub parent_slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub parent_block_id: Hash,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct UpdateParentV1 {
     pub new_parent_slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub new_parent_block_id: Hash,
 }
 
@@ -232,7 +229,6 @@ pub struct UpdateParentV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct GenesisCertificate {
     pub slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
     #[wincode(with = "Pod<BLSSignature>")]
     pub bls_signature: BLSSignature,
@@ -281,7 +277,6 @@ impl From<GenesisCertificate> for Certificate {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct FinalCertificate {
     pub slot: Slot,
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
     pub final_aggregate: VotesAggregate,
     pub notar_aggregate: Option<VotesAggregate>,
