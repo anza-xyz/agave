@@ -3,8 +3,8 @@ use {
         account_locks::{validate_account_locks, AccountLocks},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
-            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, ScanAccountStorageData,
-            ScanStorageResult, UpdateIndexThreadSelection,
+            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
+            ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
@@ -167,8 +167,10 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
         load_hint: LoadHint,
+        populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(ancestors, pubkey, load_hint)
+        self.accounts_db
+            .load(ancestors, pubkey, load_hint, populate_read_cache)
     }
 
     pub fn load_with_fixed_root(
@@ -176,7 +178,12 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(ancestors, pubkey, LoadHint::FixedMaxRoot)
+        self.load_slow(
+            ancestors,
+            pubkey,
+            LoadHint::FixedMaxRoot,
+            PopulateReadCache::True,
+        )
     }
 
     /// same as `load_with_fixed_root` except:
@@ -189,7 +196,8 @@ impl Accounts {
         self.load_slow(
             ancestors,
             pubkey,
-            LoadHint::FixedMaxRootDoNotPopulateReadCache,
+            LoadHint::FixedMaxRoot,
+            PopulateReadCache::True,
         )
     }
 
@@ -198,7 +206,12 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(ancestors, pubkey, LoadHint::Unspecified)
+        self.load_slow(
+            ancestors,
+            pubkey,
+            LoadHint::Unspecified,
+            PopulateReadCache::True,
+        )
     }
 
     /// scans underlying accounts_db for this delta (slot) with a map function

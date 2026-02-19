@@ -655,12 +655,18 @@ pub enum LoadHint {
     // account loading, while maintaining the determinism of account loading and resultant
     // transaction execution thereof.
     FixedMaxRoot,
-    /// same as `FixedMaxRoot`, except do not populate the read cache on load
-    FixedMaxRootDoNotPopulateReadCache,
     // Caller can't hint the above safety assumption. Generally RPC and miscellaneous
     // other call-site falls into this category. The likelihood of slower path is slightly
     // increased as well.
     Unspecified,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PopulateReadCache {
+    /// If the account is found in storage, populate the read cache with the loaded account
+    True,
+    /// Do not populate the read cache with loaded accounts
+    False,
 }
 
 #[derive(Debug)]
@@ -3578,8 +3584,16 @@ impl AccountsDb {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
         load_hint: LoadHint,
+        populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load(ancestors, pubkey, None, load_hint, LoadZeroLamports::None)
+        self.do_load(
+            ancestors,
+            pubkey,
+            None,
+            load_hint,
+            LoadZeroLamports::None,
+            populate_read_cache,
+        )
     }
 
     /// note this returns None for accounts with zero lamports
@@ -3588,7 +3602,12 @@ impl AccountsDb {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load(ancestors, pubkey, LoadHint::FixedMaxRoot)
+        self.load(
+            ancestors,
+            pubkey,
+            LoadHint::FixedMaxRoot,
+            PopulateReadCache::True,
+        )
     }
 
     fn read_index_for_accessor_or_load_slow<'a>(
@@ -3745,7 +3764,7 @@ impl AccountsDb {
                     // so retry. This works because in accounts cache flush, an account is written to
                     // storage *before* it is removed from the cache
                     match load_hint {
-                        LoadHint::FixedMaxRootDoNotPopulateReadCache | LoadHint::FixedMaxRoot => {
+                        LoadHint::FixedMaxRoot => {
                             // it's impossible for this to fail for transaction loads from
                             // replaying/banking more than once.
                             // This is because:
@@ -3765,7 +3784,7 @@ impl AccountsDb {
                 }
                 LoadedAccountAccessor::Stored(None) => {
                     match load_hint {
-                        LoadHint::FixedMaxRootDoNotPopulateReadCache | LoadHint::FixedMaxRoot => {
+                        LoadHint::FixedMaxRoot => {
                             // When running replay on the validator, or banking stage on the leader,
                             // it should be very rare that the storage entry doesn't exist if the
                             // entry in the accounts index is the latest version of this account.
@@ -3897,6 +3916,7 @@ impl AccountsDb {
         max_root: Option<Slot>,
         load_hint: LoadHint,
         load_zero_lamports: LoadZeroLamports,
+        populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
         self.do_load_with_populate_read_cache(
             ancestors,
@@ -3904,6 +3924,7 @@ impl AccountsDb {
             max_root,
             load_hint,
             load_zero_lamports,
+            populate_read_cache,
         )
     }
 
@@ -3915,7 +3936,7 @@ impl AccountsDb {
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
-        should_put_in_read_cache: bool,
+        should_put_in_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
         let (slot, storage_location, _maybe_account_accessor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, None, false)?;
@@ -3949,7 +3970,7 @@ impl AccountsDb {
             return None;
         }
 
-        if !in_write_cache && should_put_in_read_cache {
+        if !in_write_cache && should_put_in_read_cache == PopulateReadCache::True {
             /*
             We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
             safe/reflect 'A''s latest state on this fork.
@@ -3975,6 +3996,7 @@ impl AccountsDb {
         max_root: Option<Slot>,
         load_hint: LoadHint,
         load_zero_lamports: LoadZeroLamports,
+        populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
         #[cfg(not(test))]
         assert!(max_root.is_none());
@@ -4012,7 +4034,7 @@ impl AccountsDb {
             return None;
         }
 
-        if !in_write_cache && load_hint != LoadHint::FixedMaxRootDoNotPopulateReadCache {
+        if !in_write_cache && populate_read_cache == PopulateReadCache::True {
             /*
             We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
             safe/reflect 'A''s latest state on this fork.
@@ -4028,9 +4050,7 @@ impl AccountsDb {
             self.read_only_accounts_cache
                 .store(*pubkey, slot, account.clone());
         }
-        if load_hint == LoadHint::FixedMaxRoot
-            || load_hint == LoadHint::FixedMaxRootDoNotPopulateReadCache
-        {
+        if load_hint == LoadHint::FixedMaxRoot {
             // If the load hint is that the max root is fixed, the max root should be fixed.
             let ending_max_root = self.accounts_index.max_root_inclusive();
             if starting_max_root != ending_max_root {
@@ -6972,6 +6992,7 @@ impl AccountsDb {
             LoadHint::Unspecified,
             // callers of this expect zero lamport accounts that exist in the index to be returned as Some(empty)
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
+            PopulateReadCache::True,
         )
     }
 

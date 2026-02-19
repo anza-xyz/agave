@@ -3211,34 +3211,47 @@ fn test_load_with_read_only_accounts_cache() {
 
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
     let (account, slot) = db
-        .load_account_with(&Ancestors::default(), &account_key, false)
+        .load_account_with(
+            &Ancestors::default(),
+            &account_key,
+            PopulateReadCache::False,
+        )
         .unwrap();
     assert_eq!(account.lamports(), 1);
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
     assert_eq!(slot, 1);
 
     let (account, slot) = db
-        .load_account_with(&Ancestors::default(), &account_key, true)
+        .load_account_with(&Ancestors::default(), &account_key, PopulateReadCache::True)
         .unwrap();
     assert_eq!(account.lamports(), 1);
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
     assert_eq!(slot, 1);
 
     db.store_for_tests((2, &[(&account_key, &zero_lamport_account)][..]));
-    let account = db.load_account_with(&Ancestors::default(), &account_key, false);
+    let account = db.load_account_with(
+        &Ancestors::default(),
+        &account_key,
+        PopulateReadCache::False,
+    );
     assert!(account.is_none());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
 
     db.read_only_accounts_cache.reset_for_tests();
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
-    let account = db.load_account_with(&Ancestors::default(), &account_key, true);
+    let account =
+        db.load_account_with(&Ancestors::default(), &account_key, PopulateReadCache::True);
     assert!(account.is_none());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
 
     let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
     db.store_for_tests((2, &[(&account_key, &slot2_account)][..]));
     let (account, slot) = db
-        .load_account_with(&Ancestors::default(), &account_key, false)
+        .load_account_with(
+            &Ancestors::default(),
+            &account_key,
+            PopulateReadCache::False,
+        )
         .unwrap();
     assert_eq!(account.lamports(), 2);
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
@@ -3247,7 +3260,7 @@ fn test_load_with_read_only_accounts_cache() {
     let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
     db.store_for_tests((2, &[(&account_key, &slot2_account)][..]));
     let (account, slot) = db
-        .load_account_with(&Ancestors::default(), &account_key, true)
+        .load_account_with(&Ancestors::default(), &account_key, PopulateReadCache::True)
         .unwrap();
     assert_eq!(account.lamports(), 2);
     // The account shouldn't be added to read_only_cache because it is in write_cache.
@@ -3280,6 +3293,7 @@ fn test_flush_cache_clean() {
             Some(0),
             LoadHint::Unspecified,
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
+            PopulateReadCache::True,
         )
         .unwrap();
     assert_eq!(account.0.lamports(), 1);
@@ -3296,7 +3310,8 @@ fn test_flush_cache_clean() {
             &account_key,
             Some(0),
             LoadHint::Unspecified,
-            LOAD_ZERO_LAMPORTS_ANY_TESTS
+            LOAD_ZERO_LAMPORTS_ANY_TESTS,
+            PopulateReadCache::True,
         )
         .is_none());
 }
@@ -3378,6 +3393,7 @@ fn test_flush_cache_dont_clean_zero_lamport_account(mark_obsolete_accounts: Mark
             max_root,
             load_hint,
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
+            PopulateReadCache::True,
         )
         .unwrap()
         .0
@@ -3519,6 +3535,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
             Some(0),
             LoadHint::Unspecified,
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
+            PopulateReadCache::True,
         )
         .unwrap();
     assert_eq!(account.0.lamports(), slot0_account.lamports());
@@ -3533,6 +3550,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
             Some(max_scan_root),
             LoadHint::Unspecified,
             LOAD_ZERO_LAMPORTS_ANY_TESTS,
+            PopulateReadCache::True,
         )
         .unwrap();
     assert_eq!(account.0.lamports(), slot1_account.lamports());
@@ -3548,6 +3566,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
             Some(max_scan_root),
             LoadHint::Unspecified,
             LOAD_ZERO_LAMPORTS_ANY_TESTS,
+            PopulateReadCache::True,
         )
         .unwrap();
     assert_eq!(account.0.lamports(), slot1_account.lamports());
@@ -3561,7 +3580,8 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
             &account_key,
             Some(max_scan_root),
             LoadHint::Unspecified,
-            LOAD_ZERO_LAMPORTS_ANY_TESTS
+            LOAD_ZERO_LAMPORTS_ANY_TESTS,
+            PopulateReadCache::True
         )
         .is_none());
 }
@@ -3781,7 +3801,8 @@ fn test_accounts_db_cache_clean_dead_slots() {
                 key,
                 Some(last_dead_slot),
                 LoadHint::Unspecified,
-                LOAD_ZERO_LAMPORTS_ANY_TESTS
+                LOAD_ZERO_LAMPORTS_ANY_TESTS,
+                PopulateReadCache::True
             )
             .is_some());
     }
@@ -3803,7 +3824,8 @@ fn test_accounts_db_cache_clean_dead_slots() {
                 key,
                 Some(last_dead_slot),
                 LoadHint::Unspecified,
-                LOAD_ZERO_LAMPORTS_ANY_TESTS
+                LOAD_ZERO_LAMPORTS_ANY_TESTS,
+                PopulateReadCache::True
             )
             .is_none());
     }
@@ -4348,6 +4370,7 @@ fn start_load_thread(
                         None,
                         load_hint,
                         LOAD_ZERO_LAMPORTS_ANY_TESTS,
+                        PopulateReadCache::True,
                     )
                     .unwrap();
                 // slot + 1 == account.lamports because of the account-cache-flush thread
@@ -4655,7 +4678,8 @@ fn test_cache_flush_remove_unrooted_race_multiple_slots() {
                 .load(
                     &Ancestors::from(vec![(*slot, 0)]),
                     &account_in_slot,
-                    LoadHint::FixedMaxRoot
+                    LoadHint::FixedMaxRoot,
+                    PopulateReadCache::True,
                 )
                 .is_some());
             // Clear for next iteration so that `assert!(self.storage.get_slot_storage_entry(purged_slot).is_none());`
