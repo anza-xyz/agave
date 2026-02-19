@@ -863,10 +863,12 @@ mod external {
         }
 
         pub(super) fn spawn_external_as_thread(&self) -> Result<Vec<JoinHandle<()>>, ()> {
+            const WORKER_COUNT: usize = 5;
+
             info!("Spawning external scheduler as thread");
 
             let logon = ClientLogon {
-                worker_count: 4,
+                worker_count: WORKER_COUNT,
                 allocator_size: 512 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 128,
@@ -901,7 +903,7 @@ mod external {
                             GreedyArgs {
                                 // TODO: Do we let the operator set this or remove
                                 // num_workers from CLI?
-                                workers: 5,
+                                workers: WORKER_COUNT,
                                 unchecked_capacity: 2usize.pow(16),
                                 checked_capacity: 2usize.pow(16),
                             },
