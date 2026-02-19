@@ -105,6 +105,8 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 
 /// Result of checking a child slot's chained block ID against its parent.
 pub enum ChainedBlockIdCheck {
+    /// Feature not active; no validation performed.
+    Inactive,
     /// Chained block ID matches (or parent has no block ID to compare).
     Pass,
     /// Definitive mismatch between child's chained merkle root and parent's block ID.
@@ -2102,34 +2104,48 @@ fn supermajority_root_from_vote_accounts(
 /// Validates the chained block ID for a child slot against its parent.
 ///
 /// Returns:
+/// - `Inactive`: feature not active, no validation performed
 /// - `Pass`: chained block ID matches parent's block ID (or parent has no
 ///   block ID yet), safe to proceed with replay
 /// - `Mismatch`: definitive mismatch between child's chained merkle root
 ///   and parent's block ID
 /// - `Unavailable`: data shred 0 not received yet, cannot validate
-pub fn check_chained_block_id(
-    blockstore: &Blockstore,
-    child_slot: Slot,
-    parent_slot: Slot,
-) -> ChainedBlockIdCheck {
-    let chained_block_id = blockstore.get_parent_chained_block_id(child_slot).unwrap();
+pub fn check_chained_block_id(blockstore: &Blockstore, bank: &Bank) -> ChainedBlockIdCheck {
+    if !bank
+        .feature_set
+        .is_active(&agave_feature_set::validate_chained_block_id::id())
+    {
+        return ChainedBlockIdCheck::Inactive;
+    }
 
-    let Some(expected_parent_block_id) = chained_block_id else {
-        // Data shred 0 not received yet; skip and retry next iteration
+    let slot = bank.slot();
+    let parent_slot = bank.parent_slot();
+
+    let Ok(expected_parent_block_id) = blockstore.get_parent_chained_block_id(slot) else {
         return ChainedBlockIdCheck::Unavailable;
     };
 
-    if let Some(parent_block_id) = blockstore.get_final_merkle_root(parent_slot).unwrap() {
-        if expected_parent_block_id != parent_block_id {
+    match blockstore.get_block_merkle_root(parent_slot) {
+        Ok(parent_block_id) => {
+            if expected_parent_block_id != parent_block_id {
+                warn!(
+                    "Chained merkle root mismatch for slot {slot} (parent {parent_slot}): child \
+                     chains to {expected_parent_block_id}, but parent block ID is \
+                     {parent_block_id}"
+                );
+                ChainedBlockIdCheck::Mismatch
+            } else {
+                ChainedBlockIdCheck::Pass
+            }
+        }
+        Err(e) => {
             warn!(
-                "Chained merkle root mismatch for slot {child_slot} (parent {parent_slot}): child \
-                 chains to {expected_parent_block_id}, but parent block ID is {parent_block_id}"
+                "{parent_slot} is missing from our blockstore, likely the snapshot slot. Skipping \
+                 chained block id verification: {e:?}"
             );
-            return ChainedBlockIdCheck::Mismatch;
+            ChainedBlockIdCheck::Pass
         }
     }
-
-    ChainedBlockIdCheck::Pass
 }
 
 // Processes and replays the contents of a single slot, returns Error
@@ -2148,33 +2164,28 @@ pub fn process_single_slot(
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
-    if bank
-        .feature_set
-        .is_active(&agave_feature_set::validate_chained_block_id::id())
-    {
-        match check_chained_block_id(blockstore, slot, bank.parent_slot()) {
-            ChainedBlockIdCheck::Pass => (),
-            ChainedBlockIdCheck::Unavailable => {
-                // no shreds to replay
-                return Ok(());
+    match check_chained_block_id(blockstore, bank) {
+        ChainedBlockIdCheck::Inactive | ChainedBlockIdCheck::Pass => (),
+        ChainedBlockIdCheck::Unavailable => {
+            // no shreds to replay
+            return Ok(());
+        }
+        ChainedBlockIdCheck::Mismatch => {
+            // Mismatch, mark dead
+            if blockstore.is_primary_access() {
+                blockstore
+                    .set_dead_slot(slot)
+                    .expect("Failed to mark slot as dead in blockstore");
+            } else {
+                info!(
+                    "Failed slot {slot} won't be marked dead due to being read-only blockstore \
+                     access"
+                );
             }
-            ChainedBlockIdCheck::Mismatch => {
-                // Mismatch, mark dead
-                if blockstore.is_primary_access() {
-                    blockstore
-                        .set_dead_slot(slot)
-                        .expect("Failed to mark slot as dead in blockstore");
-                } else {
-                    info!(
-                        "Failed slot {slot} won't be marked dead due to being read-only \
-                         blockstore access"
-                    );
-                }
-                return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
-                    slot,
-                    bank.parent_slot(),
-                ));
-            }
+            return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
+                slot,
+                bank.parent_slot(),
+            ));
         }
     }
 
