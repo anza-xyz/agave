@@ -304,7 +304,7 @@ pub struct ReplaySenders {
     pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
     pub votor_event_sender: VotorEventSender,
-    pub own_vote_sender: Sender<ConsensusMessage>,
+    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
     pub lockouts_sender: Sender<TowerCommitmentAggregationData>,
 }
 
@@ -1435,7 +1435,7 @@ impl ReplayStage {
         vote_account: Pubkey,
         identity_keypair: &Arc<Keypair>,
         authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
-        own_vote_sender: &Sender<ConsensusMessage>,
+        own_vote_sender: &Sender<Vec<ConsensusMessage>>,
         bls_sender: &Sender<BLSOp>,
     ) -> bool {
         let Some((slot, block_id)) = migration_status.eligible_genesis_block() else {
@@ -1460,7 +1460,7 @@ impl ReplayStage {
                     identity_keypair.pubkey()
                 );
                 // If sending fails that means the channel is disconnected and we are shutting down
-                let _ = own_vote_sender.send(message.clone());
+                let _ = own_vote_sender.send(vec![message.clone()]);
                 let _ = bls_sender.send(BLSOp::PushVote {
                     message: Arc::new(message),
                     slot,

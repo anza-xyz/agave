@@ -25,7 +25,7 @@ pub fn spawn_service(
     packet_receiver: Receiver<PacketBatch>,
     banks: SharableBanks,
     vote_sender: VerifiedVoterSlotsSender,
-    message_sender: Sender<ConsensusMessage>,
+    message_sender: Sender<Vec<ConsensusMessage>>,
     migration_status: Arc<MigrationStatus>,
 ) -> thread::JoinHandle<()> {
     let verifier = BLSSigVerifier::new(banks, vote_sender, message_sender, migration_status);
@@ -41,7 +41,7 @@ pub struct BLSSigVerifier {
     /// Sender to repair service
     vote_sender: VerifiedVoterSlotsSender,
     /// Sender to votor
-    message_sender: Sender<ConsensusMessage>,
+    message_sender: Sender<Vec<ConsensusMessage>>,
     migration_status: Arc<MigrationStatus>,
 }
 
@@ -49,7 +49,7 @@ impl BLSSigVerifier {
     pub fn new(
         banks: SharableBanks,
         vote_sender: VerifiedVoterSlotsSender,
-        message_sender: Sender<ConsensusMessage>,
+        message_sender: Sender<Vec<ConsensusMessage>>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
@@ -165,18 +165,24 @@ impl BLSSigVerifier {
         let mut votes_by_pubkey: HashMap<Pubkey, Vec<Slot>> = HashMap::new();
 
         // Send votes
-        for (vote, pubkey) in votes {
+        for (vote, pubkey) in &votes {
             votes_by_pubkey
-                .entry(pubkey)
+                .entry(*pubkey)
                 .or_default()
                 .push(vote.vote.slot());
-            self.send(ConsensusMessage::Vote(vote))?;
         }
+        let votes = votes
+            .into_iter()
+            .map(|(v, _)| ConsensusMessage::Vote(v))
+            .collect();
+        self.send(votes)?;
 
         // Send certificates
-        for cert in certs {
-            self.send(ConsensusMessage::Certificate(cert))?;
-        }
+        let certs = certs
+            .into_iter()
+            .map(ConsensusMessage::Certificate)
+            .collect();
+        self.send(certs)?;
 
         // Send votes to repair service
         for (pubkey, slots) in votes_by_pubkey {
@@ -186,8 +192,8 @@ impl BLSSigVerifier {
         Ok(())
     }
 
-    fn send(&self, msg: ConsensusMessage) -> Result<(), ()> {
-        match self.message_sender.try_send(msg) {
+    fn send(&self, msgs: Vec<ConsensusMessage>) -> Result<(), ()> {
+        match self.message_sender.try_send(msgs) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Ok(()),
             Err(TrySendError::Disconnected(_)) => Err(()),

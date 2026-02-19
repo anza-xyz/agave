@@ -118,7 +118,7 @@ pub struct VotingContext {
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub has_new_vote_been_rooted: bool,
-    pub own_vote_sender: Sender<ConsensusMessage>,
+    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -286,7 +286,7 @@ fn insert_vote_and_create_bls_message(
     };
     context
         .own_vote_sender
-        .send(message.clone())
+        .send(vec![message.clone()])
         .map_err(|_| SendError(()))?;
 
     // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
@@ -355,7 +355,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<ConsensusMessage>,
+        own_vote_sender: Sender<Vec<ConsensusMessage>>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> VotingContext {
@@ -441,7 +441,7 @@ mod tests {
 
         // Check that own vote sender receives the vote
         let received_message = own_vote_receiver.recv().unwrap();
-        assert_eq!(received_message, expected_message);
+        assert_eq!(received_message, vec![expected_message]);
     }
 
     #[test]
