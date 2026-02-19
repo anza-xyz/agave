@@ -5180,8 +5180,8 @@ impl Bank {
 
         let stake = cert_verify::verify_certificate(cert, key_to_rank_map.len(), |rank| {
             key_to_rank_map
-                .get_pubkey_and_stake(rank)
-                .map(|(_, bls_pubkey, stake)| (*stake, *bls_pubkey))
+                .get_pubkey_stake_entry(rank)
+                .map(|entry| (entry.stake, entry.bls_pubkey))
         })?;
 
         Ok((stake, total_stake))

@@ -55,8 +55,6 @@ members = [
     "net-utils",
     "notifier",
     "perf",
-    "platform-tools-sdk/cargo-build-sbf",
-    "platform-tools-sdk/cargo-test-sbf",
     "platform-tools-sdk/gen-headers",
     "poh",
     "poh-bench",
@@ -140,6 +138,7 @@ members = [
 exclude = [
     "ci/xtask",
     "dev-bins",
+    "platform-tools-sdk",
     "programs/sbf",
     "svm/tests/example-programs",
 ]
@@ -242,7 +241,6 @@ bytemuck_derive = "1.10.2"
 bytes = "1.11.1"
 bzip2 = "0.6.1"
 caps = "0.5.6"
-cargo_metadata = "0.15.4"
 cfg-if = "1.0.4"
 cfg_eval = "0.1.2"
 chrono = { version = "0.4.43", default-features = false }

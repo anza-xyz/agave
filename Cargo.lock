@@ -1695,44 +1695,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "camino"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "869119e97797867fd90f5e22af7d0bd274bd4635ebb9eb68c04f3f513ae6c412"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "caps"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd1ddba47aba30b6a889298ad0109c3b8dcb0e8fc993b459daa7067d46f865e0"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "cargo-platform"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbdb825da8a5df079a43676dbe042702f1707b1109f713a01420fbb4cc71fa27"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "cargo_metadata"
-version = "0.15.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eee4243f1f26fc7a42710e7439c149e2b10b05472f88090acce52632f231a73a"
-dependencies = [
- "camino",
- "cargo-platform",
- "semver 1.0.27",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -6521,10 +6489,6 @@ name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
-dependencies = [
- "serde",
- "serde_core",
-]
 
 [[package]]
 name = "semver-parser"
@@ -7532,40 +7496,6 @@ dependencies = [
  "solana-system-program",
  "solana-vote-program",
  "static_assertions",
-]
-
-[[package]]
-name = "solana-cargo-build-sbf"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "assert_cmd",
- "bzip2",
- "cargo_metadata",
- "clap 3.2.23",
- "itertools 0.14.0",
- "log",
- "predicates 3.1.4",
- "regex",
- "reqwest 0.12.28",
- "semver 1.0.27",
- "serde",
- "serial_test",
- "solana-file-download",
- "solana-keypair",
- "tar",
-]
-
-[[package]]
-name = "solana-cargo-test-sbf"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-logger",
- "cargo_metadata",
- "clap 3.2.23",
- "itertools 0.14.0",
- "log",
- "regex",
 ]
 
 [[package]]

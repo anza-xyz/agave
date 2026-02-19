@@ -15,6 +15,17 @@ use {
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
 pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
 
+/// Entry in the [`BLSPubkeyToRankMap`] associating a validator's identity
+/// pubkey and BLS pubkey with its stake.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
+pub struct BLSPubkeyStakeEntry {
+    pub pubkey: Pubkey,
+    pub bls_pubkey: BLSPubkey,
+    pub stake: u64,
+}
+
 /// Container to store a mapping from validator [`BLSPubkey`] to rank.
 ///
 /// A validator with a smaller rank has a higher stake.
@@ -25,11 +36,11 @@ pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
 pub struct BLSPubkeyToRankMap {
     /// Mapping from validator [`BLSPubkey`] to rank.
     rank_map: HashMap<BLSPubkey, u16>,
-    /// Mapping from rank to validator [`(Pubkey, BLSPubkey, stake)`].
+    /// Mapping from rank to [`BLSPubkeyStakeEntry`].
     //
     // TODO(wen): We can make sorted_pubkeys a Vec<BLSPubkey> after we remove ed25519
     // pubkey from the consensus pool.
-    sorted_pubkeys: Vec<(Pubkey, BLSPubkey, u64)>,
+    sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
 }
 
 impl BLSPubkeyToRankMap {
@@ -58,7 +69,12 @@ impl BLSPubkeyToRankMap {
         let mut sorted_pubkeys = Vec::new();
         let mut bls_pubkey_to_rank_map = HashMap::new();
         for (rank, (pubkey, bls_pubkey, stake)) in pubkey_stake_pair_vec.into_iter().enumerate() {
-            sorted_pubkeys.push((pubkey, bls_pubkey, stake));
+            let entry = BLSPubkeyStakeEntry {
+                pubkey,
+                bls_pubkey,
+                stake,
+            };
+            sorted_pubkeys.push(entry);
             bls_pubkey_to_rank_map.insert(bls_pubkey, rank as u16);
         }
         Self {
@@ -79,8 +95,8 @@ impl BLSPubkeyToRankMap {
         self.rank_map.get(bls_pubkey)
     }
 
-    pub fn get_pubkey_and_stake(&self, rank: usize) -> Option<&(Pubkey, BLSPubkey, u64)> {
-        self.sorted_pubkeys.get(rank)
+    pub fn get_pubkey_stake_entry(&self, index: usize) -> Option<&BLSPubkeyStakeEntry> {
+        self.sorted_pubkeys.get(index)
     }
 }
 
@@ -476,8 +492,12 @@ pub(crate) mod tests {
             let index = bls_pubkey_to_rank_map.get_rank(&bls_pubkey).unwrap();
             assert!(index >= &0 && index < &(num_vote_accounts as u16));
             assert_eq!(
-                bls_pubkey_to_rank_map.get_pubkey_and_stake(*index as usize),
-                Some(&(pubkey, bls_pubkey, stake))
+                bls_pubkey_to_rank_map.get_pubkey_stake_entry(*index as usize),
+                Some(&BLSPubkeyStakeEntry {
+                    pubkey,
+                    bls_pubkey,
+                    stake,
+                })
             );
         }
 

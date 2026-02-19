@@ -13,10 +13,6 @@ edition = { workspace = true }
 name = "cargo-build-sbf"
 path = "src/main.rs"
 
-[features]
-agave-unstable-api = []
-program = []
-
 [dependencies]
 agave-logger = { workspace = true }
 bzip2 = { workspace = true }

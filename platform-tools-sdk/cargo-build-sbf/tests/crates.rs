@@ -1,5 +1,5 @@
 use {
-    assert_cmd::assert::Assert,
+    assert_cmd::{assert::Assert, cargo::cargo_bin_cmd},
     predicates::prelude::*,
     std::{env, fs, path::PathBuf, str::FromStr},
 };
@@ -73,16 +73,14 @@ fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
         args.push("--");
     }
     args.push("-vv");
-    let mut cmd = assert_cmd::Command::cargo_bin("cargo-build-sbf").unwrap();
-    let assert = cmd.env("RUST_LOG", "debug").args(&args).assert();
-    let output = assert.get_output();
+    let output = cargo_bin_cmd!("cargo-build-sbf")
+        .env("RUST_LOG", "debug")
+        .args(&args)
+        .output()
+        .unwrap();
     eprintln!("Test stdout\n{}\n", String::from_utf8_lossy(&output.stdout));
     eprintln!("Test stderr\n{}\n", String::from_utf8_lossy(&output.stderr));
-    if fail {
-        assert.failure();
-    } else {
-        assert.success();
-    }
+    assert_eq!(!output.status.success(), fail);
 }
 
 fn clean_target(crate_name: &str) {
@@ -292,9 +290,11 @@ fn test_corrupted_toolchain() {
         let toml = format!("{}", toml.display());
         let args = vec!["--manifest-path", &toml];
 
-        let mut cmd = assert_cmd::Command::cargo_bin("cargo-build-sbf").unwrap();
-        let assert = cmd.env("RUST_LOG", "debug").args(&args).assert();
-        let output = assert.get_output();
+        let output = cargo_bin_cmd!("cargo-build-sbf")
+            .env("RUST_LOG", "debug")
+            .args(&args)
+            .output()
+            .unwrap();
 
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("The Solana toolchain is corrupted.")
@@ -335,13 +335,13 @@ fn test_corrupted_toolchain() {
 #[serial]
 fn test_alternate_download() {
     let args = ["-v", "--install-only", "--force-tools-install"];
-    let assert = assert_cmd::Command::cargo_bin("cargo-build-sbf")
-        .unwrap()
+    let output = cargo_bin_cmd!("cargo-build-sbf")
         .env("RUST_LOG", "debug")
         .args(args)
-        .assert();
+        .output()
+        .unwrap();
 
-    assert.success();
+    assert!(output.status.success());
 
     build_noop_and_readelf("v0");
 }
@@ -350,12 +350,12 @@ fn test_alternate_download() {
 #[serial]
 fn test_binaries_work() {
     let args = ["-v", "--install-only", "--force-tools-install"];
-    let assert = assert_cmd::Command::cargo_bin("cargo-build-sbf")
-        .unwrap()
+    let output = cargo_bin_cmd!("cargo-build-sbf")
         .env("RUST_LOG", "debug")
         .args(args)
-        .assert();
-    assert.success();
+        .output()
+        .unwrap();
+    assert!(output.status.success());
     let platform_folder = platform_tools_path();
     let rust_bin_folder = platform_folder.join("rust").join("bin");
     let llvm_bin_folder = platform_folder.join("llvm").join("bin");

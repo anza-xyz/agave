@@ -26,9 +26,9 @@ if [[ ${HOST_RUST_VERSION} =~ ${pattern} ]]; then
     HOST_RUST_VERSION="${rust_stable%.*}"
 fi
 
-export SBF_TOOLS_VERSION
+export PLATFORM_TOOLS_VERSION
 
-SCCACHE_KEY_PREFIX="${rust_stable}_${rust_nightly}_${SBF_TOOLS_VERSION}"
+SCCACHE_KEY_PREFIX="${rust_stable}_${rust_nightly}_${PLATFORM_TOOLS_VERSION}"
 export SCCACHE_KEY_PREFIX
 
 SCCACHE_S3_KEY_PREFIX="$SCCACHE_KEY_PREFIX"

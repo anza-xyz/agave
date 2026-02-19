@@ -52,7 +52,7 @@ pub(crate) struct ConsensusPoolContext {
     // just like regular votes. However do we need to convert
     // Vote -> BLSMessage -> Vote?
     // consider adding a separate pathway in consensus_pool.add_message() for ingesting own votes
-    pub(crate) consensus_message_receiver: Receiver<ConsensusMessage>,
+    pub(crate) consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
 
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
@@ -279,15 +279,15 @@ impl ConsensusPoolService {
                 .try_for_each(|event| ctx.event_sender.send(event))
                 .is_err()
             {
-                return Self::handle_channel_disconnected(&mut ctx, "Votor event receiver");
+                return Self::handle_channel_disconnected(&mut ctx, "event_sender");
             }
 
             let messages: Vec<ConsensusMessage> = select! {
                 recv(ctx.consensus_message_receiver) -> msg => {
                     let Ok(first) = msg else {
-                        return Self::handle_channel_disconnected(&mut ctx, "BLS receiver");
+                        return Self::handle_channel_disconnected(&mut ctx, "consensus_message_receiver");
                     };
-                    std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).collect()
+                    std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).flatten().collect()
                 },
                 default(Duration::from_secs(1)) => continue
             };

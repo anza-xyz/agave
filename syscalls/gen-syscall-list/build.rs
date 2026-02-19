@@ -16,27 +16,22 @@ use {
 fn main() {
     let syscalls_rs_name = "../src/lib.rs";
     let syscalls_txt_name = "../../platform-tools-sdk/sbf/syscalls.txt";
-    let build_sbf_syscalls_name = "../../platform-tools-sdk/cargo-build-sbf/src/syscalls.rs";
     println!("cargo::rerun-if-changed={syscalls_rs_name}");
     println!("cargo::rerun-if-changed={syscalls_txt_name}");
-    println!("cargo::rerun-if-changed={build_sbf_syscalls_name}");
     println!("cargo::rerun-if-changed=build.rs");
 
     let syscalls_rs_path = PathBuf::from(syscalls_rs_name);
     let syscalls_txt_path = PathBuf::from(syscalls_txt_name);
-    let build_sbf_syscalls_path = PathBuf::from(build_sbf_syscalls_name);
     println!(
-        "cargo::warning=(not a warning) Generating {1} and {2} from {0}",
+        "cargo::warning=(not a warning) Generating {1} from {0}",
         syscalls_rs_path.display(),
         syscalls_txt_path.display(),
-        build_sbf_syscalls_path.display(),
     );
 
-    let old_num_syscalls = File::open(&build_sbf_syscalls_path)
+    let old_num_syscalls = File::open(&syscalls_txt_path)
         .map(|file| {
             let reader = BufReader::new(file);
-            // The rust file contains two extra lines to make a proper rust array
-            reader.lines().count().saturating_sub(2)
+            reader.lines().count()
         })
         .unwrap_or(0);
 
@@ -67,19 +62,11 @@ fn main() {
         Err(err) => panic!("Failed to create {}: {}", syscalls_txt_path.display(), err),
     };
     let mut txt_out = BufWriter::new(txt_file);
-    let rs_file = match File::create(&build_sbf_syscalls_path) {
-        Ok(x) => x,
-        Err(err) => panic!("Failed to create {}: {}", syscalls_txt_path.display(), err),
-    };
-    let mut rs_out = BufWriter::new(rs_file);
-    writeln!(rs_out, "pub(crate) const SYSCALLS: &[&str] = &[").unwrap();
     for caps in sysc_re
         .captures_iter(text)
         .chain(feature_gate_syscall_re.captures_iter(text))
     {
         let name = caps[1].to_string();
         writeln!(txt_out, "{name}").unwrap();
-        writeln!(rs_out, "    \"{name}\",").unwrap();
     }
-    writeln!(rs_out, "];").unwrap();
 }

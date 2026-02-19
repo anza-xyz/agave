@@ -110,11 +110,11 @@ pub struct VotorConfig {
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, (Slot, Hash))>>,
     pub event_sender: VotorEventSender,
-    pub own_vote_sender: Sender<ConsensusMessage>,
+    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
-    pub consensus_message_receiver: Receiver<ConsensusMessage>,
+    pub consensus_message_receiver: Receiver<Vec<ConsensusMessage>>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
 }
 
@@ -161,7 +161,7 @@ impl Votor {
             event_sender,
             own_vote_sender,
             event_receiver,
-            consensus_message_receiver: bls_receiver,
+            consensus_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
         } = config;
@@ -231,7 +231,7 @@ impl Votor {
             blockstore,
             sharable_banks,
             leader_schedule_cache,
-            consensus_message_receiver: bls_receiver,
+            consensus_message_receiver,
             bls_sender,
             event_sender,
             commitment_sender,

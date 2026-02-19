@@ -241,8 +241,6 @@ all_test_steps() {
              ^fetch-perf-libs.sh \
              ^platform-tools-sdk/ \
              ^programs/ \
-             cargo-build-sbf$ \
-             cargo-test-sbf$ \
       ; then
     cat >> "$output_file" <<"EOF"
   - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
