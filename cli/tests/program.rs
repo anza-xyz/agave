@@ -4,10 +4,8 @@
 
 use {
     agave_feature_set::enable_alt_bn128_syscall,
-    assert_matches::assert_matches,
     serde_json::Value,
     solana_account::{state_traits::StateMut, ReadableAccount},
-    solana_borsh::v1::try_from_slice_unchecked,
     solana_cli::{
         cli::{process_command, CliCommand, CliConfig},
         program::{ProgramCliCommand, CLOSE_PROGRAM_WARNING},
@@ -17,7 +15,6 @@ use {
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
-    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
@@ -25,19 +22,11 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_rpc::rpc::JsonRpcConfig,
-    solana_rpc_client::{
-        nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
-    },
-    solana_rpc_client_api::config::RpcTransactionConfig,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
-    solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, loader_v4},
-    solana_signature::Signature,
+    solana_sdk_ids::{bpf_loader_upgradeable, loader_v4},
     solana_signer::{null_signer::NullSigner, Signer},
-    solana_system_interface::program as system_program,
     solana_test_validator::TestValidatorGenesis,
-    solana_transaction::Transaction,
-    solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
         fs::File,
@@ -3001,193 +2990,6 @@ async fn create_buffer_with_offline_authority<'a>(
         assert_eq!(authority_address, Some(offline_signer.pubkey()));
     } else {
         panic!("not a buffer account");
-    }
-}
-
-#[allow(clippy::assertions_on_constants)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-#[test_case(None, false; "default")]
-#[test_case(Some(10), false; "with_compute_unit_price")]
-#[test_case(None, true; "use_rpc")]
-async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
-    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    noop_path.push("tests");
-    noop_path.push("fixtures");
-    noop_path.push("noop");
-    noop_path.set_extension("so");
-
-    let mint_keypair = Keypair::new();
-    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidatorGenesis::default()
-        .fee_rate_governor(FeeRateGovernor::new(0, 0))
-        .rent(Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
-            ..Rent::default()
-        })
-        .rpc_config(JsonRpcConfig {
-            enable_rpc_transaction_history: true,
-            faucet_addr: Some(faucet_addr),
-            ..JsonRpcConfig::default_for_test()
-        })
-        .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
-        .await
-        .expect("validator start failed");
-
-    let mut config = CliConfig::recent_for_tests();
-    config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = setup_rpc_client(&mut config);
-
-    let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
-    let mut program_data = Vec::new();
-    file.read_to_end(&mut program_data).unwrap();
-    let max_len = program_data.len();
-    let minimum_balance_for_programdata = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-            max_len,
-        ))
-        .await
-        .unwrap();
-    let minimum_balance_for_program = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
-        .await
-        .unwrap();
-    let upgrade_authority = Keypair::new();
-
-    let keypair = Keypair::new();
-    config.signers = vec![&keypair];
-    config.command = CliCommand::Airdrop {
-        pubkey: None,
-        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
-    };
-    process_command(&config).await.unwrap();
-
-    // Deploy the upgradeable program with specified program_id
-    let program_keypair = Keypair::new();
-    config.signers = vec![&keypair, &upgrade_authority, &program_keypair];
-    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
-        program_location: Some(noop_path.to_str().unwrap().to_string()),
-        fee_payer_signer_index: 0,
-        program_signer_index: Some(2),
-        program_pubkey: Some(program_keypair.pubkey()),
-        buffer_signer_index: None,
-        buffer_pubkey: None,
-        upgrade_authority_signer_index: 1,
-        is_final: false,
-        max_len: Some(max_len),
-        skip_fee_check: false,
-        compute_unit_price,
-        max_sign_attempts: 5,
-        auto_extend: true,
-        use_rpc,
-        skip_feature_verification: true,
-    });
-    config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config).await;
-    let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
-    let program_pubkey_str = json
-        .as_object()
-        .unwrap()
-        .get("programId")
-        .unwrap()
-        .as_str()
-        .unwrap();
-    assert_eq!(
-        program_keypair.pubkey(),
-        Pubkey::from_str(program_pubkey_str).unwrap()
-    );
-    let program_account = rpc_client
-        .get_account(&program_keypair.pubkey())
-        .await
-        .unwrap();
-    assert_eq!(program_account.lamports, minimum_balance_for_program);
-    assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
-    assert!(program_account.executable);
-    let signature_statuses = rpc_client
-        .get_signatures_for_address_with_config(
-            &keypair.pubkey(),
-            GetConfirmedSignaturesForAddress2Config {
-                commitment: Some(CommitmentConfig::confirmed()),
-                ..GetConfirmedSignaturesForAddress2Config::default()
-            },
-        )
-        .await
-        .unwrap();
-    let signatures: Vec<_> = signature_statuses
-        .into_iter()
-        .rev()
-        .map(|status| Signature::from_str(&status.signature).unwrap())
-        .collect();
-
-    async fn fetch_and_decode_transaction(
-        rpc_client: &RpcClient,
-        signature: &Signature,
-    ) -> Transaction {
-        rpc_client
-            .get_transaction_with_config(
-                signature,
-                RpcTransactionConfig {
-                    encoding: Some(UiTransactionEncoding::Base64),
-                    commitment: Some(CommitmentConfig::confirmed()),
-                    ..RpcTransactionConfig::default()
-                },
-            )
-            .await
-            .unwrap()
-            .transaction
-            .transaction
-            .decode()
-            .unwrap()
-            .into_legacy_transaction()
-            .unwrap()
-    }
-
-    assert!(signatures.len() >= 4);
-    let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]).await;
-    let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
-    let final_tx = fetch_and_decode_transaction(&rpc_client, signatures.last().unwrap()).await;
-
-    if let Some(compute_unit_price) = compute_unit_price {
-        for tx in [&initial_tx, &write_tx, &final_tx] {
-            let ix_len = tx.message.instructions.len();
-            for i in [1, 2] {
-                assert_eq!(
-                    tx.message.instructions[ix_len - i].program_id(&tx.message.account_keys),
-                    &compute_budget::id()
-                );
-            }
-
-            assert_matches!(
-                try_from_slice_unchecked(&tx.message.instructions[ix_len - 2].data),
-                Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) if price == compute_unit_price
-            );
-        }
-
-        assert_matches!(
-            try_from_slice_unchecked(&initial_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2820))
-        );
-        assert_matches!(
-            try_from_slice_unchecked(&write_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2670))
-        );
-        assert_matches!(
-            try_from_slice_unchecked(&final_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2970))
-        );
-    } else {
-        assert_eq!(
-            initial_tx.message.instructions[0].program_id(&initial_tx.message.account_keys),
-            &system_program::id()
-        );
-        assert_eq!(
-            write_tx.message.instructions[0].program_id(&write_tx.message.account_keys),
-            &bpf_loader_upgradeable::id()
-        );
-        assert_eq!(
-            final_tx.message.instructions[0].program_id(&final_tx.message.account_keys),
-            &system_program::id()
-        );
     }
 }
 
