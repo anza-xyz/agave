@@ -520,7 +520,7 @@ impl Blockstore {
                     .and_then(|p| merkle_roots.get(&p).copied())
                     .or_else(|| self.get_final_merkle_root(parent_slot).unwrap())
                     .unwrap_or_else(|| Hash::new_from_array(rand::rng().random()));
-                let shreds: Vec<shred::Shred> = shred::Shredder::new(slot, parent_slot, 0, 0)
+                let shreds: Vec<Shred> = Shredder::new(slot, parent_slot, 0, 0)
                     .unwrap()
                     .make_merkle_shreds_from_entries(
                         &Keypair::new(),
@@ -530,9 +530,9 @@ impl Blockstore {
                         0,
                         0,
                         &reed_solomon_cache,
-                        &mut shred::ProcessShredsStats::default(),
+                        &mut ProcessShredsStats::default(),
                     )
-                    .filter(shred::Shred::is_data)
+                    .filter(Shred::is_data)
                     .collect();
                 if let Some(last_shred) = shreds.last() {
                     merkle_roots.insert(slot, last_shred.merkle_root().unwrap());
