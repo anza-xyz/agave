@@ -107,7 +107,7 @@ impl StandardBroadcastRun {
                 .inspect(|shred| self.process_shreds_stats.record_shred(shred))
                 .collect();
         if let Some(shred) = shreds.iter().max_by_key(|shred| shred.fec_set_index()) {
-            self.chained_merkle_root = shred.merkle_root().unwrap();
+            self.chained_merkle_root = Hash::from(shred.merkle_root().unwrap());
         }
         self.report_and_reset_stats(/*was_interrupted:*/ true);
         self.completed = true;
@@ -148,7 +148,7 @@ impl StandardBroadcastRun {
                 })
                 .collect();
         if let Some(shred) = shreds.iter().max_by_key(|shred| shred.fec_set_index()) {
-            self.chained_merkle_root = shred.merkle_root().unwrap();
+            self.chained_merkle_root = Hash::from(shred.merkle_root().unwrap());
         }
         if self.next_shred_index > max_data_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);

@@ -1,9 +1,8 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred,
+    crate::shred::{self, merkle_tree::fec_set_root::FecSetRoot},
     rayon::{prelude::*, ThreadPool},
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_nohash_hasher::BuildNoHashHasher,
     solana_perf::packet::{PacketBatch, PacketRef},
     solana_pubkey::Pubkey,
@@ -13,7 +12,7 @@ use {
 #[cfg(test)]
 use {solana_keypair::Keypair, solana_perf::packet::PacketRefMut, solana_signer::Signer};
 
-pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash), ()>;
+pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, FecSetRoot), ()>;
 
 pub type SlotPubkeys = HashMap<Slot, Pubkey, BuildNoHashHasher<Slot>>;
 

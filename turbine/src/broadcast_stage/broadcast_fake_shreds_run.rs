@@ -65,7 +65,7 @@ impl BroadcastRun for BroadcastFakeShredsRun {
                     .get_data_shred(bank.slot(), u64::from(index))
                     .unwrap()
                     .unwrap();
-                shred::layout::get_merkle_root(&shred).unwrap()
+                Hash::from(shred::layout::get_merkle_root(&shred).unwrap())
             }
         };
 
