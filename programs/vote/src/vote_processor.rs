@@ -4346,6 +4346,32 @@ mod tests {
             Err(InstructionError::MissingAccount),
         );
 
+        // Fail - Source account is not a signer.
+        let non_signer_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: source_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: solana_sdk_ids::system_program::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+        process_instruction(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            transaction_accounts.clone(),
+            non_signer_instruction_accounts,
+            Err(InstructionError::MissingRequiredSignature),
+        );
+
         // Fail - Vote account fails to deserialize (zeroed/uninitialized data).
         let invalid_vote_account = AccountSharedData::new(1_000_000, VoteStateV4::size_of(), &id());
         process_instruction(
@@ -4429,8 +4455,9 @@ mod tests {
                     is_writable: false,
                 },
             ],
-            Err(InstructionError::InvalidArgument),
-            DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
+            // CPI dedup resolves to index 0 (non-signer), causing escalation.
+            Err(InstructionError::PrivilegeEscalation),
+            DEFAULT_COMPUTE_UNITS,
         );
 
         // Fail - deposit overflow.

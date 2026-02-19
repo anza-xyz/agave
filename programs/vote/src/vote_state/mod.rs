@@ -982,6 +982,12 @@ pub fn deposit_delegator_rewards(
 
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
+
+    // Source account must be a transaction-level signer.
+    if !instruction_context.is_instruction_account_signer(SENDER_ACCOUNT_INDEX)? {
+        return Err(InstructionError::MissingRequiredSignature);
+    }
+
     let vote_address = *instruction_context.get_key_of_instruction_account(VOTE_ACCOUNT_INDEX)?;
     let source_address =
         *instruction_context.get_key_of_instruction_account(SENDER_ACCOUNT_INDEX)?;
@@ -1010,7 +1016,7 @@ pub fn deposit_delegator_rewards(
     // CPI to System: Transfer from sender to vote account.
     invoke_context.native_invoke(
         system_instruction::transfer(&source_address, &vote_address, deposit),
-        &[source_address],
+        &[],
     )?;
 
     // Update `pending_delegator_rewards`.
