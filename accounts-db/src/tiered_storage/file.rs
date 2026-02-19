@@ -43,15 +43,6 @@ impl TieredReadableFile {
         Ok(file)
     }
 
-    pub fn new_writable(file_path: impl AsRef<Path>) -> io::Result<Self> {
-        Ok(Self(
-            OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(file_path)?,
-        ))
-    }
-
     fn check_magic_number(&self) -> TieredStorageResult<()> {
         self.seek_from_end(-(std::mem::size_of::<TieredStorageMagicNumber>() as i64))?;
         let mut magic_number = TieredStorageMagicNumber::zeroed();
