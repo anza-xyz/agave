@@ -167,7 +167,7 @@ use {
     solana_time_utils::years_as_slots,
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
-        versioned::VersionedTransaction,
+        versioned::{TransactionVersion, VersionedTransaction},
         Transaction, TransactionVerificationMode,
     },
     solana_transaction_context::{
@@ -4827,6 +4827,11 @@ impl Bank {
         let enable_instruction_account_limit = self
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
+
+        // Discard v1 transactions until support is added.
+        if tx.version() == TransactionVersion::Number(1) {
+            return Err(TransactionError::UnsupportedVersion);
+        }
 
         let sanitized_tx = {
             let size =
