@@ -254,6 +254,8 @@ impl Tvu {
             bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
+        // TODO: once the bls sigverifier is upstreamed, it will need the sender side.
+        let (_reward_votes_sender, reward_votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
         // The BLS socket is currently only available on Testnet and Development clusters.
         // Closer to release we will enable this for all clusters.
@@ -428,6 +430,11 @@ impl Tvu {
                 rpc_subscriptions.clone(),
             );
 
+        // TODO: when the block component processor is upstreamed,
+        // it will use the unused channels below.
+        let (reward_certs_sender, _reward_certs_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (_build_reward_certs_receiver, build_reward_certs_receiver) =
+            bounded(MAX_ALPENGLOW_PACKET_NUM);
         let votor_config = VotorConfig {
             exit: exit.clone(),
             vote_account: *vote_account,
@@ -454,6 +461,9 @@ impl Tvu {
             consensus_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
+            reward_votes_receiver,
+            reward_certs_sender,
+            build_reward_certs_receiver,
         };
         let votor = Votor::new(votor_config);
 
