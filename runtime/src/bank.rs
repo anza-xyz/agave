@@ -2895,16 +2895,17 @@ impl Bank {
     /// - If `get_alpenglow_genesis_certificate` is called after the marker is processed, we return the certificate
     pub fn get_alpenglow_genesis_certificate(&self) -> Option<Certificate> {
         self.get_account(&GENESIS_CERTIFICATE_ACCOUNT).map(|acct| {
-            acct.deserialize_data()
+            wincode::deserialize(acct.data())
                 .expect("Programmer error deserializing genesis certificate")
         })
     }
 
     /// For use in the first Alpenglow block, set the genesis certificate.
     pub fn set_alpenglow_genesis_certificate(&self, cert: &Certificate) {
-        let cert_size = wincode::serialized_size(cert).unwrap();
-        let lamports = Rent::default().minimum_balance(cert_size as usize);
-        let cert_acct = AccountSharedData::new_data(lamports, cert, &system_program::ID).unwrap();
+        let data = wincode::serialize(cert).unwrap();
+        let lamports = Rent::default().minimum_balance(data.len());
+        let mut cert_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
+        cert_acct.set_data_from_slice(&data);
 
         self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
     }
