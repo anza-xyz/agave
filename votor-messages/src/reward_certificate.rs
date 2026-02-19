@@ -75,7 +75,6 @@ pub struct NotarRewardCertificate {
     /// The slot the certificate is for.
     pub slot: Slot,
     /// The block id the certificate is for.
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
     /// The signature.
     #[wincode(with = "Pod<BLSSignatureCompressed>")]

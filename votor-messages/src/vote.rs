@@ -3,7 +3,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
-    wincode::{containers::Pod, SchemaRead, SchemaWrite},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// Enum that clients can use to parse and create the vote
@@ -208,7 +208,6 @@ pub struct NotarizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
 }
 
@@ -285,7 +284,6 @@ pub struct NotarizationFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
 }
 
@@ -336,6 +334,5 @@ pub struct GenesisVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
-    #[wincode(with = "Pod<Hash>")]
     pub block_id: Hash,
 }

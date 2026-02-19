@@ -32,7 +32,7 @@ serde = { workspace = true }
 solana-address = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
-solana-hash = { workspace = true }
+solana-hash = { workspace = true, features = ["wincode"] }
 solana-measure = { workspace = true }
 solana-merkle-tree = { workspace = true }
 solana-message = { workspace = true }

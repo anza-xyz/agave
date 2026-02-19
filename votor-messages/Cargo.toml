@@ -39,7 +39,7 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true, features = ["serde", "copy", "decode"] }
+solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode"] }
 solana-pubkey = { workspace = true }
 solana-signer-store = { workspace = true }
 thiserror = { workspace = true }
