@@ -229,6 +229,7 @@ impl RpcSender for MockSender {
                                         stack_height: Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
                                     }],
                                     address_table_lookups: None,
+                                    transaction_config: None,
                                 })
                         }),
                     meta: Some(UiTransactionStatusMeta {
