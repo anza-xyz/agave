@@ -1159,7 +1159,7 @@ pub mod raise_account_cu_limit {
 }
 
 pub mod delay_commission_updates {
-    solana_pubkey::declare_id!("BRUoCu28xjjPkDcNm7iY9a8LqgftZko99ioXz84wivXh");
+    solana_pubkey::declare_id!("76dHtohc2s5dR3ahJyBxs7eJJVipFkaPdih9CLgTTb4B");
 }
 
 pub mod raise_cpi_nesting_limit_to_8 {
