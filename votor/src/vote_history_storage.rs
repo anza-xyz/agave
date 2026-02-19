@@ -1,21 +1,22 @@
 use {
     super::vote_history::*,
     log::trace,
-    serde::{Deserialize, Serialize},
+    serde::Serialize,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_signer::Signer,
     std::{
         fs::{self, File},
-        io::{self, BufReader},
+        io::{self, Read, Write},
         path::PathBuf,
     },
+    wincode::{containers::Pod, SchemaRead, SchemaWrite},
 };
 
 pub type Result<T> = std::result::Result<T, VoteHistoryError>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum SavedVoteHistoryVersions {
     Current(SavedVoteHistory),
 }
@@ -30,7 +31,7 @@ impl SavedVoteHistoryVersions {
                 if !t.signature.verify(node_pubkey.as_ref(), &t.data) {
                     return Err(VoteHistoryError::InvalidSignature);
                 }
-                bincode::deserialize(&t.data).map(VoteHistoryVersions::Current)
+                wincode::deserialize(&t.data).map(VoteHistoryVersions::Current)
             }
         };
         vote_history
@@ -48,7 +49,9 @@ impl SavedVoteHistoryVersions {
     }
 
     fn serialize_into(&self, file: &mut File) -> Result<()> {
-        bincode::serialize_into(file, self).map_err(|e| e.into())
+        let buf = wincode::serialize(self)?;
+        file.write_all(&buf)?;
+        Ok(())
     }
 
     fn pubkey(&self) -> Pubkey {
@@ -67,14 +70,14 @@ impl From<SavedVoteHistory> for SavedVoteHistoryVersions {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "J6vB6FWFT8CFEvxndXWes461hroo8Q5L9Wq9cv4FEzaQ")
+    frozen_abi(digest = "FGxdUyqz9K4yJwTgQxokzaWpSj7WJZrrdHkmX4WEFqHB")
 )]
-#[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
 pub struct SavedVoteHistory {
+    #[wincode(with = "Pod<Signature>")]
     signature: Signature,
-    #[serde(with = "serde_bytes")]
     data: Vec<u8>,
-    #[serde(skip)]
+    #[wincode(skip)]
     node_pubkey: Pubkey,
 }
 
@@ -88,7 +91,7 @@ impl SavedVoteHistory {
             )));
         }
 
-        let data = bincode::serialize(&vote_history)?;
+        let data = wincode::serialize(&vote_history)?;
         let signature = keypair.sign_message(&data);
         Ok(Self {
             signature,
@@ -144,10 +147,11 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
         fs::create_dir_all(filename.parent().unwrap())?;
 
         // New format
-        let file = File::open(&filename)?;
-        let mut stream = BufReader::new(file);
+        let mut file = File::open(&filename)?;
+        let mut buf = vec![];
+        file.read_to_end(&mut buf).unwrap();
 
-        bincode::deserialize_from(&mut stream)
+        wincode::deserialize(&buf)
             .map_err(|e| e.into())
             .and_then(|t: SavedVoteHistoryVersions| t.try_into_vote_history(node_pubkey))
     }

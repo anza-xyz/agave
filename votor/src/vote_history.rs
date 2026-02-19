@@ -3,18 +3,19 @@ use {
         Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
     },
     agave_votor_messages::{consensus_message::Block, vote::Vote},
-    serde::{Deserialize, Serialize},
+    serde::Serialize,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     std::collections::{hash_map::Entry, HashMap, HashSet},
     thiserror::Error,
+    wincode::{containers::Pod, SchemaRead, SchemaWrite},
 };
 
 pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum VoteHistoryVersions {
     Current(VoteHistory),
 }
@@ -35,9 +36,10 @@ impl VoteHistoryVersions {
     derive(AbiExample),
     frozen_abi(digest = "9dp4rEVqAsT7mfiL5oEgWrxgWCUiEe4Fk8xJoTWwSN1X")
 )]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
 pub struct VoteHistory {
     /// The validator identity that cast votes
+    #[wincode(with = "Pod<Pubkey>")]
     pub node_pubkey: Pubkey,
 
     /// The slots which this node has cast either a notarization or skip vote
@@ -275,8 +277,10 @@ pub enum VoteHistoryError {
     #[error("IO Error: {0}")]
     IoError(#[from] std::io::Error),
 
-    #[error("Serialization Error: {0}")]
-    SerializeError(#[from] bincode::Error),
+    #[error("Read Error: {0}")]
+    ReadError(#[from] wincode::ReadError),
+    #[error("Write Error: {0}")]
+    WriteError(#[from] wincode::WriteError),
 
     #[error("The signature on the saved vote history is invalid")]
     InvalidSignature,
