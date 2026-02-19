@@ -278,7 +278,7 @@ mod test {
     macro_rules! prepare_mockup {
         ($invoke_context:ident, $instruction_accounts:ident, $rent:ident, $transaction_context:ident) => {
             let $rent = Rent {
-                lamports_per_byte_year: 42,
+                lamports_per_byte: 42,
                 ..Rent::default()
             };
             let from_lamports = $rent.minimum_balance(State::size()) + 42;

@@ -662,6 +662,7 @@ impl EncodableWithMeta for VersionedTransaction {
             message: match &self.message {
                 VersionedMessage::Legacy(message) => message.encode(UiTransactionEncoding::Json),
                 VersionedMessage::V0(message) => message.json_encode(),
+                VersionedMessage::V1(_message) => unimplemented!(),
             },
         })
     }
@@ -692,6 +693,7 @@ impl Encodable for VersionedTransaction {
                         VersionedMessage::V0(message) => {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
+                        VersionedMessage::V1(_message) => unimplemented!(),
                     },
                 })
             }
