@@ -293,7 +293,7 @@ fn test_bank_new() {
     genesis_config.rent = Rent {
         lamports_per_byte_year: 5,
         exemption_threshold: 1.2,
-        burn_percent: 5,
+        ..Rent::default()
     };
 
     let bank = Bank::new_for_tests(&genesis_config);
@@ -307,7 +307,7 @@ fn test_bank_new() {
     let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
     let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
 
-    assert_eq!(rent.burn_percent, 5);
+    assert_eq!(rent.burn_percent, Rent::default().burn_percent);
     assert_eq!(rent.exemption_threshold, 1.0);
     assert_eq!(rent.lamports_per_byte_year, 6);
 }
