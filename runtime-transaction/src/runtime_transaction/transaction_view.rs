@@ -14,6 +14,7 @@ use {
         VersionedMessage,
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
+        v1,
     },
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -147,7 +148,10 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                 loaded_addresses: Cow::Owned(self.loaded_addresses().unwrap().clone()),
                 is_writable_account_cache,
             }),
-            VersionedMessage::V1(_) => unimplemented!(),
+            VersionedMessage::V1(message) => SanitizedMessage::V1(v1::CachedMessage {
+                message: Cow::Owned(message),
+                is_writable_account_cache,
+            }),
         };
 
         // SAFETY:
