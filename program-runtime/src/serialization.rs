@@ -262,6 +262,7 @@ pub fn serialize_parameters(
         .collect::<Vec<_>>();
 
     if is_loader_deprecated {
+        // Used by loader-v1 (bpf_loader_deprecated)
         serialize_parameters_for_abiv0(
             accounts,
             instruction_context.get_instruction_data(),
@@ -270,6 +271,7 @@ pub fn serialize_parameters(
             account_data_direct_mapping,
         )
     } else {
+        // Used by loader-v2 (bpf_loader) and loader-v3 (bpf_loader_upgradeable)
         serialize_parameters_for_abiv1(
             accounts,
             instruction_context.get_instruction_data(),
@@ -291,6 +293,7 @@ pub fn deserialize_parameters(
         instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
     if is_loader_deprecated {
+        // Used by loader-v1 (bpf_loader_deprecated)
         deserialize_parameters_for_abiv0(
             instruction_context,
             stricter_abi_and_runtime_constraints,
@@ -299,6 +302,7 @@ pub fn deserialize_parameters(
             account_lengths,
         )
     } else {
+        // Used by loader-v2 (bpf_loader) and loader-v3 (bpf_loader_upgradeable)
         deserialize_parameters_for_abiv1(
             instruction_context,
             stricter_abi_and_runtime_constraints,
