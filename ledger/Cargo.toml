@@ -101,7 +101,7 @@ solana-runtime-transaction = { workspace = true }
 solana-seed-derivable = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-shred-version = { workspace = true }
-solana-signature = { workspace = true }
+solana-signature = { workspace = true, features = ["wincode"] }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-storage-bigtable = { workspace = true }
