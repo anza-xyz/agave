@@ -501,9 +501,9 @@ impl Blockstore {
             }
             let parent = walk.get_parent().map(|n| *n.data());
             if parent.is_some() || !is_orphan {
+                // parent won't exist for first node in a tree where
+                // `is_orphan == true`
                 let parent_hash = parent
-                    // parent won't exist for first node in a tree where
-                    // `is_orphan == true`
                     .and_then(|parent| blockhashes.get(&parent))
                     .unwrap_or(&starting_hash);
                 let parent_slot = parent.unwrap_or(slot);
