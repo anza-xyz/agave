@@ -5444,56 +5444,50 @@ pub mod tests {
                 blockstore.insert_shreds(shreds, None, true).unwrap();
             };
 
-        // Insert parent shreds so get_final_merkle_root returns the parent's
-        // block ID.
-        let parent_slot = 1;
-        insert_shreds_with_chained_merkle_root(parent_slot, 0, Hash::default());
+        // Create a genesis bank (slot 0) with all features active.
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        // Insert parent shreds at slot 0 so get_block_merkle_root returns the
+        // parent's block ID.
+        insert_shreds_with_chained_merkle_root(0, 0, Hash::new_unique());
         let parent_block_id = blockstore
-            .get_final_merkle_root(parent_slot)
-            .unwrap()
+            .get_last_shred_merkle_root(0)
             .expect("parent should have a merkle root");
 
         // Case 1: No shreds for child slot — should return Unavailable
-        let empty_child_slot = 10;
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 10);
         assert!(matches!(
-            check_chained_block_id(&blockstore, empty_child_slot, parent_slot),
+            check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Unavailable
         ));
 
         // Case 2: Chained merkle root matches parent block ID — should return
         // Pass
-        let matching_child_slot = 11;
-        insert_shreds_with_chained_merkle_root(matching_child_slot, parent_slot, parent_block_id);
+        insert_shreds_with_chained_merkle_root(11, 0, parent_block_id);
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 11);
         assert!(matches!(
-            check_chained_block_id(&blockstore, matching_child_slot, parent_slot),
+            check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Pass
         ));
 
         // Case 3: Chained merkle root does NOT match parent block ID — should
         // return Mismatch
-        let mismatched_child_slot = 12;
-        let wrong_merkle_root = Hash::new_unique();
-        insert_shreds_with_chained_merkle_root(
-            mismatched_child_slot,
-            parent_slot,
-            wrong_merkle_root,
-        );
+        insert_shreds_with_chained_merkle_root(12, 0, Hash::new_unique());
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 12);
         assert!(matches!(
-            check_chained_block_id(&blockstore, mismatched_child_slot, parent_slot),
+            check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Mismatch
         ));
 
-        // Case 4: Parent has no shreds (get_final_merkle_root returns None) —
+        // Case 4: Parent has no shreds (get_block_merkle_root returns Err) —
         // should return Pass regardless of chained merkle root.
-        let no_shreds_parent_slot = 20;
-        let child_slot_no_parent_id = 21;
-        insert_shreds_with_chained_merkle_root(
-            child_slot_no_parent_id,
-            no_shreds_parent_slot,
-            Hash::new_unique(),
-        );
+        let no_shreds_parent_bank =
+            Arc::new(Bank::new_from_parent(parent_bank, &Pubkey::default(), 20));
+        insert_shreds_with_chained_merkle_root(21, 20, Hash::new_unique());
+        let child_bank = Bank::new_from_parent(no_shreds_parent_bank, &Pubkey::default(), 21);
         assert!(matches!(
-            check_chained_block_id(&blockstore, child_slot_no_parent_id, no_shreds_parent_slot),
+            check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Pass
         ));
     }
