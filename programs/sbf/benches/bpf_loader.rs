@@ -64,6 +64,7 @@ macro_rules! with_mock_invoke_context {
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,
+            1,
             transaction_accounts
         );
         $invoke_context
