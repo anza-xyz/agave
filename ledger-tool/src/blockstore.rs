@@ -11,6 +11,7 @@ use {
     clap::{
         value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
     },
+    indicatif::{ProgressBar, ProgressStyle},
     itertools::Itertools,
     log::*,
     regex::Regex,
@@ -649,16 +650,37 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 AccessType::PrimaryForMaintenance,
             );
 
+            let total_slots = ending_slot.saturating_sub(starting_slot) + 1;
+            let progress_bar = ProgressBar::new(total_slots);
+            progress_bar.enable_steady_tick(Duration::from_millis(100));
+            progress_bar.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{spinner:.green} {wide_msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                    )
+                    .expect("ProgressStyle::template direct input to be correct")
+                    .progress_chars("=> "),
+            );
+
+            let mut last_slot = starting_slot.saturating_sub(1);
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
                     break;
                 }
+                progress_bar.set_message(format!(
+                    "Copying slots {starting_slot}-{ending_slot} (current {slot})"
+                ));
+                progress_bar.inc((slot - last_slot) as u64);
+                last_slot = slot;
+
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
                 if target.insert_cow_shreds(shreds, None, true).is_err() {
                     warn!("error inserting shreds for slot {slot}");
                 }
             }
+
+            progress_bar.finish_and_clear();
         }
         ("dead-slots", Some(arg_matches)) => {
             let blockstore =
