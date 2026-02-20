@@ -1,6 +1,6 @@
 use {
     crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
+        core::{ParsableAccount, ParseAccountError},
         UiAccountData, UiAccountEncoding,
     },
     base64::{prelude::BASE64_STANDARD, Engine},

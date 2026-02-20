@@ -1,5 +1,5 @@
 use {
-    crate::{parse_account_data::ParseAccountError, StringAmount},
+    crate::core::{ParseAccountError, StringAmount},
     serde::{Deserialize, Serialize},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,

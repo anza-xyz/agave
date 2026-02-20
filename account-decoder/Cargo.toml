@@ -14,9 +14,53 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 agave-unstable-api = []
+default = ["full"]
+full = [
+    "address-lookup-table",
+    "bpf-loader",
+    "config",
+    "nonce",
+    "stake",
+    "sysvar",
+    "token",
+    "token-extension",
+    "vote",
+    "dep:spl-token-interface",
+    "dep:solana-sdk-ids",
+    "dep:Inflector",
+]
+address-lookup-table = ["dep:solana-address-lookup-table-interface"]
+bpf-loader = ["dep:solana-loader-v3-interface"]
+config = ["dep:solana-config-interface", "dep:solana-stake-interface"]
+nonce = ["dep:solana-nonce"]
+stake = ["dep:solana-stake-interface", "dep:solana-clock"]
+sysvar = [
+    "dep:solana-sysvar",
+    "dep:solana-stake-interface",
+    "dep:solana-slot-hashes",
+    "dep:solana-slot-history",
+    "dep:solana-rent",
+    "dep:solana-epoch-schedule",
+    "dep:solana-clock",
+    "dep:solana-sdk-ids",
+]
+token = [
+    "dep:spl-token-2022-interface",
+    "dep:spl-generic-token",
+    "dep:solana-program-pack",
+    "dep:solana-program-option",
+    "dep:solana-clock",
+]
+token-extension = [
+    "token",
+    "dep:spl-token-2022-interface",
+    "dep:spl-token-metadata-interface",
+    "dep:spl-token-group-interface",
+]
+vote = ["dep:solana-vote-interface", "dep:solana-clock"]
 
 [dependencies]
-Inflector = { workspace = true }
+Inflector = { workspace = true, optional = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -25,32 +69,32 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
-solana-address-lookup-table-interface = { workspace = true, features = [
+solana-address-lookup-table-interface = { workspace = true, optional = true, features = [
     "bincode",
     "bytemuck",
 ] }
-solana-clock = { workspace = true }
-solana-config-interface = { workspace = true, features = ["bincode"] }
-solana-epoch-schedule = { workspace = true }
+solana-clock = { workspace = true, optional = true }
+solana-config-interface = { workspace = true, optional = true, features = ["bincode"] }
+solana-epoch-schedule = { workspace = true, optional = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["serde"] }
-solana-nonce = { workspace = true, features = ["serde"] }
-solana-program-option = { workspace = true }
-solana-program-pack = { workspace = true }
+solana-loader-v3-interface = { workspace = true, optional = true, features = ["serde"] }
+solana-nonce = { workspace = true, optional = true, features = ["serde"] }
+solana-program-option = { workspace = true, optional = true }
+solana-program-pack = { workspace = true, optional = true }
 solana-pubkey = { workspace = true }
-solana-rent = { workspace = true }
-solana-sdk-ids = { workspace = true }
-solana-slot-hashes = { workspace = true }
-solana-slot-history = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
-solana-sysvar = { workspace = true }
-solana-vote-interface = { workspace = true, features = ["bincode"] }
-spl-generic-token = { workspace = true }
-spl-token-2022-interface = { workspace = true }
-spl-token-group-interface = { workspace = true }
-spl-token-interface = { workspace = true }
-spl-token-metadata-interface = { workspace = true }
+solana-rent = { workspace = true, optional = true }
+solana-sdk-ids = { workspace = true, optional = true }
+solana-slot-hashes = { workspace = true, optional = true }
+solana-slot-history = { workspace = true, optional = true }
+solana-stake-interface = { workspace = true, optional = true, features = ["bincode", "sysvar"] }
+solana-sysvar = { workspace = true, optional = true }
+solana-vote-interface = { workspace = true, optional = true, features = ["bincode"] }
+spl-generic-token = { workspace = true, optional = true }
+spl-token-2022-interface = { workspace = true, optional = true }
+spl-token-group-interface = { workspace = true, optional = true }
+spl-token-interface = { workspace = true, optional = true }
+spl-token-metadata-interface = { workspace = true, optional = true }
 thiserror = { workspace = true }
 zstd = { workspace = true }
 
