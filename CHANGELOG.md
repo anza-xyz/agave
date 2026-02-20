@@ -71,6 +71,21 @@ without warning.
         ```
         sudo setcap cap_net_raw,cap_net_admin,cap_bpf,cap_perfmon=p /path/to/agave-validator
         ```
+* Interpretation of the `Version` struct fields in gossip `ContactInfo` has been
+[changed](https://github.com/anza-xyz/agave/pull/10286) to support communicating
+[semver prerelease notation](https://semver.org/#spec-item-9). Implementations lacking this
+support will observe a larger than expected _`min` version_ field from node publishing from a
+prerelease version. The new interpretation is as follows:
+  * The top two bits (14 and 15) of the `minor` field are now reserved for prerelease status
+  * Prerelease status bit values are;
+    3 - alpha, 2 - beta, 1 - release candidate (rc), 0 - stable
+  * When prerelease status bits are non-zero, the `Version::patch` field is interpreted as
+    the prerelease number and the actual `patch` value is implicitly zero
+  * Examples:
+    * { min: 0x0001, patch: 0x0003 } -> X.1.3
+    * { min: 0x4002, patch: 0x0002 } -> X.2.0-rc.2
+    * { min: 0x8003, patch: 0x0001 } -> X.3.0-beta.1
+    * { min: 0xC004, patch: 0x0000 } -> X.4.0-alpha.0
 
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
