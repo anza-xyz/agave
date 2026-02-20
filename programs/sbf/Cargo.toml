@@ -130,7 +130,7 @@ solana-curve25519 = "=4.0.0"
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=4.0.0-alpha.0" }
 solana-hash = { version = "=4.2.0", features = ["bytemuck", "serde", "std"] }
-solana-instruction = "=3.1.0"
+solana-instruction = "=3.2.0"
 solana-instructions-sysvar = "=3.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-ledger = { path = "../../ledger", version = "=4.0.0-alpha.0" }
