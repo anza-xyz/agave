@@ -29,11 +29,24 @@ impl<T> ChannelSend<T> for EvictingSender<T>
 where
     T: Send + 'static,
 {
+    /// Send the `msg`, blocking if the channel is full.
+    ///
+    /// Note that, unintuitively, this does not actually evict anything. If you want the evicting
+    /// behaviour, use [`Self::try_send`].
     #[inline]
     fn send(&self, msg: T) -> std::result::Result<(), SendError<T>> {
         self.sender.send(msg)
     }
 
+    /// Send the `msg` in a non-blocking manner.
+    ///
+    /// If the channel has available capacity, this will behave much like a regular channel,
+    /// inserting a message and returning successfully.
+    ///
+    /// If the channel is full, this method will attempt to remove the oldest message *once* and
+    /// attempt to insert the provided `msg` in its place. Regardless of whether this succeeds or
+    /// not `TrySendError::Full` will be returned (with either the evicted or the provided `msg`,)
+    /// except in the case of an "unlikely race condition," which might produce an `Ok(())`.
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
         let Err(e) = self.sender.try_send(msg) else {
             return Ok(());

@@ -1,10 +1,13 @@
 use {
     crate::repair::{quic_endpoint::RemoteRequest, serve_repair::ServeRepair},
     bytes::Bytes,
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{bounded, Receiver, Sender},
     solana_net_utils::SocketAddrSpace,
     solana_perf::{packet::PacketBatch, recycler::Recycler},
-    solana_streamer::streamer::{self, StreamerReceiveStats},
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        streamer::{self, StreamerReceiveStats},
+    },
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc},
@@ -18,6 +21,27 @@ pub struct ServeRepairService {
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
+pub(crate) const REQUEST_CHANNEL_SIZE: usize = 4096;
+
+#[derive(Default)]
+struct ServeRepairStats {
+    dropped_batches: i64,
+    dropped_packets: i64,
+}
+
+impl ServeRepairStats {
+    const CADENCE: std::time::Duration = std::time::Duration::from_secs(5);
+    fn report(&mut self) {
+        let dropped_batches = std::mem::replace(&mut self.dropped_batches, 0);
+        let dropped_packets = std::mem::replace(&mut self.dropped_packets, 0);
+        datapoint_info!(
+            "adapt-repair-request-packets",
+            ("dropped_packets", dropped_packets, i64),
+            ("dropped_batches", dropped_batches, i64),
+        );
+    }
+}
+
 impl ServeRepairService {
     pub(crate) fn new(
         serve_repair: ServeRepair,
@@ -29,7 +53,7 @@ impl ServeRepairService {
         stats_reporter_sender: Sender<Box<dyn FnOnce() + Send>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (request_sender, request_receiver) = unbounded();
+        let (request_sender, request_receiver) = EvictingSender::new_bounded(REQUEST_CHANNEL_SIZE);
         let serve_repair_socket = Arc::new(serve_repair_socket);
         let t_receiver = streamer::receiver(
             "solRcvrServeRep".to_string(),
@@ -46,7 +70,13 @@ impl ServeRepairService {
             .name(String::from("solServRAdapt"))
             .spawn(|| adapt_repair_requests_packets(request_receiver, remote_request_sender))
             .unwrap();
-        let (response_sender, response_receiver) = unbounded();
+        // NOTE: we use a larger sending channel here compared to the receiving one.
+        //
+        // That's because by the time we're done with the work to compute the repair packets,
+        // discarding the packet because of a full channel seems like a waste. For that reason the
+        // push to this channel is blocking and having more space here gives the sending thread an
+        // much greater chance to get to pulling from this channel before the channel fills up.
+        let (response_sender, response_receiver) = bounded(3 * REQUEST_CHANNEL_SIZE);
         let t_responder = streamer::responder(
             "Repair",
             serve_repair_socket,
@@ -75,8 +105,11 @@ pub(crate) fn adapt_repair_requests_packets(
     packets_receiver: Receiver<PacketBatch>,
     remote_request_sender: Sender<RemoteRequest>,
 ) {
-    for packets in packets_receiver {
-        for packet in &packets {
+    let mut stats = ServeRepairStats::default();
+    let mut last_report = std::time::Instant::now();
+    'recv_batch: for packets in packets_receiver.clone() {
+        let total_packets = packets.len();
+        for (i, packet) in packets.iter().enumerate() {
             let Some(bytes) = packet.data(..).map(Vec::from) else {
                 continue;
             };
@@ -85,9 +118,21 @@ pub(crate) fn adapt_repair_requests_packets(
                 remote_address: packet.meta().socket_addr(),
                 bytes: Bytes::from(bytes),
             };
-            if remote_request_sender.send(request).is_err() {
-                return; // The receiver end of the channel is disconnected.
+            match remote_request_sender.try_send(request) {
+                Ok(_) => {}
+                Err(crossbeam_channel::TrySendError::Full(_)) => {
+                    stats.dropped_batches += 1;
+                    stats.dropped_packets += total_packets.saturating_sub(i) as i64;
+                    continue 'recv_batch;
+                }
+                Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
             }
         }
+        let now = std::time::Instant::now();
+        if last_report.duration_since(now) > ServeRepairStats::CADENCE {
+            last_report = now;
+            stats.report();
+        }
     }
+    stats.report();
 }
