@@ -208,7 +208,7 @@ agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", fe
 agave-xdp = { path = "xdp", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 ahash = "0.8.12"
-anyhow = "1.0.101"
+anyhow = "1.0.102"
 aquamarine = "0.6.0"
 arbitrary = "1.4.2"
 arc-swap = "1.8.2"
