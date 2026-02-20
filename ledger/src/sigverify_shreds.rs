@@ -63,7 +63,7 @@ pub fn verify_shreds(
 ) -> Vec<Vec<u8>> {
     thread_pool.install(|| {
         batches
-            .into_par_iter()
+            .iter()
             .map(|batch| {
                 batch
                     .par_iter()
