@@ -32,6 +32,10 @@ pub enum BLSOp {
         slot: Slot,
         saved_vote_history: SavedVoteHistoryVersions,
     },
+    RefreshVote {
+        message: Arc<ConsensusMessage>,
+        slot: Slot,
+    },
     PushCertificate {
         certificate: Arc<Certificate>,
     },
@@ -211,6 +215,16 @@ impl VotingService {
                 measure.stop();
                 trace!("{measure}");
 
+                Self::broadcast_consensus_message(
+                    slot,
+                    cluster_info,
+                    &message,
+                    connection_cache,
+                    additional_listeners,
+                    staked_validators_cache,
+                );
+            }
+            BLSOp::RefreshVote { message, slot } => {
                 Self::broadcast_consensus_message(
                     slot,
                     cluster_info,
