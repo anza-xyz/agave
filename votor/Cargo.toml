@@ -30,6 +30,7 @@ frozen-abi = [
 
 [dependencies]
 agave-logger = { workspace = true }
+agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
@@ -40,7 +41,6 @@ dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 itertools = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
-num-traits = { workspace = true }
 parking_lot = { workspace = true }
 qualifier_attr = { workspace = true }
 rayon = { workspace = true }
