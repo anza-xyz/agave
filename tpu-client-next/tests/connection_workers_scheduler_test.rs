@@ -30,10 +30,7 @@ use {
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc,
-        },
+        sync::Arc,
         time::Duration,
     },
     tokio::{
@@ -869,7 +866,7 @@ async fn test_client_builder() {
 
     let _drop_guard = cancel.clone().drop_guard();
 
-    let successfully_sent = Arc::new(AtomicU64::new(0));
+    let (stats_sender, mut stats_receiver) = tokio::sync::watch::channel(0);
 
     let port_range = localhost_port_range_for_tests();
     let socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
@@ -885,7 +882,6 @@ async fn test_client_builder() {
         .max_cache_size(1)
         .worker_channel_size(100)
         .metric_reporter({
-            let successfully_sent = successfully_sent.clone();
             |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
                 let mut interval = interval(Duration::from_millis(10));
                 cancel
@@ -893,7 +889,7 @@ async fn test_client_builder() {
                         loop {
                             interval.tick().await;
                             let view = stats.read_and_reset();
-                            successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
+                            stats_sender.send(view.successfully_sent).unwrap();
                         }
                     })
                     .await;
@@ -941,15 +937,19 @@ async fn test_client_builder() {
         }
     }
 
+    {
+        stats_receiver.changed().await.unwrap();
+        if *stats_receiver.borrow() != expected_num_txs as u64 {
+            stats_receiver.changed().await.unwrap();
+        }
+        assert_eq!(*stats_receiver.borrow(), expected_num_txs as u64,);
+    }
+
     // Stop client
     client
         .shutdown()
         .await
         .expect("Client should shutdown successfully.");
-    assert_eq!(
-        successfully_sent.load(Ordering::Relaxed),
-        expected_num_txs as u64,
-    );
 
     // Stop server
     cancel.cancel();
