@@ -521,7 +521,6 @@ impl BankForks {
         snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
     ) -> Vec<BankWithScheduler> {
-        let program_cache_prune_start = Instant::now();
         let set_root_start = Instant::now();
         let (removed_banks, set_root_metrics) =
             self.do_set_root_return_metrics(root, snapshot_controller, highest_super_majority_root);
@@ -592,11 +591,6 @@ impl BankForks {
             (
                 "prune_remove_ms",
                 set_root_metrics.timings.prune_remove_ms,
-                i64
-            ),
-            (
-                "program_cache_prune_ms",
-                program_cache_prune_start.elapsed().as_millis() as i64,
                 i64
             ),
             ("dropped_banks_len", set_root_metrics.dropped_banks_len, i64),

@@ -1989,7 +1989,15 @@ fn load_frozen_forks(
                 root = new_root_bank.slot();
 
                 leader_schedule_cache.set_root(new_root_bank);
+                let mut program_cache_prune = Measure::start("program_cache_prune");
                 new_root_bank.prune_program_cache(root, new_root_bank.epoch());
+                program_cache_prune.stop();
+                datapoint_info!(
+                    "program_cache_prune",
+                    ("elapsed_ms", program_cache_prune.as_ms() as i64, i64),
+                    ("slot", root, i64),
+                    ("epoch", new_root_bank.epoch() as i64, i64),
+                );
                 let _ = bank_forks
                     .write()
                     .unwrap()
