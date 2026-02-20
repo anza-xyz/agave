@@ -257,11 +257,10 @@ impl SyscallStubs {
         }
         let sysvar = unsafe { sysvar.assume_init() };
 
-        // Check that the requested legth is not greater than
+        // Check that the requested length is not greater than
         // the actual serialized length of the sysvar data.
-        let expected_length = match bincode::serialized_size(&sysvar) {
-            Ok(n) => n,
-            Err(_) => return UNSUPPORTED_SYSVAR,
+        let Ok(expected_length) = bincode::serialized_size(&sysvar) else {
+            return UNSUPPORTED_SYSVAR;
         };
 
         if offset.saturating_add(length) > expected_length {
