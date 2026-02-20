@@ -20,9 +20,10 @@ use {
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
-    solana_clock::{Epoch, Slot},
+    solana_clock::{Clock, Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_epoch_rewards::EpochRewards,
     solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -52,7 +53,7 @@ use {
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
     solana_svm_timings::ExecuteTimings,
-    solana_sysvar::SysvarSerialize,
+    solana_sysvar::{last_restart_slot::LastRestartSlot, SysvarSerialize},
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{VoteStateV4, VoteStateVersions},
     std::{
@@ -60,7 +61,7 @@ use {
         collections::{HashMap, HashSet},
         fs::File,
         io::{self, Read},
-        mem::transmute,
+        mem::{transmute, MaybeUninit},
         panic::AssertUnwindSafe,
         path::{Path, PathBuf},
         ptr,
@@ -240,6 +241,48 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
 }
 
 struct SyscallStubs {}
+
+impl SyscallStubs {
+    fn fetch_and_write_sysvar<T: SysvarSerialize>(
+        &self,
+        var_addr: *mut u8,
+        offset: u64,
+        length: u64,
+        fetch: impl FnOnce(&Self, *mut u8) -> u64,
+    ) -> u64 {
+        // Fetch the full sysvar data using its getter.
+        let mut sysvar = MaybeUninit::<T>::uninit();
+        if fetch(self, sysvar.as_mut_ptr() as *mut u8) != SUCCESS {
+            return UNSUPPORTED_SYSVAR;
+        }
+        let sysvar = unsafe { sysvar.assume_init() };
+
+        // Check that the requested legth is not greater than
+        // the actual serialized length of the sysvar data.
+        let expected_length = match bincode::serialized_size(&sysvar) {
+            Ok(n) => n,
+            Err(_) => return UNSUPPORTED_SYSVAR,
+        };
+
+        if offset.saturating_add(length) > expected_length {
+            return UNSUPPORTED_SYSVAR;
+        }
+
+        // Write only the requested slice [offset, offset + length).
+        if let Ok(serialized) = bincode::serialize(&sysvar) {
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    serialized[offset as usize..].as_ptr(),
+                    var_addr,
+                    length as usize,
+                )
+            };
+            SUCCESS
+        } else {
+            UNSUPPORTED_SYSVAR
+        }
+    }
+}
 impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     fn sol_log(&self, message: &str) {
         let invoke_context = get_invoke_context();
@@ -431,6 +474,44 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     fn sol_get_stack_height(&self) -> u64 {
         let invoke_context = get_invoke_context();
         invoke_context.get_stack_height().try_into().unwrap()
+    }
+
+    fn sol_get_sysvar(
+        &self,
+        sysvar_id_addr: *const u8,
+        var_addr: *mut u8,
+        offset: u64,
+        length: u64,
+    ) -> u64 {
+        let sysvar_id = unsafe { &*(sysvar_id_addr as *const Pubkey) };
+
+        match *sysvar_id {
+            id if id == Clock::id() => self.fetch_and_write_sysvar::<Clock>(
+                var_addr,
+                offset,
+                length,
+                Self::sol_get_clock_sysvar,
+            ),
+            id if id == EpochRewards::id() => self.fetch_and_write_sysvar::<EpochRewards>(
+                var_addr,
+                offset,
+                length,
+                Self::sol_get_epoch_rewards_sysvar,
+            ),
+            id if id == LastRestartSlot::id() => self.fetch_and_write_sysvar::<LastRestartSlot>(
+                var_addr,
+                offset,
+                length,
+                Self::sol_get_last_restart_slot,
+            ),
+            id if id == Rent::id() => self.fetch_and_write_sysvar::<Rent>(
+                var_addr,
+                offset,
+                length,
+                Self::sol_get_rent_sysvar,
+            ),
+            _ => UNSUPPORTED_SYSVAR,
+        }
     }
 }
 
