@@ -11,7 +11,7 @@ use {
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
     agave_votor_messages::migration::MigrationStatus,
     chrono_humanize::{Accuracy, HumanTime, Tense},
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
     log::*,
     rayon::{ThreadPool, prelude::*},
@@ -1140,15 +1140,17 @@ fn confirm_full_slot(
     timing.accumulate(&confirmation_timing.batch_execute.totals);
 
     if !bank.is_complete() {
-        Err(BlockstoreProcessorError::InvalidBlock(
+        return Err(BlockstoreProcessorError::InvalidBlock(
             BlockError::Incomplete,
-        ))
-    } else if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
-        timing.accumulate(&execute_time);
-        result.map_err(BlockstoreProcessorError::InvalidTransaction)
-    } else {
-        Ok(())
+        ));
     }
+
+    if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
+        timing.accumulate(&execute_time);
+        result?;
+    }
+
+    progress.wait_for_all_verification_results(&mut 0)
 }
 
 /// Measures different parts of the slot confirmation processing pipeline.
@@ -1451,6 +1453,7 @@ pub struct ConfirmationProgress {
     pub num_shreds: u64,
     pub num_entries: usize,
     pub num_txs: usize,
+    async_verification: AsyncVerificationProgress,
 }
 
 impl ConfirmationProgress {
@@ -1458,6 +1461,133 @@ impl ConfirmationProgress {
         Self {
             last_entry,
             ..Self::default()
+        }
+    }
+
+    fn collect_available_verification_results(
+        &mut self,
+        poh_verify_elapsed: &mut u64,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        self.async_verification
+            .collect_available_results(poh_verify_elapsed)
+    }
+
+    pub fn wait_for_all_verification_results(
+        &mut self,
+        poh_verify_elapsed: &mut u64,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        self.async_verification
+            .wait_for_all_results(poh_verify_elapsed)
+    }
+}
+
+struct AsyncVerificationResult {
+    poh_verify_elapsed: u64,
+    error: Option<BlockstoreProcessorError>,
+}
+
+struct AsyncVerificationProgress {
+    sender: Sender<AsyncVerificationResult>,
+    receiver: Receiver<AsyncVerificationResult>,
+    pending_jobs: usize,
+    first_error: Option<BlockstoreProcessorError>,
+}
+
+impl Default for AsyncVerificationProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AsyncVerificationProgress {
+    // The capacity of the channel is somewhat arbitrary. At the time of this writing this is 100x
+    // the number of max entries per slot on mnb. The channel will effectively never fill up, but if
+    // it does, that condition is handled gracefully in spawn().
+    const RESULT_CHANNEL_CAPACITY: usize = 100000;
+
+    fn new() -> Self {
+        let (sender, receiver) = crossbeam_channel::bounded(Self::RESULT_CHANNEL_CAPACITY);
+        Self {
+            sender,
+            receiver,
+            pending_jobs: 0,
+            first_error: None,
+        }
+    }
+
+    // Spawns the given work on the given thread pool. The result, once
+    // available, can be collected by calling `collect_available_results()` or
+    // `wait_for_all_results()`.
+    fn spawn(
+        &mut self,
+        replay_tx_thread_pool: &ThreadPool,
+        poh_verify_elapsed: &mut u64,
+        work: impl FnOnce() -> AsyncVerificationResult + Send + 'static,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        while self.sender.is_full() {
+            // Note that we spin here if the channel is full. This is fine because it can only be
+            // full if we are not keeping up, in which case pulling results as fast as possible is
+            // the right thing to do.
+            //
+            // We also really don't want sender.send(result) below to sleep, because that would
+            // block rayon threads slowing down progress even more.
+            self.collect_available_results(poh_verify_elapsed)?;
+        }
+        self.pending_jobs = self.pending_jobs.saturating_add(1);
+        let sender = self.sender.clone();
+        replay_tx_thread_pool.spawn(move || {
+            sender
+                .send(work())
+                .expect("AsyncVerificationProgress work sender failed");
+        });
+        Ok(())
+    }
+
+    // Collects all available results from the channel.
+    fn collect_available_results(
+        &mut self,
+        poh_verify_elapsed: &mut u64,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        while let Ok(result) = self.receiver.try_recv() {
+            self.apply_result(result, poh_verify_elapsed);
+        }
+        if let Some(error) = self.first_error.take() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    // Waits for all pending jobs to complete and collects their results.
+    //
+    // This MUST be called at the end of a slot.
+    fn wait_for_all_results(
+        &mut self,
+        poh_verify_elapsed: &mut u64,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        while self.pending_jobs > 0 {
+            let result = self.receiver.recv().map_err(|_| {
+                BlockstoreProcessorError::InvalidBlock(BlockError::InvalidEntryHash)
+            })?;
+            self.apply_result(result, poh_verify_elapsed);
+        }
+        if let Some(error) = self.first_error.take() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn apply_result(
+        &mut self,
+        AsyncVerificationResult {
+            poh_verify_elapsed: poh_us,
+            error,
+        }: AsyncVerificationResult,
+        poh_verify_elapsed: &mut u64,
+    ) {
+        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        *poh_verify_elapsed = poh_verify_elapsed.saturating_add(poh_us);
+        if self.first_error.is_none() {
+            self.first_error = error;
         }
     }
 }
@@ -1597,13 +1727,31 @@ fn confirm_slot_entries(
 
     let last_entry_hash = entries.last().map(|e| e.hash);
     if !skip_verification {
-        datapoint_debug!("verify-batch-size", ("size", num_entries as i64, i64));
-        let entry_state = entries.verify(&progress.last_entry, replay_tx_thread_pool);
-        *poh_verify_elapsed += entry_state.poh_duration_us();
-        if !entry_state.status() {
-            warn!("Ledger proof of history failed at slot: {slot}");
-            return Err(BlockError::InvalidEntryHash.into());
-        }
+        let start_hash = progress.last_entry;
+        let verify_entries = entries.clone();
+        progress.async_verification.spawn(
+            replay_tx_thread_pool,
+            poh_verify_elapsed,
+            move || {
+                datapoint_debug!(
+                    "verify-batch-size",
+                    ("size", verify_entries.len() as i64, i64)
+                );
+                let state = verify_entries.verify_cpu(&start_hash);
+                let error = if state.status() {
+                    None
+                } else {
+                    warn!("Ledger proof of history failed at slot: {slot}");
+                    Some(BlockstoreProcessorError::InvalidBlock(
+                        BlockError::InvalidEntryHash,
+                    ))
+                };
+                AsyncVerificationResult {
+                    poh_verify_elapsed: state.poh_duration_us(),
+                    error,
+                }
+            },
+        )?;
     }
 
     let verify_transaction = {
@@ -1698,6 +1846,7 @@ fn confirm_slot_entries(
     }
 
     process_result?;
+    progress.collect_available_verification_results(poh_verify_elapsed)?;
 
     progress.num_shreds += num_shreds;
     progress.num_entries += num_entries;
@@ -4854,12 +5003,13 @@ pub mod tests {
         prev_entry_hash: Hash,
     ) -> result::Result<(), BlockstoreProcessorError> {
         let replay_tx_thread_pool = create_thread_pool(1);
+        let mut progress = ConfirmationProgress::new(prev_entry_hash);
         confirm_slot_entries(
             &BankWithScheduler::new_without_scheduler(bank.clone()),
             &replay_tx_thread_pool,
             (slot_entries, 0, slot_full),
             &mut ConfirmationTiming::default(),
-            &mut ConfirmationProgress::new(prev_entry_hash),
+            &mut progress,
             false,
             None,
             None,
@@ -4867,7 +5017,8 @@ pub mod tests {
             None,
             None,
             &MigrationStatus::default(),
-        )
+        )?;
+        progress.wait_for_all_verification_results(&mut 0)
     }
 
     fn create_test_transactions(
@@ -4963,6 +5114,7 @@ pub mod tests {
             &MigrationStatus::default(),
         )
         .unwrap();
+        progress.wait_for_all_verification_results(&mut 0).unwrap();
         assert_eq!(progress.num_txs, 2);
         let batch = transaction_status_receiver.recv().unwrap();
         if let TransactionStatusMessage::Batch((batch, _sequence)) = batch {
@@ -5008,6 +5160,7 @@ pub mod tests {
             &MigrationStatus::default(),
         )
         .unwrap();
+        progress.wait_for_all_verification_results(&mut 0).unwrap();
         assert_eq!(progress.num_txs, 5);
         let batch = transaction_status_receiver.recv().unwrap();
         if let TransactionStatusMessage::Batch((batch, _sequnce)) = batch {
