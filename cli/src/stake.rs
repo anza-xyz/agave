@@ -2575,26 +2575,70 @@ pub async fn get_epoch_boundary_timestamps(
     reward: &RpcInflationReward,
     epoch_schedule: &EpochSchedule,
 ) -> Result<(UnixTimestamp, UnixTimestamp), Box<dyn std::error::Error>> {
-    let epoch_end_time = rpc_client.get_block_time(reward.effective_slot).await?;
-    let mut epoch_start_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
-    let epoch_start_time = loop {
-        if epoch_start_slot >= reward.effective_slot {
-            return Err("epoch_start_time not found".to_string().into());
+    async fn get_time_with_retries(
+        rpc_client: &RpcClient,
+        slot: u64,
+    ) -> Result<UnixTimestamp, Box<dyn std::error::Error>> {
+        let mut attempt: u32 = 0;
+        loop {
+            match rpc_client.get_block_time(slot).await {
+                Ok(ts) => return Ok(ts),
+                Err(err) => {
+                    if attempt >= 2 {
+                        return Err(err.into());
+                    }
+                    let delay_ms = match attempt {
+                        0 => 100,
+                        1 => 300,
+                        _ => 700,
+                    };
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    attempt = attempt.saturating_add(1);
+                }
+            }
         }
-        match rpc_client.get_block_time(epoch_start_slot).await {
-            Ok(block_time) => {
-                break block_time;
+    }
+
+    let epoch_start_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
+    let epoch_start_block_slot = {
+        let first_blocks = rpc_client
+            .get_blocks_with_limit_and_commitment(
+                epoch_start_slot,
+                1,
+                CommitmentConfig::confirmed(),
+            )
+            .await?;
+        if let Some(&slot) = first_blocks.first() {
+            if slot <= reward.effective_slot {
+                slot
+            } else {
+                let blocks = rpc_client
+                    .get_blocks_with_commitment(
+                        epoch_start_slot,
+                        Some(reward.effective_slot),
+                        CommitmentConfig::confirmed(),
+                    )
+                    .await?;
+                *blocks
+                    .first()
+                    .ok_or_else(|| "epoch_start_time not found".to_string())?
             }
-            Err(_) => {
-                // TODO This is wrong.  We should not just increase the slot index if the RPC
-                // request failed.  It could have failed for a number of reasons, including, for
-                // example a network failure.
-                epoch_start_slot = epoch_start_slot
-                    .checked_add(1)
-                    .ok_or("Reached last slot that fits into u64")?;
-            }
+        } else {
+            let blocks = rpc_client
+                .get_blocks_with_commitment(
+                    epoch_start_slot,
+                    Some(reward.effective_slot),
+                    CommitmentConfig::confirmed(),
+                )
+                .await?;
+            *blocks
+                .first()
+                .ok_or_else(|| "epoch_start_time not found".to_string())?
         }
     };
+
+    let epoch_start_time = get_time_with_retries(rpc_client, epoch_start_block_slot).await?;
+    let epoch_end_time = get_time_with_retries(rpc_client, reward.effective_slot).await?;
     Ok((epoch_start_time, epoch_end_time))
 }
 
