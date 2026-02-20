@@ -5,7 +5,7 @@ use {
         },
         transaction_client::TransactionClient,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crossbeam_channel::Receiver as CrossbeamReceiver,
     itertools::Itertools,
     log::*,
     solana_hash::Hash,
@@ -17,16 +17,15 @@ use {
     },
     solana_signature::Signature,
     std::{
-        collections::hash_map::{Entry, HashMap},
+        collections::{hash_map::Entry, HashMap},
         net::SocketAddr,
-        num::Saturating,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, Mutex, RwLock,
+            Arc, RwLock,
         },
-        thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    tokio::{sync::mpsc, task::JoinHandle, time::interval_at},
 };
 
 /// Maximum size of the transaction retry pool
@@ -57,12 +56,17 @@ const DEFAULT_BATCH_SEND_RATE_MS: u64 = 1;
 // The maximum transaction batch send rate in MS
 pub const MAX_BATCH_SEND_RATE_MS: usize = 100_000;
 
+/// The maximum duration the retry task may be configured to sleep before
+/// processing the transactions that need to be retried.
+pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
+
 pub struct SendTransactionService {
-    receive_txn_thread: JoinHandle<()>,
-    retry_thread: JoinHandle<()>,
+    receive_txn_task: JoinHandle<()>,
+    retry_task: JoinHandle<()>,
     exit: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone)]
 pub struct TransactionInfo {
     pub message_hash: Hash,
     pub signature: Signature,
@@ -152,55 +156,62 @@ impl Default for Config {
     }
 }
 
-/// The maximum duration the retry thread may be configured to sleep before
-/// processing the transactions that need to be retried.
-pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
-
 impl SendTransactionService {
-    pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
+    pub fn new<Client: TransactionClient + Clone + Send + 'static>(
         bank_forks: &Arc<RwLock<BankForks>>,
-        receiver: Receiver<TransactionInfo>,
+        crossbeam_receiver: CrossbeamReceiver<TransactionInfo>,
         client: Client,
         config: Config,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let (tokio_sender, tokio_receiver) = mpsc::channel(1000);
+
+        std::thread::spawn(move || {
+            while let Ok(transaction_info) = crossbeam_receiver.recv() {
+                if tokio_sender.blocking_send(transaction_info).is_err() {
+                    break;
+                }
+            }
+            debug!("Crossbeam-to-tokio bridge terminated");
+        });
+
         let stats_report = Arc::new(SendTransactionServiceStatsReport::default());
 
-        let retry_transactions = Arc::new(Mutex::new(HashMap::new()));
+        let (retry_sender, retry_receiver) = mpsc::channel(config.retry_pool_max_size);
 
-        let receive_txn_thread = Self::receive_txn_thread(
-            receiver,
+        let receive_txn_task = Self::receive_txn_task(
+            tokio_receiver,
             client.clone(),
-            retry_transactions.clone(),
+            retry_sender,
             config.clone(),
             stats_report.clone(),
             exit.clone(),
         );
 
-        let retry_thread = Self::retry_thread(
+        let retry_task = Self::retry_task(
             bank_forks.clone(),
             client,
-            retry_transactions,
+            retry_receiver,
             config,
             stats_report,
             exit.clone(),
         );
+
         Self {
-            receive_txn_thread,
-            retry_thread,
+            receive_txn_task,
+            retry_task,
             exit,
         }
     }
 
-    /// Thread responsible for receiving transactions from RPC clients.
-    fn receive_txn_thread<Client: TransactionClient + std::marker::Send + 'static>(
-        receiver: Receiver<TransactionInfo>,
+    /// Task responsible for receiving transactions from RPC clients.
+    fn receive_txn_task<Client: TransactionClient + Send + 'static>(
+        mut receiver: mpsc::Receiver<TransactionInfo>,
         client: Client,
-        retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
+        retry_sender: mpsc::Sender<TransactionInfo>,
         Config {
             batch_send_rate_ms,
             batch_size,
-            retry_pool_max_size,
             default_max_retries,
             service_max_retries,
             ..
@@ -208,139 +219,182 @@ impl SendTransactionService {
         stats_report: Arc<SendTransactionServiceStatsReport>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let mut last_batch_sent = Instant::now();
-        let mut transactions = HashMap::new();
+        debug!("Starting send-transaction-service::receive_txn_task");
 
-        debug!("Starting send-transaction-service::receive_txn_thread");
-        Builder::new()
-            .name("solStxReceive".to_string())
-            .spawn(move || loop {
-                let stats = &stats_report.stats;
-                let recv_result = receiver.recv_timeout(Duration::from_millis(batch_send_rate_ms));
+        tokio::spawn(async move {
+            let mut transactions = HashMap::new();
+            let mut last_batch_sent = Instant::now();
+            let batch_send_rate = Duration::from_millis(batch_send_rate_ms);
+
+            loop {
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
-                match recv_result {
-                    Err(RecvTimeoutError::Disconnected) => {
-                        info!("Terminating send-transaction-service.");
-                        exit.store(true, Ordering::Relaxed);
-                        break;
-                    }
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Ok(transaction_info) => {
-                        stats.received_transactions.fetch_add(1, Ordering::Relaxed);
-                        let entry = transactions.entry(transaction_info.signature);
-                        let mut new_transaction = false;
-                        if let Entry::Vacant(_) = entry {
-                            if !retry_transactions
-                                .lock()
-                                .unwrap()
-                                .contains_key(&transaction_info.signature)
-                            {
-                                entry.or_insert(transaction_info);
-                                new_transaction = true;
-                            }
-                        }
-                        if !new_transaction {
-                            stats
-                                .received_duplicate_transactions
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                }
+                let stats = &stats_report.stats;
 
-                if (!transactions.is_empty()
-                    && last_batch_sent.elapsed().as_millis() as u64 >= batch_send_rate_ms)
-                    || transactions.len() >= batch_size
-                {
+                let elapsed = last_batch_sent.elapsed();
+                let timeout = batch_send_rate.saturating_sub(elapsed);
+
+                let should_send = if timeout.is_zero() {
+                    true
+                } else {
+                    match tokio::time::timeout(timeout, receiver.recv()).await {
+                        Ok(Some(transaction_info)) => {
+                            stats.received_transactions.fetch_add(1, Ordering::Relaxed);
+
+                            if let Entry::Vacant(e) = transactions.entry(transaction_info.signature)
+                            {
+                                e.insert(transaction_info);
+                            } else {
+                                stats
+                                    .received_duplicate_transactions
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+
+                            transactions.len() >= batch_size
+                        }
+                        Ok(None) => {
+                            info!("Terminating send-transaction-service.");
+                            exit.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        Err(_) => true,
+                    }
+                };
+
+                if should_send && !transactions.is_empty() {
                     stats
                         .sent_transactions
                         .fetch_add(transactions.len() as u64, Ordering::Relaxed);
+
                     let wire_transactions = transactions
                         .values()
                         .map(|transaction_info| transaction_info.wire_transaction.clone())
                         .collect::<Vec<Vec<u8>>>();
-                    client.send_transactions_in_batch(wire_transactions, stats);
-                    let last_sent_time = Instant::now();
-                    {
-                        // take a lock of retry_transactions and move the batch to the retry set.
-                        let mut retry_transactions = retry_transactions.lock().unwrap();
-                        let mut transactions_to_retry: usize = 0;
-                        let mut transactions_added_to_retry = Saturating::<usize>(0);
-                        for (signature, mut transaction_info) in transactions.drain() {
-                            // drop transactions with 0 max retries
-                            let max_retries = transaction_info
-                                .get_max_retries(default_max_retries, service_max_retries);
-                            if max_retries == Some(0) {
-                                continue;
-                            }
-                            transactions_to_retry += 1;
 
-                            let retry_len = retry_transactions.len();
-                            let entry = retry_transactions.entry(signature);
-                            if let Entry::Vacant(_) = entry {
-                                if retry_len >= retry_pool_max_size {
-                                    break;
-                                } else {
-                                    transaction_info.last_sent_time = Some(last_sent_time);
-                                    transactions_added_to_retry += 1;
-                                    entry.or_insert(transaction_info);
-                                }
-                            }
+                    client.send_transactions_in_batch(wire_transactions, stats);
+
+                    let last_sent_time = Instant::now();
+
+                    for (_signature, mut transaction_info) in transactions.drain() {
+                        // drop transactions with 0 max retries
+                        let max_retries = transaction_info
+                            .get_max_retries(default_max_retries, service_max_retries);
+                        if max_retries == Some(0) {
+                            continue;
                         }
-                        let Saturating(retry_queue_overflow) =
-                            Saturating(transactions_to_retry) - transactions_added_to_retry;
-                        stats
-                            .retry_queue_overflow
-                            .fetch_add(retry_queue_overflow as u64, Ordering::Relaxed);
-                        stats
-                            .retry_queue_size
-                            .store(retry_transactions.len() as u64, Ordering::Relaxed);
+
+                        transaction_info.last_sent_time = Some(last_sent_time);
+
+                        match retry_sender.try_send(transaction_info) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                stats.retry_queue_overflow.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => break,
+                        }
                     }
+
                     last_batch_sent = Instant::now();
+                    stats_report.report();
                 }
-                stats_report.report();
-            })
-            .unwrap()
+            }
+
+            debug!("Exiting send-transaction-service::receive_txn_task");
+        })
     }
 
-    /// Thread responsible for retrying transactions
-    fn retry_thread<Client: TransactionClient + std::marker::Send + 'static>(
+    /// Task responsible for retrying transactions
+    fn retry_task<Client: TransactionClient + Send + 'static>(
         bank_forks: Arc<RwLock<BankForks>>,
         client: Client,
-        retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
+        mut retry_receiver: mpsc::Receiver<TransactionInfo>,
         config: Config,
         stats_report: Arc<SendTransactionServiceStatsReport>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        debug!("Starting send-transaction-service::retry_thread.");
-        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let retry_interval_ms_default = MAX_RETRY_SLEEP_MS.min(config.retry_rate_ms);
-        let mut retry_interval_ms = retry_interval_ms_default;
-        Builder::new()
-            .name("solStxRetry".to_string())
-            .spawn(move || loop {
-                sleep(Duration::from_millis(retry_interval_ms));
+        debug!("Starting send-transaction-service::retry_task.");
+
+        tokio::spawn(async move {
+            let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+            let retry_interval_ms_default = MAX_RETRY_SLEEP_MS.min(config.retry_rate_ms);
+            let retry_interval_default = Duration::from_millis(retry_interval_ms_default);
+
+            let mut retry_interval = interval_at(
+                tokio::time::Instant::now() + retry_interval_default,
+                retry_interval_default,
+            );
+
+            let mut retry_transactions: HashMap<Signature, TransactionInfo> = HashMap::new();
+
+            loop {
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
-                let mut transactions = retry_transactions.lock().unwrap();
-                if transactions.is_empty() {
-                    retry_interval_ms = retry_interval_ms_default;
+
+                tokio::select! {
+                    biased;
+
+                    msg = retry_receiver.recv() => {
+                        match msg {
+                            Some(transaction_info) => {
+                                let signature = transaction_info.signature;
+                                let stats = &stats_report.stats;
+
+                                let retry_len = retry_transactions.len();
+                                if retry_len >= config.retry_pool_max_size {
+                                    stats.retry_queue_overflow.fetch_add(1, Ordering::Relaxed);
+                                } else if let Entry::Vacant(e) = retry_transactions.entry(signature) {
+                                    e.insert(transaction_info);
+                                    stats.retry_queue_size.store(
+                                        (retry_len + 1) as u64,
+                                        Ordering::Relaxed,
+                                    );
+                                }
+                                continue;
+                            }
+                            None => {
+                                break;
+                            }
+                        }
+                    }
+
+                    _ = retry_interval.tick() => {
+                    }
+                }
+
+                while let Ok(transaction_info) = retry_receiver.try_recv() {
+                    let signature = transaction_info.signature;
+                    let stats = &stats_report.stats;
+
+                    let retry_len = retry_transactions.len();
+                    if retry_len >= config.retry_pool_max_size {
+                        stats.retry_queue_overflow.fetch_add(1, Ordering::Relaxed);
+                    } else if let Entry::Vacant(e) = retry_transactions.entry(signature) {
+                        e.insert(transaction_info);
+                        stats
+                            .retry_queue_size
+                            .store((retry_len + 1) as u64, Ordering::Relaxed);
+                    }
+                }
+
+                if retry_transactions.is_empty() {
+                    retry_interval.reset_after(retry_interval_default);
                 } else {
                     let stats = &stats_report.stats;
                     stats
                         .retry_queue_size
-                        .store(transactions.len() as u64, Ordering::Relaxed);
+                        .store(retry_transactions.len() as u64, Ordering::Relaxed);
 
                     let BankPair {
                         root_bank,
                         working_bank,
                     } = sharable_banks.load();
+
                     let result = Self::process_transactions(
                         &working_bank,
                         &root_bank,
-                        &mut transactions,
+                        &mut retry_transactions,
                         &client,
                         &config,
                         stats,
@@ -348,7 +402,7 @@ impl SendTransactionService {
                     stats_report.report();
 
                     // Adjust retry interval taking into account the time since the last send.
-                    retry_interval_ms = retry_interval_ms_default
+                    let retry_interval_ms = retry_interval_ms_default
                         .checked_sub(
                             result
                                 .last_sent_time
@@ -356,14 +410,17 @@ impl SendTransactionService {
                                 .and_then(|interval| interval.as_millis().try_into().ok())
                                 .unwrap_or(0),
                         )
-                        .unwrap_or(retry_interval_ms_default);
+                        .unwrap_or(retry_interval_ms_default)
+                        .max(100);
+
+                    retry_interval.reset_after(Duration::from_millis(retry_interval_ms));
                 }
-            })
-            .unwrap()
+            }
+        })
     }
 
     /// Retry transactions sent before.
-    fn process_transactions<Client: TransactionClient + std::marker::Send + 'static>(
+    fn process_transactions<Client: TransactionClient + Send + 'static>(
         working_bank: &Bank,
         root_bank: &Bank,
         transactions: &mut HashMap<Signature, TransactionInfo>,
@@ -387,6 +444,7 @@ impl SendTransactionService {
             if transaction_info.durable_nonce_info.is_some() {
                 stats.nonced_transactions.fetch_add(1, Ordering::Relaxed);
             }
+
             if root_bank
                 .get_committed_transaction_status_and_slot(
                     &transaction_info.message_hash,
@@ -399,10 +457,12 @@ impl SendTransactionService {
                 stats.rooted_transactions.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
+
             let signature_status = working_bank.get_committed_transaction_status_and_slot(
                 &transaction_info.message_hash,
                 &transaction_info.blockhash,
             );
+
             if let Some((nonce_pubkey, durable_nonce)) = transaction_info.durable_nonce_info {
                 let nonce_account = working_bank.get_account(&nonce_pubkey).unwrap_or_default();
                 let now = Instant::now();
@@ -420,6 +480,7 @@ impl SendTransactionService {
                     return false;
                 }
             }
+
             if transaction_info.last_valid_block_height < root_bank.block_height() {
                 info!("Dropping expired transaction: {signature}");
                 result.expired += 1;
@@ -443,17 +504,17 @@ impl SendTransactionService {
 
             match signature_status {
                 None => {
+                    // Transaction sent before is unknown to the working bank, it might have been
+                    // dropped or landed in another fork. Re-send it.
                     let now = Instant::now();
                     let need_send = transaction_info
                         .last_sent_time
                         .and_then(|last| now.checked_duration_since(last))
                         .map(|elapsed| elapsed >= retry_rate)
                         .unwrap_or(true);
+
                     if need_send {
                         if transaction_info.last_sent_time.is_some() {
-                            // Transaction sent before is unknown to the working bank, it might have been
-                            // dropped or landed in another fork. Re-send it.
-
                             info!("Retrying transaction: {signature}");
                             result.retried += 1;
                             transaction_info.retries += 1;
@@ -495,8 +556,8 @@ impl SendTransactionService {
 
         stats.retries.fetch_add(result.retried, Ordering::Relaxed);
 
+        // Processing the transactions in batch
         if !batched_transactions.is_empty() {
-            // Processing the transactions in batch
             let wire_transactions = batched_transactions
                 .iter()
                 .filter_map(|signature| transactions.get(signature))
@@ -521,18 +582,20 @@ impl SendTransactionService {
         result
     }
 
-    pub fn join(self) -> thread::Result<()> {
-        self.receive_txn_thread.join()?;
+    pub async fn join(self) -> Result<(), tokio::task::JoinError> {
+        self.receive_txn_task.await?;
         self.exit.store(true, Ordering::Relaxed);
-        self.retry_thread.join()
+        self.retry_task.await?;
+        Ok(())
     }
 }
+
 #[cfg(test)]
 mod test {
     use {
         super::*,
         crate::test_utils::create_client_for_tests,
-        crossbeam_channel::{bounded, unbounded},
+        crossbeam_channel::bounded,
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
@@ -544,13 +607,13 @@ mod test {
         tokio::runtime::Handle,
     };
 
-    const GENESIS_LAMPORTS: u64 = 10_000_000_000;
+    const TEST_RETRY_RATE_MS: u64 = 100;
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn service_exit() {
+    async fn crossbeam_bridge_compatibility() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1);
 
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
@@ -560,14 +623,39 @@ mod test {
             receiver,
             client.clone(),
             Config {
-                retry_rate_ms: 1000,
+                retry_rate_ms: TEST_RETRY_RATE_MS,
                 ..Config::default()
             },
             Arc::new(AtomicBool::new(false)),
         );
 
         drop(sender);
-        send_transaction_service.join().unwrap();
+        send_transaction_service.join().await.unwrap();
+        client.cancel();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn service_exit() {
+        let bank = Bank::default_for_tests();
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let (sender, receiver) = bounded(1);
+
+        let client =
+            create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
+
+        let send_transaction_service = SendTransactionService::new(
+            &bank_forks,
+            receiver,
+            client.clone(),
+            Config {
+                retry_rate_ms: TEST_RETRY_RATE_MS,
+                ..Config::default()
+            },
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        drop(sender);
+        send_transaction_service.join().await.unwrap();
         client.cancel();
     }
 
@@ -575,7 +663,7 @@ mod test {
     async fn validator_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = bounded(0);
+        let (sender, receiver) = bounded(1);
 
         let dummy_tx_info = || TransactionInfo {
             message_hash: Hash::default(),
@@ -592,12 +680,13 @@ mod test {
         let exit = Arc::new(AtomicBool::new(false));
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
-        let _send_transaction_service = SendTransactionService::new(
+
+        let send_transaction_service = SendTransactionService::new(
             &bank_forks,
             receiver,
             client.clone(),
             Config {
-                retry_rate_ms: 1000,
+                retry_rate_ms: TEST_RETRY_RATE_MS,
                 ..Config::default()
             },
             exit.clone(),
@@ -605,22 +694,31 @@ mod test {
 
         sender.send(dummy_tx_info()).unwrap();
 
-        thread::spawn(move || {
-            exit.store(true, Ordering::Relaxed);
-            client.cancel();
-        });
-
-        let mut option = Ok(());
-        while option.is_ok() {
-            option = sender.send(dummy_tx_info());
+        for _ in 0..5 {
+            let _ = sender.send(dummy_tx_info());
         }
+
+        exit.store(true, Ordering::Relaxed);
+
+        drop(sender);
+
+        let timeout_result =
+            tokio::time::timeout(Duration::from_secs(5), send_transaction_service.join()).await;
+
+        assert!(
+            timeout_result.is_ok(),
+            "Service did not exit within timeout"
+        );
+        timeout_result.unwrap().unwrap();
+
+        client.cancel();
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn process_transactions() {
         agave_logger::setup();
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(GENESIS_LAMPORTS);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
@@ -708,6 +806,7 @@ mod test {
             config.tpu_peers.clone(),
             leader_forward_count,
         );
+
         let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
@@ -903,7 +1002,7 @@ mod test {
     async fn retry_durable_nonce_transactions() {
         agave_logger::setup();
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(GENESIS_LAMPORTS);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let leader_forward_count = 1;
@@ -1013,6 +1112,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
+
         // Nonce expired case
         transactions.insert(
             rooted_signature,
@@ -1075,6 +1175,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
+
         // ... or last_valid_block_height timeout has passed
         transactions.insert(
             Signature::default(),
@@ -1169,8 +1270,8 @@ mod test {
         );
         transactions.clear();
 
-        info!("Unknown durable-nonce transactions are retried until nonce advances...");
         // simulate there was a nonce transaction sent 4 seconds ago (> the retry rate which is 2 seconds)
+        info!("Unknown durable-nonce transactions are retried until nonce advances...");
         transactions.insert(
             Signature::default(),
             TransactionInfo::new(
@@ -1200,6 +1301,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
+
         // Advance nonce, simulate the transaction was again last sent 4 seconds ago.
         // This time the transaction should have been dropped.
         for transaction in transactions.values_mut() {
