@@ -133,7 +133,8 @@ use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::consensus_message::{Certificate, CertificateType},
     solana_bls_signatures::{
-        Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
+        signature::AsSignatureAffine, BlsError, Signature as BLSSignature,
+        SignatureCompressed as BLSSignatureCompressed,
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -303,6 +304,31 @@ pub struct VotesAggregate {
     signature: BLSSignatureCompressed,
     #[wincode(with = "WincodeVec<u8, FixIntLen<u16>>")]
     bitmap: Vec<u8>,
+}
+
+impl VotesAggregate {
+    /// Creates a VotesAggregate from a Certificate's signature and bitmap.
+    ///
+    /// # Panics
+    /// Panics if the signature cannot be converted to compressed format.
+    /// This should never happen for valid certificates from the consensus pool.
+    pub fn from_certificate(cert: &Certificate) -> Self {
+        Self {
+            signature: BLSSignatureCompressed::try_from(&cert.signature)
+                .expect("valid certificate signature should convert to compressed format"),
+            bitmap: cert.bitmap.clone(),
+        }
+    }
+
+    /// Uncompresses the signature.
+    pub fn uncompress_signature(&self) -> Result<BLSSignature, BlsError> {
+        Ok(BLSSignature::from(self.signature.try_as_affine()?))
+    }
+
+    /// Consumes self and returns the bitmap.
+    pub fn into_bitmap(self) -> Vec<u8> {
+        self.bitmap
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]

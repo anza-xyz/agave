@@ -92,6 +92,16 @@ impl CertificateType {
         matches!(self, Self::Finalize(_) | Self::FinalizeFast(_, _))
     }
 
+    /// Is this a slow finalize certificate?
+    pub fn is_slow_finalization(&self) -> bool {
+        matches!(self, Self::Finalize(_))
+    }
+
+    /// Is this a notarize certificate?
+    pub fn is_notarize(&self) -> bool {
+        matches!(self, Self::Notarize(_, _))
+    }
+
     /// Is this a notarize fallback certificate?
     pub fn is_notarize_fallback(&self) -> bool {
         matches!(self, Self::NotarizeFallback(_, _))
