@@ -181,6 +181,7 @@ use {
         vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
         vote_parser,
     },
+    solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -235,6 +236,10 @@ pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 /// This will be guaranteed through the VAT rules,
 /// only the top 2000 validators by stake will be present in vote account structures.
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
+
+/// The admission cost in lamports that is burned from the vote account of
+/// validators that are a part of the voting set
+pub const VAT_TO_BURN_PER_EPOCH: u64 = 1_600_000_000; // 1.6 SOL
 
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
@@ -1206,7 +1211,7 @@ impl Bank {
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
         {
-            let stakes = bank.stakes_cache.stakes().clone();
+            let stakes = bank.get_top_epoch_stakes();
             let stakes = SerdeStakesToStakeFormat::from(stakes);
             for epoch in 0..=bank.get_leader_schedule_epoch(bank.slot) {
                 bank.epoch_stakes
@@ -2312,7 +2317,7 @@ impl Bank {
                 // to ensure we retain the oldest epoch, if that epoch is 0.
                 epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES - 1)
             });
-            let stakes = self.stakes_cache.stakes().clone();
+            let stakes = self.get_top_epoch_stakes();
             let stakes = SerdeStakesToStakeFormat::from(stakes);
             let new_epoch_stakes = VersionedEpochStakes::new(stakes, leader_schedule_epoch);
             info!(
@@ -2320,6 +2325,16 @@ impl Bank {
                 leader_schedule_epoch,
                 new_epoch_stakes.total_stake(),
             );
+            // Only deduct and burn the VAT if both the VAT and alpenglow features are active.
+            if self
+                .feature_set
+                .is_active(&agave_feature_set::alpenglow::id())
+                && self
+                    .feature_set
+                    .is_active(&agave_feature_set::validator_admission_ticket::id())
+            {
+                self.burn_vat_from_staked_accounts(&new_epoch_stakes);
+            }
 
             // It is expensive to log the details of epoch stakes. Only log them at "trace"
             // level for debugging purpose.
@@ -2336,6 +2351,51 @@ impl Bank {
             self.epoch_stakes
                 .insert(leader_schedule_epoch, new_epoch_stakes);
         }
+    }
+
+    /// Burn the Validator Admission ticket from each vote account.
+    ///
+    /// Note: This must ONLY be called after the vote accounts have been filtered (`clone_and_filter_for_vat`)
+    /// to the top `MAX_ALPENGLOW_VOTE_ACCOUNTS` that contain enough balance for admission.
+    fn burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
+        let vote_accounts = epoch_stakes.stakes().vote_accounts();
+        // +1 for the incinerator account
+        let mut accounts_to_store: Vec<(Pubkey, AccountSharedData)> =
+            Vec::with_capacity(vote_accounts.len() + 1);
+        let mut total_vat = 0u64;
+
+        // Vote accounts have already been filtered by clone_and_filter_for_vat to only include
+        // accounts with non-zero stake and sufficient balance.
+        for (vote_pubkey, _stake) in vote_accounts.delegated_stakes() {
+            let mut account = self.get_account(vote_pubkey).unwrap();
+            total_vat += VAT_TO_BURN_PER_EPOCH;
+            account.set_lamports(
+                account
+                    .lamports()
+                    .checked_sub(VAT_TO_BURN_PER_EPOCH)
+                    .expect(
+                        "Vote accounts should have already been filtered to contain enough \
+                         balance for the VAT",
+                    ),
+            );
+            accounts_to_store.push((*vote_pubkey, account));
+        }
+
+        // Per SIMD-0357, transfer collected VAT to the incinerator account.
+        let mut incinerator_account = self.get_account(&incinerator::id()).unwrap_or_default();
+        incinerator_account.set_lamports(
+            incinerator_account
+                .lamports()
+                .checked_add(total_vat)
+                .unwrap(),
+        );
+        accounts_to_store.push((incinerator::id(), incinerator_account));
+
+        self.store_accounts((self.slot, accounts_to_store.as_slice()));
+        info!(
+            "Transferred total VAT of {total_vat} lamports to incinerator from staked vote \
+             accounts"
+        );
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -5949,6 +6009,36 @@ impl Bank {
     /// Return total transaction fee collected
     pub fn get_collector_fee_details(&self) -> CollectorFeeDetails {
         self.collector_fee_details.read().unwrap().clone()
+    }
+
+    /// If the VAT feature is active, returns the `Stakes` as filtered by SIMD-0357
+    /// See `VoteAccounts::clone_and_filter_for_vat` for the full criteria
+    ///
+    /// If the VAT feature is not active, return all stakes
+    pub fn get_top_epoch_stakes(&self) -> Stakes<StakeAccount<Delegation>> {
+        if !self
+            .feature_set
+            .is_active(&feature_set::validator_admission_ticket::id())
+        {
+            return self.stakes_cache.stakes().clone();
+        }
+        let rent_exempt_minimum = self
+            .rent_collector
+            .rent
+            .minimum_balance(VoteStateV4::size_of());
+
+        let minimum_vote_account_balance =
+            if self.feature_set.is_active(&feature_set::alpenglow::id()) {
+                // Per SIMD-0357, the minimum required balance is
+                // VAT + rent-exempt minimum for vote account.
+                VAT_TO_BURN_PER_EPOCH + rent_exempt_minimum
+            } else {
+                rent_exempt_minimum
+            };
+
+        self.stakes_cache
+            .stakes()
+            .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance)
     }
 }
 

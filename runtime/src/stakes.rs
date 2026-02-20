@@ -181,6 +181,23 @@ pub struct Stakes<T: Clone> {
 }
 
 impl<T: Clone> Stakes<T> {
+    pub fn clone_and_filter_for_vat(
+        &self,
+        max_vote_accounts: usize,
+        minimum_vote_account_balance: u64,
+    ) -> Stakes<T> {
+        Stakes {
+            vote_accounts: self
+                .vote_accounts
+                .clone_and_filter_for_vat(max_vote_accounts, minimum_vote_account_balance),
+            epoch: self.epoch,
+            // Do not need anything else for EpochStakes
+            stake_delegations: ImHashMap::new(),
+            unused: 0,
+            stake_history: StakeHistory::default(),
+        }
+    }
+
     pub fn vote_accounts(&self) -> &VoteAccounts {
         &self.vote_accounts
     }
