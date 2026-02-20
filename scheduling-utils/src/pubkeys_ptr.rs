@@ -21,7 +21,6 @@ impl PubkeysPtr {
     ///
     /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
     /// [`Self::from_sharable_pubkeys`].
-    #[cfg(feature = "dev-context-only-utils")]
     pub unsafe fn from_raw_parts(ptr: NonNull<Pubkey>, count: usize) -> Self {
         Self { ptr, count }
     }

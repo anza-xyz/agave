@@ -192,7 +192,7 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
-agave-scheduler-bindings = { workspace = true, features = ["dev-context-only-utils"] }
+agave-scheduler-bindings = { workspace = true }
 bencher = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
