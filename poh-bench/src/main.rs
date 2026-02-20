@@ -76,11 +76,11 @@ fn main() {
     while num_entries <= max_num_entries as usize {
         let mut time = Measure::start("time");
         for _ in 0..iterations {
-            assert!(
+            assert!(thread_pool.install(|| {
                 ticks[..num_entries]
-                    .verify_cpu_generic(&start_hash, &thread_pool)
+                    .verify_cpu_generic(&start_hash)
                     .status()
-            );
+            }));
         }
         time.stop();
         println!(
@@ -97,11 +97,11 @@ fn main() {
             if is_x86_feature_detected!("avx2") && entry::api().is_some() {
                 let mut time = Measure::start("time");
                 for _ in 0..iterations {
-                    assert!(
+                    assert!(thread_pool.install(|| {
                         ticks[..num_entries]
-                            .verify_cpu_x86_simd(&start_hash, 8, &thread_pool)
+                            .verify_cpu_x86_simd(&start_hash, 8)
                             .status()
-                    );
+                    }));
                 }
                 time.stop();
                 println!(
@@ -114,11 +114,11 @@ fn main() {
             if is_x86_feature_detected!("avx512f") && entry::api().is_some() {
                 let mut time = Measure::start("time");
                 for _ in 0..iterations {
-                    assert!(
+                    assert!(thread_pool.install(|| {
                         ticks[..num_entries]
-                            .verify_cpu_x86_simd(&start_hash, 16, &thread_pool)
+                            .verify_cpu_x86_simd(&start_hash, 16)
                             .status()
-                    )
+                    }));
                 }
                 time.stop();
                 println!(

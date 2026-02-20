@@ -348,18 +348,9 @@ fn compare_hashes(computed_hash: Hash, ref_entry: &Entry) -> bool {
 // an EntrySlice is a slice of Entries
 pub trait EntrySlice {
     /// Verifies the hashes and counts of a slice of transactions are all consistent.
-    fn verify_cpu(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
-    fn verify_cpu_generic(
-        &self,
-        start_hash: &Hash,
-        thread_pool: &ThreadPool,
-    ) -> EntryVerificationState;
-    fn verify_cpu_x86_simd(
-        &self,
-        start_hash: &Hash,
-        simd_len: usize,
-        thread_pool: &ThreadPool,
-    ) -> EntryVerificationState;
+    fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState;
+    fn verify_cpu_generic(&self, start_hash: &Hash) -> EntryVerificationState;
+    fn verify_cpu_x86_simd(&self, start_hash: &Hash, simd_len: usize) -> EntryVerificationState;
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
     /// Checks that each entry tick has the correct number of hashes. Entry slices do not
     /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
@@ -371,14 +362,10 @@ pub trait EntrySlice {
 
 impl EntrySlice for [Entry] {
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState {
-        self.verify_cpu(start_hash, thread_pool)
+        thread_pool.install(|| self.verify_cpu(start_hash))
     }
 
-    fn verify_cpu_generic(
-        &self,
-        start_hash: &Hash,
-        thread_pool: &ThreadPool,
-    ) -> EntryVerificationState {
+    fn verify_cpu_generic(&self, start_hash: &Hash) -> EntryVerificationState {
         let now = Instant::now();
         let genesis = [Entry {
             num_hashes: 0,
@@ -386,19 +373,17 @@ impl EntrySlice for [Entry] {
             transactions: vec![],
         }];
         let entry_pairs = genesis.par_iter().chain(self).zip(self);
-        let res = thread_pool.install(|| {
-            entry_pairs.all(|(x0, x1)| {
-                let r = x1.verify(&x0.hash);
-                if !r {
-                    warn!(
-                        "entry invalid!: x0: {:?}, x1: {:?} num txs: {}",
-                        x0.hash,
-                        x1.hash,
-                        x1.transactions.len()
-                    );
-                }
-                r
-            })
+        let res = entry_pairs.all(|(x0, x1)| {
+            let r = x1.verify(&x0.hash);
+            if !r {
+                warn!(
+                    "entry invalid!: x0: {:?}, x1: {:?} num txs: {}",
+                    x0.hash,
+                    x1.hash,
+                    x1.transactions.len()
+                );
+            }
+            r
         });
         let poh_duration_us = now.elapsed().as_micros() as u64;
         EntryVerificationState {
@@ -407,12 +392,7 @@ impl EntrySlice for [Entry] {
         }
     }
 
-    fn verify_cpu_x86_simd(
-        &self,
-        start_hash: &Hash,
-        simd_len: usize,
-        thread_pool: &ThreadPool,
-    ) -> EntryVerificationState {
+    fn verify_cpu_x86_simd(&self, start_hash: &Hash, simd_len: usize) -> EntryVerificationState {
         use solana_hash::HASH_BYTES;
         let now = Instant::now();
         let genesis = [Entry {
@@ -443,46 +423,44 @@ impl EntrySlice for [Entry] {
         num_hashes.resize(aligned_len, 0);
         let num_hashes: Vec<_> = num_hashes.chunks(simd_len).collect();
 
-        let res = thread_pool.install(|| {
-            hashes_chunked
-                .par_iter_mut()
-                .zip(num_hashes)
-                .enumerate()
-                .all(|(i, (chunk, num_hashes))| {
-                    match simd_len {
-                        8 => unsafe {
-                            (api().unwrap().poh_verify_many_simd_avx2)(
-                                chunk.as_mut_ptr(),
-                                num_hashes.as_ptr(),
-                            );
-                        },
-                        16 => unsafe {
-                            (api().unwrap().poh_verify_many_simd_avx512skx)(
-                                chunk.as_mut_ptr(),
-                                num_hashes.as_ptr(),
-                            );
-                        },
-                        _ => {
-                            panic!("unsupported simd len: {simd_len}");
-                        }
+        let res = hashes_chunked
+            .par_iter_mut()
+            .zip(num_hashes)
+            .enumerate()
+            .all(|(i, (chunk, num_hashes))| {
+                match simd_len {
+                    8 => unsafe {
+                        (api().unwrap().poh_verify_many_simd_avx2)(
+                            chunk.as_mut_ptr(),
+                            num_hashes.as_ptr(),
+                        );
+                    },
+                    16 => unsafe {
+                        (api().unwrap().poh_verify_many_simd_avx512skx)(
+                            chunk.as_mut_ptr(),
+                            num_hashes.as_ptr(),
+                        );
+                    },
+                    _ => {
+                        panic!("unsupported simd len: {simd_len}");
                     }
-                    let entry_start = i * simd_len;
-                    // The last chunk may produce indexes larger than what we have in the reference entries
-                    // because it is aligned to simd_len.
-                    let entry_end = std::cmp::min(entry_start + simd_len, self.len());
-                    self[entry_start..entry_end]
-                        .iter()
-                        .enumerate()
-                        .all(|(j, ref_entry)| {
-                            let start = j * HASH_BYTES;
-                            let end = start + HASH_BYTES;
-                            let hash = <[u8; HASH_BYTES]>::try_from(&chunk[start..end])
-                                .map(Hash::new_from_array)
-                                .unwrap();
-                            compare_hashes(hash, ref_entry)
-                        })
-                })
-        });
+                }
+                let entry_start = i * simd_len;
+                // The last chunk may produce indexes larger than what we have in the reference entries
+                // because it is aligned to simd_len.
+                let entry_end = std::cmp::min(entry_start + simd_len, self.len());
+                self[entry_start..entry_end]
+                    .iter()
+                    .enumerate()
+                    .all(|(j, ref_entry)| {
+                        let start = j * HASH_BYTES;
+                        let end = start + HASH_BYTES;
+                        let hash = <[u8; HASH_BYTES]>::try_from(&chunk[start..end])
+                            .map(Hash::new_from_array)
+                            .unwrap();
+                        compare_hashes(hash, ref_entry)
+                    })
+            });
         let poh_duration_us = now.elapsed().as_micros() as u64;
         EntryVerificationState {
             verification_status: res,
@@ -490,7 +468,7 @@ impl EntrySlice for [Entry] {
         }
     }
 
-    fn verify_cpu(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState {
+    fn verify_cpu(&self, start_hash: &Hash) -> EntryVerificationState {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         let (has_avx2, has_avx512) = (
             is_x86_feature_detected!("avx2"),
@@ -501,14 +479,14 @@ impl EntrySlice for [Entry] {
 
         if api().is_some() {
             if has_avx512 && self.len() >= 128 {
-                self.verify_cpu_x86_simd(start_hash, 16, thread_pool)
+                self.verify_cpu_x86_simd(start_hash, 16)
             } else if has_avx2 && self.len() >= 48 {
-                self.verify_cpu_x86_simd(start_hash, 8, thread_pool)
+                self.verify_cpu_x86_simd(start_hash, 8)
             } else {
-                self.verify_cpu_generic(start_hash, thread_pool)
+                self.verify_cpu_generic(start_hash)
             }
         } else {
-            self.verify_cpu_generic(start_hash, thread_pool)
+            self.verify_cpu_generic(start_hash)
         }
     }
 
