@@ -78,7 +78,7 @@ pub(crate) struct ValidatedRewardCert {
 }
 
 impl ValidatedRewardCert {
-    /// If validattion of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
+    /// If validation of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
     #[allow(dead_code)]
     pub(crate) fn try_new(
         bank: &Bank,
