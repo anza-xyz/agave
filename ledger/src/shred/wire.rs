@@ -15,21 +15,19 @@ use {
     solana_perf::packet::{PacketRef, PacketRefMut},
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
+    std::ops::Range,
 };
 #[cfg(test)]
 use {
     rand::{prelude::IndexedMutRandom as _, Rng},
     solana_perf::packet::Packet,
     std::collections::HashMap,
-    std::ops::Range,
 };
 
 #[inline]
 fn get_shred_size(shred: &[u8]) -> Option<usize> {
-    match get_shred_variant(shred).ok()? {
-        ShredVariant::MerkleCode { .. } => Some(shred::merkle::ShredCode::SIZE_OF_PAYLOAD),
-        ShredVariant::MerkleData { .. } => Some(shred::merkle::ShredData::SIZE_OF_PAYLOAD),
-    }
+    get_shred_variant(shred).ok()?;
+    Some(shred::merkle::ShredCode::SIZE_OF_PAYLOAD)
 }
 
 #[inline]
@@ -66,14 +64,11 @@ pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
 
 #[inline]
 pub(crate) fn get_signature(shred: &[u8]) -> Option<Signature> {
-    let bytes = <[u8; 64]>::try_from(shred.get(..64)?).unwrap();
+    let bytes = <[u8; SIGNATURE_BYTES]>::try_from(shred.get(SIGNATURE_RANGE)?).unwrap();
     Some(Signature::from(bytes))
 }
 
-#[cfg(test)]
-pub(crate) const fn get_signature_range() -> Range<usize> {
-    0..SIGNATURE_BYTES
-}
+pub(crate) const SIGNATURE_RANGE: Range<usize> = 0..SIGNATURE_BYTES;
 
 #[inline]
 pub(super) fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
@@ -259,10 +254,12 @@ fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
 
 pub fn get_retransmitter_signature(shred: &[u8]) -> Result<Signature, Error> {
     let offset = get_retransmitter_signature_offset(shred)?;
-    let Some(bytes) = shred.get(offset..offset + 64) else {
+    let Some(bytes) = shred.get(offset..offset + SIGNATURE_BYTES) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
-    Ok(Signature::from(<[u8; 64]>::try_from(bytes).unwrap()))
+    Ok(Signature::from(
+        <[u8; SIGNATURE_BYTES]>::try_from(bytes).unwrap(),
+    ))
 }
 
 pub fn is_retransmitter_signed_variant(shred: &[u8]) -> Result<bool, Error> {
@@ -376,7 +373,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
     let coin_flip: bool = rng.random();
     if coin_flip {
         // Corrupt one byte within the signature offsets.
-        modify_packet(rng, packet, 0..SIGNATURE_BYTES);
+        modify_packet(rng, packet, SIGNATURE_RANGE);
     } else {
         // Corrupt one byte within the signed data offsets.
         let offsets = merkle_variant
