@@ -2927,6 +2927,13 @@ impl Bank {
         }
 
         // On epoch boundaries, update epoch_start_timestamp
+        //
+        // Note: the genesis block's bank is created via new_from_genesis, which calls update_clock
+        // unconditionally. In update_clock, we have a check for whether slot == 0, and if that's
+        // the case, the clock is set to self.unix_timestamp_from_genesis().
+        //
+        // As a result, we don't actually need the (0, _) case below, since it's never invoked.
+        // However, include this for completeness in the match statement.
         let unix_timestamp_s = unix_timestamp_nanos / 1_000_000_000;
         let epoch_start_timestamp = match (self.slot, self.parent()) {
             (0, _) => self.unix_timestamp_from_genesis(),
@@ -2953,23 +2960,19 @@ impl Bank {
         });
 
         // Update Alpenglow clock
-        let alpenclock_size = wincode::serialized_size(&unix_timestamp_nanos).unwrap();
-        let lamports = Rent::default().minimum_balance(alpenclock_size as usize);
-        let alpenclock_account_data =
-            AccountSharedData::new_data(lamports, &unix_timestamp_nanos, &system_program::ID)
-                .unwrap();
+        let data = wincode::serialize(&unix_timestamp_nanos).unwrap();
+        let lamports = Rent::default().minimum_balance(data.len());
+        let mut alpenclock_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
+        alpenclock_acct.set_data_from_slice(&data);
 
-        self.store_account_and_update_capitalization(
-            &NANOSECOND_CLOCK_ACCOUNT,
-            &alpenclock_account_data,
-        );
+        self.store_account_and_update_capitalization(&NANOSECOND_CLOCK_ACCOUNT, &alpenclock_acct);
     }
 
     /// Get the nanosecond clock value. Returns `None` if the nanosecond clock has not been
     /// populated (i.e., before Alpenglow migration completes).
     pub fn get_nanosecond_clock(&self) -> Option<i64> {
         self.get_account(&NANOSECOND_CLOCK_ACCOUNT).map(|acct| {
-            acct.deserialize_data()
+            wincode::deserialize(acct.data())
                 .expect("Couldn't deserialize nanosecond resolution clock")
         })
     }
