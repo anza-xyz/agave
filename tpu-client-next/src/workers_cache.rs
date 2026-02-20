@@ -388,7 +388,7 @@ mod tests {
 
     fn create_test_endpoint() -> Endpoint {
         let socket = bind_to_localhost_unique().unwrap();
-        let client_config = create_client_config(&QuicClientCertificate::new(None));
+        let client_config = create_client_config(&QuicClientCertificate::new(None), None);
         create_client_endpoint(BindTarget::Socket(socket), client_config).unwrap()
     }
 

@@ -563,6 +563,7 @@ impl TpuClientNextClient {
                 send: 1,
                 connect: 4,
             },
+            initial_congestion_window: None,
         }
     }
 }

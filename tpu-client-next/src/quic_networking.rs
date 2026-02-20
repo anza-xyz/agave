@@ -3,8 +3,8 @@
 use {
     crate::connection_workers_scheduler::BindTarget,
     quinn::{
-        crypto::rustls::QuicClientConfig, default_runtime, ClientConfig, Connection, Endpoint,
-        EndpointConfig, IdleTimeout, TransportConfig,
+        congestion::CubicConfig, crypto::rustls::QuicClientConfig, default_runtime, ClientConfig,
+        Connection, Endpoint, EndpointConfig, IdleTimeout, TransportConfig,
     },
     rustls::KeyLogFile,
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
@@ -27,7 +27,16 @@ pub const QUIC_MAX_TIMEOUT: Duration = Duration::from_secs(10);
 /// connection timeout.
 pub const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(1);
 
-pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -> ClientConfig {
+/// Default QUIC approach is arguably overly conservative for short-lived, latency-sensitive flows.
+/// Modern CDNs routinely use much larger initial congestion windows to avoid slow start dominating
+/// transfer time. Allow bursting 128 transactions at connection start (subject to flow control
+/// restrictions).
+pub const INITIAL_CONGESTION_WINDOW: u64 = 128 * solana_packet::PACKET_DATA_SIZE as u64;
+
+pub(crate) fn create_client_config(
+    client_certificate: &QuicClientCertificate,
+    initial_congestion_window: Option<u64>,
+) -> ClientConfig {
     let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(
             vec![client_certificate.certificate.clone()],
@@ -51,6 +60,12 @@ pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -
         // with the same priority.
         // See https://github.com/quinn-rs/quinn/pull/2002.
         res.send_fairness(false);
+
+        if let Some(cwnd) = initial_congestion_window {
+            let mut cubic = CubicConfig::default();
+            cubic.initial_window(cwnd);
+            res.congestion_controller_factory(Arc::new(cubic));
+        }
 
         res
     };
