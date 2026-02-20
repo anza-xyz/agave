@@ -5,10 +5,6 @@ use {
     solana_accounts_db::{
         accounts_file::StorageAccess,
         append_vec::{self, AppendVec},
-        tiered_storage::{
-            file::TieredReadableFile,
-            hot::{HotStorageReader, HotStorageWriter, RENT_EXEMPT_RENT_EPOCH},
-        },
         utils::create_account_shared_data,
     },
     solana_clock::Slot,
@@ -44,12 +40,7 @@ fn bench_write_accounts_file(c: &mut Criterion, storage_access: StorageAccess) {
         let accounts: Vec<_> = std::iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new_rent_epoch(
-                    lamports,
-                    space,
-                    &Pubkey::new_unique(),
-                    RENT_EXEMPT_RENT_EPOCH,
-                ),
+                AccountSharedData::new(lamports, space, &Pubkey::new_unique()),
             )
         })
         .take(accounts_count)
@@ -71,27 +62,6 @@ fn bench_write_accounts_file(c: &mut Criterion, storage_access: StorageAccess) {
                     let res = append_vec.append_accounts(&storable_accounts, 0).unwrap();
                     let accounts_written_count = res.offsets.len();
                     assert_eq!(accounts_written_count, accounts_count);
-                },
-                BatchSize::SmallInput,
-            );
-        });
-
-        group.bench_function(BenchmarkId::new("hot_storage", accounts_count), |b| {
-            b.iter_batched_ref(
-                || {
-                    let path = temp_dir
-                        .path()
-                        .join(format!("hot_storage_{accounts_count}"));
-                    _ = std::fs::remove_file(&path);
-                    HotStorageWriter::new(path).unwrap()
-                },
-                |hot_storage| {
-                    let res = hot_storage.write_accounts(&storable_accounts, 0).unwrap();
-                    let accounts_written_count = res.offsets.len();
-                    assert_eq!(accounts_written_count, accounts_count);
-                    // Purposely do not call hot_storage.flush() here, since it will impact the
-                    // bench.  Flushing will be handled by Drop, which is *not* timed (and that's
-                    // what we want).
                 },
                 BatchSize::SmallInput,
             );
@@ -164,21 +134,6 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
                 .0,
         );
 
-        // create a hot storage file
-        let hot_storage_path = temp_dir
-            .path()
-            .join(format!("hot_storage_{accounts_count}"));
-        _ = std::fs::remove_file(&hot_storage_path);
-        let mut hot_storage_writer = HotStorageWriter::new(&hot_storage_path).unwrap();
-        let stored_accounts_info = hot_storage_writer
-            .write_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
-            .unwrap();
-        assert_eq!(stored_accounts_info.offsets.len(), accounts_count);
-        hot_storage_writer.flush().unwrap();
-        // Similar to the append vec case above, open the hot storage for reading here.
-        let hot_storage_file = TieredReadableFile::new(&hot_storage_path).unwrap();
-        let hot_storage_reader = HotStorageReader::new(hot_storage_file).unwrap();
-
         group.bench_function(BenchmarkId::new("append_vec_mmap", accounts_count), |b| {
             b.iter(|| {
                 let mut count = 0;
@@ -190,13 +145,6 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
             b.iter(|| {
                 let mut count = 0;
                 append_vec_file.scan_pubkeys(|_| count += 1).unwrap();
-                assert_eq!(count, accounts_count);
-            });
-        });
-        group.bench_function(BenchmarkId::new("hot_storage", accounts_count), |b| {
-            b.iter(|| {
-                let mut count = 0;
-                hot_storage_reader.scan_pubkeys(|_| count += 1).unwrap();
                 assert_eq!(count, accounts_count);
             });
         });
