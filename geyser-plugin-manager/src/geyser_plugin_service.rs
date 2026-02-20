@@ -201,10 +201,10 @@ impl GeyserPluginService {
         if let Some(mut slot_status_observer) = self.slot_status_observer {
             slot_status_observer.join()?;
         }
+
         let empty_plugin_manager = GeyserPluginManager {
             plugins: Vec::new(),
         };
-
         let mut geyser_plugin_manager_ref =
             self.plugin_manager.swap(Arc::new(empty_plugin_manager));
         let mut geyser_plugin_manager = Arc::get_mut(&mut geyser_plugin_manager_ref);
