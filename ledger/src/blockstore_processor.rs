@@ -1143,6 +1143,9 @@ fn confirm_full_slot(
         Err(BlockstoreProcessorError::InvalidBlock(
             BlockError::Incomplete,
         ))
+    } else if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
+        timing.accumulate(&execute_time);
+        result.map_err(BlockstoreProcessorError::InvalidTransaction)
     } else {
         Ok(())
     }
@@ -1731,10 +1734,10 @@ fn process_bank_0(
         &mut ExecuteTimings::default(),
         migration_status,
     )
-    .map_err(|_| BlockstoreProcessorError::FailedToReplayBank0)?;
-    if let Some((result, _timings)) = bank0.wait_for_completed_scheduler() {
-        result.unwrap();
-    }
+    .map_err(|err| match err {
+        err @ BlockstoreProcessorError::InvalidTransaction(_) => panic!("{err}"),
+        _ => BlockstoreProcessorError::FailedToReplayBank0,
+    })?;
     bank0.freeze();
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
@@ -2203,13 +2206,6 @@ pub fn process_single_slot(
         timing,
         migration_status,
     )
-    .and_then(|()| {
-        if let Some((result, completed_timings)) = bank.wait_for_completed_scheduler() {
-            timing.accumulate(&completed_timings);
-            result?
-        }
-        Ok(())
-    })
     .map_err(|err| {
         warn!("slot {slot} failed to verify: {err}");
         if blockstore.is_primary_access() {
@@ -2223,10 +2219,6 @@ pub fn process_single_slot(
         }
         err
     })?;
-
-    if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
-        result?
-    }
 
     let block_id = blockstore
         .check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
