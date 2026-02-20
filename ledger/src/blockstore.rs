@@ -123,6 +123,7 @@ type CompletedRanges = Vec<Range<u32>>;
 pub struct SignatureInfosForAddress {
     pub infos: Vec<ConfirmedTransactionStatusWithSignature>,
     pub found_before: bool,
+    pub found_until: bool,
 }
 
 #[derive(Error, Debug)]
@@ -3389,20 +3390,24 @@ impl Blockstore {
         // Generate a HashSet of signatures that should be excluded from the results based on
         // `until` signature
         let mut get_until_slot_timer = Measure::start("get_until_slot_timer");
-        let (lowest_slot, until_excluded_signatures) = match until {
-            None => (first_available_block, HashSet::new()),
+        let (lowest_slot, until_excluded_signatures, found_until) = match until {
+            None => (first_available_block, HashSet::new(), false),
             Some(until) => {
                 let transaction_status =
                     self.get_transaction_status(until, &confirmed_unrooted_slots)?;
                 match transaction_status {
-                    None => (first_available_block, HashSet::new()),
+                    None => (first_available_block, HashSet::new(), false),
                     Some((slot, _)) => {
                         let mut slot_signatures = self.get_block_signatures_rev(slot)?;
                         if let Some(pos) = slot_signatures.iter().position(|&x| x == until) {
                             slot_signatures = slot_signatures.split_off(pos);
                         }
 
-                        (slot, slot_signatures.into_iter().collect::<HashSet<_>>())
+                        (
+                            slot,
+                            slot_signatures.into_iter().collect::<HashSet<_>>(),
+                            true,
+                        )
                     }
                 }
             }
@@ -3514,6 +3519,7 @@ impl Blockstore {
         Ok(SignatureInfosForAddress {
             infos,
             found_before: true, // if `before` signature was not found, this method returned early
+            found_until,
         })
     }
 
