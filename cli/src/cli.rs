@@ -87,6 +87,8 @@ pub enum CliCommand {
     },
     LeaderSchedule {
         epoch: Option<Epoch>,
+        vote_addresses: Option<Vec<Pubkey>>,
+        only_vote_addresses: bool,
     },
     LiveSlots,
     Logs {
@@ -940,8 +942,19 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         CliCommand::Inflation(inflation_subcommand) => {
             process_inflation_subcommand(&rpc_client, config, inflation_subcommand).await
         }
-        CliCommand::LeaderSchedule { epoch } => {
-            process_leader_schedule(&rpc_client, config, *epoch).await
+        CliCommand::LeaderSchedule {
+            epoch,
+            vote_addresses,
+            only_vote_addresses,
+        } => {
+            process_leader_schedule(
+                &rpc_client,
+                config,
+                *epoch,
+                vote_addresses.clone(),
+                *only_vote_addresses,
+            )
+            .await
         }
         CliCommand::LiveSlots => process_live_slots(config),
         CliCommand::Logs { filter } => process_logs(config, filter),
