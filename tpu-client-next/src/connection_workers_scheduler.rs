@@ -10,7 +10,7 @@ use {
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
         transaction_batch::TransactionBatch,
-        workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError},
+        workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError, WorkersCacheStrategy},
         SendTransactionStats,
     },
     async_trait::async_trait,
@@ -97,6 +97,9 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// The maximum number of reconnection attempts allowed in case of
     /// connection failure.
     pub max_reconnect_attempts: usize,
+
+    /// Cache strategy used to store connection workers.
+    pub worker_cache_strategy: WorkersCacheStrategy,
 
     /// Configures the number of leaders to connect to and send transactions to.
     pub leaders_fanout: Fanout,
@@ -213,6 +216,7 @@ impl ConnectionWorkersScheduler {
             skip_check_transaction_age,
             worker_channel_size,
             max_reconnect_attempts,
+            worker_cache_strategy,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
         broadcaster: Box<dyn WorkersBroadcaster>,
@@ -227,7 +231,7 @@ impl ConnectionWorkersScheduler {
         let mut endpoint = setup_endpoint(bind, stake_identity)?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
-        let mut workers = WorkersCache::new(num_connections, cancel.clone());
+        let mut workers = WorkersCache::new(num_connections, cancel.clone(), worker_cache_strategy);
 
         let mut last_error = None;
         // flag to ensure that the section handling
