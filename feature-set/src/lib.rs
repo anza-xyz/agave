@@ -1305,6 +1305,10 @@ pub mod validate_chained_block_id {
     solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
 }
 
+pub mod validator_admission_ticket {
+    solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2323,6 +2327,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validate_chained_block_id::id(),
             "SIMD-0340: Validate chained block ID",
+        ),
+        (
+            validator_admission_ticket::id(),
+            "SIMD-0357: Alpenglow VAT implementation",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
