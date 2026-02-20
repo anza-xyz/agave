@@ -4,7 +4,7 @@ use {
     clap::Args,
     log::{debug, info},
     std::{fs, path::PathBuf},
-    toml_edit::{value, DocumentMut, Item},
+    toml_edit::{DocumentMut, Item, value},
 };
 
 #[derive(Args)]

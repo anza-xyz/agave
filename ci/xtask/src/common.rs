@@ -1,5 +1,5 @@
 use {
-    anyhow::{anyhow, Result},
+    anyhow::{Result, anyhow},
     ignore::WalkBuilder,
     std::{
         fs,
