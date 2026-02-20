@@ -881,6 +881,7 @@ mod external {
             let mut threads = self.spawn_external(agave_session)?;
 
             // Spawn the scheduler thread with the external greedy scheduler.
+            let worker_exit = self.worker_exit_signal.clone();
             threads.push(
                 Builder::new()
                     .name("solExtSched".to_string())
@@ -896,9 +897,9 @@ mod external {
                                 checked_capacity: 2usize.pow(16),
                             },
                         );
-                        loop {
-                            // TODO: This will panic if agave side goes quiet, need a
-                            // proper graceful shutdown.
+
+                        // Run until banking manager tells us to exit.
+                        while !worker_exit.load(Ordering::Relaxed) {
                             scheduler.poll(&mut bridge);
                         }
                     })
