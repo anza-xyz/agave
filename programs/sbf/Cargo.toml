@@ -263,6 +263,15 @@ solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 test-case = { workspace = true }
 
+# Enable basic optimizations for unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
+
+# Enable optimizations for procmacros for faster codegen
+[profile.dev.build-override]
+opt-level = 1
+
 [profile.release]
 # The test programs are build in release mode
 # Minimize their file size so that they fit into the account size limit

@@ -58,8 +58,12 @@ $ ./cargo build
 **Run the test suite:**
 
 ```bash
-$ ./cargo test
+$ ./cargo nextest run --profile ci  --cargo-profile ci --config-file ./nextest.toml
 ```
+
+### Debugger
+
+Beware that by default some optimizations are enabled in debug builds, if you need to step through the code you may want to build without optimizer enabled.
 
 ### Starting a local testnet
 
