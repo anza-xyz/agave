@@ -3660,7 +3660,7 @@ pub mod rpc_full {
                             (
                                 Some(version.to_string()),
                                 Some(version.feature_set),
-                                Some(version.client),
+                                Some(version.client()),
                             )
                         } else {
                             (None, None, None)
@@ -3692,7 +3692,7 @@ pub mod rpc_full {
                                 .rpc_pubsub()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             version,
-                            client_id,
+                            client_id: client_id.map(|id| format!("{id}")),
                             feature_set,
                             shred_version: Some(my_shred_version),
                         })
@@ -5192,7 +5192,7 @@ pub mod tests {
             "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
-            "clientId": 3u16,
+            "clientId": "Agave",
         }, {
             "pubkey": rpc.leader_pubkey().to_string(),
             "gossip": "127.0.0.1:1235",
@@ -5208,7 +5208,7 @@ pub mod tests {
             "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
-            "clientId": 3u16,
+            "clientId": "Agave",
         }]);
         assert_eq!(result, expected);
     }
