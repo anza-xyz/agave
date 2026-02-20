@@ -267,7 +267,7 @@ impl VoteWorker {
                 }
             }
 
-            if let Some(retryable_vote_indices) = self.do_process_packets(
+            let retryable_vote_indices = self.do_process_packets(
                 bank,
                 &mut reached_end_of_slot,
                 &resolved_txs,
@@ -275,18 +275,11 @@ impl VoteWorker {
                 consumed_buffered_packets_count,
                 rebuffered_packet_count,
                 slot_metrics_tracker,
-            ) {
-                self.storage.reinsert_packets(
-                    Self::extract_retryable(&mut resolved_txs, retryable_vote_indices)
-                        .map(|tx| tx.into_inner_transaction().into_view()),
-                );
-            } else {
-                self.storage.reinsert_packets(
-                    resolved_txs
-                        .drain(..)
-                        .map(|tx| tx.into_inner_transaction().into_view()),
-                );
-            }
+            );
+            self.storage.reinsert_packets(
+                Self::extract_retryable(&mut resolved_txs, retryable_vote_indices)
+                    .map(|tx| tx.into_inner_transaction().into_view()),
+            );
         }
 
         reached_end_of_slot
@@ -301,11 +294,7 @@ impl VoteWorker {
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) -> Option<Vec<usize>> {
-        if *reached_end_of_slot {
-            return None;
-        }
-
+    ) -> Vec<usize> {
         let (process_transactions_summary, process_packets_transactions_us) = measure_us!(self
             .process_packets_transactions(
                 bank,
@@ -343,7 +332,7 @@ impl VoteWorker {
         slot_metrics_tracker
             .increment_retryable_packets_count(retryable_transaction_indexes.len() as u64);
 
-        Some(retryable_transaction_indexes)
+        retryable_transaction_indexes
     }
 
     fn process_packets_transactions(
