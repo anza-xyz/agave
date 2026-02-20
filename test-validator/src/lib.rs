@@ -144,7 +144,6 @@ pub struct TestValidatorGenesis {
     pub max_genesis_archive_unpacked_size: Option<u64>,
     pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub enable_scheduler_bindings: bool,
-    pub external_as_thread: bool,
     deactivate_feature_set: HashSet<Pubkey>,
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
@@ -180,7 +179,6 @@ impl Default for TestValidatorGenesis {
             max_genesis_archive_unpacked_size: Option::<u64>::default(),
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
             enable_scheduler_bindings: false,
-            external_as_thread: false,
             deactivate_feature_set,
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
@@ -1227,7 +1225,6 @@ impl TestValidator {
             accounts_db_config,
             runtime_config,
             enable_scheduler_bindings: config.enable_scheduler_bindings,
-            external_as_thread: config.external_as_thread,
             ..ValidatorConfig::default_for_test()
         };
         if let Some(ref tower_storage) = config.tower_storage {

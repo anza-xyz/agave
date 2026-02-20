@@ -407,7 +407,6 @@ fn main() {
     genesis.transaction_account_lock_limit =
         value_t!(matches, "transaction_account_lock_limit", usize).ok();
     genesis.enable_scheduler_bindings = matches.is_present("enable_scheduler_bindings");
-    genesis.external_as_thread = matches.is_present("external_as_thread");
 
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
 

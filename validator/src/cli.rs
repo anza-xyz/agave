@@ -802,12 +802,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Enables external processes to connect and manage block production"),
         )
         .arg(
-            Arg::with_name("external_as_thread")
-                .long("external-as-thread")
-                .takes_value(false)
-                .help("Run the external scheduler as an in-process thread"),
-        )
-        .arg(
             Arg::with_name("deactivate_feature")
                 .long("deactivate-feature")
                 .takes_value(true)

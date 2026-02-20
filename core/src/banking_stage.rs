@@ -382,7 +382,6 @@ pub struct BankingStage {
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
-    external_as_thread: bool,
 }
 
 impl BankingStage {
@@ -402,7 +401,6 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        external_as_thread: bool,
     ) -> BankingStageHandle {
         let committer = Committer::new(
             transaction_status_sender,
@@ -410,20 +408,13 @@ impl BankingStage {
             prioritization_fee_cache,
         );
 
-        #[cfg(unix)]
-        let initial_args = match external_as_thread {
+        let initial_args = match cfg!(unix) {
             true => BankingControlMsg::ExternalAsThread,
             false => BankingControlMsg::Internal {
                 block_production_method,
                 num_workers,
                 config: scheduler_config,
             },
-        };
-        #[cfg(not(unix))]
-        let initial_args = BankingControlMsg::Internal {
-            block_production_method,
-            num_workers,
-            config: scheduler_config,
         };
 
         // Setup the manager thread state.
@@ -441,7 +432,6 @@ impl BankingStage {
             committer,
             log_messages_bytes_limit,
             threads: FuturesUnordered::default(),
-            external_as_thread,
         };
 
         // Spawn the manager thread.
@@ -515,12 +505,10 @@ impl BankingStage {
         error!("Spawning the default block production method as a fallback...");
 
         #[cfg(unix)]
-        if self.external_as_thread {
-            return self
-                .cycle_threads(BankingControlMsg::ExternalAsThread)
-                .await;
-        }
-
+        return self
+            .cycle_threads(BankingControlMsg::ExternalAsThread)
+            .await;
+        #[cfg(not(unix))]
         self.cycle_threads(BankingControlMsg::Internal {
             block_production_method: BlockProductionMethod::default(),
             num_workers: BankingStage::default_num_workers(),
@@ -1100,7 +1088,6 @@ mod tests {
             None,
             bank_forks,
             None,
-            false,
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1165,7 +1152,6 @@ mod tests {
             None,
             bank_forks,
             None,
-            false,
         );
         trace!("sending bank");
         drop(non_vote_sender);
@@ -1240,7 +1226,6 @@ mod tests {
             None,
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             None,
-            false,
         );
 
         // good tx, and no verify
@@ -1393,7 +1378,6 @@ mod tests {
                 None,
                 bank_forks,
                 None,
-                false,
             );
 
             // wait for banking_stage to eat the packets
@@ -1547,7 +1531,6 @@ mod tests {
             None,
             bank_forks,
             None,
-            false,
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();
