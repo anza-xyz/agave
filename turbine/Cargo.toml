@@ -13,6 +13,7 @@ edition = "2024"
 agave-unstable-api = []
 
 [dependencies]
+agave-cpu-utils = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
@@ -59,7 +60,6 @@ wincode = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true }
 caps = { workspace = true }
-core_affinity = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }

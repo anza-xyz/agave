@@ -10,10 +10,10 @@ use {
             IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
         route::NextHop,
-        set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
+    agave_cpu_utils::set_cpu_affinity,
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
     std::{

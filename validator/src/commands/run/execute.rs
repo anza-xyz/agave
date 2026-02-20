@@ -6,6 +6,7 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
+    agave_cpu_utils,
     agave_snapshots::{
         paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -69,10 +70,7 @@ use {
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
-    solana_turbine::{
-        broadcast_stage::BroadcastStageType,
-        xdp::{set_cpu_affinity, XdpConfig},
-    },
+    solana_turbine::{broadcast_stage::BroadcastStageType, xdp::XdpConfig},
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -362,20 +360,15 @@ pub fn execute(
     #[cfg(not(target_os = "linux"))]
     let maybe_xdp_retransmit_builder = None;
 
-    let reserved = retransmit_xdp
-        .map(|xdp| xdp.cpus.clone())
-        .unwrap_or_default()
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    if !reserved.is_empty() {
-        let available = core_affinity::get_core_ids()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|core_id| core_id.id)
-            .collect::<HashSet<_>>();
-        let available = available.difference(&reserved);
-        set_cpu_affinity(available.into_iter().copied()).unwrap();
+    let reserved_cores: HashSet<_> = retransmit_xdp
+        .as_ref()
+        .into_iter()
+        .flat_map(|xdp| xdp.cpus.iter().copied())
+        .collect();
+    if !reserved_cores.is_empty() {
+        let cpu_count = agave_cpu_utils::cpu_count().unwrap_or(0);
+        let unreserved_cores = (0..cpu_count).filter(|core| !reserved_cores.contains(core));
+        agave_cpu_utils::set_cpu_affinity(unreserved_cores).unwrap();
     }
 
     solana_core::validator::report_target_features();
