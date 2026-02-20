@@ -122,7 +122,7 @@ solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
 solana-bpf-loader-program = { path = "../bpf_loader", version = "=4.0.0-alpha.0" }
 solana-cli-output = { path = "../../cli-output", version = "=4.0.0-alpha.0" }
-solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
+solana-clock = { version = "=3.0.1", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.0.0-alpha.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.0.0-alpha.0" }
 solana-cpi = "=3.1.0"
