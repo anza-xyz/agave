@@ -4643,6 +4643,7 @@ pub(crate) mod tests {
             },
             replay_stage::ReplayStage,
             vote_simulator::{self, VoteSimulator},
+            voting_service::TpuClientNextVoteTransport,
         },
         blockstore_processor::{
             confirm_full_slot, fill_blockstore_slot_with_ticks, process_bank_0, ProcessOptions,
@@ -4650,7 +4651,6 @@ pub(crate) mod tests {
         crossbeam_channel::unbounded,
         itertools::Itertools,
         solana_account::{state_traits::StateMut, ReadableAccount},
-        solana_client::connection_cache::ConnectionCache,
         solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_entry::entry::{self, Entry},
         solana_genesis_config as genesis_config,
@@ -4679,7 +4679,6 @@ pub(crate) mod tests {
         },
         solana_sha256_hasher::hash,
         solana_system_transaction as system_transaction,
-        solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_error::TransactionError,
         solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_vote::vote_transaction,
@@ -7954,6 +7953,7 @@ pub(crate) mod tests {
         );
 
         let (voting_sender, voting_receiver) = unbounded();
+        let vote_client = TpuClientNextVoteTransport::new();
 
         // Simulate landing a vote for slot 0 landing in slot 1
         let bank1 = Bank::new_from_parent_with_bank_forks(
@@ -7985,24 +7985,12 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            &vote_client,
         );
 
         let mut cursor = Cursor::default();
@@ -8083,24 +8071,12 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            &vote_client,
         );
 
         let votes = cluster_info.get_votes(&mut cursor);
@@ -8211,24 +8187,12 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            &vote_client,
         );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
@@ -8334,6 +8298,7 @@ pub(crate) mod tests {
         cursor: &mut Cursor,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
+        vote_client: &TpuClientNextVoteTransport,
     ) -> Arc<Bank> {
         let my_vote_pubkey = &my_vote_keypair[0].pubkey();
         tower.record_bank_vote(&parent_bank);
@@ -8353,24 +8318,12 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic_for_tests(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
-
         crate::voting_service::VotingService::handle_vote(
             cluster_info,
             poh_recorder,
             tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            vote_client,
         );
 
         let votes = cluster_info.get_votes(cursor);
@@ -8466,6 +8419,7 @@ pub(crate) mod tests {
 
         let (voting_sender, voting_receiver) = unbounded();
         let mut cursor = Cursor::default();
+        let vote_client = TpuClientNextVoteTransport::new();
 
         let mut new_bank = send_vote_in_new_bank(
             bank0,
@@ -8484,6 +8438,7 @@ pub(crate) mod tests {
             &mut cursor,
             &bank_forks,
             &mut progress,
+            &vote_client,
         );
         new_bank = send_vote_in_new_bank(
             new_bank.clone(),
@@ -8502,6 +8457,7 @@ pub(crate) mod tests {
             &mut cursor,
             &bank_forks,
             &mut progress,
+            &vote_client,
         );
         // Create enough banks on the fork so last vote is outside SlotHash, make sure
         // we now vote at the tip of the fork.
