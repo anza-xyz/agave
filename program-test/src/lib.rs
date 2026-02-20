@@ -22,8 +22,9 @@ use {
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Clock, Epoch, Slot},
     solana_cluster_type::ClusterType,
-    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
     solana_epoch_rewards::EpochRewards,
+    solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -39,7 +40,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
-        serialization::serialize_parameters, stable_log,
+        serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -61,7 +62,7 @@ use {
         collections::{HashMap, HashSet},
         fs::File,
         io::{self, Read},
-        mem::{transmute, MaybeUninit},
+        mem::transmute,
         panic::AssertUnwindSafe,
         path::{Path, PathBuf},
         ptr,
@@ -248,14 +249,35 @@ impl SyscallStubs {
         var_addr: *mut u8,
         offset: u64,
         length: u64,
-        fetch: impl FnOnce(&Self, *mut u8) -> u64,
+        fetch: impl FnOnce(&SysvarCache) -> Result<Arc<T>, InstructionError>,
     ) -> u64 {
-        // Fetch the full sysvar data using its getter.
-        let mut sysvar = MaybeUninit::<T>::uninit();
-        if fetch(self, sysvar.as_mut_ptr() as *mut u8) != SUCCESS {
-            return UNSUPPORTED_SYSVAR;
+        // Consume compute units for the syscall.
+        let invoke_context = get_invoke_context();
+        let SVMTransactionExecutionCost {
+            sysvar_base_cost,
+            cpi_bytes_per_unit,
+            mem_op_base_cost,
+            ..
+        } = *invoke_context.get_execution_cost();
+
+        let sysvar_id_cost = 32_u64.checked_div(cpi_bytes_per_unit).unwrap_or(0);
+        let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
+
+        if invoke_context
+            .consume_checked(
+                sysvar_base_cost
+                    .saturating_add(sysvar_id_cost)
+                    .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
+            )
+            .is_err()
+        {
+            panic!("Exceeded compute budget");
         }
-        let sysvar = unsafe { sysvar.assume_init() };
+
+        // Fetch the sysvar from the cache.
+        let Ok(sysvar) = fetch(get_invoke_context().get_sysvar_cache()) else {
+            return UNSUPPORTED_SYSVAR;
+        };
 
         // Check that the requested length is not greater than
         // the actual serialized length of the sysvar data.
@@ -489,26 +511,29 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 var_addr,
                 offset,
                 length,
-                Self::sol_get_clock_sysvar,
+                SysvarCache::get_clock,
             ),
             id if id == EpochRewards::id() => self.fetch_and_write_sysvar::<EpochRewards>(
                 var_addr,
                 offset,
                 length,
-                Self::sol_get_epoch_rewards_sysvar,
+                SysvarCache::get_epoch_rewards,
+            ),
+            id if id == EpochSchedule::id() => self.fetch_and_write_sysvar::<EpochSchedule>(
+                var_addr,
+                offset,
+                length,
+                SysvarCache::get_epoch_schedule,
             ),
             id if id == LastRestartSlot::id() => self.fetch_and_write_sysvar::<LastRestartSlot>(
                 var_addr,
                 offset,
                 length,
-                Self::sol_get_last_restart_slot,
+                SysvarCache::get_last_restart_slot,
             ),
-            id if id == Rent::id() => self.fetch_and_write_sysvar::<Rent>(
-                var_addr,
-                offset,
-                length,
-                Self::sol_get_rent_sysvar,
-            ),
+            id if id == Rent::id() => {
+                self.fetch_and_write_sysvar::<Rent>(var_addr, offset, length, SysvarCache::get_rent)
+            }
             _ => UNSUPPORTED_SYSVAR,
         }
     }
