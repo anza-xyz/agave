@@ -1,13 +1,13 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    clap::{crate_description, crate_name, value_t, values_t, values_t_or_exit, App, Arg},
+    clap::{App, Arg, crate_description, crate_name, value_t, values_t, values_t_or_exit},
     log::*,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     rayon::prelude::*,
     solana_clap_utils::{
         hidden_unless_forced, input_parsers::pubkey_of, input_validators::is_url_or_moniker,
     },
-    solana_cli_config::{ConfigInput, CONFIG_FILE},
+    solana_cli_config::{CONFIG_FILE, ConfigInput},
     solana_client::{
         rpc_client::SerializableTransaction, rpc_config::RpcBlockConfig,
         rpc_request::MAX_GET_CONFIRMED_BLOCKS_RANGE, transaction_executor::TransactionExecutor,
@@ -17,7 +17,7 @@ use {
     solana_gossip::gossip_service::discover_peers,
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_measure::measure::Measure,
     solana_message::Message,
     solana_net_utils::SocketAddrSpace,
@@ -39,10 +39,10 @@ use {
         process::exit,
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Barrier, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };

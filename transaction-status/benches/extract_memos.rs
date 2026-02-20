@@ -1,6 +1,6 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
-    solana_message::{compiled_instruction::CompiledInstruction, Message},
+    bencher::{Bencher, benchmark_group, benchmark_main},
+    solana_message::{Message, compiled_instruction::CompiledInstruction},
     solana_pubkey::Pubkey,
     solana_transaction_status::extract_memos::ExtractMemos,
 };

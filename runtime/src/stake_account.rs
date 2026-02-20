@@ -1,7 +1,7 @@
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi::abi_example::AbiExample;
 use {
-    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_stake_interface::{

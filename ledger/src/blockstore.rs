@@ -7,18 +7,18 @@ use trees::{Tree, TreeWalk};
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
-        blockstore::column::{columns as cf, Column, ColumnIndexDeprecation, TypedColumn},
+        blockstore::column::{Column, ColumnIndexDeprecation, TypedColumn, columns as cf},
         blockstore_db::{IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch},
         blockstore_meta::*,
         blockstore_options::{
-            BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
+            BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions, LedgerColumnOptions,
         },
         blockstore_processor::BlockstoreProcessorError,
         leader_schedule_cache::LeaderScheduleCache,
         next_slots_iterator::NextSlotsIterator,
         shred::{
-            self, ErasureSetId, ProcessShredsStats, ReedSolomonCache, Shred, ShredId, ShredType,
-            Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+            self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, ProcessShredsStats, ReedSolomonCache,
+            Shred, ShredId, ShredType, Shredder,
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
@@ -27,7 +27,7 @@ use {
     agave_snapshots::unpack_genesis_archive,
     assert_matches::debug_assert_matches,
     bincode::{deserialize, serialize},
-    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
+    crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
     itertools::Itertools,
     log::*,
@@ -36,12 +36,12 @@ use {
     rocksdb::{DBRawIterator, LiveFile},
     solana_account::ReadableAccount,
     solana_address_lookup_table_interface::state::AddressLookupTable,
-    solana_clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
+    solana_clock::{DEFAULT_TICKS_PER_SECOND, Slot, UnixTimestamp},
     solana_entry::{
         block_component::BlockComponent,
-        entry::{create_ticks, Entry, MaxDataShredsLen},
+        entry::{Entry, MaxDataShredsLen, create_ticks},
     },
-    solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+    solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -54,7 +54,7 @@ use {
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_time_utils::timestamp,
     solana_transaction::versioned::{
-        sanitized::SanitizedVersionedTransaction, VersionedTransaction,
+        VersionedTransaction, sanitized::SanitizedVersionedTransaction,
     },
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
@@ -67,8 +67,8 @@ use {
         cell::RefCell,
         cmp,
         collections::{
-            btree_map::Entry as BTreeMapEntry, hash_map::Entry as HashMapEntry, BTreeMap, HashMap,
-            HashSet, VecDeque,
+            BTreeMap, HashMap, HashSet, VecDeque, btree_map::Entry as BTreeMapEntry,
+            hash_map::Entry as HashMapEntry,
         },
         convert::TryInto,
         fmt::Write,
@@ -78,14 +78,14 @@ use {
         path::{Path, PathBuf},
         rc::Rc,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
-    wincode::{containers::Vec as WincodeVec, Deserialize as _},
+    wincode::{Deserialize as _, containers::Vec as WincodeVec},
 };
 
 pub mod blockstore_purge;
@@ -3754,10 +3754,12 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
         mut deserialize: impl FnMut(Vec<u8>) -> Result<Vec<T>>,
     ) -> Result<Vec<T>> {
-        debug_assert!(completed_ranges
-            .iter()
-            .tuple_windows()
-            .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end));
+        debug_assert!(
+            completed_ranges
+                .iter()
+                .tuple_windows()
+                .all(|(a, b)| a.start < a.end && a.end == b.start && b.start < b.end)
+        );
         let maybe_panic = |index: u64| {
             if let Some(slot_meta) = slot_meta {
                 if slot > self.lowest_cleanup_slot() {
@@ -5343,17 +5345,17 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+            shred::{MAX_DATA_SHREDS_PER_SLOT, max_ticks_per_n_shreds},
         },
         assert_matches::assert_matches,
-        bincode::{serialize, Options},
+        bincode::{Options, serialize},
         crossbeam_channel::unbounded,
         rand::{rng, seq::SliceRandom},
         solana_account_decoder::parse_token::UiTokenAmount,
         solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_entry::entry::{next_entry, next_entry_mut},
-        solana_genesis_utils::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
+        solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
         solana_hash::Hash,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
@@ -5417,9 +5419,11 @@ pub mod tests {
         let entries = blockstore.get_slot_entries(0, 0).unwrap();
 
         assert_eq!(ticks, entries);
-        assert!(Path::new(ledger_path.path())
-            .join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL)
-            .exists());
+        assert!(
+            Path::new(ledger_path.path())
+                .join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL)
+                .exists()
+        );
 
         assert_eq!(
             genesis_config,
@@ -5950,10 +5954,12 @@ pub mod tests {
         let shreds = entries_to_test_shreds(&entries, slot, 0, true, 0);
         let num_shreds = shreds.len();
         assert!(num_shreds > 1);
-        assert!(blockstore
-            .insert_shreds(shreds[1..].to_vec(), None, false)
-            .unwrap()
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shreds(shreds[1..].to_vec(), None, false)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             blockstore
                 .insert_shreds(vec![shreds[0].clone()], None, false)
@@ -5964,10 +5970,12 @@ pub mod tests {
             }]
         );
         // Inserting shreds again doesn't trigger notification
-        assert!(blockstore
-            .insert_shreds(shreds, None, false)
-            .unwrap()
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shreds(shreds, None, false)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -7504,15 +7512,17 @@ pub mod tests {
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
 
-        assert!(blockstore
-            .check_insert_data_shred(
-                Cow::Owned(new_data_shred),
-                &mut shred_insertion_tracker,
-                false,
-                None,
-                ShredSource::Turbine,
-            )
-            .is_err());
+        assert!(
+            blockstore
+                .check_insert_data_shred(
+                    Cow::Owned(new_data_shred),
+                    &mut shred_insertion_tracker,
+                    false,
+                    None,
+                    ShredSource::Turbine,
+                )
+                .is_err()
+        );
         let ShredInsertionTracker {
             merkle_root_metas,
             duplicate_shreds,
@@ -8281,10 +8291,12 @@ pub mod tests {
         let cost_units_2 = Some(5678);
 
         // result not found
-        assert!(transaction_status_cf
-            .get_protobuf((Signature::default(), 0))
-            .unwrap()
-            .is_none());
+        assert!(
+            transaction_status_cf
+                .get_protobuf((Signature::default(), 0))
+                .unwrap()
+                .is_none()
+        );
 
         // insert value
         let status = TransactionStatusMeta {
@@ -8305,9 +8317,11 @@ pub mod tests {
             cost_units: cost_units_1,
         }
         .into();
-        assert!(transaction_status_cf
-            .put_protobuf((Signature::default(), 0), &status)
-            .is_ok());
+        assert!(
+            transaction_status_cf
+                .put_protobuf((Signature::default(), 0), &status)
+                .is_ok()
+        );
 
         // result found
         let TransactionStatusMeta {
@@ -8361,9 +8375,11 @@ pub mod tests {
             cost_units: cost_units_2,
         }
         .into();
-        assert!(transaction_status_cf
-            .put_protobuf((Signature::from([2u8; 64]), 9), &status,)
-            .is_ok());
+        assert!(
+            transaction_status_cf
+                .put_protobuf((Signature::from([2u8; 64]), 9), &status,)
+                .is_ok()
+        );
 
         // result found
         let TransactionStatusMeta {
@@ -9476,17 +9492,19 @@ pub mod tests {
         assert!(sig_infos.found_before);
         assert!(sig_infos.infos.is_empty());
 
-        assert!(blockstore
-            .get_confirmed_signatures_for_address2(
-                address0,
-                highest_super_majority_root,
-                None,
-                Some(all0[0].signature),
-                2,
-            )
-            .unwrap()
-            .infos
-            .is_empty());
+        assert!(
+            blockstore
+                .get_confirmed_signatures_for_address2(
+                    address0,
+                    highest_super_majority_root,
+                    None,
+                    Some(all0[0].signature),
+                    2,
+                )
+                .unwrap()
+                .infos
+                .is_empty()
+        );
 
         // Fetch all signatures for address 0, three at a time
         assert!(all0.len().is_multiple_of(3));
@@ -9633,29 +9651,33 @@ pub mod tests {
             assert_eq!(results[0], all0[i], "Unexpected result for {i}");
         }
 
-        assert!(blockstore
-            .get_confirmed_signatures_for_address2(
-                address0,
-                highest_confirmed_slot,
-                Some(all0[all0.len() - 1].signature),
-                None,
-                1,
-            )
-            .unwrap()
-            .infos
-            .is_empty());
+        assert!(
+            blockstore
+                .get_confirmed_signatures_for_address2(
+                    address0,
+                    highest_confirmed_slot,
+                    Some(all0[all0.len() - 1].signature),
+                    None,
+                    1,
+                )
+                .unwrap()
+                .infos
+                .is_empty()
+        );
 
-        assert!(blockstore
-            .get_confirmed_signatures_for_address2(
-                address0,
-                highest_confirmed_slot,
-                None,
-                Some(all0[0].signature),
-                2,
-            )
-            .unwrap()
-            .infos
-            .is_empty());
+        assert!(
+            blockstore
+                .get_confirmed_signatures_for_address2(
+                    address0,
+                    highest_confirmed_slot,
+                    None,
+                    Some(all0[0].signature),
+                    2,
+                )
+                .unwrap()
+                .infos
+                .is_empty()
+        );
 
         // Fetch all signatures for address 0, three at a time
         assert!(all0.len() % 3 == 2);
@@ -10344,9 +10366,11 @@ pub mod tests {
             blockstore.is_shred_duplicate(&duplicate_shred).as_deref(),
             Some(shred.payload().as_ref())
         );
-        assert!(blockstore
-            .is_shred_duplicate(&non_duplicate_shred)
-            .is_none());
+        assert!(
+            blockstore
+                .is_shred_duplicate(&non_duplicate_shred)
+                .is_none()
+        );
 
         // Store a duplicate shred
         blockstore
@@ -10401,10 +10425,12 @@ pub mod tests {
                 .next_slots,
             vec![unconfirmed_child_slot]
         );
-        assert!(blockstore
-            .get_data_shred(unconfirmed_slot, 0)
-            .unwrap()
-            .is_none());
+        assert!(
+            blockstore
+                .get_data_shred(unconfirmed_slot, 0)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -10432,10 +10458,12 @@ pub mod tests {
         // Purge the slot
         blockstore.clear_unconfirmed_slot(unconfirmed_slot);
         assert!(!blockstore.is_dead(unconfirmed_slot));
-        assert!(blockstore
-            .get_data_shred(unconfirmed_slot, 0)
-            .unwrap()
-            .is_none());
+        assert!(
+            blockstore
+                .get_data_shred(unconfirmed_slot, 0)
+                .unwrap()
+                .is_none()
+        );
 
         // Re-add unconfirmed_slot and confirm that confirmed_slot only has
         // unconfirmed_slot in next_slots once
@@ -10455,13 +10483,10 @@ pub mod tests {
 
         for i in 0..10 {
             shred_index.insert(i as u64);
-            assert!(update_completed_data_indexes(
-                true,
-                i,
-                &shred_index,
-                &mut completed_data_indexes
-            )
-            .eq(std::iter::once(i..i + 1)));
+            assert!(
+                update_completed_data_indexes(true, i, &shred_index, &mut completed_data_indexes)
+                    .eq(std::iter::once(i..i + 1))
+            );
             assert!(completed_data_indexes.clone().into_iter().eq(0..=i));
         }
     }
@@ -10920,10 +10945,12 @@ pub mod tests {
                     shred_to_check.payload().as_ref(),
                 );
             } else {
-                assert!(blockstore
-                    .get_data_shred(slot, shred_index)
-                    .unwrap()
-                    .is_none());
+                assert!(
+                    blockstore
+                        .get_data_shred(slot, shred_index)
+                        .unwrap()
+                        .is_none()
+                );
             }
         }
 
@@ -10951,10 +10978,12 @@ pub mod tests {
                     shred_to_check.payload().as_ref(),
                 );
             } else {
-                assert!(blockstore
-                    .get_data_shred(slot, shred_index)
-                    .unwrap()
-                    .is_none());
+                assert!(
+                    blockstore
+                        .get_data_shred(slot, shred_index)
+                        .unwrap()
+                        .is_none()
+                );
             }
         }
     }
@@ -11185,9 +11214,11 @@ pub mod tests {
         let coding_shred = coding_shreds[0].clone();
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule,)
+                .is_empty()
+        );
 
         let merkle_root = coding_shred.merkle_root().unwrap();
 
@@ -11201,12 +11232,16 @@ pub mod tests {
         );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred, &leader_schedule,)
-            .is_empty());
-        assert!(blockstore
-            .insert_shred_return_duplicate(data_shred, &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred, &leader_schedule,)
+                .is_empty()
+        );
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(data_shred, &leader_schedule,)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -11234,14 +11269,18 @@ pub mod tests {
         );
         let next_coding_shred = next_coding_shreds[0].clone();
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(next_coding_shred, &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(next_coding_shred, &leader_schedule,)
+                .is_empty()
+        );
 
         // Insert previous FEC set
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred, &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred, &leader_schedule,)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -11256,9 +11295,11 @@ pub mod tests {
             setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
         let data_shred = data_shreds[0].clone();
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(data_shred.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(data_shred.clone(), &leader_schedule,)
+                .is_empty()
+        );
 
         // Incorrectly chained merkle for next slot
         let merkle_root = Hash::new_unique();
@@ -11273,12 +11314,16 @@ pub mod tests {
             );
         let next_slot_data_shred = next_slot_data_shreds[0].clone();
         let next_slot_coding_shred = next_slot_coding_shreds[0].clone();
-        assert!(blockstore
-            .insert_shred_return_duplicate(next_slot_coding_shred, &leader_schedule,)
-            .is_empty());
-        assert!(blockstore
-            .insert_shred_return_duplicate(next_slot_data_shred, &leader_schedule)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(next_slot_coding_shred, &leader_schedule,)
+                .is_empty()
+        );
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(next_slot_data_shred, &leader_schedule)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -11306,14 +11351,18 @@ pub mod tests {
             );
         let next_slot_data_shred = next_slot_data_shreds[0].clone();
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(next_slot_data_shred.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(next_slot_data_shred.clone(), &leader_schedule,)
+                .is_empty()
+        );
 
         // Insert for previous slot
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred, &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred, &leader_schedule,)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -11330,9 +11379,11 @@ pub mod tests {
         let coding_shred_previous = coding_shreds[0].clone();
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred_previous.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred_previous.clone(), &leader_schedule,)
+                .is_empty()
+        );
 
         // Incorrectly chained merkle
         let merkle_root = Hash::new_unique();
@@ -11359,9 +11410,11 @@ pub mod tests {
         );
 
         // Should not check again, even though this shred conflicts as well
-        assert!(blockstore
-            .insert_shred_return_duplicate(data_shred.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(data_shred.clone(), &leader_schedule,)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -11378,9 +11431,11 @@ pub mod tests {
         let coding_shred_previous = coding_shreds[0].clone();
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred_previous.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred_previous.clone(), &leader_schedule,)
+                .is_empty()
+        );
 
         // Incorrectly chained merkle
         let merkle_root = Hash::new_unique();
@@ -11407,9 +11462,11 @@ pub mod tests {
             )
         );
         // Should not check again, even though this shred conflicts as well
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred.clone(), &leader_schedule,)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -11439,9 +11496,11 @@ pub mod tests {
             );
         let next_data_shred = next_data_shreds[0].clone();
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(next_data_shred.clone(), &leader_schedule_next,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(next_data_shred.clone(), &leader_schedule_next,)
+                .is_empty()
+        );
 
         // Insert previous FEC set
         let duplicate_shreds =
@@ -11501,13 +11560,17 @@ pub mod tests {
             );
         let next_data_shred = next_data_shreds[0].clone();
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(prev_coding_shred.clone(), &leader_schedule_prev,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(prev_coding_shred.clone(), &leader_schedule_prev,)
+                .is_empty()
+        );
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(next_data_shred.clone(), &leader_schedule_next)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(next_data_shred.clone(), &leader_schedule_next)
+                .is_empty()
+        );
 
         // Insert data shred
         let duplicate_shreds =
@@ -11552,9 +11615,11 @@ pub mod tests {
         let coding_shred_previous = coding_shreds[1].clone();
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred_previous.clone(), &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred_previous.clone(), &leader_schedule,)
+                .is_empty()
+        );
 
         // Set the first received coding shred index to 0 and remove merkle root meta to simulate this insertion coming from an
         // older version.
@@ -11572,10 +11637,12 @@ pub mod tests {
             .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
         blockstore.write_batch(write_batch).unwrap();
-        assert!(blockstore
-            .merkle_root_meta(coding_shred_previous.erasure_set())
-            .unwrap()
-            .is_none());
+        assert!(
+            blockstore
+                .merkle_root_meta(coding_shred_previous.erasure_set())
+                .unwrap()
+                .is_none()
+        );
 
         // Add an incorrectly chained merkle from the next set. Although incorrectly chained
         // we skip the duplicate check as the first received coding shred index shred is missing
@@ -11591,12 +11658,16 @@ pub mod tests {
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred, &leader_schedule)
-            .is_empty());
-        assert!(blockstore
-            .insert_shred_return_duplicate(data_shred, &leader_schedule,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred, &leader_schedule)
+                .is_empty()
+        );
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(data_shred, &leader_schedule,)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -11626,9 +11697,11 @@ pub mod tests {
             );
         let next_data_shred = next_data_shreds[0].clone();
 
-        assert!(blockstore
-            .insert_shred_return_duplicate(next_data_shred, &leader_schedule_next,)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(next_data_shred, &leader_schedule_next,)
+                .is_empty()
+        );
 
         // Remove the merkle root meta in order to simulate this blockstore originating from
         // an older version.
@@ -11638,16 +11711,20 @@ pub mod tests {
             .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
         blockstore.write_batch(write_batch).unwrap();
-        assert!(blockstore
-            .merkle_root_meta(next_coding_shreds[0].erasure_set())
-            .unwrap()
-            .is_none());
+        assert!(
+            blockstore
+                .merkle_root_meta(next_coding_shreds[0].erasure_set())
+                .unwrap()
+                .is_none()
+        );
 
         // Insert previous FEC set, although incorrectly chained we skip the duplicate check
         // as the merkle root meta is missing.
-        assert!(blockstore
-            .insert_shred_return_duplicate(coding_shred, &leader_schedule)
-            .is_empty());
+        assert!(
+            blockstore
+                .insert_shred_return_duplicate(coding_shred, &leader_schedule)
+                .is_empty()
+        );
     }
 
     #[test]

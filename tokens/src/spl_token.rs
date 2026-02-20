@@ -1,7 +1,7 @@
 use {
     crate::{
         args::{DistributeTokensArgs, SplTokenArgs},
-        commands::{get_fee_estimate_for_messages, Error, FundingSource, TypedAllocation},
+        commands::{Error, FundingSource, TypedAllocation, get_fee_estimate_for_messages},
     },
     console::style,
     solana_account_decoder::parse_token::{real_number_string, real_number_string_trimmed},

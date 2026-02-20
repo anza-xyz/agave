@@ -23,15 +23,15 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
-    solana_streamer::sendmmsg::{batch_send, SendPktsError},
+    solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
+        ConnectionWorkersScheduler,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler,
     },
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransportError,

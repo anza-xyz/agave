@@ -224,13 +224,15 @@ mod tests {
 
         if allow_prefund {
             // Succeed if prefund is allowed
-            assert!(TargetBuiltin::new_checked(
-                &bank,
-                &program_address,
-                &migration_target,
-                allow_prefund,
-            )
-            .is_ok());
+            assert!(
+                TargetBuiltin::new_checked(
+                    &bank,
+                    &program_address,
+                    &migration_target,
+                    allow_prefund,
+                )
+                .is_ok()
+            );
         } else {
             // Fail if prefund is not allowed
             assert_matches!(

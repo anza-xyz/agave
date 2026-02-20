@@ -5,8 +5,8 @@ pub mod datapoint;
 pub mod metrics;
 pub use crate::metrics::{flush, query, set_host_id, set_panic_hook, submit};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 // To track an external counter which cannot be reset and is always increasing

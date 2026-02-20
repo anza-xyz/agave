@@ -1,14 +1,14 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_feature_set::{
-        alpenglow, increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FeatureSet,
-        FEATURE_NAMES,
+        FEATURE_NAMES, FeatureSet, alpenglow, increase_cpi_account_info_limit,
+        raise_cpi_nesting_limit_to_8,
     },
     agave_snapshots::{
-        paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig, SnapshotInterval,
+        SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
     agave_syscalls::create_program_runtime_environment_v1,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::Receiver,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -17,7 +17,7 @@ use {
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
@@ -29,7 +29,7 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_geyser_plugin_manager::{
-        geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
+        GeyserPluginManagerRequest, geyser_plugin_manager::GeyserPluginManager,
     },
     solana_gossip::{
         cluster_info::{ClusterInfo, NodeConfig},
@@ -38,7 +38,7 @@ use {
     },
     solana_inflation::Inflation,
     solana_instruction::{AccountMeta, Instruction},
-    solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
     solana_ledger::{
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
         create_new_tmp_ledger,
@@ -47,7 +47,7 @@ use {
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{
-        find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
+        PortRange, SocketAddrSpace, find_available_ports_in_range, multihomed_sockets::BindIpAddrs,
     },
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
@@ -73,7 +73,7 @@ use {
         collections::{HashMap, HashSet},
         ffi::OsStr,
         fmt::Display,
-        fs::{self, remove_dir_all, File},
+        fs::{self, File, remove_dir_all},
         io::Read,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZero, NonZeroU64},
@@ -1496,9 +1496,11 @@ mod test {
             blockhash,
         );
 
-        assert!(rpc_client
-            .send_and_confirm_transaction(&transaction)
-            .is_ok());
+        assert!(
+            rpc_client
+                .send_and_confirm_transaction(&transaction)
+                .is_ok()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1522,10 +1524,12 @@ mod test {
             blockhash,
         );
 
-        assert!(rpc_client
-            .send_and_confirm_transaction(&transaction)
-            .await
-            .is_ok());
+        assert!(
+            rpc_client
+                .send_and_confirm_transaction(&transaction)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

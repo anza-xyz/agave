@@ -239,7 +239,7 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,
@@ -265,12 +265,14 @@ mod tests {
                 .map(|(node_ix, pubkey)| {
                     let mut contact_info = ContactInfo::new(*pubkey, 0_u64, 0_u16);
 
-                    assert!(contact_info
-                        .set_alpenglow((
-                            Ipv4Addr::LOCALHOST,
-                            8080_u16.saturating_add(node_ix as u16)
-                        ))
-                        .is_ok());
+                    assert!(
+                        contact_info
+                            .set_alpenglow((
+                                Ipv4Addr::LOCALHOST,
+                                8080_u16.saturating_add(node_ix as u16)
+                            ))
+                            .is_ok()
+                    );
 
                     contact_info
                 });
@@ -480,9 +482,10 @@ mod tests {
 
         // Epochs 2 - 6 should have entries
         for entry_ix in 2_u64..=6_u64 {
-            assert!(svc
-                .cache
-                .contains(&svc.cur_epoch(entry_ix.saturating_mul(base_slot))));
+            assert!(
+                svc.cache
+                    .contains(&svc.cur_epoch(entry_ix.saturating_mul(base_slot)))
+            );
         }
 
         // Accessing the cache after TTL should recalculate everything; the size remains 5, since

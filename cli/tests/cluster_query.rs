@@ -1,7 +1,7 @@
 use {
     solana_cli::{
         check_balance,
-        cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
+        cli::{CliCommand, CliConfig, process_command, request_and_confirm_airdrop},
         test_utils::check_ready,
     },
     solana_commitment_config::CommitmentConfig,

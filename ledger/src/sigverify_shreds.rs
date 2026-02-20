@@ -1,7 +1,7 @@
 #![allow(clippy::implicit_hasher)]
 use {
     crate::shred,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_nohash_hasher::BuildNoHashHasher,
@@ -104,7 +104,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::{seq::SliceRandom, Rng},
+        rand::{Rng, seq::SliceRandom},
         rayon::ThreadPoolBuilder,
         solana_entry::entry::Entry,
         solana_hash::Hash,

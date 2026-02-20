@@ -38,7 +38,7 @@ use {
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::Slot,
-    solana_message::{v0::LoadedAddresses, SimpleAddressLoader},
+    solana_message::{SimpleAddressLoader, v0::LoadedAddresses},
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
@@ -49,7 +49,7 @@ use {
     },
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
-        versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
+        versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     solana_transaction_error::AddressLoaderError,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},

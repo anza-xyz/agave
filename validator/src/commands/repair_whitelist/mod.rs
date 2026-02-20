@@ -3,7 +3,7 @@ use {
         admin_rpc_service,
         commands::{FromClapArgMatches, Result},
     },
-    clap::{values_t, App, AppSettings, Arg, ArgMatches, SubCommand},
+    clap::{App, AppSettings, Arg, ArgMatches, SubCommand, values_t},
     itertools::Itertools,
     solana_clap_utils::input_validators::is_pubkey,
     solana_cli_output::OutputFormat,

@@ -1,8 +1,8 @@
 use {
     super::{
+        DiskIndexValue, IndexValue, SlotListItem,
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         in_mem_accounts_index::InMemAccountsIndex,
-        DiskIndexValue, IndexValue, SlotListItem,
     },
     solana_time_utils::AtomicInterval,
     std::{

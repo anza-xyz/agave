@@ -5,8 +5,8 @@ use {
         transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
-            SharedBytes, StateContainer, TransactionViewState, TransactionViewStateContainer,
-            EXTRA_CAPACITY,
+            EXTRA_CAPACITY, SharedBytes, StateContainer, TransactionViewState,
+            TransactionViewStateContainer,
         },
     },
     crate::banking_stage::{
@@ -22,7 +22,7 @@ use {
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
-    solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
+    solana_clock::{Epoch, MAX_PROCESSING_AGE, Slot},
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
     solana_message::v0::LoadedAddresses,
@@ -579,15 +579,15 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::{Receiver, unbounded},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
-            v0, AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage,
+            AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage, v0,
         },
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{to_packet_batches, Packet, PacketBatch, RecycledPacketBatch},
+        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch, to_packet_batches},
         solana_pubkey::Pubkey,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,

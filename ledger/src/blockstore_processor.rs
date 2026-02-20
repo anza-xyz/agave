@@ -8,19 +8,20 @@ use {
         transaction_balances::compile_collected_balances,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
+    ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
     agave_votor_messages::migration::MigrationStatus,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::Sender,
     itertools::Itertools,
     log::*,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     scopeguard::defer,
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
-    solana_clock::{Slot, MAX_PROCESSING_AGE},
+    solana_clock::{MAX_PROCESSING_AGE, Slot},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
-    solana_entry::entry::{self, create_ticks, Entry, EntrySlice, EntryType},
+    solana_entry::entry::{self, Entry, EntrySlice, EntryType, create_ticks},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -49,11 +50,11 @@ use {
         transaction_processing_result::ProcessedTransaction,
         transaction_processor::ExecutionRecordingConfig,
     },
-    solana_svm_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
+    solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_transaction::{
-        sanitized::SanitizedTransaction, versioned::VersionedTransaction,
-        TransactionVerificationMode,
+        TransactionVerificationMode, sanitized::SanitizedTransaction,
+        versioned::VersionedTransaction,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
@@ -66,12 +67,11 @@ use {
         ops::Index,
         path::PathBuf,
         result,
-        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
+        sync::{Arc, Mutex, RwLock, atomic::AtomicBool},
         time::{Duration, Instant},
         vec::Drain,
     },
     thiserror::Error,
-    ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
@@ -2368,17 +2368,17 @@ pub mod tests {
         crate::{
             blockstore_options::{AccessType, BlockstoreOptions},
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
         },
         assert_matches::assert_matches,
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         solana_account::{AccountSharedData, WritableAccount},
         solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
-        solana_instruction::{error::InstructionError, Instruction},
+        solana_instruction::{Instruction, error::InstructionError},
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::declare_process_instruction,
@@ -2386,7 +2386,7 @@ pub mod tests {
         solana_runtime::{
             bank::bank_hash_details::SlotDetails,
             genesis_utils::{
-                self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
+                self, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
             installed_scheduler_pool::{
                 MockInstalledScheduler, MockUninstalledScheduler, SchedulerAborted,
@@ -2402,7 +2402,7 @@ pub mod tests {
         solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
-            vote_state::{TowerSync, VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
         },
         std::{collections::BTreeSet, slice, sync::RwLock},
         test_case::{test_case, test_matrix},
@@ -2782,12 +2782,14 @@ pub mod tests {
         // One fork, other one is ignored b/c not a descendant of the root
         assert_eq!(frozen_bank_slots(&bank_forks), vec![4]);
 
-        assert!(&bank_forks[4]
-            .parents()
-            .iter()
-            .map(|bank| bank.slot())
-            .next()
-            .is_none());
+        assert!(
+            &bank_forks[4]
+                .parents()
+                .iter()
+                .map(|bank| bank.slot())
+                .next()
+                .is_none()
+        );
 
         // Ensure bank_forks holds the right banks
         verify_fork_infos(&bank_forks);
@@ -3075,12 +3077,14 @@ pub mod tests {
         assert_eq!(frozen_bank_slots(&bank_forks), vec![last_slot + 1]);
 
         // The latest root should have purged all its parents
-        assert!(&bank_forks[last_slot + 1]
-            .parents()
-            .iter()
-            .map(|bank| bank.slot())
-            .next()
-            .is_none());
+        assert!(
+            &bank_forks[last_slot + 1]
+                .parents()
+                .iter()
+                .map(|bank| bank.slot())
+                .next()
+                .is_none()
+        );
     }
 
     #[test]

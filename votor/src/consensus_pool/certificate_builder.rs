@@ -2,7 +2,7 @@ use {
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
-    solana_signer_store::{encode_base2, encode_base3, EncodeError},
+    solana_signer_store::{EncodeError, encode_base2, encode_base3},
     thiserror::Error,
 };
 
@@ -279,7 +279,7 @@ mod tests {
             Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
         },
         solana_hash::Hash,
-        solana_signer_store::{decode, Decoded},
+        solana_signer_store::{Decoded, decode},
     };
 
     #[test]

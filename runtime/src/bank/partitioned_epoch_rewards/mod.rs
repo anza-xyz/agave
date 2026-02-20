@@ -426,14 +426,14 @@ mod tests {
             bank::tests::create_genesis_config,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
         },
         assert_matches::assert_matches,
-        solana_account::{state_traits::StateMut, Account},
-        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_account::{Account, state_traits::StateMut},
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -443,8 +443,8 @@ mod tests {
         solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
-        solana_vote_interface::state::{VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
-        solana_vote_program::vote_state::{self, handler::VoteStateHandle, TowerSync},
+        solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
+        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandle},
         std::sync::{Arc, RwLock},
     };
 
@@ -845,9 +845,11 @@ mod tests {
                 assert!(curr_bank.is_calculated());
 
                 // after reward calculation, the cache should be filled.
-                assert!(curr_bank
-                    .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
-                    .is_some());
+                assert!(
+                    curr_bank
+                        .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
+                        .is_some()
+                );
                 assert_eq!(post_cap, pre_cap);
 
                 // Make a root the bank, which is the first bank in the epoch.
@@ -939,9 +941,11 @@ mod tests {
                 assert!(curr_bank.is_calculated());
 
                 // after reward calculation, the cache should be filled.
-                assert!(curr_bank
-                    .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
-                    .is_some());
+                assert!(
+                    curr_bank
+                        .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
+                        .is_some()
+                );
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
                 starting_hash = Some(curr_bank.parent_hash);
             } else if slot == SLOTS_PER_EPOCH + 1 {
@@ -955,9 +959,11 @@ mod tests {
 
                 // The first block of the epoch has not rooted yet, so the cache
                 // should still have the results.
-                assert!(curr_bank
-                    .get_epoch_rewards_from_cache(&starting_hash.unwrap())
-                    .is_some());
+                assert!(
+                    curr_bank
+                        .get_epoch_rewards_from_cache(&starting_hash.unwrap())
+                        .is_some()
+                );
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
 
                 // 1st reward distribution block, state should be partitioned.

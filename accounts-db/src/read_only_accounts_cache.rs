@@ -4,12 +4,12 @@
 use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     ahash::random_state::RandomState as AHashRandomState,
-    dashmap::{mapref::entry::Entry, DashMap},
+    dashmap::{DashMap, mapref::entry::Entry},
     log::*,
     rand::{
+        Rng, SeedableRng,
         rngs::SmallRng,
         seq::{IndexedRandom as _, IteratorRandom},
-        Rng, SeedableRng,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
@@ -18,8 +18,8 @@ use {
     std::{
         mem::ManuallyDrop,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         thread,
         time::{Duration, Instant},

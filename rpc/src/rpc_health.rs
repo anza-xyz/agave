@@ -3,8 +3,8 @@ use {
     solana_clock::Slot,
     solana_ledger::blockstore::Blockstore,
     std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -132,7 +132,7 @@ pub mod tests {
         solana_clock::UnixTimestamp,
         solana_hash::Hash,
         solana_ledger::{
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
         },
         solana_pubkey::Pubkey,

@@ -10,11 +10,11 @@ use {
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
-    solana_account::{state_traits::StateMut, ReadableAccount},
+    solana_account::{ReadableAccount, state_traits::StateMut},
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{
-            stats::PurgeStats, AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection,
+            AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection, stats::PurgeStats,
         },
         storable_accounts::StorableAccountsBySlot,
     },
@@ -26,8 +26,8 @@ use {
     std::{
         collections::HashSet,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
         },
     },
 };
@@ -369,7 +369,7 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_genesis_config::create_genesis_config,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_pubkey::Pubkey,
@@ -402,12 +402,16 @@ mod tests {
         };
         minimizer.get_vote_accounts();
 
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&genesis_config_info.voting_keypair.pubkey()));
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&genesis_config_info.validator_pubkey));
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&genesis_config_info.voting_keypair.pubkey())
+        );
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&genesis_config_info.validator_pubkey)
+        );
     }
 
     #[test]
@@ -514,9 +518,11 @@ mod tests {
         assert_eq!(minimizer.minimized_account_set.len(), 3);
         assert!(minimizer.minimized_account_set.contains(&non_program_id));
         assert!(minimizer.minimized_account_set.contains(&program_id));
-        assert!(minimizer
-            .minimized_account_set
-            .contains(&programdata_address));
+        assert!(
+            minimizer
+                .minimized_account_set
+                .contains(&programdata_address)
+        );
     }
 
     #[test]

@@ -1,10 +1,10 @@
 use {
     super::{
+        Field, Result, VoteStateViewError,
         field_frames::{
             AuthorizedVotersListFrame, EpochCreditsListFrame, LandedVotesListFrame, ListFrame,
             PriorVotersFrame, RootSlotFrame,
         },
-        Field, Result, VoteStateViewError,
     },
     solana_pubkey::Pubkey,
     solana_vote_interface::state::BlockTimestamp,

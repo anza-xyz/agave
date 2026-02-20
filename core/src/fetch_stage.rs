@@ -2,7 +2,7 @@
 
 use {
     crate::result::{Error, Result},
-    crossbeam_channel::{unbounded, RecvTimeoutError, TrySendError},
+    crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
     solana_packet::PacketFlags,
@@ -17,10 +17,10 @@ use {
     std::{
         net::UdpSocket,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::Duration,
     },
 };
@@ -163,16 +163,18 @@ impl FetchStage {
 
         let fwd_thread_hdl = Builder::new()
             .name("solFetchStgFwRx".to_string())
-            .spawn(move || loop {
-                if let Err(e) =
-                    Self::handle_forwarded_packets(&forward_receiver, &sender, &poh_recorder)
-                {
-                    match e {
-                        Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
-                        Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
-                        Error::Recv(_) => break,
-                        Error::Send => break,
-                        _ => error!("{e:?}"),
+            .spawn(move || {
+                loop {
+                    if let Err(e) =
+                        Self::handle_forwarded_packets(&forward_receiver, &sender, &poh_recorder)
+                    {
+                        match e {
+                            Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
+                            Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
+                            Error::Recv(_) => break,
+                            Error::Send => break,
+                            _ => error!("{e:?}"),
+                        }
                     }
                 }
             })
@@ -180,13 +182,15 @@ impl FetchStage {
 
         let metrics_thread_hdl = Builder::new()
             .name("solFetchStgMetr".to_string())
-            .spawn(move || loop {
-                sleep(Duration::from_secs(1));
+            .spawn(move || {
+                loop {
+                    sleep(Duration::from_secs(1));
 
-                tpu_vote_stats.report();
+                    tpu_vote_stats.report();
 
-                if exit.load(Ordering::Relaxed) {
-                    return;
+                    if exit.load(Ordering::Relaxed) {
+                        return;
+                    }
                 }
             })
             .unwrap();

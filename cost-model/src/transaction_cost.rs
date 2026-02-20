@@ -327,7 +327,7 @@ mod tests {
     use {
         super::*,
         crate::cost_model::CostModel,
-        agave_feature_set::{bls_pubkey_management_in_vote_account, FeatureSet},
+        agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,

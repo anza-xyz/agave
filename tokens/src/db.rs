@@ -1,6 +1,6 @@
 use {
     chrono::prelude::*,
-    pickledb::{error::Error, PickleDb, PickleDbDumpPolicy},
+    pickledb::{PickleDb, PickleDbDumpPolicy, error::Error},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -375,10 +375,11 @@ mod tests {
             None
         );
 
-        assert!(db
-            .get::<TransactionInfo>(&signature.to_string())
-            .unwrap()
-            .finalized_date
-            .is_some());
+        assert!(
+            db.get::<TransactionInfo>(&signature.to_string())
+                .unwrap()
+                .finalized_date
+                .is_some()
+        );
     }
 }

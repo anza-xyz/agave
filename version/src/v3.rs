@@ -1,6 +1,6 @@
 use {
     crate::{client_ids::ClientId, compute_commit},
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     serde::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
     solana_serde_varint as serde_varint,

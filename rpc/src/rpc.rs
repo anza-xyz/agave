@@ -8,21 +8,20 @@ use {
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     bincode::{config::Options, serialize},
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
+        BoxFuture, Error, Metadata, Result,
         futures::future::{self, FutureExt, OptionFuture},
         types::error,
-        BoxFuture, Error, Metadata, Result,
     },
     jsonrpc_derive::rpc,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_decoder::{
-        encode_ui_account,
+        MAX_BASE58_BYTES, UiAccount, UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
         parse_account_data::SplTokenAdditionalDataV2,
-        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v3, UiTokenAmount},
-        UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
+        parse_token::{UiTokenAmount, is_known_spl_token_id, token_amount_to_ui_amount_v3},
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
@@ -31,7 +30,7 @@ use {
         },
     },
     solana_client::connection_cache::Protocol,
-    solana_clock::{Slot, UnixTimestamp, MAX_PROCESSING_AGE},
+    solana_clock::{MAX_PROCESSING_AGE, Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::Entry,
     solana_epoch_info::EpochInfo,
@@ -50,17 +49,17 @@ use {
     solana_metrics::inc_new_counter_info,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_pack::Pack,
-    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_rpc_client_api::{
         config::*,
         custom_error::RpcCustomError,
         filter::{Memcmp, RpcFilterType},
         request::{
-            TokenAccountsFilter, DELINQUENT_VALIDATOR_SLOT_DISTANCE,
-            MAX_GET_CONFIRMED_BLOCKS_RANGE, MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
-            MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
-            MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
+            DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_GET_CONFIRMED_BLOCKS_RANGE,
+            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
+            MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
             MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY, NUM_LARGEST_ACCOUNTS,
+            TokenAccountsFilter,
         },
         response::{Response as RpcResponse, *},
     },
@@ -68,7 +67,7 @@ use {
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
-        non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
+        non_circulating_supply::{NonCirculatingSupply, calculate_non_circulating_supply},
         prioritization_fee_cache::PrioritizationFeeCache,
         stake_utils,
     },
@@ -78,17 +77,16 @@ use {
     solana_signer::Signer,
     solana_storage_bigtable::Error as StorageError,
     solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
+        sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
         versioned::VersionedTransaction,
     },
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
-        map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
-        ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta,
-        EncodedConfirmedTransactionWithStatusMeta, Reward, RewardType, Rewards,
-        TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
-        UiConfirmedBlock, UiTransactionEncoding,
+        BlockEncodingOptions, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
+        ConfirmedTransactionWithStatusMeta, EncodedConfirmedTransactionWithStatusMeta, Reward,
+        RewardType, Rewards, TransactionBinaryEncoding, TransactionConfirmationStatus,
+        TransactionStatus, UiConfirmedBlock, UiTransactionEncoding, map_inner_instructions,
     },
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
@@ -98,21 +96,21 @@ use {
     },
     spl_token_2022_interface::{
         extension::{
-            interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
             BaseStateWithExtensions, StateWithExtensions,
+            interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
         },
         state::{Account as TokenAccount, Mint},
     },
     std::{
         any::type_name,
-        cmp::{max, min, Reverse},
+        cmp::{Reverse, max, min},
         collections::{BinaryHeap, HashMap, HashSet},
         convert::TryFrom,
         net::SocketAddr,
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::Duration,
     },
@@ -3452,7 +3450,7 @@ pub mod rpc_full {
     use {
         super::*,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::{parse_ui_inner_instructions, UiLoadedAddresses},
+        solana_transaction_status::{UiLoadedAddresses, parse_ui_inner_instructions},
     };
     #[rpc]
     pub trait Full {
@@ -3750,9 +3748,7 @@ pub mod rpc_full {
             debug!("request_airdrop rpc request received");
             trace!(
                 "request_airdrop id={} lamports={} config: {:?}",
-                pubkey_str,
-                lamports,
-                &config
+                pubkey_str, lamports, &config
             );
 
             let faucet_addr = meta.config.faucet_addr.ok_or_else(Error::invalid_request)?;
@@ -4539,11 +4535,11 @@ pub mod tests {
         },
         agave_reserved_account_keys::ReservedAccountKeys,
         bincode::deserialize,
-        jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
+        jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{state_traits::StateMut, Account},
-        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_account::{Account, state_traits::StateMut},
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
@@ -4552,17 +4548,17 @@ pub mod tests {
         solana_entry::entry::next_versioned_entry,
         solana_fee_calculator::FeeRateGovernor,
         solana_gossip::{contact_info::ContactInfo, socketaddr},
-        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_instruction::{AccountMeta, Instruction, error::InstructionError},
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore_meta::PerfSampleV2,
             blockstore_processor::fill_blockstore_slot_with_ticks,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path,
         },
         solana_message::{
-            v0::{self, MessageAddressTableLookup},
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
+            v0::{self, MessageAddressTableLookup},
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_program_option::COption,
@@ -4594,7 +4590,7 @@ pub mod tests {
         solana_system_transaction as system_transaction,
         solana_sysvar::slot_hashes::SlotHashes,
         solana_time_utils::slot_duration_from_slots_per_year,
-        solana_transaction::{versioned::TransactionVersion, Transaction},
+        solana_transaction::{Transaction, versioned::TransactionVersion},
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
@@ -4603,14 +4599,14 @@ pub mod tests {
         solana_vote_interface::state::VoteStateV4,
         solana_vote_program::{
             vote_instruction,
-            vote_state::{TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteInit, VoteStateVersions},
         },
         spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::{
             extension::{
+                BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
                 immutable_owner::ImmutableOwner, memo_transfer::MemoTransfer,
-                mint_close_authority::MintCloseAuthority, BaseStateWithExtensionsMut,
-                ExtensionType, StateWithExtensionsMut,
+                mint_close_authority::MintCloseAuthority,
             },
             state::{AccountState as TokenAccountState, Mint},
         },
@@ -5661,8 +5657,8 @@ pub mod tests {
     }
 
     #[test]
-    fn test_encode_account_does_not_throw_despite_data_too_large_to_base58_encode_because_dataslice_makes_it_fit(
-    ) {
+    fn test_encode_account_does_not_throw_despite_data_too_large_to_base58_encode_because_dataslice_makes_it_fit()
+     {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::create_from_existing_shared_data(
@@ -5685,8 +5681,8 @@ pub mod tests {
     }
 
     #[test]
-    fn test_encode_account_does_not_throw_despite_dataslice_being_too_large_to_base58_encode_because_account_is_small_enough_to_fit(
-    ) {
+    fn test_encode_account_does_not_throw_despite_dataslice_being_too_large_to_base58_encode_because_account_is_small_enough_to_fit()
+     {
         let data = vec![42; MAX_BASE58_BYTES];
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::create_from_existing_shared_data(
@@ -5709,8 +5705,8 @@ pub mod tests {
     }
 
     #[test]
-    fn test_encode_account_does_not_throw_despite_account_and_dataslice_being_too_large_to_base58_encode_because_their_intersection_fits(
-    ) {
+    fn test_encode_account_does_not_throw_despite_account_and_dataslice_being_too_large_to_base58_encode_because_their_intersection_fits()
+     {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::create_from_existing_shared_data(
@@ -7842,10 +7838,12 @@ pub mod tests {
             serde_json::from_value(result["result"].clone()).unwrap();
 
         assert!(vote_account_status.delinquent.is_empty());
-        assert!(!vote_account_status
-            .current
-            .iter()
-            .any(|x| x.epoch_credits.len() != MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY));
+        assert!(
+            !vote_account_status
+                .current
+                .iter()
+                .any(|x| x.epoch_credits.len() != MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY)
+        );
 
         // Advance bank with no voting
         rpc.advance_bank_to_confirmed_slot(bank.slot() + TEST_SLOTS_PER_EPOCH);
@@ -8735,46 +8733,54 @@ pub mod tests {
         );
 
         // Can't filter on account type for token-v3
-        assert!(get_spl_token_owner_filter(
-            &spl_generic_token::token::id(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
-            ],
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            get_spl_token_owner_filter(
+                &spl_generic_token::token::id(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
 
         // Filtering on mint instead of owner
-        assert!(get_spl_token_owner_filter(
-            &spl_generic_token::token::id(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, owner.to_bytes().to_vec())),
-                RpcFilterType::DataSize(165)
-            ],
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            get_spl_token_owner_filter(
+                &spl_generic_token::token::id(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, owner.to_bytes().to_vec())),
+                    RpcFilterType::DataSize(165)
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
 
         // Wrong program id
-        assert!(get_spl_token_owner_filter(
-            &Pubkey::new_unique(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
-                RpcFilterType::DataSize(165)
-            ],
-        )
-        .unwrap()
-        .is_none());
-        assert!(get_spl_token_owner_filter(
-            &Pubkey::new_unique(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
-            ],
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            get_spl_token_owner_filter(
+                &Pubkey::new_unique(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
+                    RpcFilterType::DataSize(165)
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            get_spl_token_owner_filter(
+                &Pubkey::new_unique(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
 
         // Test invalid filters
 
@@ -8782,15 +8788,18 @@ pub mod tests {
         let owner = Pubkey::new_unique();
         let mut first_half_bytes = owner.to_bytes().to_vec();
         first_half_bytes.resize(16, 0);
-        assert!(get_spl_token_owner_filter(
-            &spl_generic_token::token::id(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, first_half_bytes)),
-                RpcFilterType::DataSize(165)
-            ],
-        )
-        .is_err_and(|err| err.code == ErrorCode::InvalidParams
-            && err.message == "Incorrect byte length 16 for SPL token owner filter, expected 32"));
+        assert!(
+            get_spl_token_owner_filter(
+                &spl_generic_token::token::id(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, first_half_bytes)),
+                    RpcFilterType::DataSize(165)
+                ],
+            )
+            .is_err_and(|err| err.code == ErrorCode::InvalidParams
+                && err.message
+                    == "Incorrect byte length 16 for SPL token owner filter, expected 32")
+        );
     }
 
     #[test]
@@ -8839,46 +8848,54 @@ pub mod tests {
         );
 
         // Can't filter on account type for token-v3
-        assert!(get_spl_token_mint_filter(
-            &spl_generic_token::token::id(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
-            ],
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            get_spl_token_mint_filter(
+                &spl_generic_token::token::id(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
 
         // Filtering on owner instead of mint
-        assert!(get_spl_token_mint_filter(
-            &spl_generic_token::token::id(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, mint.to_bytes().to_vec())),
-                RpcFilterType::DataSize(165)
-            ],
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            get_spl_token_mint_filter(
+                &spl_generic_token::token::id(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, mint.to_bytes().to_vec())),
+                    RpcFilterType::DataSize(165)
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
 
         // Wrong program id
-        assert!(get_spl_token_mint_filter(
-            &Pubkey::new_unique(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
-                RpcFilterType::DataSize(165)
-            ],
-        )
-        .unwrap()
-        .is_none());
-        assert!(get_spl_token_mint_filter(
-            &Pubkey::new_unique(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
-            ],
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            get_spl_token_mint_filter(
+                &Pubkey::new_unique(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
+                    RpcFilterType::DataSize(165)
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            get_spl_token_mint_filter(
+                &Pubkey::new_unique(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
+                ],
+            )
+            .unwrap()
+            .is_none()
+        );
 
         // Test invalid filters
 
@@ -8886,18 +8903,21 @@ pub mod tests {
         let owner = Pubkey::new_unique();
         let mut first_half_bytes = owner.to_bytes().to_vec();
         first_half_bytes.resize(16, 0);
-        assert!(get_spl_token_mint_filter(
-            &spl_generic_token::token::id(),
-            &[
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, first_half_bytes)),
-                RpcFilterType::DataSize(165)
-            ],
-        )
-        .is_err_and(|err| {
-            print!("{err:?}");
-            err.code == ErrorCode::InvalidParams
-                && err.message == "Incorrect byte length 16 for SPL token mint filter, expected 32"
-        }));
+        assert!(
+            get_spl_token_mint_filter(
+                &spl_generic_token::token::id(),
+                &[
+                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, first_half_bytes)),
+                    RpcFilterType::DataSize(165)
+                ],
+            )
+            .is_err_and(|err| {
+                print!("{err:?}");
+                err.code == ErrorCode::InvalidParams
+                    && err.message
+                        == "Incorrect byte length 16 for SPL token mint filter, expected 32"
+            })
+        );
     }
 
     #[test]

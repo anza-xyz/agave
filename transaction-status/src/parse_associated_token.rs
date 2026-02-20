@@ -1,10 +1,10 @@
 use {
     crate::parse_instruction::{
-        check_num_accounts, ParsableProgram, ParseInstructionError, ParsedInstructionEnum,
+        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
     borsh::BorshDeserialize,
     serde_json::json,
-    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
     spl_associated_token_account_interface::instruction::AssociatedTokenAccountInstruction,
 };
 
@@ -156,11 +156,13 @@ mod test {
 
         // after popping another account, parsing should fail
         compiled_instruction.accounts.pop();
-        assert!(parse_associated_token(
-            compiled_instruction,
-            &AccountKeys::new(&message.account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_associated_token(
+                compiled_instruction,
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -194,11 +196,13 @@ mod test {
             }
         );
         compiled_instruction.accounts.pop();
-        assert!(parse_associated_token(
-            compiled_instruction,
-            &AccountKeys::new(&message.account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_associated_token(
+                compiled_instruction,
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -236,11 +240,13 @@ mod test {
             }
         );
         compiled_instruction.accounts.pop();
-        assert!(parse_associated_token(
-            compiled_instruction,
-            &AccountKeys::new(&message.account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_associated_token(
+                compiled_instruction,
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -292,10 +298,12 @@ mod test {
             }
         );
         compiled_instruction.accounts.pop();
-        assert!(parse_associated_token(
-            compiled_instruction,
-            &AccountKeys::new(&message.account_keys, None)
-        )
-        .is_err());
+        assert!(
+            parse_associated_token(
+                compiled_instruction,
+                &AccountKeys::new(&message.account_keys, None)
+            )
+            .is_err()
+        );
     }
 }

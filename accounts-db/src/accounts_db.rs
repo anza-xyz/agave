@@ -24,7 +24,7 @@ pub mod stats;
 pub(crate) mod tests;
 
 pub use accounts_db_config::{
-    AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+    ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
@@ -32,8 +32,8 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
             AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
@@ -45,9 +45,10 @@ use {
         accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
-            in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
-            AccountsIndexRootsStats, AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList,
-            RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, Startup, UpsertReclaim,
+            AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
+            AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanConfig,
+            ScanFilter, ScanResult, SlotList, Startup, UpsertReclaim,
+            in_mem_accounts_index::StartupStats,
         },
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
@@ -65,8 +66,8 @@ use {
     bv::BitVec,
     dashmap::{DashMap, DashSet},
     log::*,
-    rand::{rng, Rng},
-    rayon::{prelude::*, ThreadPool},
+    rand::{Rng, rng},
+    rayon::{ThreadPool, prelude::*},
     seqlock::SeqLock,
     smallvec::SmallVec,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -86,8 +87,8 @@ use {
         ops::RangeBounds,
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
             Arc, Condvar, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         },
         thread,
         time::{Duration, Instant},
@@ -1398,9 +1399,10 @@ impl AccountsDb {
                 }
             });
 
-        let (pubkeys_removed_from_accounts_index, handle_dead_keys_us) = measure_us!(self
-            .accounts_index
-            .handle_dead_keys(&dead_keys, &self.account_indexes));
+        let (pubkeys_removed_from_accounts_index, handle_dead_keys_us) = measure_us!(
+            self.accounts_index
+                .handle_dead_keys(&dead_keys, &self.account_indexes)
+        );
 
         self.stats
             .purge_exact_count
@@ -1610,8 +1612,7 @@ impl AccountsDb {
         timings.dirty_pubkeys_count = Self::count_pubkeys(&candidates);
         trace!(
             "dirty_stores.len: {} pubkeys.len: {}",
-            dirty_stores_len,
-            timings.dirty_pubkeys_count,
+            dirty_stores_len, timings.dirty_pubkeys_count,
         );
         dirty_store_processing_time.stop();
         timings.dirty_store_processing_us += dirty_store_processing_time.as_us();
@@ -3488,10 +3489,10 @@ impl AccountsDb {
         slot: Slot,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
         storage_scan_func: impl for<'a, 'b, 'storage> Fn(
-                &'b mut B,
-                &'a StoredAccountInfoWithoutData<'storage>,
-                Option<&'storage [u8]>, // account data
-            ) + Sync,
+            &'b mut B,
+            &'a StoredAccountInfoWithoutData<'storage>,
+            Option<&'storage [u8]>, // account data
+        ) + Sync,
         scan_account_storage_data: ScanAccountStorageData,
     ) -> ScanStorageResult<R, B>
     where
@@ -4229,10 +4230,11 @@ impl AccountsDb {
         // 2) Those slots/roots should have already been purged from the accounts index root
         // tracking metadata via `accounts_index.clean_dead_slot()`.
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
-        assert!(self
-            .accounts_index
-            .get_rooted_from_list(removed_slots.clone())
-            .is_empty());
+        assert!(
+            self.accounts_index
+                .get_rooted_from_list(removed_slots.clone())
+                .is_empty()
+        );
         safety_checks_elapsed.stop();
         purge_stats
             .safety_checks_elapsed
@@ -4290,10 +4292,11 @@ impl AccountsDb {
         is_dead: bool,
     ) {
         // Slot purged from cache should not exist in the backing store
-        assert!(self
-            .storage
-            .get_slot_storage_entry_shrinking_in_progress_ok(purged_slot)
-            .is_none());
+        assert!(
+            self.storage
+                .get_slot_storage_entry_shrinking_in_progress_ok(purged_slot)
+                .is_none()
+        );
         let mut num_purged_keys = 0;
         let (reclaims, _) = self.purge_keys_exact(pubkeys.into_iter().map(|key| {
             num_purged_keys += 1;
@@ -4817,8 +4820,8 @@ impl AccountsDb {
                 "flush_slot_cache",
             );
 
-            let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
-                ._store_accounts_frozen(
+            let (store_accounts_timing_inner, store_accounts_total_inner_us) =
+                measure_us!(self._store_accounts_frozen(
                     (slot, &accounts[..]),
                     &flushed_store,
                     reclaim_method,
@@ -4908,12 +4911,13 @@ impl AccountsDb {
 
             // Nobody else should have been purging this slot, so should not have been removed
             // from `self.remove_unrooted_slots_synchronization`.
-            assert!(self
-                .remove_unrooted_slots_synchronization
-                .slots_under_contention
-                .lock()
-                .unwrap()
-                .remove(&slot));
+            assert!(
+                self.remove_unrooted_slots_synchronization
+                    .slots_under_contention
+                    .lock()
+                    .unwrap()
+                    .remove(&slot)
+            );
 
             // Signal to any threads blocked on `remove_unrooted_slots(slot)` that we have finished
             // flushing
@@ -6249,9 +6253,10 @@ impl AccountsDb {
             })
             .expect("must scan accounts storage");
 
-        let (insert_info, insert_time_us) = measure_us!(self
-            .accounts_index
-            .insert_new_if_missing_into_primary_index(slot, keyed_account_infos));
+        let (insert_info, insert_time_us) = measure_us!(
+            self.accounts_index
+                .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
+        );
 
         if insert_info.count > 0 {
             // push summary info for store_id into thread state (all threads build a piece of full list)

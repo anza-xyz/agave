@@ -3,35 +3,35 @@ use {
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     bip39::{Mnemonic, MnemonicType, Seed},
     clap::{
-        builder::ValueParser, crate_description, crate_name, value_parser, Arg, ArgAction,
-        ArgMatches, Command,
+        Arg, ArgAction, ArgMatches, Command, builder::ValueParser, crate_description, crate_name,
+        value_parser,
     },
-    solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
+    solana_bls_signatures::{Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair},
     solana_clap_v3_utils::{
+        DisplayError,
         input_parsers::{
-            signer::{SignerSource, SignerSourceParserBuilder},
             STDOUT_OUTFILE_TOKEN,
+            signer::{SignerSource, SignerSourceParserBuilder},
         },
         keygen::{
-            check_for_overwrite,
+            KeyGenerationCommonArgs, NO_OUTFILE_ARG, check_for_overwrite,
             derivation_path::{acquire_derivation_path, derivation_path_arg},
             mnemonic::{
                 acquire_passphrase_and_message, no_passphrase_and_message, try_get_language,
                 try_get_word_count,
             },
-            no_outfile_arg, KeyGenerationCommonArgs, NO_OUTFILE_ARG,
+            no_outfile_arg,
         },
         keypair::{
-            keypair_from_seed_phrase, keypair_from_source, signer_from_source,
-            SKIP_SEED_PHRASE_VALIDATION_ARG,
+            SKIP_SEED_PHRASE_VALIDATION_ARG, keypair_from_seed_phrase, keypair_from_source,
+            signer_from_source,
         },
-        DisplayError,
     },
-    solana_cli_config::{Config, CONFIG_FILE},
+    solana_cli_config::{CONFIG_FILE, Config},
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{
-        keypair_from_seed, seed_derivable::keypair_from_seed_and_derivation_path, write_keypair,
-        write_keypair_file, Keypair,
+        Keypair, keypair_from_seed, seed_derivable::keypair_from_seed_and_derivation_path,
+        write_keypair, write_keypair_file,
     },
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -42,8 +42,8 @@ use {
         error,
         rc::Rc,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread,
         time::Instant,
@@ -729,11 +729,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                         .chars()
                         .map(|c| {
                             let up = c.to_ascii_uppercase();
-                            if BS58_ALPHABET.contains(up) {
-                                up
-                            } else {
-                                c
-                            }
+                            if BS58_ALPHABET.contains(up) { up } else { c }
                         })
                         .collect()
                 } else {
@@ -762,101 +758,103 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                     let passphrase_message = passphrase_message.clone();
                     let derivation_path = derivation_path.clone();
 
-                    thread::spawn(move || loop {
-                        if done.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        let attempts = attempts.fetch_add(1, Ordering::Relaxed);
-                        if attempts.is_multiple_of(1_000_000) {
-                            println!(
-                                "Searched {} keypairs in {}s. {} matches found.",
-                                attempts,
-                                start.elapsed().as_secs(),
-                                found.load(Ordering::Relaxed),
-                            );
-                        }
-                        let (keypair, phrase) = if use_mnemonic {
-                            let mnemonic = Mnemonic::new(mnemonic_type, language);
-                            let seed = Seed::new(&mnemonic, &passphrase);
-                            let keypair = match derivation_path {
-                                Some(_) => keypair_from_seed_and_derivation_path(
-                                    seed.as_bytes(),
-                                    derivation_path.clone(),
-                                ),
-                                None => keypair_from_seed(seed.as_bytes()),
+                    thread::spawn(move || {
+                        loop {
+                            if done.load(Ordering::Relaxed) {
+                                break;
                             }
-                            .unwrap();
-                            (keypair, mnemonic.phrase().to_string())
-                        } else {
-                            (Keypair::new(), "".to_string())
-                        };
-                        // Skip keypairs that will never match the user specified prefix
-                        if skip_len_44_pubkeys
-                            && keypair.pubkey() >= smallest_length_44_public_key::PUBKEY
-                        {
-                            continue;
-                        }
-                        let mut pubkey = bs58::encode(keypair.pubkey()).into_string();
-                        if ignore_case {
-                            pubkey = pubkey.to_lowercase();
-                        }
-                        let mut total_matches_found = 0;
-                        for i in 0..grind_matches_thread_safe.len() {
-                            if grind_matches_thread_safe[i].count.load(Ordering::Relaxed) == 0 {
-                                total_matches_found += 1;
+                            let attempts = attempts.fetch_add(1, Ordering::Relaxed);
+                            if attempts.is_multiple_of(1_000_000) {
+                                println!(
+                                    "Searched {} keypairs in {}s. {} matches found.",
+                                    attempts,
+                                    start.elapsed().as_secs(),
+                                    found.load(Ordering::Relaxed),
+                                );
+                            }
+                            let (keypair, phrase) = if use_mnemonic {
+                                let mnemonic = Mnemonic::new(mnemonic_type, language);
+                                let seed = Seed::new(&mnemonic, &passphrase);
+                                let keypair = match derivation_path {
+                                    Some(_) => keypair_from_seed_and_derivation_path(
+                                        seed.as_bytes(),
+                                        derivation_path.clone(),
+                                    ),
+                                    None => keypair_from_seed(seed.as_bytes()),
+                                }
+                                .unwrap();
+                                (keypair, mnemonic.phrase().to_string())
+                            } else {
+                                (Keypair::new(), "".to_string())
+                            };
+                            // Skip keypairs that will never match the user specified prefix
+                            if skip_len_44_pubkeys
+                                && keypair.pubkey() >= smallest_length_44_public_key::PUBKEY
+                            {
                                 continue;
                             }
-
-                            // A check immediately after arg parsing ensures that some keypair
-                            // search criteria is supplied. That is, one of `.starts` or `.ends`
-                            // will be a non-empty `String`. If the search criteria only specifies
-                            // one of these parameters, an empty `String` is used for the other.
-                            //
-                            // `String::starts_with("")` and `String::ends_with("")` return true for
-                            // for all strings so calling those two functions with the match strings
-                            // is sufficient for evaluating a candidate keypair.
-                            //
-                            // Note that the below logic works if no search criteria is given - no
-                            // search criteria means any pubkey will match
-                            let pubkey_matches_start =
-                                pubkey.starts_with(&grind_matches_thread_safe[i].starts);
-                            let pubkey_matches_end =
-                                pubkey.ends_with(&grind_matches_thread_safe[i].ends);
-
-                            if pubkey_matches_start && pubkey_matches_end {
-                                let _found = found.fetch_add(1, Ordering::Relaxed);
-                                grind_matches_thread_safe[i]
-                                    .count
-                                    .fetch_sub(1, Ordering::Relaxed);
-                                if !no_outfile {
-                                    write_keypair_file(
-                                        &keypair,
-                                        format!("{}.json", keypair.pubkey()),
-                                    )
-                                    .unwrap();
-                                    println!(
-                                        "Wrote keypair to {}",
-                                        &format!("{}.json", keypair.pubkey())
-                                    );
+                            let mut pubkey = bs58::encode(keypair.pubkey()).into_string();
+                            if ignore_case {
+                                pubkey = pubkey.to_lowercase();
+                            }
+                            let mut total_matches_found = 0;
+                            for i in 0..grind_matches_thread_safe.len() {
+                                if grind_matches_thread_safe[i].count.load(Ordering::Relaxed) == 0 {
+                                    total_matches_found += 1;
+                                    continue;
                                 }
-                                if use_mnemonic {
-                                    let divider =
-                                        String::from_utf8(vec![b'='; phrase.len()]).unwrap();
-                                    println!(
-                                        "{}\nFound matching key {}",
-                                        &divider,
-                                        keypair.pubkey()
-                                    );
-                                    println!(
-                                        "\nSave this seed phrase{} to recover your new \
-                                         keypair:\n{}\n{}",
-                                        passphrase_message, phrase, &divider
-                                    );
+
+                                // A check immediately after arg parsing ensures that some keypair
+                                // search criteria is supplied. That is, one of `.starts` or `.ends`
+                                // will be a non-empty `String`. If the search criteria only specifies
+                                // one of these parameters, an empty `String` is used for the other.
+                                //
+                                // `String::starts_with("")` and `String::ends_with("")` return true for
+                                // for all strings so calling those two functions with the match strings
+                                // is sufficient for evaluating a candidate keypair.
+                                //
+                                // Note that the below logic works if no search criteria is given - no
+                                // search criteria means any pubkey will match
+                                let pubkey_matches_start =
+                                    pubkey.starts_with(&grind_matches_thread_safe[i].starts);
+                                let pubkey_matches_end =
+                                    pubkey.ends_with(&grind_matches_thread_safe[i].ends);
+
+                                if pubkey_matches_start && pubkey_matches_end {
+                                    let _found = found.fetch_add(1, Ordering::Relaxed);
+                                    grind_matches_thread_safe[i]
+                                        .count
+                                        .fetch_sub(1, Ordering::Relaxed);
+                                    if !no_outfile {
+                                        write_keypair_file(
+                                            &keypair,
+                                            format!("{}.json", keypair.pubkey()),
+                                        )
+                                        .unwrap();
+                                        println!(
+                                            "Wrote keypair to {}",
+                                            &format!("{}.json", keypair.pubkey())
+                                        );
+                                    }
+                                    if use_mnemonic {
+                                        let divider =
+                                            String::from_utf8(vec![b'='; phrase.len()]).unwrap();
+                                        println!(
+                                            "{}\nFound matching key {}",
+                                            &divider,
+                                            keypair.pubkey()
+                                        );
+                                        println!(
+                                            "\nSave this seed phrase{} to recover your new \
+                                             keypair:\n{}\n{}",
+                                            passphrase_message, phrase, &divider
+                                        );
+                                    }
                                 }
                             }
-                        }
-                        if total_matches_found == grind_matches_thread_safe.len() {
-                            done.store(true, Ordering::Relaxed);
+                            if total_matches_found == grind_matches_thread_safe.len() {
+                                done.store(true, Ordering::Relaxed);
+                            }
                         }
                     })
                 })
@@ -898,7 +896,7 @@ mod tests {
     use {
         super::*,
         solana_keypair::read_keypair_file,
-        tempfile::{tempdir, TempDir},
+        tempfile::{TempDir, tempdir},
     };
 
     fn read_pubkey_file(infile: &str) -> Result<Pubkey, Box<dyn std::error::Error>> {

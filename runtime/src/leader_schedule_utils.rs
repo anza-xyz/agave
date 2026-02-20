@@ -1,6 +1,6 @@
 use {
     crate::bank::Bank,
-    solana_clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::{Epoch, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_leader_schedule::LeaderSchedule,
     solana_pubkey::Pubkey,
     std::collections::HashMap,

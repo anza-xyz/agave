@@ -4,28 +4,28 @@ mod serde_snapshot_tests {
         crate::{
             bank::BankHashStats,
             serde_snapshot::{
-                deserialize_accounts_db_fields, reconstruct_accountsdb_from_fields,
-                remap_append_vec_file, SerializableAccountsDb, SnapshotAccountsDbFields,
+                SerializableAccountsDb, SnapshotAccountsDbFields, deserialize_accounts_db_fields,
+                reconstruct_accountsdb_from_fields, remap_append_vec_file,
             },
             snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::FileInfo,
-        bincode::{serialize_into, Error},
+        bincode::{Error, serialize_into},
         log::info,
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
+            ObsoleteAccounts,
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
             account_storage_reader::AccountStorageReader,
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
-                MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
+                MarkObsoleteAccounts, get_temp_accounts_paths,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,
-            ObsoleteAccounts,
         },
         solana_clock::Slot,
         solana_pubkey::Pubkey,
@@ -35,8 +35,8 @@ mod serde_snapshot_tests {
             ops::RangeFull,
             path::{Path, PathBuf},
             sync::{
-                atomic::{AtomicUsize, Ordering},
                 Arc,
+                atomic::{AtomicUsize, Ordering},
             },
         },
         tempfile::TempDir,
@@ -291,9 +291,10 @@ mod serde_snapshot_tests {
 
         // Check purged account stays gone
         let unrooted_slot_ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
-        assert!(db
-            .load_without_fixed_root(&unrooted_slot_ancestors, &key)
-            .is_none());
+        assert!(
+            db.load_without_fixed_root(&unrooted_slot_ancestors, &key)
+                .is_none()
+        );
     }
 
     #[test_matrix(

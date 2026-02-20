@@ -9,10 +9,10 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_votor_messages::migration::MigrationStatus,
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Select, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     rayon::ThreadPool,
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         crds::Cursor,
@@ -46,10 +46,10 @@ use {
         collections::HashMap,
         iter::repeat,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -748,18 +748,18 @@ mod tests {
             bank::Bank,
             commitment::BlockCommitmentCache,
             genesis_utils::{
-                self, create_genesis_config, GenesisConfigInfo, ValidatorVoteKeypairs,
+                self, GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
             },
             vote_sender_types::ReplayVoteSender,
         },
         solana_signature::Signature,
         solana_signer::Signer,
         solana_vote::vote_transaction,
-        solana_vote_program::vote_state::{TowerSync, Vote, MAX_LOCKOUT_HISTORY},
+        solana_vote_program::vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, Vote},
         std::{
             collections::BTreeSet,
             iter::repeat_with,
-            sync::{atomic::AtomicU64, Arc},
+            sync::{Arc, atomic::AtomicU64},
         },
     };
 
@@ -807,18 +807,22 @@ mod tests {
         // the ref count, which would prevent cleanup
         let new_voter_ = new_voter;
         vote_tracker.insert_vote(bank.slot(), new_voter_);
-        assert!(vote_tracker
-            .slot_vote_trackers
-            .read()
-            .unwrap()
-            .contains_key(&bank.slot()));
+        assert!(
+            vote_tracker
+                .slot_vote_trackers
+                .read()
+                .unwrap()
+                .contains_key(&bank.slot())
+        );
         let bank1 = Bank::new_from_parent(bank.clone(), &Pubkey::default(), bank.slot() + 1);
         vote_tracker.progress_with_new_root_bank(&bank1);
-        assert!(!vote_tracker
-            .slot_vote_trackers
-            .read()
-            .unwrap()
-            .contains_key(&bank.slot()));
+        assert!(
+            !vote_tracker
+                .slot_vote_trackers
+                .read()
+                .unwrap()
+                .contains_key(&bank.slot())
+        );
 
         // Check `keys` and `epoch_authorized_voters` are purged when new
         // root bank moves to the next epoch
@@ -1097,11 +1101,13 @@ mod tests {
             for voting_keypairs in &validator_voting_keypairs {
                 let pubkey = voting_keypairs.vote_keypair.pubkey();
                 assert!(r_slot_vote_tracker.voted.contains_key(&pubkey));
-                assert!(r_slot_vote_tracker
-                    .voted_slot_updates
-                    .as_ref()
-                    .unwrap()
-                    .contains(&Arc::new(pubkey)));
+                assert!(
+                    r_slot_vote_tracker
+                        .voted_slot_updates
+                        .as_ref()
+                        .unwrap()
+                        .contains(&Arc::new(pubkey))
+                );
                 // Only the last vote in the stack of `gossip_vote` and `replay_vote_slots`
                 // should count towards the `optimistic` vote set,
                 let optimistic_votes_tracker =
@@ -1218,11 +1224,13 @@ mod tests {
             for voting_keypairs in keyset {
                 let pubkey = voting_keypairs.vote_keypair.pubkey();
                 assert!(r_slot_vote_tracker.voted.contains_key(&pubkey));
-                assert!(r_slot_vote_tracker
-                    .voted_slot_updates
-                    .as_ref()
-                    .unwrap()
-                    .contains(&Arc::new(pubkey)));
+                assert!(
+                    r_slot_vote_tracker
+                        .voted_slot_updates
+                        .as_ref()
+                        .unwrap()
+                        .contains(&Arc::new(pubkey))
+                );
                 // All the votes were single votes, so they should all count towards
                 // the optimistic confirmation vote set
                 let optimistic_votes_tracker = r_slot_vote_tracker

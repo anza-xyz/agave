@@ -1,7 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
-    agave_feature_set::{enable_secp256r1_precompile, FeatureSet},
+    agave_feature_set::{FeatureSet, enable_secp256r1_precompile},
     solana_message::compiled_instruction::CompiledInstruction,
     solana_precompile_error::PrecompileError,
     solana_pubkey::Pubkey,

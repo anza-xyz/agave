@@ -7,7 +7,7 @@ use {
     solana_instruction::Instruction,
     solana_msg::msg,
     solana_program_error::ProgramResult,
-    solana_program_test::{processor, ProgramTest},
+    solana_program_test::{ProgramTest, processor},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_signer::Signer,

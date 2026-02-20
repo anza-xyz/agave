@@ -1,26 +1,26 @@
 #![allow(clippy::to_string_in_format_args)]
 use {
     crate::{
+        QuietDisplay, VerboseDisplay,
         cli_clientid::CliClientId,
         cli_version::CliVersion,
         display::{
-            build_balance_message, build_balance_message_with_config, format_labeled_address,
-            unix_timestamp_to_string, writeln_name_value, writeln_transaction,
-            BuildBalanceMessageConfig,
+            BuildBalanceMessageConfig, build_balance_message, build_balance_message_with_config,
+            format_labeled_address, unix_timestamp_to_string, writeln_name_value,
+            writeln_transaction,
         },
-        QuietDisplay, VerboseDisplay,
     },
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     chrono::{Local, TimeZone, Utc},
     clap::ArgMatches,
-    console::{style, Emoji},
+    console::{Emoji, style},
     inflector::cases::titlecase::to_title_case,
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
     solana_account::ReadableAccount,
     solana_account_decoder::{
-        encode_ui_account, parse_account_data::AccountAdditionalDataV3,
-        parse_token::UiTokenAccount, UiAccountEncoding, UiDataSliceConfig,
+        UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
+        parse_account_data::AccountAdditionalDataV3, parse_token::UiTokenAccount,
     },
     solana_clap_utils::keypair::SignOnly,
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -36,7 +36,7 @@ use {
         stake_history::StakeHistoryEntry,
         state::{Authorized, Lockup},
     },
-    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
@@ -3403,7 +3403,7 @@ mod tests {
         solana_message::Message,
         solana_pubkey::Pubkey,
         solana_signature::Signature,
-        solana_signer::{null_signer::NullSigner, Signer, SignerError},
+        solana_signer::{Signer, SignerError, null_signer::NullSigner},
         solana_system_interface::instruction::transfer,
         solana_transaction::Transaction,
     };

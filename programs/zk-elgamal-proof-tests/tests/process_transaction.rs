@@ -1,5 +1,5 @@
 use {
-    bytemuck::{bytes_of, Pod},
+    bytemuck::{Pod, bytes_of},
     solana_account::Account,
     solana_instruction::error::InstructionError,
     solana_keypair::Keypair,

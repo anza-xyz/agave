@@ -5,7 +5,7 @@ use {
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     solana_account::from_account,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -521,12 +521,16 @@ pub(crate) mod tests {
             None,
         );
 
-        assert!(vote_storage
-            .update_latest_vote(vote_a, false /* should replenish */)
-            .is_none());
-        assert!(vote_storage
-            .update_latest_vote(vote_b, false /* should replenish */)
-            .is_none());
+        assert!(
+            vote_storage
+                .update_latest_vote(vote_a, false /* should replenish */)
+                .is_none()
+        );
+        assert!(
+            vote_storage
+                .update_latest_vote(vote_b, false /* should replenish */)
+                .is_none()
+        );
         assert_eq!(2, vote_storage.len());
 
         assert_eq!(

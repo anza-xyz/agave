@@ -15,11 +15,11 @@ use solana_program_runtime::memory::translate_vm_slice;
 #[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_big_mod_exp::{big_mod_exp, BigModExpParams},
+    solana_big_mod_exp::{BigModExpParams, big_mod_exp},
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
+    solana_instruction::{AccountMeta, ProcessedSiblingInstruction, error::InstructionError},
     solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS},
     solana_program_runtime::{
@@ -29,7 +29,7 @@ use {
         memory::MemoryTranslationError,
         stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
-    solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
+    solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
@@ -37,7 +37,7 @@ use {
         vm::Config,
     },
     solana_secp256k1_recover::{
-        Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
+        SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH, Secp256k1RecoverError,
     },
     solana_sha256_hasher::Hasher,
     solana_svm_feature_set::SVMFeatureSet,
@@ -49,7 +49,7 @@ use {
         alloc::Layout,
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
-        str::{from_utf8, Utf8Error},
+        str::{Utf8Error, from_utf8},
     },
     thiserror::Error as ThisError,
 };
@@ -2685,7 +2685,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         core::slice,
-        solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_account::{AccountSharedData, create_account_shared_data_for_test},
         solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,

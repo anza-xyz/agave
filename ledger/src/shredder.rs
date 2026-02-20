@@ -1,10 +1,10 @@
 use {
     crate::shred::{
-        self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
+        self, DATA_SHREDS_PER_FEC_BLOCK, Error, ProcessShredsStats, Shred, ShredData, ShredFlags,
     },
     lazy_lru::LruCache,
     rayon::ThreadPool,
-    reed_solomon_erasure::{galois_8::ReedSolomon, Error::TooFewDataShards},
+    reed_solomon_erasure::{Error::TooFewDataShards, galois_8::ReedSolomon},
     solana_clock::Slot,
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
@@ -310,8 +310,8 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            self, max_ticks_per_n_shreds, verify_test_data_shred, ShredType,
-            CODING_SHREDS_PER_FEC_BLOCK,
+            self, CODING_SHREDS_PER_FEC_BLOCK, ShredType, max_ticks_per_n_shreds,
+            verify_test_data_shred,
         },
         assert_matches::assert_matches,
         itertools::Itertools,
@@ -624,10 +624,12 @@ mod tests {
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
-        assert!(!data_shreds
-            .iter()
-            .chain(coding_shreds.iter())
-            .any(|s| s.version() != version));
+        assert!(
+            !data_shreds
+                .iter()
+                .chain(coding_shreds.iter())
+                .any(|s| s.version() != version)
+        );
     }
 
     #[test_matrix([true, false])]
@@ -730,12 +732,16 @@ mod tests {
             .into_iter()
             .map(|(fec_set_index, chunk)| (fec_set_index, chunk.count()))
             .collect();
-        assert!(chunks
-            .iter()
-            .all(|(_, chunk_size)| *chunk_size >= MIN_CHUNK_SIZE));
-        assert!(chunks
-            .iter()
-            .all(|(_, chunk_size)| *chunk_size < 2 * MIN_CHUNK_SIZE));
+        assert!(
+            chunks
+                .iter()
+                .all(|(_, chunk_size)| *chunk_size >= MIN_CHUNK_SIZE)
+        );
+        assert!(
+            chunks
+                .iter()
+                .all(|(_, chunk_size)| *chunk_size < 2 * MIN_CHUNK_SIZE)
+        );
         assert_eq!(chunks[0].0, start_index);
         assert!(chunks.iter().tuple_windows().all(
             |((fec_set_index, chunk_size), (next_fec_set_index, _chunk_size))| fec_set_index
@@ -743,10 +749,12 @@ mod tests {
                 == *next_fec_set_index
         ));
         assert!(coding_shreds.len() >= data_shreds.len());
-        assert!(coding_shreds
-            .iter()
-            .zip(&data_shreds)
-            .all(|(code, data)| code.fec_set_index() == data.fec_set_index()));
+        assert!(
+            coding_shreds
+                .iter()
+                .zip(&data_shreds)
+                .all(|(code, data)| code.fec_set_index() == data.fec_set_index())
+        );
         assert_eq!(
             coding_shreds.last().unwrap().fec_set_index(),
             data_shreds.last().unwrap().fec_set_index()

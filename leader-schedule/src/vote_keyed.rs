@@ -1,5 +1,5 @@
 use {
-    super::{stake_weighted_slot_leaders, SlotLeader},
+    super::{SlotLeader, stake_weighted_slot_leaders},
     itertools::Itertools,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,

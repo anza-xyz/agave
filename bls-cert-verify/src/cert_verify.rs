@@ -8,10 +8,10 @@ use {
     bitvec::vec::BitVec,
     rayon::{iter::IntoParallelRefIterator, join},
     solana_bls_signatures::{
-        pubkey::Pubkey as BlsPubkey, signature::AsSignatureAffine, BlsError, PubkeyProjective,
-        Signature as BlsSignature, SignatureProjective, VerifiablePubkey,
+        BlsError, PubkeyProjective, Signature as BlsSignature, SignatureProjective,
+        VerifiablePubkey, pubkey::Pubkey as BlsPubkey, signature::AsSignatureAffine,
     },
-    solana_signer_store::{decode, DecodeError, Decoded},
+    solana_signer_store::{DecodeError, Decoded, decode},
     thiserror::Error,
 };
 

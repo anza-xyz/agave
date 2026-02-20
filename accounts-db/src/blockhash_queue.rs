@@ -356,8 +356,10 @@ mod tests {
             hash_queue.get_hash_info_if_valid(most_recent_hash, 0),
             Some(hash_queue.hashes.get(most_recent_hash).unwrap())
         );
-        assert!(hash_queue
-            .get_hash_info_if_valid(&hash_list[MAX_AGE - 1], 0)
-            .is_none());
+        assert!(
+            hash_queue
+                .get_hash_info_if_valid(&hash_list[MAX_AGE - 1], 0)
+                .is_none()
+        );
     }
 }

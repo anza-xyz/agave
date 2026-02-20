@@ -1,7 +1,7 @@
 use {
     crate::{
-        keygen::mnemonic::{language_arg, no_passphrase_arg, word_count_arg},
         ArgConstant,
+        keygen::mnemonic::{language_arg, no_passphrase_arg, word_count_arg},
     },
     clap::{Arg, ArgMatches, Command},
     std::{error, path::Path},

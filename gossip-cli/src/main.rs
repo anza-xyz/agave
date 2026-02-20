@@ -3,8 +3,8 @@
 use solana_gossip::{contact_info::ContactInfo, gossip_service::discover_peers};
 use {
     clap::{
-        crate_description, crate_name, value_t, value_t_or_exit, values_t, App, AppSettings, Arg,
-        ArgMatches, SubCommand,
+        App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
+        value_t_or_exit, values_t,
     },
     log::{info, warn},
     solana_clap_utils::{

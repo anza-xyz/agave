@@ -47,10 +47,10 @@ mod tests {
     use {
         super::*,
         solana_net_utils::sockets::{
-            bind_to_async, bind_to_with_config, unique_port_range_for_tests,
-            SocketConfiguration as SocketConfig,
+            SocketConfiguration as SocketConfig, bind_to_async, bind_to_with_config,
+            unique_port_range_for_tests,
         },
-        solana_packet::{Packet, PACKET_DATA_SIZE},
+        solana_packet::{PACKET_DATA_SIZE, Packet},
         solana_streamer::nonblocking::recvmmsg::recv_mmsg,
         std::net::{IpAddr, Ipv4Addr},
         tokio::net::UdpSocket,

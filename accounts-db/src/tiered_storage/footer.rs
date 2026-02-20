@@ -1,11 +1,11 @@
 use {
     crate::tiered_storage::{
+        TieredStorageResult,
         error::TieredStorageError,
         file::{TieredReadableFile, TieredStorageMagicNumber, TieredWritableFile},
         index::IndexBlockFormat,
         mmap_utils::{get_pod, get_type},
         owners::OwnersBlockFormat,
-        TieredStorageResult,
     },
     bytemuck::Zeroable,
     memmap2::Mmap,

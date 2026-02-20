@@ -5,9 +5,8 @@ use {
     async_trait::async_trait,
     log::*,
     reqwest::{
-        self,
+        self, StatusCode,
         header::{self, CONTENT_TYPE, RETRY_AFTER},
-        StatusCode,
     },
     solana_rpc_client_api::{
         client_error::Result,
@@ -18,8 +17,8 @@ use {
     },
     std::{
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         time::{Duration, Instant},
     },

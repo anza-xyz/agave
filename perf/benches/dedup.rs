@@ -1,11 +1,11 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{Bencher, benchmark_group, benchmark_main},
     rand::prelude::*,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::{to_packet_batches, PacketBatch},
+        packet::{PacketBatch, to_packet_batches},
     },
     std::time::Duration,
 };

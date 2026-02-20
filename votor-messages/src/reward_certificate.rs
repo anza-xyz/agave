@@ -9,9 +9,9 @@ use {
     solana_signer_store::EncodeError,
     thiserror::Error,
     wincode::{
+        SchemaRead, SchemaWrite,
         containers::{Pod, Vec as WincodeVec},
         len::ShortU16,
-        SchemaRead, SchemaWrite,
     },
 };
 

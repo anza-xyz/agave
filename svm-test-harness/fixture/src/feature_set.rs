@@ -4,7 +4,7 @@
 
 use {
     crate::proto::FeatureSet as ProtoFeatureSet,
-    agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet},
     solana_pubkey::Pubkey,
     std::{collections::HashMap, sync::LazyLock},
 };

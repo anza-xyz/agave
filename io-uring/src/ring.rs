@@ -1,11 +1,10 @@
 use {
     crate::slab::FixedSlab,
     io_uring::{
-        cqueue, squeue,
+        IoUring, cqueue, squeue,
         types::{SubmitArgs, Timespec},
-        IoUring,
     },
-    smallvec::{smallvec, SmallVec},
+    smallvec::{SmallVec, smallvec},
     std::{io, os::fd::RawFd, time::Duration},
 };
 

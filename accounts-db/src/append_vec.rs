@@ -22,12 +22,12 @@ use {
         utils::create_account_shared_data,
     },
     agave_fs::{
+        FileInfo, FileSize,
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
             RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
-        FileInfo, FileSize,
     },
     log::*,
     memmap2::MmapMut,
@@ -38,14 +38,14 @@ use {
     std::{
         self,
         convert::TryFrom,
-        fs::{remove_file, File, OpenOptions},
+        fs::{File, OpenOptions, remove_file},
         io::{self, BufRead, Seek, SeekFrom, Write},
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, MutexGuard,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
     },
     thiserror::Error,
@@ -910,9 +910,10 @@ impl AppendVec {
             Some((pubkey, create_account_shared_data(&r_callback)))
         });
         if result.is_none() {
-            assert!(self
-                .get_stored_account_meta_callback(offset, |_| {})
-                .is_none());
+            assert!(
+                self.get_stored_account_meta_callback(offset, |_| {})
+                    .is_none()
+            );
             assert!(self.get_account_shared_data(offset).is_none());
             // it has different rules for checking len and returning None
             assert_eq!(sizes, 0);
@@ -1368,7 +1369,7 @@ mod tests {
         memoffset::offset_of,
         rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
-        solana_account::{accounts_equal, AccountSharedData, WritableAccount},
+        solana_account::{AccountSharedData, WritableAccount, accounts_equal},
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::{test_case, test_matrix},

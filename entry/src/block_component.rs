@@ -133,19 +133,19 @@ use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::consensus_message::{Certificate, CertificateType},
     solana_bls_signatures::{
-        signature::AsSignatureAffine, BlsError, Signature as BLSSignature,
-        SignatureCompressed as BLSSignatureCompressed,
+        BlsError, Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
+        signature::AsSignatureAffine,
     },
     solana_clock::Slot,
     solana_hash::Hash,
     std::mem::MaybeUninit,
     wincode::{
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::{Config, DefaultConfig},
         containers::{Pod, Vec as WincodeVec},
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
         len::{BincodeLen, FixIntLen},
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
 };
 

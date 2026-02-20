@@ -2,7 +2,7 @@
 //! The struct handles different validators voting for different block ids and ensures that a given validator does not vote for multiple block ids.
 
 use {
-    super::{partial_cert::PartialCert, AddVoteError, BuildSigBitmapError},
+    super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
     crate::consensus_rewards::BuildRewardCertsRespError,
     agave_votor_messages::reward_certificate::NotarRewardCertificate,
     solana_bls_signatures::Signature as BLSSignature,

@@ -1,5 +1,5 @@
 use {
-    super::{error::TieredStorageError, TieredStorageResult},
+    super::{TieredStorageResult, error::TieredStorageError},
     bytemuck::{AnyBitPattern, NoUninit, Zeroable},
     std::{
         fs::{File, OpenOptions},
@@ -175,7 +175,7 @@ mod tests {
     use {
         crate::tiered_storage::{
             error::TieredStorageError,
-            file::{TieredReadableFile, TieredWritableFile, FILE_MAGIC_NUMBER},
+            file::{FILE_MAGIC_NUMBER, TieredReadableFile, TieredWritableFile},
         },
         std::path::Path,
         tempfile::TempDir,

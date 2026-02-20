@@ -7,13 +7,13 @@ use {
     crossbeam_channel::{Receiver, Sender},
     dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     serde::{Deserialize, Serialize},
     solana_hash::Hash,
     solana_merkle_tree::MerkleTree,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction::{
-        versioned::VersionedTransaction, Transaction, TransactionVerificationMode,
+        Transaction, TransactionVerificationMode, versioned::VersionedTransaction,
     },
     solana_transaction_error::TransactionResult as Result,
     std::{
@@ -22,7 +22,7 @@ use {
         sync::{Arc, Once, OnceLock},
         time::Instant,
     },
-    wincode::{containers::Vec as WincodeVec, len::BincodeLen, SchemaRead, SchemaWrite},
+    wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::BincodeLen},
 };
 
 pub type EntrySender = Sender<Vec<Entry>>;
@@ -597,7 +597,7 @@ mod tests {
     use {
         super::*,
         agave_reserved_account_keys::ReservedAccountKeys,
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -801,17 +801,23 @@ mod tests {
         // base case
         assert!(vec![][..].verify(&zero, &thread_pool).status());
         // singleton case 1
-        assert!(vec![Entry::new_tick(0, &zero)][..]
-            .verify(&zero, &thread_pool)
-            .status());
+        assert!(
+            vec![Entry::new_tick(0, &zero)][..]
+                .verify(&zero, &thread_pool)
+                .status()
+        );
         // singleton case 2, bad
-        assert!(!vec![Entry::new_tick(0, &zero)][..]
-            .verify(&one, &thread_pool)
-            .status());
+        assert!(
+            !vec![Entry::new_tick(0, &zero)][..]
+                .verify(&one, &thread_pool)
+                .status()
+        );
         // inductive step
-        assert!(vec![next_entry(&zero, 0, vec![]); 2][..]
-            .verify(&zero, &thread_pool)
-            .status());
+        assert!(
+            vec![next_entry(&zero, 0, vec![]); 2][..]
+                .verify(&zero, &thread_pool)
+                .status()
+        );
 
         let mut bad_ticks = vec![next_entry(&zero, 0, vec![]); 2];
         bad_ticks[1].hash = one;
@@ -830,13 +836,17 @@ mod tests {
         // base case
         assert!(vec![][..].verify(&one, &thread_pool).status());
         // singleton case 1
-        assert!(vec![Entry::new_tick(1, &two)][..]
-            .verify(&one, &thread_pool)
-            .status());
+        assert!(
+            vec![Entry::new_tick(1, &two)][..]
+                .verify(&one, &thread_pool)
+                .status()
+        );
         // singleton case 2, bad
-        assert!(!vec![Entry::new_tick(1, &two)][..]
-            .verify(&two, &thread_pool)
-            .status());
+        assert!(
+            !vec![Entry::new_tick(1, &two)][..]
+                .verify(&two, &thread_pool)
+                .status()
+        );
 
         let mut ticks = vec![next_entry(&one, 1, vec![])];
         ticks.push(next_entry(&ticks.last().unwrap().hash, 1, vec![]));
@@ -865,13 +875,17 @@ mod tests {
         // base case
         assert!(vec![][..].verify(&one, &thread_pool).status());
         // singleton case 1
-        assert!(vec![next_entry(&one, 1, vec![tx0.clone()])][..]
-            .verify(&one, &thread_pool)
-            .status());
+        assert!(
+            vec![next_entry(&one, 1, vec![tx0.clone()])][..]
+                .verify(&one, &thread_pool)
+                .status()
+        );
         // singleton case 2, bad
-        assert!(!vec![next_entry(&one, 1, vec![tx0.clone()])][..]
-            .verify(&two, &thread_pool)
-            .status());
+        assert!(
+            !vec![next_entry(&one, 1, vec![tx0.clone()])][..]
+                .verify(&two, &thread_pool)
+                .status()
+        );
 
         let mut ticks = vec![next_entry(&one, 1, vec![tx0.clone()])];
         ticks.push(next_entry(

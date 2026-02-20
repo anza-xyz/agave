@@ -324,7 +324,7 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{
-            create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+            ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
         },
         agave_votor_messages::vote::Vote,
         bitvec::prelude::*,

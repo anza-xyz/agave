@@ -10,20 +10,22 @@ pub(crate) fn spawn(path: &Path, session_sender: mpsc::Sender<BankingControlMsg>
 
     std::thread::Builder::new()
         .name("solBindingSrv".to_string())
-        .spawn(move || loop {
-            match listener.accept() {
-                Ok(session) => {
-                    if session_sender
-                        .blocking_send(BankingControlMsg::External { session })
-                        .is_err()
-                    {
-                        break;
+        .spawn(move || {
+            loop {
+                match listener.accept() {
+                    Ok(session) => {
+                        if session_sender
+                            .blocking_send(BankingControlMsg::External { session })
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
-                }
-                Err(err) => {
-                    error!("External scheduler handshake failed; err={err}")
-                }
-            };
+                    Err(err) => {
+                        error!("External scheduler handshake failed; err={err}")
+                    }
+                };
+            }
         })
         .unwrap();
 }

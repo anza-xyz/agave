@@ -1,24 +1,24 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    clap::{crate_description, crate_name, value_t_or_exit, Arg, Command},
+    clap::{Arg, Command, crate_description, crate_name, value_t_or_exit},
     crossbeam_channel::unbounded,
     solana_net_utils::{
         bind_to_unspecified,
-        sockets::{multi_bind_in_range_with_config, SocketConfiguration},
+        sockets::{SocketConfiguration, multi_bind_in_range_with_config},
     },
     solana_streamer::{
-        packet::{Packet, PacketBatchRecycler, RecycledPacketBatch, PACKET_DATA_SIZE},
+        packet::{PACKET_DATA_SIZE, Packet, PacketBatchRecycler, RecycledPacketBatch},
         sendmmsg::batch_send,
-        streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
+        streamer::{PacketBatchReceiver, StreamerReceiveStats, receiver},
     },
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        thread::{sleep, spawn, JoinHandle, Result},
+        thread::{JoinHandle, Result, sleep, spawn},
         time::{Duration, SystemTime},
     },
 };
@@ -63,13 +63,15 @@ fn producer(dest_addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> 
 }
 
 fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: PacketBatchReceiver) -> JoinHandle<()> {
-    spawn(move || loop {
-        if exit.load(Ordering::Relaxed) {
-            return;
-        }
-        let timer = Duration::new(1, 0);
-        if let Ok(packet_batch) = r.recv_timeout(timer) {
-            rvs.fetch_add(packet_batch.len(), Ordering::Relaxed);
+    spawn(move || {
+        loop {
+            if exit.load(Ordering::Relaxed) {
+                return;
+            }
+            let timer = Duration::new(1, 0);
+            if let Ok(packet_batch) = r.recv_timeout(timer) {
+                rvs.fetch_add(packet_batch.len(), Ordering::Relaxed);
+            }
         }
     })
 }

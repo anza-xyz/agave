@@ -4,8 +4,8 @@
 
 use {
     rand::{
-        distr::{weighted::WeightedIndex, Distribution},
         Rng, SeedableRng,
+        distr::{Distribution, weighted::WeightedIndex},
     },
     rand_chacha::ChaChaRng,
     solana_account::AccountSharedData,

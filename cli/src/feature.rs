@@ -1,13 +1,13 @@
 use {
     crate::{
         cli::{
-            log_instruction_custom_error, log_instruction_custom_error_to_str, CliCommand,
-            CliCommandInfo, CliConfig, CliError, ProcessResult,
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            log_instruction_custom_error, log_instruction_custom_error_to_str,
         },
-        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
+        spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
     agave_feature_set::FEATURE_NAMES,
-    clap::{value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
+    clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t_or_exit},
     console::style,
     serde::{Deserialize, Serialize},
     solana_account::Account,
@@ -15,13 +15,13 @@ use {
         compute_budget::ComputeUnitLimit, fee_payer::*, hidden_unless_forced, input_parsers::*,
         input_validators::*, keypair::*,
     },
-    solana_cli_output::{cli_version::CliVersion, QuietDisplay, VerboseDisplay},
+    solana_cli_output::{QuietDisplay, VerboseDisplay, cli_version::CliVersion},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::{
-        activate_with_lamports, error::FeatureGateError, from_account,
-        instruction::revoke_pending_activation, Feature,
+        Feature, activate_with_lamports, error::FeatureGateError, from_account,
+        instruction::revoke_pending_activation,
     },
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -1013,11 +1013,11 @@ async fn process_activate(
                     "Add force argument once more to override the sanity check to force feature \
                      activation "
                         .into(),
-                )
+                );
             }
             ForceActivation::Yes => println!("FEATURE ACTIVATION FORCED"),
             ForceActivation::No => {
-                return Err("Feature activation is not allowed at this time".into())
+                return Err("Feature activation is not allowed at this time".into());
             }
         }
     }

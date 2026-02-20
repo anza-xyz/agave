@@ -3,13 +3,13 @@ use {
         address_lookup_table::*, clap_app::*, cluster_query::*, feature::*, inflation::*, nonce::*,
         program::*, program_v4::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
-    clap::{crate_description, crate_name, value_t_or_exit, ArgMatches, Shell},
+    clap::{ArgMatches, Shell, crate_description, crate_name, value_t_or_exit},
     num_traits::FromPrimitive,
     serde_json::{self, Value},
     solana_clap_utils::{self, input_parsers::*, keypair::*},
     solana_cli_config::ConfigInput,
     solana_cli_output::{
-        display::println_name_value, CliSignature, CliValidatorsSortOrder, OutputFormat,
+        CliSignature, CliValidatorsSortOrder, OutputFormat, display::println_name_value,
     },
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Epoch, Slot},
@@ -30,7 +30,7 @@ use {
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_tpu_client::{
         nonblocking::tpu_client::TpuClient,
-        tpu_client::{TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE},
+        tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, TpuClientConfig},
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
@@ -1957,7 +1957,7 @@ mod tests {
     use {
         super::*,
         serde_json::json,
-        solana_keypair::{keypair_from_seed, read_keypair_file, write_keypair_file, Keypair},
+        solana_keypair::{Keypair, keypair_from_seed, read_keypair_file, write_keypair_file},
         solana_presigner::Presigner,
         solana_pubkey::Pubkey,
         solana_rpc_client::{mock_sender::MocksMap, mock_sender_for_cli::SIGNATURE},

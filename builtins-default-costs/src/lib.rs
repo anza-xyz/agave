@@ -192,15 +192,19 @@ mod test {
     #[test]
     fn test_const_builtin_cost_arrays() {
         // sanity check to make sure built-ins are declared in the correct array
-        assert!(MIGRATING_BUILTINS_COSTS
-            .iter()
-            .enumerate()
-            .all(|(index, (_, c))| {
-                c.core_bpf_migration_feature().is_some() && c.position() == Some(index)
-            }));
-        assert!(NON_MIGRATING_BUILTINS_COSTS
-            .iter()
-            .all(|(_, c)| c.core_bpf_migration_feature().is_none()));
+        assert!(
+            MIGRATING_BUILTINS_COSTS
+                .iter()
+                .enumerate()
+                .all(|(index, (_, c))| {
+                    c.core_bpf_migration_feature().is_some() && c.position() == Some(index)
+                })
+        );
+        assert!(
+            NON_MIGRATING_BUILTINS_COSTS
+                .iter()
+                .all(|(_, c)| c.core_bpf_migration_feature().is_none())
+        );
     }
 
     #[test]

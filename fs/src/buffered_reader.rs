@@ -15,9 +15,9 @@
 //! should be used, which supports dynamically allocated buffer for preparing contiguous data slices.
 use {
     crate::{
+        FileSize,
         file_io::{read_into_buffer, read_more_buffer},
         io_setup::IoSetupState,
-        FileSize,
     },
     std::{
         fs::File,

@@ -10,12 +10,12 @@ use {
         },
         snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
-            get_slot_and_append_vec_id, SnapshotStorageRebuilder,
+            SnapshotStorageRebuilder, get_slot_and_append_vec_id,
         },
     },
-    agave_fs::{buffered_writer::large_file_buf_writer, io_setup::IoSetupState, FileInfo},
+    agave_fs::{FileInfo, buffered_writer::large_file_buf_writer, io_setup::IoSetupState},
     agave_snapshots::{
-        archive_snapshot,
+        ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion, archive_snapshot,
         error::{
             AddBankSnapshotError, GetSnapshotAccountsHardLinkDirError,
             HardLinkStoragesToSnapshotError, SnapshotError, SnapshotFastbootError,
@@ -28,7 +28,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion,
+        streaming_unarchive_snapshot,
     },
     crossbeam_channel::Receiver,
     log::*,
@@ -39,7 +39,7 @@ use {
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_file::{AccountsFile, StorageAccess},
-        utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
+        utils::{ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
     solana_clock::Slot,
     solana_measure::{measure::Measure, measure_time, measure_us},
@@ -553,11 +553,10 @@ pub fn serialize_snapshot(
         );
 
         let version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-        let (_, write_version_file_us) = measure_us!(fs::write(
-            &version_path,
-            snapshot_version.as_str().as_bytes(),
-        )
-        .map_err(|err| AddBankSnapshotError::WriteSnapshotVersionFile(err, version_path))?);
+        let (_, write_version_file_us) = measure_us!(
+            fs::write(&version_path, snapshot_version.as_str().as_bytes(),)
+                .map_err(|err| AddBankSnapshotError::WriteSnapshotVersionFile(err, version_path))?
+        );
 
         let (flush_storages_us, hard_link_storages_us, serialize_obsolete_accounts_us) =
             if should_flush_and_hard_link_storages {
@@ -568,12 +567,10 @@ pub fn serialize_snapshot(
                     })?;
                 }
                 let flush_us = flush_measure.end_as_us();
-                let (_, hard_link_us) = measure_us!(hard_link_storages_to_snapshot(
-                    &bank_snapshot_dir,
-                    slot,
-                    snapshot_storages
-                )
-                .map_err(AddBankSnapshotError::HardLinkStorages)?);
+                let (_, hard_link_us) = measure_us!(
+                    hard_link_storages_to_snapshot(&bank_snapshot_dir, slot, snapshot_storages)
+                        .map_err(AddBankSnapshotError::HardLinkStorages)?
+                );
 
                 let (_, serialize_obsolete_accounts_us) = measure_us!({
                     write_obsolete_accounts_to_snapshot(&bank_snapshot_dir, snapshot_storages, slot)
@@ -1984,11 +1981,13 @@ mod tests {
             )))
             .unwrap();
 
-        assert!(check_are_snapshots_compatible(
-            &full_snapshot_archive_info,
-            Some(&incremental_snapshot_archive_info)
-        )
-        .is_ok());
+        assert!(
+            check_are_snapshots_compatible(
+                &full_snapshot_archive_info,
+                Some(&incremental_snapshot_archive_info)
+            )
+            .is_ok()
+        );
 
         let incremental_snapshot_archive_info =
             IncrementalSnapshotArchiveInfo::new_from_path(PathBuf::from(format!(
@@ -1999,11 +1998,13 @@ mod tests {
             )))
             .unwrap();
 
-        assert!(check_are_snapshots_compatible(
-            &full_snapshot_archive_info,
-            Some(&incremental_snapshot_archive_info)
-        )
-        .is_err());
+        assert!(
+            check_are_snapshots_compatible(
+                &full_snapshot_archive_info,
+                Some(&incremental_snapshot_archive_info)
+            )
+            .is_err()
+        );
     }
 
     /// A test heler function that creates bank snapshot files
@@ -2203,9 +2204,11 @@ mod tests {
             (max_full_snapshot_slot - min_full_snapshot_slot)
                 * (max_incremental_snapshot_slot - min_incremental_snapshot_slot)
         );
-        assert!(incremental_snapshot_archives
-            .iter()
-            .all(|info| info.is_remote()));
+        assert!(
+            incremental_snapshot_archives
+                .iter()
+                .all(|info| info.is_remote())
+        );
     }
 
     #[test]

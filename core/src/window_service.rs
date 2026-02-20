@@ -11,9 +11,9 @@ use {
         result::{Error, Result},
     },
     agave_feature_set as feature_set,
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
-    rayon::{prelude::*, ThreadPool},
-    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
+    rayon::{ThreadPool, prelude::*},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
@@ -30,8 +30,8 @@ use {
         borrow::Cow,
         net::UdpSocket,
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -447,12 +447,12 @@ mod test {
     use {
         super::*,
         rand::Rng,
-        solana_entry::entry::{create_ticks, Entry},
+        solana_entry::entry::{Entry, create_ticks},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore::{make_many_slot_entries, Blockstore},
+            blockstore::{Blockstore, make_many_slot_entries},
             genesis_utils::create_genesis_config,
             get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, Shredder},

@@ -39,7 +39,7 @@ mod real {
             collections::HashMap,
             fmt::Debug,
             sync::{Arc, Condvar, Mutex},
-            thread::{current, panicking, JoinHandle, ThreadId},
+            thread::{JoinHandle, ThreadId, current, panicking},
         },
     };
 
@@ -159,11 +159,13 @@ mod real {
         }
 
         fn activate(&self) {
-            assert!(THREAD_REGISTRY
-                .lock()
-                .unwrap()
-                .insert(self.1, self.0.clone())
-                .is_none());
+            assert!(
+                THREAD_REGISTRY
+                    .lock()
+                    .unwrap()
+                    .insert(self.1, self.0.clone())
+                    .is_none()
+            );
         }
 
         fn deactivate(&self) {
@@ -216,7 +218,7 @@ mod real {
             super::*,
             std::{
                 io,
-                thread::{current, spawn, Builder, Scope, ScopedJoinHandle},
+                thread::{Builder, Scope, ScopedJoinHandle, current, spawn},
             },
         };
 
@@ -336,7 +338,7 @@ mod dummy {
         pub(crate) use crate::sleepless_testing::{BuilderTracked, ScopeTracked};
         use std::{
             io,
-            thread::{spawn, Builder, JoinHandle, Scope, ScopedJoinHandle},
+            thread::{Builder, JoinHandle, Scope, ScopedJoinHandle, spawn},
         };
 
         #[inline]

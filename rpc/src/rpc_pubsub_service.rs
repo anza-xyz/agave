@@ -8,9 +8,9 @@ use {
         },
         rpc_subscriptions::{RpcNotification, RpcSubscriptions},
     },
-    dashmap::{mapref::entry::Entry, DashMap},
+    dashmap::{DashMap, mapref::entry::Entry},
     jsonrpc_core::IoHandler,
-    soketto::handshake::{server, Server},
+    soketto::handshake::{Server, server},
     solana_metrics::TokenCounter,
     solana_rayon_threadlimit::get_thread_count,
     solana_time_utils::AtomicInterval,
@@ -20,8 +20,8 @@ use {
         num::NonZeroUsize,
         str,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
     },
@@ -498,13 +498,13 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             commitment::BlockCommitmentCache,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
         std::{
             net::{IpAddr, Ipv4Addr},
             sync::{
-                atomic::{AtomicBool, AtomicU64},
                 RwLock,
+                atomic::{AtomicBool, AtomicU64},
             },
         },
     };

@@ -13,7 +13,7 @@ use {
     crossbeam_channel::bounded,
     log::{debug, info},
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
+    solana_net_utils::sockets::{SocketConfiguration, bind_to_with_config},
     solana_pubkey::Pubkey,
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
