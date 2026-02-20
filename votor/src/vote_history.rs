@@ -10,7 +10,7 @@ use {
     solana_pubkey::Pubkey,
     std::collections::{hash_map::Entry, HashMap, HashSet},
     thiserror::Error,
-    wincode::{containers::Pod, SchemaRead, SchemaWrite},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
@@ -39,7 +39,6 @@ impl VoteHistoryVersions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
 pub struct VoteHistory {
     /// The validator identity that cast votes
-    #[wincode(with = "Pod<Pubkey>")]
     pub node_pubkey: Pubkey,
 
     /// The slots which this node has cast either a notarization or skip vote

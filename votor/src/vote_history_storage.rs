@@ -10,7 +10,7 @@ use {
         io::{self, Read, Write},
         path::PathBuf,
     },
-    wincode::{containers::Pod, SchemaRead, SchemaWrite},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub type Result<T> = std::result::Result<T, VoteHistoryError>;
@@ -74,7 +74,6 @@ impl From<SavedVoteHistory> for SavedVoteHistoryVersions {
 )]
 #[derive(Default, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
 pub struct SavedVoteHistory {
-    #[wincode(with = "Pod<Signature>")]
     signature: Signature,
     data: Vec<u8>,
     #[wincode(skip)]
@@ -149,7 +148,7 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
         // New format
         let mut file = File::open(&filename)?;
         let mut buf = vec![];
-        file.read_to_end(&mut buf).unwrap();
+        file.read_to_end(&mut buf)?;
 
         wincode::deserialize(&buf)
             .map_err(|e| e.into())
