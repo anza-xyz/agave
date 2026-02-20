@@ -2,7 +2,7 @@ use num_traits::NumCast;
 
 /// Welford's online algorithm for computing running mean, variance, and standard deviation.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct WelfordStats {
+pub struct WelfordStats {
     /// Number of samples added.
     count: u64,
     /// Running mean, updated incrementally with each sample.
@@ -15,7 +15,7 @@ pub(crate) struct WelfordStats {
 
 impl WelfordStats {
     /// Adds a sample and updates all running statistics.
-    pub(crate) fn add_sample(&mut self, value: u64) {
+    pub fn add_sample(&mut self, value: u64) {
         self.count = self.count.checked_add(1).unwrap();
         let v = value as f64;
         let d = v - self.mean;
@@ -25,12 +25,12 @@ impl WelfordStats {
     }
 
     /// Returns the number of samples added.
-    pub(crate) fn count(&self) -> u64 {
+    pub fn count(&self) -> u64 {
         self.count
     }
 
     /// Returns the mean, or `None` if no samples have been added.
-    pub(crate) fn mean<T: NumCast>(&self) -> Option<T> {
+    pub fn mean<T: NumCast>(&self) -> Option<T> {
         match self.count {
             0 => None,
             _ => NumCast::from(self.mean),
@@ -38,7 +38,7 @@ impl WelfordStats {
     }
 
     /// Returns the sample standard deviation, or `None` if fewer than 2 samples.
-    pub(crate) fn stddev<T: NumCast>(&self) -> Option<T> {
+    pub fn stddev<T: NumCast>(&self) -> Option<T> {
         match self.count {
             0 | 1 => None,
             n => {
@@ -49,17 +49,48 @@ impl WelfordStats {
     }
 
     /// Returns the maximum value seen, or `None` if no samples have been added.
-    pub(crate) fn maximum<T: NumCast>(&self) -> Option<T> {
+    pub fn maximum<T: NumCast>(&self) -> Option<T> {
         match self.count {
             0 => None,
             _ => NumCast::from(self.max),
         }
     }
+
+    /// Merges two sets of stats together.
+    pub fn merge(&mut self, other: Self) {
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 {
+            *self = other;
+            return;
+        }
+
+        // Merge variances together using
+        // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
+        let new_count = self.count.checked_add(other.count).unwrap();
+        let delta = other.mean - self.mean;
+        let sum_sq_diff = self.m2
+            + other.m2
+            + (delta * delta) * self.count as f64 * other.count as f64 / new_count as f64;
+        self.m2 = sum_sq_diff;
+
+        // A more stable version of computing the mean.  A less stable but easier to understand
+        // formula would be: new_mean = (n1*mean1 + n2*mean2) / (n1 + n2)
+        self.mean = self.mean + (other.count as f64 / new_count as f64) * (other.mean - self.mean);
+
+        self.max = self.max.max(other.max);
+        self.count = new_count;
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, test_case::test_matrix};
+    use {
+        super::*,
+        rand::{rngs::StdRng, Rng, SeedableRng},
+        test_case::test_matrix,
+    };
 
     const EPSILON: f64 = 1e-10;
 
@@ -131,5 +162,60 @@ mod tests {
         assert_eq!(stats.mean::<i64>(), Some((base + 2) as i64));
         assert!((stats.stddev::<f64>().unwrap() - expected_sequential_stddev(5)).abs() < EPSILON);
         assert_eq!(stats.maximum::<u64>(), Some(base + 4));
+    }
+
+    #[test]
+    fn test_merging() {
+        let seed = rand::random::<u64>();
+        let mut rng = StdRng::seed_from_u64(seed);
+        let first_data = (0..1000).map(|_| rng.gen()).collect::<Vec<_>>();
+
+        let mut total = WelfordStats::default();
+        let mut first = WelfordStats::default();
+        for d in first_data {
+            first.add_sample(d);
+            total.add_sample(d);
+        }
+        let second_data = (0..1000).map(|_| rng.gen()).collect::<Vec<_>>();
+        let mut second = WelfordStats::default();
+        for d in second_data {
+            second.add_sample(d);
+            total.add_sample(d);
+        }
+        first.merge(second);
+        let total_mean = total.mean::<f64>().unwrap();
+        let first_mean = first.mean::<f64>().unwrap();
+        let diff = (total_mean - first_mean).abs();
+        assert!(
+            diff / first_mean < EPSILON,
+            "seed={seed}, total_mean={total_mean}, first_mean={first_mean}, diff={diff}"
+        );
+        let total_stddev = total.stddev::<f64>().unwrap();
+        let first_stddev = first.stddev::<f64>().unwrap();
+        let diff = (total_stddev - first_stddev).abs();
+        assert!(
+            diff / first_stddev < EPSILON,
+            "seed={seed}, total_stddev={total_stddev}, first_stddev={first_stddev}, diff={diff}"
+        );
+        assert_eq!(total.count(), first.count());
+        assert_eq!(total.maximum::<u64>(), first.maximum::<u64>());
+    }
+
+    #[test]
+    fn test_merging_empty() {
+        let mut a = WelfordStats::default();
+        a.merge(WelfordStats::default());
+        assert_eq!(a.count(), 0);
+        assert_eq!(a.mean::<f64>(), None);
+
+        // should not be corrupted by the empty merge
+        a.add_sample(42);
+        assert_eq!(a.mean::<u64>(), Some(42));
+
+        let mut b = make_stats(&[10, 20, 30]);
+        let expected = b.mean::<f64>().unwrap();
+        b.merge(WelfordStats::default());
+        assert_eq!(b.count(), 3);
+        assert_eq!(b.mean::<f64>().unwrap(), expected);
     }
 }
