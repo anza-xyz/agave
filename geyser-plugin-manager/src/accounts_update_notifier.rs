@@ -2,7 +2,7 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
+        ReplicaAccountInfoV4, ReplicaAccountInfoVersions, ReplicaAccountUpdater,
     },
     log::*,
     solana_account::{AccountSharedData, ReadableAccount},
@@ -92,8 +92,8 @@ impl AccountsUpdateNotifierImpl {
         txn: &'a Option<&'a SanitizedTransaction>,
         pubkey: &'a Pubkey,
         write_version: u64,
-    ) -> ReplicaAccountInfoV3<'a> {
-        ReplicaAccountInfoV3 {
+    ) -> ReplicaAccountInfoV4<'a> {
+        ReplicaAccountInfoV4 {
             pubkey: pubkey.as_ref(),
             lamports: account.lamports(),
             owner: account.owner().as_ref(),
@@ -101,15 +101,22 @@ impl AccountsUpdateNotifierImpl {
             rent_epoch: account.rent_epoch(),
             data: account.data(),
             write_version,
-            txn: *txn,
+            updater: match txn {
+                Some(txn) => ReplicaAccountUpdater::Transaction {
+                    signature: txn.signature(),
+                    message_hash: txn.message_hash(),
+                    is_simple_vote: txn.is_simple_vote_transaction(),
+                },
+                None => ReplicaAccountUpdater::Runtime,
+            },
         }
     }
 
     fn accountinfo_from_account_for_geyser<'a>(
         &self,
         account: &'a AccountForGeyser<'_>,
-    ) -> ReplicaAccountInfoV3<'a> {
-        ReplicaAccountInfoV3 {
+    ) -> ReplicaAccountInfoV4<'a> {
+        ReplicaAccountInfoV4 {
             pubkey: account.pubkey.as_ref(),
             lamports: account.lamports(),
             owner: account.owner().as_ref(),
@@ -117,13 +124,13 @@ impl AccountsUpdateNotifierImpl {
             rent_epoch: account.rent_epoch(),
             data: account.data(),
             write_version: 0, // can/will be populated afterwards
-            txn: None,
+            updater: ReplicaAccountUpdater::Runtime,
         }
     }
 
     fn notify_plugins_of_account_update(
         &self,
-        account: ReplicaAccountInfoV3,
+        account: ReplicaAccountInfoV4,
         slot: Slot,
         is_startup: bool,
     ) {
@@ -134,7 +141,7 @@ impl AccountsUpdateNotifierImpl {
         }
         for plugin in plugin_manager.plugins.iter() {
             match plugin.update_account(
-                ReplicaAccountInfoVersions::V0_0_3(&account),
+                ReplicaAccountInfoVersions::V0_0_4(&account),
                 slot,
                 is_startup,
             ) {
