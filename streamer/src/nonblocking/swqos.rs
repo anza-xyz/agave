@@ -211,9 +211,17 @@ impl SwQos {
                 }
             }
         } else {
+            let num_connections = context
+                .stream_counter
+                .as_ref()
+                .map(|c| c.connection_count.load(Ordering::Relaxed))
+                .unwrap_or(1)
+                .max(1) as u32;
             match context.peer_type {
-                ConnectionPeerType::Unstaked => Some(unstaked_unsat_max.max(1)),
-                ConnectionPeerType::Staked(_) => Some(staked_unsat_max.max(1)),
+                ConnectionPeerType::Unstaked => {
+                    Some(unstaked_unsat_max.max(1))
+                }
+                ConnectionPeerType::Staked(_) => Some((staked_unsat_max / num_connections).max(1)),
             }
         }
     }
@@ -744,6 +752,28 @@ pub mod test {
             swqos.compute_max_streams_for_rtt(&big, rtt, false),
             swqos.compute_max_streams_for_rtt(&small, rtt, false),
         );
+    }
+
+    #[test]
+    fn test_unsaturated_quota_divided_by_connections() {
+        let swqos = make_swqos(SwQosConfig {
+            base_max_streams: 2048,
+            ..SwQosConfig::default()
+        });
+        let rtt = REFERENCE_RTT; // scale=1.0 → staked_unsat_max=2048
+
+        let ctx1 = staked_context(1_000, 100_000, 1);
+        let ctx4 = staked_context(1_000, 100_000, 4);
+        let q1 = swqos
+            .compute_max_streams_for_rtt(&ctx1, rtt, false)
+            .unwrap();
+        let q4 = swqos
+            .compute_max_streams_for_rtt(&ctx4, rtt, false)
+            .unwrap();
+
+        assert_eq!(q1, 2048);
+        assert_eq!(q4, 512); // 2048 / 4
+        assert!(q4 * 4 <= q1);
     }
 
     #[test]
