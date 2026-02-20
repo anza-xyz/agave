@@ -1,5 +1,5 @@
 use std::{
-    sync::atomic::{AtomicI64, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
@@ -24,6 +24,8 @@ pub struct LoadDebtTracker {
     bucket: AtomicI64,
     /// Nanos since epoch of the last refill. High bit is a lock.
     last_refill_nanos: AtomicU64,
+    /// Tracks the last observed saturation state for transition logging.
+    was_saturated: AtomicBool,
     epoch: Instant,
     refill_interval_nanos: u64,
     max_streams_per_second: u64,
@@ -51,6 +53,7 @@ impl LoadDebtTracker {
         Self {
             bucket: AtomicI64::new(burst_capacity),
             last_refill_nanos: AtomicU64::new(0),
+            was_saturated: AtomicBool::new(false),
             epoch: Instant::now(),
             refill_interval_nanos: refill_interval.as_nanos() as u64,
             max_streams_per_second,
@@ -74,14 +77,32 @@ impl LoadDebtTracker {
     /// `saturation_threshold`. When already below that threshold,
     /// a refill is attempted so parked connections can detect recovery
     /// even when no streams are flowing.
+    ///
+    /// Logs a warning when the system becomes saturated and an info message
+    /// when it recovers.
     pub fn is_saturated(&self) -> bool {
         let level = self.bucket.load(Ordering::Relaxed);
-        if level < self.saturation_threshold {
+        let saturated = if level < self.saturation_threshold {
             self.try_refill();
             self.bucket.load(Ordering::Relaxed) < self.saturation_threshold
         } else {
             false
+        };
+        let prev = self.was_saturated.swap(saturated, Ordering::Relaxed);
+        if saturated && !prev {
+            log::warn!(
+                "LoadDebtTracker: system saturated (bucket={}, threshold={})",
+                self.bucket.load(Ordering::Relaxed),
+                self.saturation_threshold,
+            );
+        } else if !saturated && prev {
+            log::info!(
+                "LoadDebtTracker: system recovered (bucket={}, threshold={})",
+                self.bucket.load(Ordering::Relaxed),
+                self.saturation_threshold,
+            );
         }
+        saturated
     }
 
     /// Return the current bucket level.
