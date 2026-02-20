@@ -68,7 +68,7 @@ impl TieredReadableFile {
     /// Reads a value of type `T` from the file.
     ///
     /// Type T must be plain ol' data.
-    pub fn read_pod<T: NoUninit + AnyBitPattern>(&self, value: &mut T) -> io::Result<()> {
+    pub fn read_pod<T: AnyBitPattern>(&self, value: &mut T) -> io::Result<()> {
         // SAFETY: Since T is AnyBitPattern, it is safe to cast bytes to T.
         unsafe { self.read_type(value) }
     }
