@@ -18,7 +18,7 @@ dummy-for-ci-check = []
 frozen-abi = []
 
 [dependencies]
-anyhow = "1.0.101"
+anyhow = "1.0.102"
 cargo_metadata = "0.23.1"
 clap = { version = "4.5.59", features = ["derive"] }
 env_logger = "0.11.9"
