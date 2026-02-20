@@ -80,6 +80,9 @@ pub fn main() {
         ("set-identity", Some(subcommand_matches)) => {
             commands::set_identity::execute(subcommand_matches, &ledger_path)
         }
+        ("set-identity-and-vote-account", Some(subcommand_matches)) => {
+            commands::set_identity_and_vote_account::execute(subcommand_matches, &ledger_path)
+        }
         ("set-log-filter", Some(subcommand_matches)) => {
             commands::set_log_filter::execute(subcommand_matches, &ledger_path)
         }
