@@ -691,6 +691,7 @@ impl Validator {
     pub fn new(
         node: Node,
         identity_keypair: Arc<Keypair>,
+        block_producer_keypair: Option<Arc<Keypair>>,
         ledger_path: &Path,
         vote_account: &Pubkey,
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
@@ -708,6 +709,7 @@ impl Validator {
         Self::new_with_exit(
             node,
             identity_keypair,
+            block_producer_keypair,
             ledger_path,
             vote_account,
             authorized_voter_keypairs,
@@ -728,6 +730,7 @@ impl Validator {
     pub fn new_with_exit(
         mut node: Node,
         identity_keypair: Arc<Keypair>,
+        block_producer_keypair: Option<Arc<Keypair>>,
         ledger_path: &Path,
         vote_account: &Pubkey,
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
@@ -777,6 +780,12 @@ impl Validator {
         assert_eq!(&id, node.info.pubkey());
 
         info!("identity pubkey: {id}");
+        if let Some(ref bp_keypair) = block_producer_keypair {
+            info!(
+                "block producer pubkey: {} (overrides identity for leader schedule)",
+                bp_keypair.pubkey()
+            );
+        }
         info!("vote account pubkey: {vote_account}");
 
         if !config.no_os_network_stats_reporting {
@@ -1000,6 +1009,9 @@ impl Validator {
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
+        if let Some(ref bp_keypair) = block_producer_keypair {
+            cluster_info.set_block_producer_keypair(bp_keypair.clone());
+        }
         let cluster_info = Arc::new(cluster_info);
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
         migration_status.set_pubkey(cluster_info.id());
@@ -2990,6 +3002,7 @@ mod tests {
         let validator = Validator::new(
             validator_node,
             Arc::new(validator_keypair),
+            None, // block_producer_keypair
             &validator_ledger_path,
             &voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![voting_keypair])),
@@ -3207,6 +3220,7 @@ mod tests {
                 Validator::new(
                     validator_node,
                     Arc::new(validator_keypair),
+                    None, // block_producer_keypair
                     &validator_ledger_path,
                     &vote_account_keypair.pubkey(),
                     Arc::new(RwLock::new(vec![Arc::new(vote_account_keypair)])),

@@ -1234,6 +1234,7 @@ impl TestValidator {
         let validator = Some(Validator::new(
             node,
             Arc::new(validator_identity),
+            None, // block_producer_keypair
             &ledger_path,
             &vote_account_address,
             config.authorized_voter_keypairs.clone(),
