@@ -393,6 +393,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-votor-messages",
+ "agave-welford-stats",
  "anyhow",
  "bincode",
  "bitvec",
@@ -402,7 +403,6 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "lru",
- "num-traits",
  "parking_lot 0.12.5",
  "qualifier_attr",
  "rayon",
@@ -460,6 +460,13 @@ dependencies = [
  "solana-signer-store",
  "thiserror 2.0.18",
  "wincode",
+]
+
+[[package]]
+name = "agave-welford-stats"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

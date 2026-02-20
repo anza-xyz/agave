@@ -131,6 +131,7 @@ members = [
     "votor",
     "votor-messages",
     "watchtower",
+    "welford-stats",
     "xdp",
     "xdp-ebpf",
 ]
@@ -205,6 +206,7 @@ agave-syscalls = { path = "syscalls", version = "=4.0.0-alpha.0", default-featur
 agave-transaction-view = { path = "transaction-view", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+agave-welford-stats = { path = "welford-stats" }
 agave-xdp = { path = "xdp", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 ahash = "0.8.12"

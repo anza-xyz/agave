@@ -1,6 +1,6 @@
 use {
-    crate::welford_stats::WelfordStats,
     agave_votor_messages::vote::Vote,
+    agave_welford_stats::WelfordStats,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,

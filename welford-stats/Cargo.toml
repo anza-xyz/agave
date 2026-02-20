@@ -1,0 +1,21 @@
+[package]
+name = "agave-welford-stats"
+description = "Using Welford's algorithm to maintain stats"
+readme = "../README.md"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+num-traits = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+test-case = { workspace = true }
+
+[lints]
+workspace = true
