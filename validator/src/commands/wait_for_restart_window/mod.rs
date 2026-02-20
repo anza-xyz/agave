@@ -6,6 +6,7 @@ use {
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     console::style,
+    jsonrpc_core_client::RpcError,
     solana_clap_utils::{
         input_parsers::pubkey_of,
         input_validators::{is_parsable, is_pubkey_or_keypair, is_valid_percentage},
@@ -18,6 +19,7 @@ use {
     std::{
         collections::VecDeque,
         path::Path,
+        result,
         time::{Duration, SystemTime},
     },
 };
@@ -108,6 +110,28 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn should_skip_snapshot_check(
+    skip_new_snapshot_check_arg: bool,
+    generating_snapshots: result::Result<bool, RpcError>,
+) -> bool {
+    if !skip_new_snapshot_check_arg {
+        match generating_snapshots {
+            Ok(false) => {
+                println!("Validator is not generating snapshots. Skipping new snapshot check...");
+                true
+            }
+            Err(err) => {
+                println!("Failed to check if validator is generating snapshots: {err}");
+                println!("Leaving snapshot check on...");
+                false
+            }
+            Ok(true) => false,
+        }
+    } else {
+        skip_new_snapshot_check_arg
+    }
+}
+
 pub fn wait_for_restart_window(
     ledger_path: &Path,
     identity: Option<Pubkey>,
@@ -119,6 +143,16 @@ pub fn wait_for_restart_window(
     let sleep_interval = Duration::from_secs(5);
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
+
+    let generating_snapshots = admin_rpc_service::runtime().block_on(async {
+        let admin_client = admin_rpc_service::connect(ledger_path).await?;
+        admin_client.generating_snapshots().await
+    });
+
+    // Check if the snapshot check should be skipped. The snapshot check is only relevant if the validator is
+    // generating snapshots.
+    let skip_new_snapshot_check =
+        should_skip_snapshot_check(skip_new_snapshot_check, generating_snapshots);
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     let rpc_addr = admin_rpc_service::runtime()
@@ -453,5 +487,26 @@ mod tests {
                 ..WaitForRestartWindowArgs::default()
             },
         );
+    }
+
+    #[test]
+    fn test_should_skip_snapshot_check_with_arg_true() {
+        // Verify cases where the skip_new_snapshot_check_arg is true, which should always skip
+        // the snapshot check regardless of the result of generating_snapshots
+        assert!(should_skip_snapshot_check(true, Ok(false)));
+        assert!(should_skip_snapshot_check(true, Ok(true)));
+        assert!(should_skip_snapshot_check(
+            true,
+            Err(RpcError::Client("test error".into()))
+        ));
+
+        // Verify cases where the skip_new_snapshot_check_arg is false, which should only skip if
+        // generating_snapshots returns Ok(false). Notice the ! in cases 2 and 3.
+        assert!(should_skip_snapshot_check(false, Ok(false)));
+        assert!(!should_skip_snapshot_check(false, Ok(true)));
+        assert!(!should_skip_snapshot_check(
+            false,
+            Err(RpcError::Client("test error".into()))
+        ));
     }
 }
