@@ -729,12 +729,8 @@ mod tests {
         itertools::Itertools,
         solana_hash::Hash,
         solana_keypair::Keypair,
-<<<<<<< HEAD
-        solana_perf::{packet, sigverify},
-=======
         solana_leader_schedule::SlotLeader,
-        solana_perf::packet,
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
+        solana_perf::{packet, sigverify},
         solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
