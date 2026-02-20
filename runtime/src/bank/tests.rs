@@ -8713,11 +8713,11 @@ fn test_get_largest_accounts() {
         .iter()
         .cloned()
         .zip(vec![
-            2 * LAMPORTS_PER_SOL,
-            3 * LAMPORTS_PER_SOL,
-            3 * LAMPORTS_PER_SOL,
-            4 * LAMPORTS_PER_SOL,
-            5 * LAMPORTS_PER_SOL,
+            200 * LAMPORTS_PER_SOL,
+            300 * LAMPORTS_PER_SOL,
+            300 * LAMPORTS_PER_SOL,
+            400 * LAMPORTS_PER_SOL,
+            500 * LAMPORTS_PER_SOL,
         ])
         .collect();
 
@@ -8747,17 +8747,17 @@ fn test_get_largest_accounts() {
     assert_eq!(
         bank.get_largest_accounts(1, &pubkeys_hashset, AccountAddressFilter::Include, false)
             .unwrap(),
-        vec![(pubkeys[4], 5 * LAMPORTS_PER_SOL)]
+        vec![(pubkeys[4], 500 * LAMPORTS_PER_SOL)]
     );
     assert_eq!(
         bank.get_largest_accounts(1, &exclude_hashset, AccountAddressFilter::Exclude, false)
             .unwrap(),
-        vec![(pubkeys[4], 5 * LAMPORTS_PER_SOL)]
+        vec![(pubkeys[4], 500 * LAMPORTS_PER_SOL)]
     );
     assert_eq!(
         bank.get_largest_accounts(1, &exclude4, AccountAddressFilter::Exclude, false)
             .unwrap(),
-        vec![(pubkeys[3], 4 * LAMPORTS_PER_SOL)]
+        vec![(pubkeys[3], 400 * LAMPORTS_PER_SOL)]
     );
 
     // Return all added accounts
