@@ -88,6 +88,7 @@ agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-
 rand = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
+solana-leader-schedule = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }

@@ -7,6 +7,7 @@ use {
     solana_clock::Clock,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
+    solana_leader_schedule::SlotLeader,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::instruction,
     solana_message::Message,
@@ -202,11 +203,11 @@ pub fn load_upgradeable_program_and_advance_slot(
     // load_upgradeable_program sets clock sysvar to 1, which causes the program to be effective
     // after 2 slots. They need to be called individually to create the correct fork graph in between.
     bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
+        .advance_slot(1, bank_forks, SlotLeader::default())
         .expect("Failed to advance the slot");
 
     let bank = bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
+        .advance_slot(1, bank_forks, SlotLeader::default())
         .expect("Failed to advance the slot");
 
     (bank, program_id)
@@ -362,7 +363,7 @@ pub fn load_program_of_loader_v4(
             .unwrap();
     }
     let bank = bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
+        .advance_slot(1, bank_forks, SlotLeader::default())
         .expect("Failed to advance the slot");
     (bank, program_keypair.pubkey())
 }

@@ -122,7 +122,7 @@ mod tests {
         solana_bls_signatures::{Keypair as BlsKeypair, Pubkey as BlsPubkey},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
-        solana_pubkey::Pubkey,
+        solana_leader_schedule::SlotLeader,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
@@ -170,7 +170,7 @@ mod tests {
         .genesis_config;
         genesis_config.epoch_schedule = EpochSchedule::without_warmup();
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let bank = Bank::new_from_parent(bank, SlotLeader::default(), slot);
         let rank_map = bank.get_rank_map(slot).unwrap().clone();
         let signing_keys = (0..max_validators)
             .map(|index| {

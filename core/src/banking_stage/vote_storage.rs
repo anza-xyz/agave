@@ -375,6 +375,7 @@ pub(crate) mod tests {
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils::{self, ValidatorVoteKeypairs},
         solana_signer::Signer,
@@ -853,7 +854,7 @@ pub(crate) mod tests {
         let bank_0 = Bank::new_for_tests(&genesis_config);
         let mut bank = Bank::new_from_parent(
             Arc::new(bank_0),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             MINIMUM_SLOTS_PER_EPOCH, // This puts us in epoch 1
         );
         assert_eq!(bank.epoch(), 1);
@@ -937,7 +938,7 @@ pub(crate) mod tests {
         let bank_0 = Bank::new_for_tests(&config);
         let bank = Bank::new_from_parent(
             Arc::new(bank_0),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             MINIMUM_SLOTS_PER_EPOCH - 1,
         );
         assert_eq!(bank.epoch(), 0);
@@ -952,7 +953,7 @@ pub(crate) mod tests {
         let bank_0 = Bank::new_for_tests(&config);
         let bank = Bank::new_from_parent(
             Arc::new(bank_0),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             MINIMUM_SLOTS_PER_EPOCH,
         );
         assert_eq!(bank.epoch(), 1);
@@ -971,7 +972,7 @@ pub(crate) mod tests {
         let bank_0 = Bank::new_for_tests(&config);
         let bank = Bank::warp_from_parent(
             Arc::new(bank_0),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             3 * MINIMUM_SLOTS_PER_EPOCH,
         );
         assert_eq!(bank.epoch(), 2);
