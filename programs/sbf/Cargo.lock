@@ -6697,6 +6697,7 @@ name = "solana-core"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-bls-cert-verify",
  "agave-feature-set",
  "agave-logger",
  "agave-scheduler-bindings",
@@ -6748,6 +6749,7 @@ dependencies = [
  "solana-address-lookup-table-interface",
  "solana-bincode",
  "solana-bloom",
+ "solana-bls-signatures",
  "solana-builtins-default-costs",
  "solana-client",
  "solana-clock",
