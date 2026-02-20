@@ -673,7 +673,18 @@ mod tests {
         plugin_manager.store(Arc::new(new_plugin_manager));
 
         // check that plugin gets unloaded when we unload the plugin manager
-        drop(plugin_manager);
+        let empty_plugin_manager = GeyserPluginManager {
+            plugins: Vec::new(),
+        };
+        let mut geyser_plugin_manager_ref = plugin_manager.swap(Arc::new(empty_plugin_manager));
+        let mut geyser_plugin_manager = Arc::get_mut(&mut geyser_plugin_manager_ref);
+        // Poll every 5ms to obtain a mutable ref to the plugin manager.
+        while geyser_plugin_manager.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            geyser_plugin_manager = Arc::get_mut(&mut geyser_plugin_manager_ref);
+        }
+        let geyser_plugin_manager = geyser_plugin_manager.unwrap();
+        geyser_plugin_manager.unload();
         assert!(!test_plugin_loaded.load(Ordering::Relaxed));
     }
 }
