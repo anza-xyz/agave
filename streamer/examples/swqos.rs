@@ -16,7 +16,10 @@ use {
     solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
     solana_pubkey::Pubkey,
     solana_streamer::{
-        nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
+        nonblocking::{
+            quic::SpawnNonBlockingServerResult, swqos::SwQosConfig,
+            testing_utilities::SpawnSwQosServerResult,
+        },
         quic::QuicStreamerConfig,
         streamer::StakedNodes,
     },
@@ -110,11 +113,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let cancel = CancellationToken::new();
-    let SpawnNonBlockingServerResult {
-        endpoints,
-        stats,
-        thread: run_thread,
-        max_concurrent_connections: _,
+    let SpawnSwQosServerResult {
+        server:
+            SpawnNonBlockingServerResult {
+                endpoints,
+                stats,
+                thread: run_thread,
+                max_concurrent_connections: _,
+            },
+        swqos: _,
     } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
         "quic_streamer_test",
         [socket.try_clone()?],

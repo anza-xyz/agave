@@ -1077,6 +1077,7 @@ pub fn execute(
             max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
             max_streams_per_ms,
+            ..Default::default()
         },
     };
 
@@ -1096,6 +1097,7 @@ pub fn execute(
             max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
             max_streams_per_ms,
+            ..Default::default()
         },
     };
 

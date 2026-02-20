@@ -210,9 +210,7 @@ pub struct StreamerStats {
     // opened from a particular IP address.
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
-    pub(crate) stream_load_ema: AtomicUsize,
-    pub(crate) stream_load_ema_overflow: AtomicUsize,
-    pub(crate) stream_load_capacity_overflow: AtomicUsize,
+    pub(crate) parked_streams: AtomicUsize,
     pub(crate) process_sampled_packets_us_hist: Mutex<histogram::Histogram>,
     pub(crate) perf_track_overhead_us: AtomicU64,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
@@ -232,6 +230,28 @@ pub struct StreamerStats {
 }
 
 impl StreamerStats {
+    pub fn total_new_streams(&self) -> usize {
+        self.total_new_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn parked_streams(&self) -> usize {
+        self.parked_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn total_packets_sent_to_consumer(&self) -> usize {
+        self.total_packets_sent_to_consumer.load(Ordering::Relaxed)
+    }
+
+    pub fn connection_added_from_staked_peer(&self) -> usize {
+        self.connection_added_from_staked_peer
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn connection_added_from_unstaked_peer(&self) -> usize {
+        self.connection_added_from_unstaked_peer
+            .load(Ordering::Relaxed)
+    }
+
     pub fn report(&self, name: &'static str) {
         let process_sampled_packets_us_hist = {
             let mut metrics = self.process_sampled_packets_us_hist.lock().unwrap();
@@ -458,21 +478,6 @@ impl StreamerStats {
                 i64
             ),
             (
-                "stream_load_ema",
-                self.stream_load_ema.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "stream_load_ema_overflow",
-                self.stream_load_ema_overflow.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "stream_load_capacity_overflow",
-                self.stream_load_capacity_overflow.load(Ordering::Relaxed),
-                i64
-            ),
-            (
                 "throttled_unstaked_streams",
                 self.throttled_unstaked_streams.swap(0, Ordering::Relaxed),
                 i64
@@ -556,6 +561,11 @@ impl StreamerStats {
                 "refused_connections_too_many_open_connections",
                 self.refused_connections_too_many_open_connections
                     .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "parked_streams",
+                self.parked_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
