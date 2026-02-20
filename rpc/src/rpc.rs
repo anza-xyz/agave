@@ -988,7 +988,6 @@ impl JsonRpcRequestProcessor {
                 slot_leaders.extend(
                     leader_schedule
                         .get_slot_leaders()
-                        .iter()
                         .map(|slot_leader| slot_leader.id)
                         .skip(slot_index as usize)
                         .take(limit.saturating_sub(slot_leaders.len())),
@@ -2932,7 +2931,6 @@ pub mod rpc_minimal {
                         solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
                             leader_schedule
                                 .get_slot_leaders()
-                                .iter()
                                 .map(|slot_leader| &slot_leader.id)
                                 .enumerate(),
                         );

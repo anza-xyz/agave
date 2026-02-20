@@ -10209,10 +10209,13 @@ pub mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = FixedSchedule {
-            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(vec![SlotLeader {
-                id: leader_keypair.pubkey(),
-                vote_address: Pubkey::new_unique(),
-            }])),
+            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(
+                vec![SlotLeader {
+                    id: leader_keypair.pubkey(),
+                    vote_address: Pubkey::new_unique(),
+                }],
+                1,
+            )),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 
