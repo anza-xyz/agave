@@ -7,8 +7,8 @@ use {
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
-        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
         Deserialize, Serialize,
+        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -16,8 +16,8 @@ use {
         is_loadable::IsLoadable as _,
     },
     solana_cli_output::{
-        display::{build_balance_message, writeln_transaction},
         CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay, VerboseDisplay,
+        display::{build_balance_message, writeln_transaction},
     },
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -40,7 +40,7 @@ use {
         cmp,
         collections::HashMap,
         fmt::{self, Display, Formatter},
-        io::{stdout, Write},
+        io::{Write, stdout},
         rc::Rc,
         sync::Arc,
     },

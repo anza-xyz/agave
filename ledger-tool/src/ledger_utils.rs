@@ -5,7 +5,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_hash::StartingSnapshotHashes,
     },
-    clap::{value_t, value_t_or_exit, values_t_or_exit, ArgMatches},
+    clap::{ArgMatches, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
     solana_accounts_db::utils::{
@@ -13,7 +13,7 @@ use {
     },
     solana_clock::Slot,
     solana_core::validator::{
-        supported_scheduling_mode, BlockProductionMethod, BlockVerificationMethod,
+        BlockProductionMethod, BlockVerificationMethod, supported_scheduling_mode,
     },
     solana_genesis_config::GenesisConfig,
     solana_genesis_utils::open_genesis_config,
@@ -48,8 +48,8 @@ use {
         path::{Path, PathBuf},
         process::exit,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
     },
     thiserror::Error,
