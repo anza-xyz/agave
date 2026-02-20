@@ -454,6 +454,7 @@ dependencies = [
  "agave-xdp-ebpf",
  "arc-swap",
  "aya",
+ "bytes",
  "crossbeam-channel",
  "libc",
  "log",
