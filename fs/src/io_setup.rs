@@ -21,6 +21,7 @@ use {
 pub struct IoSetupState {
     #[cfg(target_os = "linux")]
     shared_sqpoll: Option<SharedSqPoll>,
+    pub use_direct_io: bool,
     pub use_registered_io_uring_buffers: bool,
 }
 
@@ -43,6 +44,17 @@ impl IoSetupState {
     /// Speeds up kernel operations on the memory, but requires appropriate memlock ulimit.
     pub fn with_buffers_registered(mut self, fixed: bool) -> Self {
         self.use_registered_io_uring_buffers = fixed;
+        self
+    }
+
+    /// Enables direct I/O for operations that bypass the operating system's caching layer.
+    ///
+    /// File system is required to support opening files with `O_DIRECT` flag.
+    ///
+    /// This can improve performance when allocation and checking of caches by the kernel is slower
+    /// than the overall savings from re-using cached file data (e.g. for read / write once data).
+    pub fn with_direct_io(mut self, use_direct_io: bool) -> Self {
+        self.use_direct_io = use_direct_io;
         self
     }
 

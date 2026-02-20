@@ -364,6 +364,8 @@ pub fn get_accounts_db_config(
         use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
             solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
         ),
+        snapshots_use_direct_io: value_t!(arg_matches, "accounts_db_snapshots_use_direct_io", bool)
+            .unwrap_or(true),
         ..AccountsDbConfig::default()
     }
 }
