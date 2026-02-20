@@ -148,7 +148,7 @@ dependencies = [
  "bincode",
  "bzip2",
  "chrono",
- "clap 2.33.3",
+ "clap 4.5.60",
  "console 0.16.2",
  "crossbeam-channel",
  "ctrlc",
@@ -308,7 +308,7 @@ dependencies = [
 name = "agave-store-histogram"
 version = "4.0.0-alpha.0"
 dependencies = [
- "clap 2.33.3",
+ "clap 4.5.60",
  "solana-version",
 ]
 
@@ -398,7 +398,7 @@ dependencies = [
  "assert_cmd",
  "caps",
  "chrono",
- "clap 2.33.3",
+ "clap 4.5.60",
  "console 0.16.2",
  "core_affinity",
  "crossbeam-channel",
@@ -575,7 +575,7 @@ name = "agave-watchtower"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.5.60",
  "humantime",
  "log",
  "solana-clap-utils",
@@ -1876,9 +1876,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.31"
+version = "4.5.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027bb0d98429ae334a8698531da7077bdf906419543a35a55c2cb1b66437d767"
+checksum = "2797f34da339ce31042b27d23607e051786132987f595b02ba4f6a6dffb7030a"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1886,21 +1886,21 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.31"
+version = "4.5.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5589e0cba072e0f3d23791efac0fd8627b49c829c196a492e88168e6a669d863"
+checksum = "24a241312cea5059b13574bb9b3861cabf758b879c15190b37b6d6fd63ab6876"
 dependencies = [
  "anstream",
  "anstyle",
- "clap_lex 0.7.4",
+ "clap_lex 1.0.0",
  "strsim 0.11.1",
 ]
 
 [[package]]
 name = "clap_derive"
-version = "4.5.28"
+version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf4ced95c6f4a675af3da73304b9ac4ed991640c36374e4b46795c49e17cf1ed"
+checksum = "a92793da1a46a5f2a02a6f4c46c6496b28c43638adea8306fcb0caa1634f24e5"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -1919,9 +1919,9 @@ dependencies = [
 
 [[package]]
 name = "clap_lex"
-version = "0.7.4"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
+checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "colorchoice"
@@ -2108,7 +2108,7 @@ dependencies = [
  "anes",
  "cast 0.3.0",
  "ciborium",
- "clap 4.5.31",
+ "clap 4.5.60",
  "criterion-plot",
  "itertools 0.13.0",
  "num-traits",
@@ -6996,7 +6996,7 @@ name = "solana-accounts-cluster-bench"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.5.60",
  "log",
  "rand 0.9.2",
  "rayon",
@@ -7574,7 +7574,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bs58",
- "clap 2.33.3",
+ "clap 4.5.60",
  "console 0.16.2",
  "const_format",
  "criterion-stats",
@@ -8443,7 +8443,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "bincode",
- "clap 2.33.3",
+ "clap 4.5.60",
  "crossbeam-channel",
  "log",
  "solana-clap-utils",
@@ -8564,7 +8564,7 @@ dependencies = [
  "agave-snapshots",
  "base64 0.22.1",
  "bincode",
- "clap 2.33.3",
+ "clap 4.5.60",
  "itertools 0.14.0",
  "serde",
  "serde_json",
@@ -8690,7 +8690,7 @@ dependencies = [
  "bincode",
  "bs58",
  "bv",
- "clap 2.33.3",
+ "clap 4.5.60",
  "criterion",
  "crossbeam-channel",
  "flate2",
@@ -8757,7 +8757,7 @@ name = "solana-gossip-cli"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.5.60",
  "log",
  "solana-clap-utils",
  "solana-gossip",
@@ -10656,7 +10656,7 @@ dependencies = [
 name = "solana-stake-accounts"
 version = "4.0.0-alpha.0"
 dependencies = [
- "clap 2.33.3",
+ "clap 4.5.60",
  "solana-account",
  "solana-clap-utils",
  "solana-cli-config",
@@ -10784,7 +10784,7 @@ dependencies = [
  "assert_matches",
  "bytes",
  "chrono",
- "clap 4.5.31",
+ "clap 4.5.60",
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.32",
@@ -10930,7 +10930,7 @@ name = "solana-svm-test-harness"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
- "clap 4.5.31",
+ "clap 4.5.60",
  "prost",
  "solana-svm-test-harness-fixture",
  "solana-svm-test-harness-instr",
