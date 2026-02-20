@@ -10213,6 +10213,7 @@ dependencies = [
  "bincode",
  "bitvec",
  "blake3",
+ "boxcar",
  "bv",
  "bytemuck",
  "crossbeam-channel",

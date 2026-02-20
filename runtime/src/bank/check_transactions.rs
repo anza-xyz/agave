@@ -239,13 +239,12 @@ impl Bank {
         } else {
             None
         };
-        let rcache = self.status_cache.read().unwrap();
 
         for (sanitized_tx_ref, lock_result) in sanitized_txs.iter().zip(lock_results) {
             let sanitized_tx = sanitized_tx_ref.borrow();
 
             let (result, processed_slot) = if lock_result.is_ok() {
-                if let Some(slot) = self.get_processed_slot(sanitized_tx, &rcache) {
+                if let Some(slot) = self.get_processed_slot(sanitized_tx, &self.status_cache) {
                     error_counters.already_processed += 1;
                     (Err(TransactionError::AlreadyProcessed), Some(slot))
                 } else {

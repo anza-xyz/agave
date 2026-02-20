@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::Arc;
 #[cfg(not(feature = "shuttle-test"))]
@@ -89,6 +87,8 @@ where
 
     /// Retains only the elements specified by the predicate or that are being
     /// accessed by other threads.
+    // FIXME: use this?
+    #[cfg(test)]
     pub fn retain_if_accessed_or(&self, mut f: impl FnMut(&K, &mut ROValue<V>) -> bool) {
         self.inner.retain(|k, v| v.shared() || f(k, v))
     }
