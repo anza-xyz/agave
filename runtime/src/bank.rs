@@ -2116,7 +2116,7 @@ impl Bank {
     }
 
     /// Returns a reference to the [`VersionedEpochStakes`] corresponding to the given [`Slot`].
-    fn epoch_stakes_from_slot(&self, slot: Slot) -> Option<&VersionedEpochStakes> {
+    pub fn epoch_stakes_from_slot(&self, slot: Slot) -> Option<&VersionedEpochStakes> {
         let epoch = self.epoch_schedule().get_epoch(slot);
         self.epoch_stakes(epoch)
     }
