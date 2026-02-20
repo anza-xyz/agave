@@ -6,7 +6,7 @@ use {
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
-        bls_sigverifier,
+        bls_sigverify,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
             VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, VoteTracker,
@@ -32,6 +32,7 @@ use {
         voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
         votor::{Votor, VotorConfig},
     },
+    agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
     bytes::Bytes,
     crossbeam_channel::{bounded, unbounded, Receiver, Sender},
     solana_client::connection_cache::ConnectionCache,
@@ -109,6 +110,12 @@ pub struct Tvu {
     bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
+
+    // TODO: these will be used when the block component processor is upstreamed
+    #[allow(dead_code)]
+    reward_certs_receiver: Receiver<BuildRewardCertsResponse>,
+    #[allow(dead_code)]
+    build_reward_certs_sender: Sender<BuildRewardCertsRequest>,
 }
 
 pub struct TvuSockets {
@@ -252,10 +259,9 @@ impl Tvu {
         // streamer and sigverify for A2A BLS messages
         let (consensus_message_sender, consensus_message_receiver) =
             bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (rewards_msg_sender, rewards_msg_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
-        // TODO: once the bls sigverifier is upstreamed, it will need the sender side.
-        let (_reward_votes_sender, reward_votes_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
         // The BLS socket is currently only available on Testnet and Development clusters.
         // Closer to release we will enable this for all clusters.
@@ -294,20 +300,23 @@ impl Tvu {
             };
 
             // sigverifier
-            let banks = bank_forks.read().unwrap().sharable_banks();
-            let bls_sigverify_t = bls_sigverifier::spawn_service(
+            let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+            let bls_sigverifier = bls_sigverify::bls_sigverifier::spawn_service(
                 exit.clone(),
                 bls_packet_receiver,
-                banks,
+                sharable_banks,
                 verified_voter_slots_sender,
+                rewards_msg_sender,
                 consensus_message_sender.clone(),
-                migration_status.clone(),
+                consensus_metrics_sender.clone(),
+                cluster_info.clone(),
+                leader_schedule_cache.clone(),
             );
 
             let mut key_notifiers = key_notifiers.write().unwrap();
             key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
 
-            Some((bls_streamer_t, bls_sigverify_t))
+            Some((bls_streamer_t, bls_sigverifier))
         } else {
             None
         };
@@ -432,8 +441,8 @@ impl Tvu {
 
         // TODO: when the block component processor is upstreamed,
         // it will use the unused channels below.
-        let (reward_certs_sender, _reward_certs_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
-        let (_build_reward_certs_receiver, build_reward_certs_receiver) =
+        let (reward_certs_sender, reward_certs_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (build_reward_certs_sender, build_reward_certs_receiver) =
             bounded(MAX_ALPENGLOW_PACKET_NUM);
         let votor_config = VotorConfig {
             exit: exit.clone(),
@@ -461,7 +470,7 @@ impl Tvu {
             consensus_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
-            reward_votes_receiver,
+            reward_votes_receiver: rewards_msg_receiver,
             reward_certs_sender,
             build_reward_certs_receiver,
         };
@@ -588,6 +597,8 @@ impl Tvu {
             bls_sigverify_threads,
             votor,
             commitment_service,
+            reward_certs_receiver,
+            build_reward_certs_sender,
         })
     }
 
