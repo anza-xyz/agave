@@ -793,16 +793,16 @@ mod tests {
             stakes::{Stakes, tests::create_staked_node_accounts},
         },
         agave_feature_set::{FeatureSet, delay_commission_updates},
-        bincode,
+        agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
         rayon::ThreadPoolBuilder,
         solana_account::{
             AccountSharedData, ReadableAccount, accounts_equal, state_traits::StateMut,
         },
         solana_accounts_db::partitioned_rewards::PartitionedEpochRewardsConfig,
-        solana_bls_signatures::{
-            keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-        },
+        solana_bls_signatures::keypair::Keypair as BLSKeypair,
+        solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
+        solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_signer::Signer,
@@ -811,9 +811,9 @@ mod tests {
             state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
         solana_vote_interface::state::{
-            BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInit, VoteStateV4, VoteStateVersions,
+            BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInitV2, VoteStateV4, VoteStateVersions,
         },
-        solana_vote_program::{authorized_voters::AuthorizedVoters, vote_state},
+        solana_vote_program::vote_state::{self, create_bls_proof_of_possession},
         std::{
             collections::HashSet,
             sync::{Arc, RwLockReadGuard},
@@ -1069,26 +1069,20 @@ mod tests {
         assert_eq!(bank.epoch(), op.epoch);
         for (vote_address, vote_op) in &op.vote_operations {
             if let Some(balance) = &vote_op.create_with_balance {
-                let vote_init = VoteInit {
-                    node_pubkey: Pubkey::new_unique(),
-                    authorized_voter: Pubkey::new_unique(),
-                    authorized_withdrawer: Pubkey::new_unique(),
-                    commission: 0,
-                };
                 // Create a BLS pubkey so the vote account passes VAT filtering
-                let bls_pubkey: BLSPubkeyCompressed = BLSKeypair::new().public.into();
-                let bls_pubkey_buffer = bincode::serialize(&bls_pubkey).unwrap();
-                let bls_pubkey_compressed = Some(bls_pubkey_buffer.try_into().unwrap());
-                let vote_state = VoteStateV4 {
-                    node_pubkey: vote_init.node_pubkey,
-                    authorized_voters: AuthorizedVoters::new(
-                        bank.epoch(),
-                        vote_init.authorized_voter,
-                    ),
-                    authorized_withdrawer: vote_init.authorized_withdrawer,
-                    bls_pubkey_compressed,
-                    ..VoteStateV4::default()
+                let identity = Keypair::new();
+                let bls_keypair =
+                    BLSKeypair::derive_from_signer(&identity, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+                let (bls_pubkey, bls_pop) =
+                    create_bls_proof_of_possession(vote_address, &bls_keypair);
+                let vote_init = VoteInitV2 {
+                    node_pubkey: identity.pubkey(),
+                    authorized_voter: identity.pubkey(),
+                    authorized_voter_bls_pubkey: bls_pubkey,
+                    authorized_voter_bls_proof_of_possession: bls_pop,
+                    ..VoteInitV2::default()
                 };
+                let vote_state = VoteStateV4::new(&vote_init, &Clock::default());
                 let mut account = solana_account::AccountSharedData::new(
                     *balance,
                     VoteStateV4::size_of(),
