@@ -17,6 +17,7 @@ use {
         },
     },
     agave_votor_messages::migration::MigrationStatus,
+    arrayvec::ArrayVec,
     bincode::{serialize, Options},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -40,12 +41,9 @@ use {
     solana_hash::{Hash, HASH_BYTES},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{token_bucket::TokenBucket, SocketAddrSpace},
     solana_packet::PACKET_DATA_SIZE,
-    solana_perf::{
-        data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
-    },
+    solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_runtime::bank_forks::SharableBanks,
@@ -270,16 +268,6 @@ pub enum RepairProtocol {
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
 const REPAIR_REQUEST_MIN_BYTES: usize = REPAIR_REQUEST_PONG_SERIALIZED_BYTES;
 
-fn discard_malformed_repair_requests(
-    requests: &mut Vec<RemoteRequest>,
-    stats: &mut ServeRepairStats,
-) -> usize {
-    let num_requests = requests.len();
-    requests.retain(|request| request.bytes.len() >= REPAIR_REQUEST_MIN_BYTES);
-    stats.err_malformed += num_requests - requests.len();
-    requests.len()
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
@@ -406,6 +394,7 @@ struct RepairRequestWithMeta {
     whitelisted: bool,
 }
 
+const MAX_REQUESTS_PER_ITERATION: usize = 64;
 impl ServeRepair {
     pub fn new(
         cluster_info: Arc<ClusterInfo>,
@@ -584,13 +573,13 @@ impl ServeRepair {
         epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
-        socket_addr_space: &SocketAddrSpace,
+        socket_addr_space: SocketAddrSpace,
     ) -> Result<RepairRequestWithMeta> {
         let Ok(request) = deserialize_request::<RepairProtocol>(&remote_request) else {
             return Err(Error::from(RepairVerifyError::Malformed));
         };
         let from_addr = remote_request.remote_address;
-        if !ContactInfo::is_valid_address(&from_addr, socket_addr_space) {
+        if !ContactInfo::is_valid_address(&from_addr, &socket_addr_space) {
             return Err(Error::from(RepairVerifyError::Malformed));
         }
         Self::verify_signed_packet(my_id, &remote_request.bytes, &request)?;
@@ -651,39 +640,6 @@ impl ServeRepair {
         }
     }
 
-    fn decode_requests(
-        requests: Vec<RemoteRequest>,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
-        whitelist: &HashSet<Pubkey>,
-        my_id: &Pubkey,
-        socket_addr_space: &SocketAddrSpace,
-        stats: &mut ServeRepairStats,
-    ) -> Vec<RepairRequestWithMeta> {
-        let decode_request = |request| {
-            let result = Self::decode_request(
-                request,
-                epoch_staked_nodes,
-                whitelist,
-                my_id,
-                socket_addr_space,
-            );
-            match &result {
-                Ok(req) => {
-                    if req.stake == 0 {
-                        stats.handle_requests_unstaked += 1;
-                    } else {
-                        stats.handle_requests_staked += 1;
-                    }
-                }
-                Err(e) => {
-                    Self::record_request_decode_error(e, stats);
-                }
-            }
-            result.ok()
-        };
-        requests.into_iter().filter_map(decode_request).collect()
-    }
-
     /// Process messages from the network
     fn run_listen(
         &mut self,
@@ -693,14 +649,14 @@ impl ServeRepair {
         response_sender: &PacketBatchSender,
         repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
-        data_budget: &DataBudget,
+        data_budget: &TokenBucket,
     ) -> std::result::Result<(), RecvTimeoutError> {
         /// How much more expensive it is to serve bytes if we are a leader
         const LEADER_BYTE_COST_MULTIPLIER: usize = 10;
         const TIMEOUT: Duration = Duration::from_secs(1);
-        let mut requests = vec![requests_receiver.recv_timeout(TIMEOUT)?];
-        const MAX_REQUESTS_PER_ITERATION: usize = 1024;
-        let mut total_requests = requests.len();
+        let mut request_buffer: ArrayVec<RemoteRequest, MAX_REQUESTS_PER_ITERATION> =
+            ArrayVec::new();
+        request_buffer.push(requests_receiver.recv_timeout(TIMEOUT)?);
 
         let socket_addr_space = *self.cluster_info.socket_addr_space();
         let root_bank = self.sharable_banks.root();
@@ -708,58 +664,72 @@ impl ServeRepair {
         let identity_keypair = self.cluster_info.keypair();
         let my_id = identity_keypair.pubkey();
 
-        let max_buffered_packets = if !self.repair_whitelist.read().unwrap().is_empty() {
-            4 * MAX_REQUESTS_PER_ITERATION
-        } else {
-            2 * MAX_REQUESTS_PER_ITERATION
-        };
+        // Check if we are currently a leader, so we can limit the service rate
+        // If information is not available, assume we are not a leader.
+        let is_leader = self
+            .leader_state
+            .as_ref()
+            .map(|ls| ls.load().working_bank().is_some())
+            .unwrap_or(false);
+        // assign 10x cost to served bytes if we are a leader
+        let byte_cost_multiplier = if is_leader { 10 } else { 1 };
 
-        let mut dropped_requests = 0;
-        let mut well_formed_requests = discard_malformed_repair_requests(&mut requests, stats);
-        loop {
-            let mut more: Vec<_> = requests_receiver.try_iter().collect();
-            if more.is_empty() {
+        while request_buffer.len() < request_buffer.capacity() {
+            let Ok(request) = requests_receiver.try_recv() else {
+                break;
+            };
+            if request.bytes.len() < REPAIR_REQUEST_MIN_BYTES {
+                stats.err_malformed += 1;
+            }
+            // shed any excessload blindly if we are about to run out of data budget
+            if data_budget.current_tokens()
+                < (PACKET_DATA_SIZE * MAX_REQUESTS_PER_ITERATION * byte_cost_multiplier) as u64
+            {
+                stats.dropped_requests_load_shed += 1;
                 break;
             }
-            total_requests += more.len();
-            if well_formed_requests > max_buffered_packets {
-                // Already exceeded max. Don't waste time discarding
-                dropped_requests += more.len();
-                continue;
-            }
-            let retained = discard_malformed_repair_requests(&mut more, stats);
-            well_formed_requests += retained;
-            if retained > 0 && well_formed_requests <= max_buffered_packets {
-                requests.extend(more);
-            } else {
-                dropped_requests += more.len();
-            }
+            request_buffer.push(request);
         }
 
-        stats.dropped_requests_load_shed += dropped_requests;
-        stats.total_requests += total_requests;
+        stats.total_requests += request_buffer.len();
 
         let decode_start = Instant::now();
-        let mut decoded_requests = {
+        let mut decoded_request_buffer: ArrayVec<
+            RepairRequestWithMeta,
+            MAX_REQUESTS_PER_ITERATION,
+        > = ArrayVec::new();
+        {
             let whitelist = self.repair_whitelist.read().unwrap();
-            Self::decode_requests(
-                requests,
-                &epoch_staked_nodes,
-                &whitelist,
-                &my_id,
-                &socket_addr_space,
-                stats,
-            )
-        };
-        let whitelisted_request_count = decoded_requests.iter().filter(|r| r.whitelisted).count();
-        stats.decode_time_us += decode_start.elapsed().as_micros() as u64;
-        stats.whitelisted_requests += whitelisted_request_count.min(MAX_REQUESTS_PER_ITERATION);
-
-        if decoded_requests.len() > MAX_REQUESTS_PER_ITERATION {
-            stats.dropped_requests_low_stake += decoded_requests.len() - MAX_REQUESTS_PER_ITERATION;
-            decoded_requests.sort_unstable_by_key(|r| Reverse((r.whitelisted, r.stake)));
-            decoded_requests.truncate(MAX_REQUESTS_PER_ITERATION);
+            for request in request_buffer.drain(..) {
+                let result = Self::decode_request(
+                    request,
+                    &epoch_staked_nodes,
+                    &whitelist,
+                    &my_id,
+                    socket_addr_space,
+                );
+                let request = match result {
+                    Ok(req) => {
+                        if req.stake == 0 {
+                            stats.handle_requests_unstaked += 1;
+                        } else {
+                            stats.handle_requests_staked += 1;
+                        }
+                        req
+                    }
+                    Err(e) => {
+                        Self::record_request_decode_error(&e, stats);
+                        continue;
+                    }
+                };
+                if request.whitelisted {
+                    stats.whitelisted_requests += 1;
+                }
+                decoded_request_buffer.push(request);
+            }
         }
+        decoded_request_buffer.sort_unstable_by_key(|r| Reverse((r.whitelisted, r.stake)));
+        stats.decode_time_us += decode_start.elapsed().as_micros() as u64;
 
         // Check if we are currently a leader, so we can limit the service rate
         // If information is not available, assume we are not a leader.
@@ -778,7 +748,7 @@ impl ServeRepair {
         self.handle_requests(
             ping_cache,
             recycler,
-            decoded_requests,
+            &mut decoded_request_buffer,
             response_sender,
             repair_response_quic_sender,
             stats,
@@ -885,9 +855,7 @@ impl ServeRepair {
         repair_response_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        const INTERVAL_MS: u64 = 1000;
-        const MAX_BYTES_PER_SECOND: usize = 12_000_000;
-        const MAX_BYTES_PER_INTERVAL: usize = MAX_BYTES_PER_SECOND * INTERVAL_MS as usize / 1000;
+        const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
 
         // rate limit delay should be greater than the repair request iteration delay
         assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
@@ -906,7 +874,11 @@ impl ServeRepair {
             .spawn(move || {
                 let mut last_print = Instant::now();
                 let mut stats = ServeRepairStats::default();
-                let data_budget = DataBudget::default();
+                let data_budget = TokenBucket::new(
+                    MAX_BYTES_PER_SECOND,
+                    MAX_BYTES_PER_SECOND,
+                    MAX_BYTES_PER_SECOND as f64,
+                );
                 while !exit.load(Ordering::Relaxed) {
                     let result = self.run_listen(
                         &mut ping_cache,
@@ -928,7 +900,6 @@ impl ServeRepair {
                         self.report_reset_stats(&mut stats);
                         last_print = Instant::now();
                     }
-                    data_budget.update(INTERVAL_MS, |_bytes| MAX_BYTES_PER_INTERVAL);
                 }
             })
             .unwrap()
@@ -1044,25 +1015,26 @@ impl ServeRepair {
         &self,
         ping_cache: &mut PingCache,
         recycler: &PacketBatchRecycler,
-        requests: Vec<RepairRequestWithMeta>,
+        requests: &mut ArrayVec<RepairRequestWithMeta, MAX_REQUESTS_PER_ITERATION>,
         packet_batch_sender: &PacketBatchSender,
         repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
-        data_budget: &DataBudget,
+        data_budget: &TokenBucket,
         byte_cost_multiplier: usize,
     ) {
         let identity_keypair = self.cluster_info.keypair();
         let mut pending_pings = Vec::default();
-
         for RepairRequestWithMeta {
             request,
             from_addr,
             protocol,
             stake,
             whitelisted: _,
-        } in requests.into_iter()
+        } in requests.drain(..)
         {
-            if !data_budget.check(request.max_response_bytes() * byte_cost_multiplier) {
+            if !data_budget.current_tokens()
+                < (request.max_response_bytes() * byte_cost_multiplier) as u64
+            {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
@@ -1085,7 +1057,9 @@ impl ServeRepair {
             };
             let num_response_packets = rsp.len();
             let num_response_bytes: usize = rsp.iter().map(|p| p.meta().size).sum();
-            if data_budget.take(num_response_bytes * byte_cost_multiplier)
+            if data_budget
+                .consume_tokens((num_response_bytes * byte_cost_multiplier) as u64)
+                .is_ok()
                 && send_response(
                     rsp,
                     protocol,
@@ -1445,93 +1419,6 @@ mod tests {
         } else {
             assert!(res.is_err());
         }
-    }
-
-    fn repair_request_header_for_tests() -> RepairRequestHeader {
-        RepairRequestHeader {
-            signature: Signature::default(),
-            sender: Pubkey::default(),
-            recipient: Pubkey::default(),
-            timestamp: timestamp(),
-            nonce: Nonce::default(),
-        }
-    }
-
-    fn make_remote_request(packet: &Packet) -> RemoteRequest {
-        RemoteRequest {
-            remote_pubkey: None,
-            remote_address: packet.meta().socket_addr(),
-            bytes: Bytes::from(Vec::from(packet.data(..).unwrap())),
-        }
-    }
-
-    #[test]
-    fn test_check_well_formed_repair_request() {
-        let mut rng = rand::rng();
-        let keypair = Keypair::new();
-        let ping = Ping::new(rng.random(), &keypair);
-        let pong = Pong::new(&ping, &keypair);
-        let request = RepairProtocol::Pong(pong);
-        let mut pkt = Packet::from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 5;
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 0);
-        assert_eq!(stats.err_malformed, 1);
-
-        let request = RepairProtocol::WindowIndex {
-            header: repair_request_header_for_tests(),
-            slot: 123,
-            shred_index: 456,
-        };
-        let mut pkt = Packet::from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 8;
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 0);
-        assert_eq!(stats.err_malformed, 1);
-
-        let request = RepairProtocol::AncestorHashes {
-            header: repair_request_header_for_tests(),
-            slot: 123,
-        };
-        let mut pkt = Packet::from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 1;
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 0);
-        assert_eq!(stats.err_malformed, 1);
-
-        let request = RepairProtocol::Orphan {
-            header: repair_request_header_for_tests(),
-            slot: 262_547_696,
-        };
-        let mut pkt = Packet::from_data(None, request).unwrap();
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 1);
-        pkt.meta_mut().size = 3;
-        let mut batch = vec![make_remote_request(&pkt)];
-        let mut stats = ServeRepairStats::default();
-        let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
-        assert_eq!(num_well_formed, 0);
-        assert_eq!(stats.err_malformed, 1);
     }
 
     #[test]
