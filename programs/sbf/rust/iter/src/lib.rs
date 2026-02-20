@@ -4,7 +4,7 @@
 
 use {
     solana_program::log::sol_log_64,
-    solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS},
+    solana_program_entrypoint::{SUCCESS, custom_heap_default, custom_panic_default},
 };
 
 #[no_mangle]

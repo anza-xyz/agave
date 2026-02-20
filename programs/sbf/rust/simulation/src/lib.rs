@@ -1,11 +1,11 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    solana_account_info::{next_account_info, AccountInfo},
+    solana_account_info::{AccountInfo, next_account_info},
     solana_clock::Clock,
     solana_msg::msg,
     solana_program_error::ProgramResult,
-    solana_pubkey::{declare_id, Pubkey},
+    solana_pubkey::{Pubkey, declare_id},
     solana_sysvar::{Sysvar, SysvarSerialize},
     std::convert::TryInto,
 };

@@ -13,11 +13,11 @@ use solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status};
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
-    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
-    solana_clock::{UnixTimestamp, MAX_PROCESSING_AGE},
+    solana_clock::{MAX_PROCESSING_AGE, UnixTimestamp},
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -25,11 +25,11 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeBudgetLimits, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
     solana_loader_v4_interface::instruction as loader_v4_instruction,
-    solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
+    solana_message::{Message, SanitizedMessage, inner_instruction::InnerInstruction},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -37,8 +37,8 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            bootstrap_validator_stake_lamports, create_genesis_config,
-            create_genesis_config_with_leader_ex, GenesisConfigInfo,
+            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+            create_genesis_config_with_leader_ex,
         },
         loader_utils::{
             create_program, instructions_to_load_program_of_loader_v4, load_program_of_loader_v4,
@@ -59,7 +59,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -719,17 +719,21 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == "Program data: AQID BAUG"));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == "Program data: AQID BAUG")
+        );
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program return: {} CAFE", program_id))
+        );
     }
 }
 
@@ -976,9 +980,10 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
+        assert!(
+            bank.feature_set
+                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
+        );
         {
             // Reset the account balances for `ARGUMENT` and `INVOKED_ARGUMENT`
             let account = AccountSharedData::new(42, 100, &invoke_program_id);
@@ -1027,9 +1032,11 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_cpi_account_info_limit::id(),
         );
 
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::increase_cpi_account_info_limit::id())
+        );
 
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339,
@@ -1043,9 +1050,11 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::increase_tx_account_lock_limit::id(),
         );
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::increase_tx_account_lock_limit::id())
+        );
 
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
@@ -1059,9 +1068,10 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
+        assert!(
+            bank.feature_set
+                .is_active(&feature_set::increase_tx_account_lock_limit::id())
+        );
 
         let bank = bank_with_feature_activated(
             &bank_forks,
@@ -1069,9 +1079,10 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_cpi_account_info_limit::id(),
         );
 
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
+        assert!(
+            bank.feature_set
+                .is_active(&feature_set::increase_cpi_account_info_limit::id())
+        );
         // failure cases
 
         let do_invoke_failure_test_local_with_compute_check =
@@ -1246,9 +1257,11 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_cpi_account_info_limit::id(),
         );
 
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::increase_cpi_account_info_limit::id())
+        );
 
         do_invoke_failure_test_local(
             TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_SIMD_0339,
@@ -1273,9 +1286,11 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::increase_tx_account_lock_limit::id())
+        );
 
         do_invoke_failure_test_local(
             TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
@@ -1335,9 +1350,11 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(!bank
-            .feature_set
-            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
+        assert!(
+            !bank
+                .feature_set
+                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
+        );
         do_invoke_failure_test_local(
             TEST_NESTED_INVOKE_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
@@ -1358,9 +1375,10 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::raise_cpi_nesting_limit_to_8::id(),
         );
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
+        assert!(
+            bank.feature_set
+                .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id())
+        );
         do_invoke_failure_test_local(
             TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
@@ -3970,9 +3988,11 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(bank_client
-        .send_and_confirm_message(&[&mint_keypair], message)
-        .is_ok());
+    assert!(
+        bank_client
+            .send_and_confirm_message(&[&mint_keypair], message)
+            .is_ok()
+    );
 }
 
 #[test]

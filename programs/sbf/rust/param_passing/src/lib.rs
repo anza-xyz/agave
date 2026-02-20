@@ -2,7 +2,7 @@
 
 use {
     solana_program::log::sol_log_64,
-    solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS},
+    solana_program_entrypoint::{SUCCESS, custom_heap_default, custom_panic_default},
     solana_sbf_rust_param_passing_dep::{Data, TestDep},
 };
 
