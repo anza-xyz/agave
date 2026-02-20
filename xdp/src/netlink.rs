@@ -2,24 +2,43 @@
 
 use {
     libc::{
-        getsockname, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
-        AF_INET, AF_INET6, AF_NETLINK, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE,
-        NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI,
-        NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWNEIGH,
-        RTM_NEWROUTE, RT_TABLE_MAIN, SOCK_RAW, SOL_NETLINK,
+        nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket, AF_INET, AF_INET6,
+        AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, NDA_DST, NDA_LLADDR,
+        NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR,
+        NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST, RTA_DST, RTA_GATEWAY, RTA_IIF, RTA_OIF,
+        RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK,
+        RTM_NEWNEIGH, RTM_NEWROUTE, RT_TABLE_MAIN, SOCK_RAW, SOL_NETLINK, SOL_SOCKET, SO_RCVBUF,
     },
     std::{
         collections::HashMap,
+        ffi::CStr,
         io, mem,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
-        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
         ptr, slice,
     },
     thiserror::Error,
 };
 
+const NETLINK_RCVBUF_SIZE: i32 = 1 << 16;
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
+// GRE nested attributes (from include/uapi/linux/if_tunnel.h)
+const IFLA_GRE_LOCAL: u16 = 6;
+const IFLA_GRE_REMOTE: u16 = 7;
+const IFLA_GRE_TTL: u16 = 8;
+const IFLA_GRE_TOS: u16 = 9;
+const IFLA_GRE_PMTUDISC: u16 = 10;
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+struct ifinfomsg {
+    ifi_family: u8,
+    __ifi_pad: u8,
+    ifi_type: u16,
+    ifi_index: u32,
+    ifi_flags: u32,
+    ifi_change: u32,
+}
 
 pub struct NetlinkSocket {
     sock: OwnedFd,
@@ -50,27 +69,7 @@ impl NetlinkSocket {
         {
             return Err(io::Error::last_os_error());
         }
-
-        // Safety: sockaddr_nl is POD so this is safe
-        let mut addr = unsafe { mem::zeroed::<sockaddr_nl>() };
-        addr.nl_family = AF_NETLINK as u16;
-        let mut addr_len = mem::size_of::<sockaddr_nl>() as u32;
-        // Safety: libc wrapper
-        if unsafe {
-            getsockname(
-                sock.as_raw_fd(),
-                &mut addr as *mut _ as *mut _,
-                &mut addr_len as *mut _,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(Self {
-            sock,
-            _nl_pid: addr.nl_pid,
-        })
+        Ok(Self { sock, _nl_pid: 0 })
     }
 
     fn send(&self, msg: &[u8]) -> Result<(), io::Error> {
@@ -88,8 +87,13 @@ impl NetlinkSocket {
         Ok(())
     }
 
-    fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
-        let mut buf = [0u8; 4096];
+    pub(crate) fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
+        // The theoretical max size of a single netlink message (including header) is 4GiB.
+        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/netlink.h#L46
+        // However, in the kernel, the netlink message size is set to a page size.
+        // If the page size exceeds 8KiB, the netlink message size is capped to 8KiB
+        // See: https://elixir.bootlin.com/linux/v6.17.7/source/include/linux/netlink.h#L267
+        let mut buf = [0u8; 8 * 1024]; // 8 KiB
         let mut messages = Vec::new();
         let mut multipart = true;
         'out: while multipart {
@@ -133,10 +137,49 @@ impl NetlinkSocket {
 
         Ok(messages)
     }
+
+    /// Opens a listener socket for netlink updates
+    /// NETLINK_ROUTE socket subscribed to `groups` bitmask
+    pub fn bind(groups: u32) -> Result<Self, io::Error> {
+        let sock = Self::open()?;
+
+        // Subscribe to multicast groups
+        let mut addr: sockaddr_nl = unsafe { mem::zeroed() };
+        addr.nl_family = AF_NETLINK as u16;
+        addr.nl_groups = groups;
+        if unsafe {
+            libc::bind(
+                sock.as_raw_fd(),
+                &addr as *const _ as *const _,
+                mem::size_of::<sockaddr_nl>() as u32,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        unsafe {
+            setsockopt(
+                sock.as_raw_fd(),
+                SOL_SOCKET,
+                SO_RCVBUF,
+                &NETLINK_RCVBUF_SIZE as *const _ as *const _,
+                mem::size_of::<i32>() as u32,
+            );
+        }
+
+        Ok(sock)
+    }
+
+    #[inline]
+    pub fn as_raw_fd(&self) -> RawFd {
+        self.sock.as_raw_fd()
+    }
 }
 
+#[derive(Debug, Clone)]
 pub struct NetlinkMessage {
-    header: nlmsghdr,
+    pub(crate) header: nlmsghdr,
     data: Vec<u8>,
     error: Option<nlmsgerr>,
 }
@@ -296,8 +339,138 @@ impl std::fmt::Display for MacAddress {
     }
 }
 
+/// GRE tunnel information from netlink
+///
+/// Note: Only supports basic GRE header (no optional fields).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GreTunnelInfo {
+    /// Source IP address for the GRE tunnel header
+    pub local: IpAddr,
+    /// Destination IP address for the GRE tunnel header
+    pub remote: IpAddr,
+    pub ttl: u8,
+    pub tos: u8,
+    /// PMTU discovery setting (IFLA_GRE_PMTUDISC)
+    pub pmtudisc: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceInfo {
+    pub if_index: u32,
+    pub gre_tunnel: Option<GreTunnelInfo>,
+}
+
+impl InterfaceInfo {
+    pub fn is_gre(&self) -> bool {
+        self.gre_tunnel.is_some()
+    }
+}
+
+#[repr(C)]
+struct InterfaceRequest {
+    header: nlmsghdr,
+    ifi: ifinfomsg,
+}
+
+pub fn netlink_get_interfaces(family: u8) -> Result<Vec<InterfaceInfo>, io::Error> {
+    let sock = NetlinkSocket::open()?;
+
+    // Safety: ifinfomsg is POD
+    let mut req = unsafe { mem::zeroed::<InterfaceRequest>() };
+
+    let nlmsg_len = mem::size_of::<nlmsghdr>() + mem::size_of::<ifinfomsg>();
+    req.header = nlmsghdr {
+        nlmsg_len: nlmsg_len as u32,
+        nlmsg_flags: (NLM_F_REQUEST | NLM_F_DUMP) as u16,
+        nlmsg_type: RTM_GETLINK,
+        nlmsg_pid: 0,
+        nlmsg_seq: 1,
+    };
+
+    req.ifi.ifi_family = family;
+    sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
+
+    let mut interfaces = Vec::new();
+    for msg in sock.recv()? {
+        if msg.header.nlmsg_type != RTM_NEWLINK {
+            continue;
+        }
+
+        if let Some(if_info) = parse_rtm_ifinfomsg(&msg) {
+            interfaces.push(if_info);
+        }
+    }
+
+    Ok(interfaces)
+}
+
+pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
+    if msg.data.len() < mem::size_of::<ifinfomsg>() {
+        return None;
+    }
+
+    let ifi = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ifinfomsg) };
+    let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<ifinfomsg>()..]) else {
+        return None;
+    };
+
+    // Parse GRE tunnel information if this is a GRE interface
+    let gre_tunnel = parse_gre_tunnel_info_from_linkinfo(&attrs);
+    Some(InterfaceInfo {
+        if_index: ifi.ifi_index,
+        gre_tunnel,
+    })
+}
+
+// Parse GRE tunnel information from netlink
+fn parse_gre_tunnel_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<GreTunnelInfo> {
+    let gre = parse_linkinfo_data_for_kind(attrs, b"gre")?;
+
+    let u8_from_bytes = |data: &[u8]| -> Option<u8> { data.first().copied() };
+
+    let local = gre
+        .get(&IFLA_GRE_LOCAL)
+        .and_then(|a| parse_ip_address(a.data, AF_INET as u8))?;
+    let remote = gre
+        .get(&IFLA_GRE_REMOTE)
+        .and_then(|a| parse_ip_address(a.data, AF_INET as u8))?;
+    let ttl = gre.get(&IFLA_GRE_TTL).and_then(|a| u8_from_bytes(a.data))?;
+    let tos = gre.get(&IFLA_GRE_TOS).and_then(|a| u8_from_bytes(a.data))?;
+    let pmtudisc = gre
+        .get(&IFLA_GRE_PMTUDISC)
+        .and_then(|a| u8_from_bytes(a.data))?;
+
+    Some(GreTunnelInfo {
+        local,
+        remote,
+        ttl,
+        tos,
+        pmtudisc,
+    })
+}
+
+fn parse_linkinfo_data_for_kind<'a>(
+    attrs: &HashMap<u16, NlAttr<'a>>,
+    expected_kind: &[u8],
+) -> Option<HashMap<u16, NlAttr<'a>>> {
+    let li = attrs.get(&IFLA_LINKINFO)?;
+    // IFLA_LINKINFO contains nested attributes
+    let info = parse_attrs(li.data).ok()?;
+    let kind_attr = info.get(&IFLA_INFO_KIND)?;
+    if kind_attr.data.is_empty() {
+        return None;
+    }
+    let kind = CStr::from_bytes_until_nul(kind_attr.data).ok()?;
+    if kind.to_bytes() != expected_kind {
+        return None;
+    }
+    // Nested data (GRE attributes) is optional.
+    let data_attr = info.get(&IFLA_INFO_DATA)?;
+    parse_attrs(data_attr.data).ok()
+}
+
 /// Represents an entry in the neighbor table (ARP/NDP cache)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NeighborEntry {
     // IPv4 or IPv6 address
     pub destination: Option<IpAddr>,
@@ -310,9 +483,12 @@ pub struct NeighborEntry {
 }
 
 impl NeighborEntry {
-    /// Returns true if this neighbor entry is valid and usable
-    pub fn is_valid(&self) -> bool {
-        self.lladdr.is_some() && (self.state & (NUD_REACHABLE | NUD_PERMANENT | NUD_STALE)) != 0
+    #[inline]
+    pub fn key(&self) -> Option<(i32, Ipv4Addr)> {
+        match self.destination {
+            Some(IpAddr::V4(ip)) => Some((self.ifindex, ip)),
+            _ => None,
+        }
     }
 }
 
@@ -320,12 +496,12 @@ impl NeighborEntry {
 #[allow(non_camel_case_types)]
 struct ndmsg {
     ndm_family: u8,
-    ndm_pad1: u8,
-    ndm_pad2: u16,
+    _ndm_pad1: u8,
+    _ndm_pad2: u16,
     ndm_ifindex: i32,
     ndm_state: u16,
-    ndm_flags: u8,
-    ndm_type: u8,
+    _ndm_flags: u8,
+    _ndm_type: u8,
 }
 
 #[repr(C)]
@@ -336,7 +512,7 @@ struct NeighRequest {
 
 /// fetch the kernel's neighbor table (ARP/NDP cache)
 pub fn netlink_get_neighbors(
-    if_index: Option<i32>,
+    if_index: Option<u32>,
     family: u8,
 ) -> Result<Vec<NeighborEntry>, io::Error> {
     let sock = NetlinkSocket::open()?;
@@ -355,7 +531,7 @@ pub fn netlink_get_neighbors(
 
     req.ndm.ndm_family = family;
     if let Some(idx) = if_index {
-        req.ndm.ndm_ifindex = idx;
+        req.ndm.ndm_ifindex = idx as i32;
     }
 
     sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
@@ -371,20 +547,21 @@ pub fn netlink_get_neighbors(
             continue;
         }
 
-        let Some(neighbor) = parse_rtm_newneigh(msg, if_index) else {
-            continue;
-        };
-
-        neighbors.push(neighbor);
+        if let Some(neighbor) = parse_rtm_newneigh(&msg, if_index) {
+            neighbors.push(neighbor);
+        }
     }
 
     Ok(neighbors)
 }
 
-pub fn parse_rtm_newneigh(msg: NetlinkMessage, if_index: Option<i32>) -> Option<NeighborEntry> {
+pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option<NeighborEntry> {
+    if msg.data.len() < mem::size_of::<ndmsg>() {
+        return None;
+    }
     let nd_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
     if let Some(idx) = if_index {
-        if nd_msg.ndm_ifindex != idx {
+        if nd_msg.ndm_ifindex != idx as i32 {
             return None;
         }
     }
@@ -410,7 +587,7 @@ pub fn parse_rtm_newneigh(msg: NetlinkMessage, if_index: Option<i32>) -> Option<
     Some(neighbor)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteEntry {
     pub destination: Option<IpAddr>,
     pub gateway: Option<IpAddr>,
@@ -424,6 +601,18 @@ pub struct RouteEntry {
     pub type_: u8,
     pub family: u8,
     pub dst_len: u8,
+    pub flags: u32,
+}
+
+impl RouteEntry {
+    #[inline]
+    pub fn same_key(&self, other: &Self) -> bool {
+        self.family == other.family
+            && self.dst_len == other.dst_len
+            && self.destination == other.destination
+            && self.table == other.table
+            && self.type_ == other.type_
+    }
 }
 
 #[repr(C)]
@@ -493,17 +682,18 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
             continue;
         }
 
-        let Some(route) = parse_rtm_newroute(msg) else {
-            continue;
-        };
-
-        routes.push(route);
+        if let Some(route) = parse_rtm_newroute(&msg) {
+            routes.push(route);
+        }
     }
 
     Ok(routes)
 }
 
-pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
+pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
+    if msg.data.len() < mem::size_of::<rtmsg>() {
+        return None;
+    }
     let rt_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const rtmsg) };
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<rtmsg>()..]) else {
         return None;
@@ -521,6 +711,7 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
         type_: rt_msg.rtm_type,
         family: rt_msg.rtm_family,
         dst_len: rt_msg.rtm_dst_len,
+        flags: rt_msg.rtm_flags,
     };
     if let Some(dst_attr) = attrs.get(&RTA_DST) {
         route.destination = parse_ip_address(dst_attr.data, rt_msg.rtm_family);
@@ -550,25 +741,4 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
         route.pref_src = parse_ip_address(prefsrc_attr.data, rt_msg.rtm_family);
     }
     Some(route)
-}
-
-pub fn netlink_get_default_gateway(family: u8) -> Result<Option<RouteEntry>, io::Error> {
-    let routes = netlink_get_routes(family)?;
-
-    for route in routes {
-        let is_default_destination = match (route.destination, family as i32) {
-            (None, _) => true,
-            // 0.0.0.0
-            (Some(IpAddr::V4(addr)), AF_INET) => addr.is_unspecified() && route.dst_len == 0,
-            // ::/0
-            (Some(IpAddr::V6(addr)), AF_INET6) => addr.is_unspecified() && route.dst_len == 0,
-            _ => false,
-        };
-
-        if is_default_destination && route.gateway.is_some() {
-            return Ok(Some(route));
-        }
-    }
-
-    Ok(None)
 }

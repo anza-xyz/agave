@@ -3,12 +3,13 @@
 use {
     crate::{
         device::{NetworkDevice, QueueId, RingSizes},
+        gre::{construct_gre_packet, gre_packet_size},
         netlink::MacAddress,
         packet::{
-            write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
-            UDP_HEADER_SIZE,
+            write_eth_header, write_ip_header_for_udp, write_udp_header, ETH_HEADER_SIZE,
+            IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
-        route::Router,
+        route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
@@ -27,7 +28,7 @@ use {
 };
 
 #[allow(clippy::too_many_arguments)]
-pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
+pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
     cpu_id: usize,
     dev: &NetworkDevice,
     queue_id: QueueId,
@@ -35,9 +36,9 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     src_mac: Option<MacAddress>,
     src_ip: Option<Ipv4Addr>,
     src_port: u16,
-    dest_mac: Option<MacAddress>,
     receiver: Receiver<(A, T)>,
     drop_sender: Sender<(A, T)>,
+    route_fn: R,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -107,9 +108,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         mut completion,
     } = tx;
     let mut ring = ring.unwrap();
-
-    // get the routing table from netlink
-    let router = Router::new().expect("failed to create router");
 
     // we don't need higher caps anymore
     for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
@@ -199,17 +197,42 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                 let IpAddr::V4(dst_ip) = addr.ip() else {
                     panic!("IPv6 not supported");
                 };
+                let len = payload.as_ref().len();
 
-                let dest_mac = if let Some(mac) = dest_mac {
-                    mac
+                let dst = addr.ip();
+                let Some(next_hop) = route_fn(&dst) else {
+                    log::warn!("dropping packet: no route for peer {addr}");
+                    batched_packets -= 1;
+                    umem.release(frame.offset());
+                    continue;
+                };
+
+                if let Some(gre) = &next_hop.gre {
+                    frame.set_len(gre_packet_size(len));
+                    let packet = umem.map_frame_mut(&frame);
+                    let inner_src_ip = next_hop.preferred_src_ip.unwrap_or(src_ip);
+                    if let Err(err) = construct_gre_packet(
+                        packet,
+                        &src_mac,
+                        &gre.mac_addr,
+                        &inner_src_ip,
+                        &dst_ip,
+                        src_port,
+                        addr.port(),
+                        payload.as_ref(),
+                        &gre.tunnel_info,
+                    ) {
+                        log::warn!("dropping packet: {err}");
+                        batched_packets -= 1;
+                        umem.release(frame.offset());
+                        continue;
+                    }
                 } else {
-                    let next_hop = router.route(addr.ip()).unwrap();
-
                     // we need the MAC address to send the packet
                     let Some(dest_mac) = next_hop.mac_addr else {
                         log::warn!(
-                            "dropping packet: turbine peer {addr} must be routed through {} which \
-                             has no known MAC address",
+                            "dropping packet: peer {addr} must be routed through {} which has no \
+                             known MAC address",
                             next_hop.ip_addr
                         );
                         batched_packets -= 1;
@@ -217,39 +240,35 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         continue;
                     };
 
-                    dest_mac
-                };
+                    const PACKET_HEADER_SIZE: usize =
+                        ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
+                    frame.set_len(PACKET_HEADER_SIZE + len);
+                    let packet = umem.map_frame_mut(&frame);
 
-                const PACKET_HEADER_SIZE: usize =
-                    ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                let len = payload.as_ref().len();
-                frame.set_len(PACKET_HEADER_SIZE + len);
-                let packet = umem.map_frame_mut(&frame);
+                    // write the payload first as it's needed for checksum calculation (if enabled)
+                    packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
 
-                // write the payload first as it's needed for checksum calculation (if enabled)
-                packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
+                    write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
-                write_eth_header(packet, &src_mac.0, &dest_mac.0);
+                    write_ip_header_for_udp(
+                        &mut packet[ETH_HEADER_SIZE..],
+                        &src_ip,
+                        &dst_ip,
+                        (UDP_HEADER_SIZE + len) as u16,
+                    );
 
-                write_ip_header(
-                    &mut packet[ETH_HEADER_SIZE..],
-                    &src_ip,
-                    &dst_ip,
-                    (UDP_HEADER_SIZE + len) as u16,
-                );
+                    write_udp_header(
+                        &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
+                        &src_ip,
+                        src_port,
+                        &dst_ip,
+                        addr.port(),
+                        len as u16,
+                        // don't do checksums
+                        false,
+                    );
+                }
 
-                write_udp_header(
-                    &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
-                    &src_ip,
-                    src_port,
-                    &dst_ip,
-                    addr.port(),
-                    len as u16,
-                    // don't do checksums
-                    false,
-                );
-
-                // write the packet into the ring
                 ring.write(frame, 0)
                     .map_err(|_| "ring full")
                     // this should never happen as we check for available slots above
