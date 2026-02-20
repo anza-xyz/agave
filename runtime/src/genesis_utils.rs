@@ -209,10 +209,21 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         let vote_pubkey = validator_voting_keypairs.borrow().vote_keypair.pubkey();
         let stake_pubkey = validator_voting_keypairs.borrow().stake_keypair.pubkey();
 
-        // Ensure minimum lamports for VAT filtering
+        // Ensure minimum lamports for VAT filtering, but only when stake > 0.
+        // When stake is explicitly 0, respect that (e.g., for testing unstaked validator filtering).
         let rent = &genesis_config_info.genesis_config.rent;
-        let vote_account_lamports = (*stake).max(minimum_vote_account_balance_for_vat(100));
-        let stake_lamports = (*stake).max(minimum_stake_lamports_for_vat(rent));
+        let (vote_account_lamports, stake_lamports) = if *stake > 0 {
+            (
+                (*stake).max(minimum_vote_account_balance_for_vat(100)),
+                (*stake).max(minimum_stake_lamports_for_vat(rent)),
+            )
+        } else {
+            // Zero stake - just need rent exemption, no VAT minimums
+            (
+                rent.minimum_balance(VoteStateV4::size_of()),
+                rent.minimum_balance(StakeStateV2::size_of()),
+            )
+        };
 
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
@@ -414,11 +425,20 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     feature_set: &FeatureSet,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    // Ensure minimum lamports for VAT filtering
+    // Ensure minimum lamports for VAT filtering, but only when stake > 0.
     // VAT requires: non-zero stake, BLS pubkey, and lamports >= VAT_TO_BURN_PER_EPOCH + rent_exempt_minimum.
-    let vote_account_lamports =
-        (validator_stake_lamports).max(minimum_vote_account_balance_for_vat(100));
-    let stake_lamports = validator_stake_lamports.max(minimum_stake_lamports_for_vat(&rent));
+    let (vote_account_lamports, stake_lamports) = if validator_stake_lamports > 0 {
+        (
+            validator_stake_lamports.max(minimum_vote_account_balance_for_vat(100)),
+            validator_stake_lamports.max(minimum_stake_lamports_for_vat(&rent)),
+        )
+    } else {
+        // Zero stake - just need rent exemption, no VAT minimums
+        (
+            rent.minimum_balance(VoteStateV4::size_of()),
+            rent.minimum_balance(StakeStateV2::size_of()),
+        )
+    };
 
     let validator_vote_account = if feature_set.is_active(&vote_state_v4::id()) {
         // Vote state v4 feature active. Create a v4 account.
