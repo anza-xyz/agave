@@ -5804,7 +5804,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 }
 
 #[test_matrix(
-    [0, 1, 2, 5, 10, 15, 20],
+    [0, 1, 2, 5, 10, 15, 20, 32],
     [1, 10, 50, 100, 255, 500, 1000, 1024]
 )]
 #[allow(clippy::arithmetic_side_effects)]
@@ -5849,7 +5849,6 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
         account_metas.push(AccountMeta::new(pubkey, false));
     }
 
-    // `num_accounts * 2` will be added as return data.
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
 
     let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
@@ -5865,6 +5864,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
             .unwrap();
 
     assert!(effects.result.is_none());
+    // `num_accounts * 2` will be added as return data.
     assert_eq!(
         (num_accounts * 2).to_le_bytes().to_vec(),
         effects.return_data

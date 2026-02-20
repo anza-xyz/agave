@@ -5,7 +5,9 @@
 
 use {
     core::{mem::size_of, ptr::with_exposed_provenance_mut, slice::from_raw_parts},
-    pinocchio::{error::ProgramError, AccountView, Address, ProgramResult},
+    solana_account_view::AccountView,
+    solana_address::Address,
+    solana_program_error::{ProgramError, ProgramResult},
 };
 
 /// `assert_eq(core::mem::align_of::<u128>(), 8)` is true for BPF but not
