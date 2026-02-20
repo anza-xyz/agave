@@ -194,6 +194,7 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-logger = { workspace = true }
 agave-transaction-view = { workspace = true }
+bitvec = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
@@ -210,6 +211,7 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-signature = { workspace = true, features = ["std"] }
+solana-signer-store = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["sysvar"] }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = [
