@@ -7,7 +7,9 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::shred::{self, ShredFetchStats, should_discard_shred},
+    solana_ledger::shred::{
+        self, ShredFetchStats, max_shred_index, should_discard_shred_with_custom_shred_limits,
+    },
     solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef},
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -156,15 +158,26 @@ impl ShredFetchStage {
                     &shred_filter_ctx.epoch_schedule,
                 )
             };
+            let max_shred_index = |shred_slot| {
+                let halve_slot_times_active = check_feature_activation(
+                    &agave_feature_set::halve_slot_times::id(),
+                    shred_slot,
+                    &shred_filter_ctx.feature_set,
+                    &shred_filter_ctx.epoch_schedule,
+                );
+                max_shred_index(halve_slot_times_active)
+            };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
-                    || should_discard_shred(
+                    || should_discard_shred_with_custom_shred_limits(
                         packet.as_ref(),
                         shred_filter_ctx.last_root,
                         max_slot,
                         shred_version,
                         discard_unexpected_data_complete_shreds,
+                        max_shred_index,
+                        max_shred_index,
                         &mut stats,
                     )
                 {

@@ -23,6 +23,7 @@ use {
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
+    agave_feature_set as feature_set,
     agave_snapshots::unpack_genesis_archive,
     agave_votor_messages::migration::MigrationStatus,
     assert_matches::{assert_matches, debug_assert_matches},
@@ -108,6 +109,24 @@ pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
+
+fn is_feature_active_at_genesis(genesis_config: &GenesisConfig, feature_id: &Pubkey) -> bool {
+    genesis_config.accounts.contains_key(feature_id)
+}
+
+pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 {
+    let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick else {
+        return 0;
+    };
+
+    if is_feature_active_at_genesis(genesis_config, &feature_set::halve_slot_times::id())
+        && !is_feature_active_at_genesis(genesis_config, &feature_set::alpenglow::id())
+    {
+        hashes_per_tick.saturating_div(2).max(1)
+    } else {
+        hashes_per_tick
+    }
+}
 
 // Contiguous, sorted and non-empty ranges of shred indices:
 //     completed_ranges[i].start < completed_ranges[i].end
@@ -5419,7 +5438,9 @@ pub fn create_new_ledger(
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
-    let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
+    // Slot-0 tick entries are created before a Bank exists, so derive the
+    // effective hashes-per-tick directly from genesis feature state here.
+    let hashes_per_tick = hashes_per_tick_for_ledger(genesis_config);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);
@@ -5819,13 +5840,17 @@ pub mod tests {
         rand::{rng, seq::SliceRandom},
         solana_account_decoder::parse_token::UiTokenAmount,
         solana_entry::entry::{next_entry, next_entry_mut},
+        solana_genesis_config::GenesisConfig,
         solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
         solana_hash::Hash,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
         solana_packet::PACKET_DATA_SIZE,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, RewardType},
+        solana_runtime::{
+            bank::{Bank, RewardType},
+            genesis_utils::activate_feature,
+        },
         solana_sha256_hasher::hash,
         solana_shred_version::version_from_hash,
         solana_signature::Signature,
@@ -5856,6 +5881,25 @@ pub mod tests {
             entries.append(&mut tick);
         }
         entries
+    }
+
+    #[test]
+    fn test_hashes_per_tick_for_ledger() {
+        let mut genesis_config = GenesisConfig::default();
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 0);
+
+        genesis_config.poh_config.hashes_per_tick = Some(2);
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
+
+        activate_feature(&mut genesis_config, feature_set::halve_slot_times::id());
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 1);
+
+        genesis_config.poh_config.hashes_per_tick = Some(1);
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 1);
+
+        genesis_config.poh_config.hashes_per_tick = Some(2);
+        activate_feature(&mut genesis_config, feature_set::alpenglow::id());
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
     }
 
     fn make_and_insert_slot(blockstore: &Blockstore, slot: Slot, parent_slot: Slot) {

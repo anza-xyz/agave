@@ -2736,6 +2736,7 @@ pub mod tests {
     use {
         super::*,
         crate::{
+            blockstore::hashes_per_tick_for_ledger,
             blockstore_options::{AccessType, BlockstoreOptions},
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
@@ -2884,7 +2885,7 @@ pub mod tests {
     fn do_test_process_blockstore_with_missing_hashes(blockstore_access_type: AccessType) {
         agave_logger::setup();
 
-        let hashes_per_tick = 2;
+        let hashes_per_tick = 4;
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(10_000);
@@ -2896,7 +2897,7 @@ pub mod tests {
 
         let parent_slot = 0;
         let slot = 1;
-        let entries = create_ticks(ticks_per_slot, hashes_per_tick - 1, blockhash);
+        let entries = create_ticks(ticks_per_slot, 1, blockhash);
         assert_matches!(
             blockstore.write_entries(
                 slot,
@@ -3552,13 +3553,13 @@ pub mod tests {
         agave_logger::setup();
         let leader_pubkey = solana_pubkey::new_rand();
         let mint = 100_000;
-        let hashes_per_tick = 10;
+        let hashes_per_tick_genesis = 12;
         let GenesisConfigInfo {
             mut genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config_with_leader(mint, &leader_pubkey, 50);
-        genesis_config.poh_config.hashes_per_tick = Some(hashes_per_tick);
+        genesis_config.poh_config.hashes_per_tick = Some(hashes_per_tick_genesis);
         let (ledger_path, mut last_entry_hash) =
             create_new_tmp_ledger_auto_delete!(&genesis_config);
         debug!("ledger_path: {ledger_path:?}");
@@ -3587,6 +3588,7 @@ pub mod tests {
             entries.push(entry);
         }
 
+        let hashes_per_tick = hashes_per_tick_for_ledger(&genesis_config);
         let remaining_hashes = hashes_per_tick - entries.len() as u64;
         let tick_entry = next_entry_mut(&mut last_entry_hash, remaining_hashes, vec![]);
         entries.push(tick_entry);
@@ -3594,7 +3596,7 @@ pub mod tests {
         // Fill up the rest of slot 1 with ticks
         entries.extend(create_ticks(
             genesis_config.ticks_per_slot - 1,
-            genesis_config.poh_config.hashes_per_tick.unwrap(),
+            hashes_per_tick,
             last_entry_hash,
         ));
         let last_blockhash = entries.last().unwrap().hash;
@@ -5742,13 +5744,14 @@ pub mod tests {
         let genesis_hash = genesis_config.hash();
 
         let (slot_0_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let hashes_per_tick = slot_0_bank.hashes_per_tick().unwrap();
         assert_eq!(slot_0_bank.slot(), 0);
         assert_eq!(slot_0_bank.tick_height(), 0);
         assert_eq!(slot_0_bank.max_tick_height(), 2);
         assert_eq!(slot_0_bank.last_blockhash(), genesis_hash);
         assert_eq!(slot_0_bank.get_hash_age(&genesis_hash), Some(0));
 
-        let slot_0_entries = entry::create_ticks(TICKS_PER_SLOT, HASHES_PER_TICK, genesis_hash);
+        let slot_0_entries = entry::create_ticks(TICKS_PER_SLOT, hashes_per_tick, genesis_hash);
         let slot_0_hash = slot_0_entries.last().unwrap().hash;
         confirm_slot_entries_for_tests(&slot_0_bank, slot_0_entries, true, genesis_hash).unwrap();
         assert_eq!(slot_0_bank.tick_height(), slot_0_bank.max_tick_height());
@@ -5767,7 +5770,7 @@ pub mod tests {
         assert_eq!(slot_2_bank.max_tick_height(), 6);
         assert_eq!(slot_2_bank.last_blockhash(), slot_0_hash);
 
-        let slot_1_entries = entry::create_ticks(TICKS_PER_SLOT, HASHES_PER_TICK, slot_0_hash);
+        let slot_1_entries = entry::create_ticks(TICKS_PER_SLOT, hashes_per_tick, slot_0_hash);
         let slot_1_hash = slot_1_entries.last().unwrap().hash;
         confirm_slot_entries_for_tests(&slot_2_bank, slot_1_entries, false, slot_0_hash).unwrap();
         assert_eq!(slot_2_bank.tick_height(), 4);
@@ -5802,7 +5805,7 @@ pub mod tests {
             let slot_2_entries = {
                 let to_pubkey = Pubkey::new_unique();
                 let mut prev_entry_hash = slot_1_hash;
-                let mut remaining_entry_hashes = HASHES_PER_TICK;
+                let mut remaining_entry_hashes = hashes_per_tick;
 
                 let tx =
                     system_transaction::transfer(&mint_keypair, &to_pubkey, 1, recent_blockhash);
@@ -5816,7 +5819,7 @@ pub mod tests {
                 ));
                 entries.push(next_entry_mut(
                     &mut prev_entry_hash,
-                    HASHES_PER_TICK,
+                    hashes_per_tick,
                     vec![],
                 ));
 
