@@ -203,6 +203,7 @@ pub fn wait_for_restart_window(
 
             upcoming_idle_windows.clear();
             {
+                let has_leader_slots = !leader_schedule.is_empty();
                 let mut leader_schedule = leader_schedule.clone();
                 let mut max_idle_window = 0;
 
@@ -215,7 +216,7 @@ pub fn wait_for_restart_window(
                     }
                     idle_window_start_slot = next_leader_slot;
                 }
-                if !leader_schedule.is_empty() && upcoming_idle_windows.is_empty() {
+                if has_leader_slots && upcoming_idle_windows.is_empty() {
                     return Err(format!(
                         "Validator has no idle window of at least {min_idle_slots} slots. Largest \
                          idle window for epoch {} is {max_idle_window} slots",
