@@ -36,9 +36,23 @@ pub struct GlobalOptions {
     pub verbose: bool,
 }
 
-#[tokio::main]
-async fn main() {
-    if let Err(err) = try_main().await {
+fn main() {
+    // parse the command line arguments
+    let xtask = Xtask::parse();
+
+    // set the log level
+    // Safety: no threads are spawned at this point, so no parallel env updates can happen
+    unsafe {
+        if xtask.global.verbose {
+            std::env::set_var("RUST_LOG", "debug");
+        } else {
+            std::env::set_var("RUST_LOG", "info");
+        }
+    }
+    env_logger::init();
+
+    let rt = tokio::runtime::Runtime::new().expect("must create runtime");
+    if let Err(err) = rt.block_on(try_main(xtask)) {
         error!("Error: {err}");
         for (i, cause) in err.chain().skip(1).enumerate() {
             error!("  {}: {}", i.saturating_add(1), cause);
@@ -47,18 +61,7 @@ async fn main() {
     }
 }
 
-async fn try_main() -> Result<()> {
-    // parse the command line arguments
-    let xtask = Xtask::parse();
-
-    // set the log level
-    if xtask.global.verbose {
-        std::env::set_var("RUST_LOG", "debug");
-    } else {
-        std::env::set_var("RUST_LOG", "info");
-    }
-    env_logger::init();
-
+async fn try_main(xtask: Xtask) -> Result<()> {
     // run the command
     match xtask.command {
         Commands::Hello => commands::hello::run()?,
