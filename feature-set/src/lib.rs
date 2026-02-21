@@ -174,6 +174,8 @@ impl FeatureSet {
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
             block_revenue_sharing: false, // Hard-coded as disabled for now. Not a fully-implemented feature yet.
             vote_account_initialize_v2: false, // Feature disabled for now.
+            direct_account_pointers_in_program_input: self
+                .is_active(&direct_account_pointers_in_program_input::id()),
         }
     }
 }
@@ -1305,6 +1307,10 @@ pub mod validate_chained_block_id {
     solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
 }
 
+pub mod direct_account_pointers_in_program_input {
+    solana_pubkey::declare_id!("ptrXWLkSDMZZmZN8GAT6W5yW4EvYByfw6cRRHbXwQNS");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2323,6 +2329,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validate_chained_block_id::id(),
             "SIMD-0340: Validate chained block ID",
+        ),
+        (
+            direct_account_pointers_in_program_input::id(),
+            "SIMD-0449: Direct Account Pointers in Program Input",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

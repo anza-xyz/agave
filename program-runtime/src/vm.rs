@@ -209,6 +209,9 @@ pub fn execute<'a, 'b: 'a>(
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
         .get_feature_set()
         .provide_instruction_data_offset_in_vm_r2;
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
@@ -216,6 +219,7 @@ pub fn execute<'a, 'b: 'a>(
             &instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
+            direct_account_pointers_in_program_input,
         )?;
     serialize_time.stop();
 
