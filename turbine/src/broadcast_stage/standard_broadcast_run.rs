@@ -13,7 +13,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{
         MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
-        Shred, ShredType, Shredder, merkle_tree::MerkleTree,
+        Shred, ShredType, Shredder, max_shred_index, merkle_tree::MerkleTree,
     },
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
@@ -268,6 +268,9 @@ impl StandardBroadcastRun {
         } = receive_results;
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
+        let halve_slot_times_active = bank.halve_slot_times_active();
+        self.max_data_shreds_per_slot = max_shred_index(halve_slot_times_active);
+        self.max_code_shreds_per_slot = max_shred_index(halve_slot_times_active);
 
         let maybe_send_header = if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.

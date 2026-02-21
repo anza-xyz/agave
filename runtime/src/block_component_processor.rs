@@ -1014,9 +1014,9 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_multi_slot_gap() {
-        // For 5 slots: upper_bound = parent_time + 2 * 5 * 400ms = parent_time + 4000ms
-        // Use 2 seconds which is within bounds
-        test_clock_bounds_helper(5, |_, lower, _| lower + 2_000_000_000, true);
+        // For 5 slots: upper_bound = parent_time + 2 * 5 * 200ms = parent_time + 2000ms
+        // Use 1 second which is within bounds
+        test_clock_bounds_helper(5, |_, lower, _| lower + 1_000_000_000, true);
     }
 
     #[test]
