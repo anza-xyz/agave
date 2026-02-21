@@ -1113,7 +1113,7 @@ mod tests {
         assert!(matches!(
             signer_source,
             SignerSource {
-                kind: SignerSourceKind::Base58Keypair(ref s),
+                kind: SignerSourceKind::Base58Keypair(s),
                 derivation_path: None,
                 legacy: false,
             }
