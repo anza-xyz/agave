@@ -121,6 +121,9 @@ impl PohService {
                     }
                     return;
                 }
+
+                // Overwrite with testing value if provided.
+                let ticks_per_slot = poh_config.target_tick_count.unwrap_or(ticks_per_slot);
                 if poh_config.hashes_per_tick.is_none() {
                     if poh_config.target_tick_count.is_none() {
                         Self::low_power_tick_producer(
@@ -149,18 +152,14 @@ impl PohService {
                     if let Some(cores) = core_affinity::get_core_ids() {
                         core_affinity::set_for_current(cores[pinned_cpu_core]);
                     }
-                    let target_ns_per_tick = Self::target_ns_per_tick(
-                        ticks_per_slot,
-                        poh_config.target_tick_duration.as_nanos() as u64,
-                    );
                     Self::tick_producer(
                         poh_recorder,
+                        &poh_config,
                         &poh_exit,
                         ticks_per_slot,
                         hashes_per_batch,
                         &mut record_receiver,
                         poh_service_receiver,
-                        target_ns_per_tick,
                         &migration_status.shutdown_poh,
                     )
                 }
@@ -220,13 +219,14 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
+        let mut target_tick_duration = Duration::from_nanos(
+            Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
+        );
         while !poh_exit.load(Ordering::Relaxed) && !shutdown_poh.load(Ordering::Relaxed) {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, record_receiver);
             loop {
-                let remaining_tick_time = poh_config
-                    .target_tick_duration
-                    .saturating_sub(last_tick.elapsed());
+                let remaining_tick_time = target_tick_duration.saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
                     record_receiver,
@@ -270,6 +270,9 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(
+                    Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
+                );
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -327,22 +330,22 @@ impl PohService {
         let mut warned = false;
         let mut elapsed_ticks = 0;
         let mut last_tick = Instant::now();
-        let num_ticks = poh_config.target_tick_count.unwrap();
+        let num_ticks = ticks_per_slot;
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut should_shutdown_for_test_producers =
             Self::should_shutdown_for_test_producers(&poh_recorder);
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
-
+        let mut target_tick_duration = Duration::from_nanos(
+            Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
+        );
         while elapsed_ticks < num_ticks {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, record_receiver);
 
             loop {
-                let remaining_tick_time = poh_config
-                    .target_tick_duration
-                    .saturating_sub(last_tick.elapsed());
+                let remaining_tick_time = target_tick_duration.saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
                     record_receiver,
@@ -391,6 +394,9 @@ impl PohService {
             }
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(
+                    Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
+                );
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -531,18 +537,22 @@ impl PohService {
 
     fn tick_producer(
         poh_recorder: Arc<RwLock<PohRecorder>>,
+        poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
         record_receiver: &mut RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
-        target_ns_per_tick: u64,
         shutdown_poh: &AtomicBool,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
         let mut should_exit = poh_exit.load(Ordering::Relaxed);
+        let mut target_ns_per_tick = Self::target_ns_per_tick(
+            ticks_per_slot,
+            Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
+        );
 
         loop {
             // If we should exit, close the channel so no more records are accepted,
@@ -596,6 +606,10 @@ impl PohService {
             if let Some(service_message) = service_message {
                 if !should_exit {
                     Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                    target_ns_per_tick = Self::target_ns_per_tick(
+                        ticks_per_slot,
+                        Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
+                    );
                 }
             }
 
@@ -620,29 +634,42 @@ impl PohService {
         }
     }
 
+    // Reconciles the target tick duration derived from the bank via recorder
+    // vs. the one declared in the PoH config.
+    fn target_tick_ns_recorder_vs_poh_config(
+        poh_recorder: &RwLock<PohRecorder>,
+        poh_config: &PohConfig,
+    ) -> u64 {
+        poh_recorder
+            .read()
+            .unwrap()
+            .target_tick_duration_ns()
+            // Testing can set bank values to insanely large numbers, so let
+            // poh_config override these back to more sane timings when necessary.
+            .min(poh_config.target_tick_duration.as_nanos() as u64)
+    }
+
     fn handle_service_message(
         poh_recorder: &RwLock<PohRecorder>,
         mut service_message: PohServiceMessageGuard,
         record_receiver: &mut RecordReceiver,
     ) {
-        {
-            let mut recorder = poh_recorder.write().unwrap();
-            match service_message.take() {
-                PohServiceMessage::Reset {
-                    reset_bank,
-                    next_leader_slot,
-                } => {
-                    recorder.reset(reset_bank, next_leader_slot);
-                }
-                PohServiceMessage::SetBank { bank } => {
-                    let bank_id = bank.bank_id();
-                    let bank_max_tick_height = bank.max_tick_height();
-                    recorder.set_bank(bank);
-                    let should_restart =
-                        recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
-                    if should_restart {
-                        record_receiver.restart(bank_id);
-                    }
+        let mut recorder = poh_recorder.write().unwrap();
+        match service_message.take() {
+            PohServiceMessage::Reset {
+                reset_bank,
+                next_leader_slot,
+            } => {
+                recorder.reset(reset_bank, next_leader_slot);
+            }
+            PohServiceMessage::SetBank { bank } => {
+                let bank_id = bank.bank_id();
+                let bank_max_tick_height = bank.max_tick_height();
+                recorder.set_bank(bank);
+                let should_restart =
+                    recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
+                if should_restart {
+                    record_receiver.restart(bank_id);
                 }
             }
         }

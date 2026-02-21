@@ -1158,6 +1158,10 @@ pub mod raise_account_cu_limit {
     solana_pubkey::declare_id!("htsptAwi2yRoZH83SKaUXykeZGtZHgxkS2QwW1pssR8");
 }
 
+pub mod halve_slot_times {
+    solana_pubkey::declare_id!("shortoK7FR1q2FtTS83NAFEERpibyAGSEFHvNj1mJW7");
+}
+
 pub mod delay_commission_updates {
     solana_pubkey::declare_id!("76dHtohc2s5dR3ahJyBxs7eJJVipFkaPdih9CLgTTb4B");
 }
@@ -2210,6 +2214,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             raise_account_cu_limit::id(),
             "SIMD-0306: Raise account CU limit to 40% max",
         ),
+        (halve_slot_times::id(), "Halve slot time to 200ms"),
         (
             raise_cpi_nesting_limit_to_8::id(),
             "SIMD-0268: Raise CPI nesting limit from 4 to 8",
