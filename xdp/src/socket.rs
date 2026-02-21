@@ -65,7 +65,9 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<xdp_umem_reg>() as libc::socklen_t,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                let err = io::Error::last_os_error();
+                log::error!("setsockopt(XDP_UMEM_REG) failed: {err}");
+                return Err(err);
             }
 
             for (ring, size) in [
@@ -87,7 +89,9 @@ impl<U: Umem> Socket<U> {
                     mem::size_of::<u32>() as socklen_t,
                 ) < 0
                 {
-                    return Err(io::Error::last_os_error());
+                    let err = io::Error::last_os_error();
+                    log::error!("setsockopt(SOL_XDP, ring={ring}, size={size}) failed: {err}");
+                    return Err(err);
                 }
             }
 
@@ -101,7 +105,9 @@ impl<U: Umem> Socket<U> {
                 &mut optlen,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                let err = io::Error::last_os_error();
+                log::error!("getsockopt(XDP_MMAP_OFFSETS) failed: {err}");
+                return Err(err);
             }
 
             let tx_completion_ring = TxCompletionRing::new(
@@ -178,7 +184,14 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<sockaddr_xdp>() as socklen_t,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                let err = io::Error::last_os_error();
+                log::error!(
+                    "bind(AF_XDP, ifindex={}, queue={}, flags=0x{:x}) failed: {err}",
+                    sxdp.sxdp_ifindex,
+                    sxdp.sxdp_queue_id,
+                    sxdp.sxdp_flags,
+                );
+                return Err(err);
             }
 
             let tx = Tx {
