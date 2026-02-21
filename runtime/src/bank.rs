@@ -4338,7 +4338,11 @@ impl Bank {
         self.slots_per_year *= HALVE_SLOT_TIMES_MULTIPLIER;
         self.rent_collector.slots_per_year *= HALVE_SLOT_TIMES_MULTIPLIER;
         if let Some(hashes_per_tick) = self.hashes_per_tick {
-            self.hashes_per_tick = Some(hashes_per_tick.saturating_div(HALVE_SLOT_TIMES_DIVISOR));
+            self.hashes_per_tick = Some(
+                hashes_per_tick
+                    .saturating_div(HALVE_SLOT_TIMES_DIVISOR)
+                    .max(1),
+            );
         }
     }
 

@@ -152,10 +152,6 @@ impl PohService {
                     if let Some(cores) = core_affinity::get_core_ids() {
                         core_affinity::set_for_current(cores[pinned_cpu_core]);
                     }
-                    let target_ns_per_tick = Self::target_tick_ns_from_recorder(&poh_recorder)
-                        // Testing can set bank values to insanely large numbers, so let
-                        // poh_config override these back to more sane timings.
-                        .min(poh_config.target_tick_duration.as_nanos() as u64);
                     Self::tick_producer(
                         poh_recorder,
                         &poh_config,
@@ -164,7 +160,6 @@ impl PohService {
                         hashes_per_batch,
                         &mut record_receiver,
                         poh_service_receiver,
-                        target_ns_per_tick,
                         &migration_status.shutdown_poh,
                     )
                 }
@@ -224,9 +219,8 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
-        let mut target_tick_duration = Self::target_tick_duration_for_low_power_poh(
-            Self::target_tick_ns_from_recorder(&poh_recorder),
-            poh_config,
+        let mut target_tick_duration = Duration::from_nanos(
+            Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
         );
         while !poh_exit.load(Ordering::Relaxed) && !shutdown_poh.load(Ordering::Relaxed) {
             let service_message =
@@ -275,11 +269,9 @@ impl PohService {
             }
 
             if let Some(service_message) = service_message {
-                let new_target_tick_duration =
-                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                target_tick_duration = Self::target_tick_duration_for_low_power_poh(
-                    new_target_tick_duration,
-                    poh_config,
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(
+                    Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
                 );
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
@@ -345,9 +337,8 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
-        let mut target_tick_duration = Self::target_tick_duration_for_low_power_poh(
-            Self::target_tick_ns_from_recorder(&poh_recorder),
-            poh_config,
+        let mut target_tick_duration = Duration::from_nanos(
+            Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
         );
         while elapsed_ticks < num_ticks {
             let service_message =
@@ -402,11 +393,9 @@ impl PohService {
                 warn!("exit signal is ignored because PohService is scheduled to exit soon");
             }
             if let Some(service_message) = service_message {
-                let new_target_tick_duration =
-                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                target_tick_duration = Self::target_tick_duration_for_low_power_poh(
-                    new_target_tick_duration,
-                    poh_config,
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(
+                    Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
                 );
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
@@ -554,13 +543,16 @@ impl PohService {
         hashes_per_batch: u64,
         record_receiver: &mut RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
-        mut target_ns_per_tick: u64,
         shutdown_poh: &AtomicBool,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
         let mut should_exit = poh_exit.load(Ordering::Relaxed);
+        let mut target_ns_per_tick = Self::target_ns_per_tick(
+            ticks_per_slot,
+            Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
+        );
 
         loop {
             // If we should exit, close the channel so no more records are accepted,
@@ -613,15 +605,11 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 if !should_exit {
-                    let new_target_ns_per_tick = Self::handle_service_message(
-                        &poh_recorder,
-                        service_message,
-                        record_receiver,
+                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                    target_ns_per_tick = Self::target_ns_per_tick(
+                        ticks_per_slot,
+                        Self::target_tick_ns_recorder_vs_poh_config(&poh_recorder, poh_config),
                     );
-                    target_ns_per_tick = new_target_ns_per_tick
-                        // Testing can set bank values to insanely large numbers, so let
-                        // poh_config override these back to more sane timings.
-                        .min(poh_config.target_tick_duration.as_nanos() as u64);
                 }
             }
 
@@ -646,58 +634,45 @@ impl PohService {
         }
     }
 
-    fn target_tick_ns_from_recorder(poh_recorder: &RwLock<PohRecorder>) -> u64 {
-        let (ticks_per_slot, target_tick_ns) = {
-            let recorder = poh_recorder.read().unwrap();
-            (
-                recorder.ticks_per_slot(),
-                recorder.target_tick_duration_ns(),
-            )
-        };
-
-        // Adjust target tick duration to account for time spent outside of PoH
-        // generation (mostly network).
-        Self::target_ns_per_tick(ticks_per_slot, target_tick_ns)
-    }
-
-    fn target_tick_duration_for_low_power_poh(
-        target_tick_from_bank_ns: u64,
+    // Reconciles the target tick duration derived from the bank via recorder
+    // vs. the one declared in the PoH config.
+    fn target_tick_ns_recorder_vs_poh_config(
+        poh_recorder: &RwLock<PohRecorder>,
         poh_config: &PohConfig,
-    ) -> Duration {
-        Duration::from_nanos(target_tick_from_bank_ns)
+    ) -> u64 {
+        poh_recorder
+            .read()
+            .unwrap()
+            .target_tick_duration_ns()
             // Testing can set bank values to insanely large numbers, so let
-            // poh_config override these back to more sane timings.
-            .min(poh_config.target_tick_duration)
+            // poh_config override these back to more sane timings when necessary.
+            .min(poh_config.target_tick_duration.as_nanos() as u64)
     }
 
     fn handle_service_message(
         poh_recorder: &RwLock<PohRecorder>,
         mut service_message: PohServiceMessageGuard,
         record_receiver: &mut RecordReceiver,
-    ) -> u64 {
-        {
-            let mut recorder = poh_recorder.write().unwrap();
-            match service_message.take() {
-                PohServiceMessage::Reset {
-                    reset_bank,
-                    next_leader_slot,
-                } => {
-                    recorder.reset(reset_bank, next_leader_slot);
-                }
-                PohServiceMessage::SetBank { bank } => {
-                    let bank_id = bank.bank_id();
-                    let bank_max_tick_height = bank.max_tick_height();
-                    recorder.set_bank(bank);
-                    let should_restart =
-                        recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
-                    if should_restart {
-                        record_receiver.restart(bank_id);
-                    }
+    ) {
+        let mut recorder = poh_recorder.write().unwrap();
+        match service_message.take() {
+            PohServiceMessage::Reset {
+                reset_bank,
+                next_leader_slot,
+            } => {
+                recorder.reset(reset_bank, next_leader_slot);
+            }
+            PohServiceMessage::SetBank { bank } => {
+                let bank_id = bank.bank_id();
+                let bank_max_tick_height = bank.max_tick_height();
+                recorder.set_bank(bank);
+                let should_restart =
+                    recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
+                if should_restart {
+                    record_receiver.restart(bank_id);
                 }
             }
         }
-
-        Self::target_tick_ns_from_recorder(poh_recorder)
     }
 
     /// If we have a service message and there are no more records to process,
