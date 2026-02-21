@@ -125,6 +125,17 @@ pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHRED
 /// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
 pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
 pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
+// `fn max_shred_index` breaks if this assumption doesn't hold and would need to
+// be split out into separate data/coding functions.
+const_assert_eq!(MAX_DATA_SHREDS_PER_SLOT, MAX_CODE_SHREDS_PER_SLOT);
+
+pub const fn max_shred_index(halve_slot_times_active: bool) -> u32 {
+    if halve_slot_times_active {
+        (MAX_DATA_SHREDS_PER_SLOT as u32) / 2
+    } else {
+        MAX_DATA_SHREDS_PER_SLOT as u32
+    }
+}
 
 pub const MAX_FEC_SETS_PER_SLOT: u32 =
     MAX_DATA_SHREDS_PER_SLOT as u32 / DATA_SHREDS_PER_FEC_BLOCK as u32;

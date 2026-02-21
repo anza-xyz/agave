@@ -23,6 +23,7 @@ use {
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
+    agave_feature_set as feature_set,
     agave_snapshots::unpack_genesis_archive,
     agave_votor_messages::migration::MigrationStatus,
     assert_matches::{assert_matches, debug_assert_matches},
@@ -356,11 +357,22 @@ impl SlotMetaWorkingSetEntry {
     }
 }
 
+fn is_feature_active_at_genesis(genesis_config: &GenesisConfig, feature_id: &Pubkey) -> bool {
+    genesis_config.accounts.contains_key(feature_id)
+}
+
 pub(crate) fn hashes_per_tick_for_ledger(genesis_config: &GenesisConfig) -> u64 {
     let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick else {
         return 0;
     };
-    hashes_per_tick
+
+    if is_feature_active_at_genesis(genesis_config, &feature_set::halve_slot_times::id())
+        && !is_feature_active_at_genesis(genesis_config, &feature_set::alpenglow::id())
+    {
+        hashes_per_tick.saturating_div(2).max(1)
+    } else {
+        hashes_per_tick
+    }
 }
 
 pub fn banking_trace_path(path: &Path) -> PathBuf {
@@ -5839,7 +5851,10 @@ pub mod tests {
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
         solana_packet::PACKET_DATA_SIZE,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, RewardType},
+        solana_runtime::{
+            bank::{Bank, RewardType},
+            genesis_utils::activate_feature,
+        },
         solana_sha256_hasher::hash,
         solana_shred_version::version_from_hash,
         solana_signature::Signature,
@@ -5892,6 +5907,16 @@ pub mod tests {
         assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 0);
 
         genesis_config.poh_config.hashes_per_tick = Some(2);
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
+
+        activate_feature(&mut genesis_config, feature_set::halve_slot_times::id());
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 1);
+
+        genesis_config.poh_config.hashes_per_tick = Some(1);
+        assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 1);
+
+        genesis_config.poh_config.hashes_per_tick = Some(2);
+        activate_feature(&mut genesis_config, feature_set::alpenglow::id());
         assert_eq!(hashes_per_tick_for_ledger(&genesis_config), 2);
     }
 

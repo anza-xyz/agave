@@ -375,11 +375,7 @@ impl Bank {
 
     /// # stake accounts to store in one block during partitioned reward interval
     pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
-        self.rc
-            .accounts
-            .accounts_db
-            .partitioned_epoch_rewards_config
-            .stake_account_stores_per_block
+        self.partitioned_rewards_stake_account_stores_per_block
     }
 
     /// Calculate the number of blocks required to distribute rewards to all stake accounts.

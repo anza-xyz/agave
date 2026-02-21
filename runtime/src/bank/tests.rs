@@ -13,8 +13,8 @@ use {
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
-            minimum_vote_account_balance_for_vat,
+            create_lockup_stake_account, deactivate_features,
+            genesis_sysvar_and_builtin_program_lamports, minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
@@ -43,6 +43,7 @@ use {
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
         accounts_scan::ScanError,
         ancestors::Ancestors,
+        partitioned_rewards::MAX_PARTITIONED_REWARDS_PER_BLOCK_HALVE_SLOTS,
     },
     solana_client_traits::SyncClient,
     solana_clock::{
@@ -5161,9 +5162,10 @@ fn test_fuzz_instructions() {
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
 #[allow(deprecated)]
-#[test_case(false ; "legacy")]
-#[test_case(true ; "deprecate rent exemption threshold")]
-fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
+#[test_case(false, false ; "legacy")]
+#[test_case(true, false ; "deprecate rent exemption threshold")]
+#[test_case(false, true ; "halve slots")]
+fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool, halve_slots: bool) {
     let mut genesis_config = GenesisConfig {
         // Override the creation time to ensure bank hash consistency
         creation_time: 0,
@@ -5184,6 +5186,10 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
 
     if !deprecate_rent_exemption_threshold {
         feature_set.deactivate(&feature_set::deprecate_rent_exemption_threshold::id());
+    }
+
+    if !halve_slots {
+        feature_set.deactivate(&feature_set::halve_slot_times::id());
     }
 
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
@@ -5222,6 +5228,8 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
                     "Gqd3QevNuGLvzL91YbUa86FCcPFCi3GsSDqrhbq2gjX7"
+                } else if halve_slots {
+                    "5CVXp9MBMzrKjfyyFr1iEtBzKeq3RkBHifTbzrzj7Xsm"
                 } else {
                     "HV9Wr7XVke8YYYxMnsQWYf8GnBC5PPKJyGX52raDvev8"
                 },
@@ -5233,6 +5241,8 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
                     "Gdes9UEi7nxJyytpnAPM8wRMpZ39W8G3tqJSHUj49GQk"
+                } else if halve_slots {
+                    "4oBqKQxAwfDy8wcDhKZUfVvLSE98sAR8QpSwKGAvkKKY"
                 } else {
                     "5Gp1HpKChMPo1t34WHCFM2mhWxy5s8QYFkf3FnxEAmku"
                 },
@@ -6257,6 +6267,179 @@ fn test_block_limits() {
         bank.read_cost_tracker().unwrap().get_account_limit(),
         MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_ENABLED,
         "bank created from genesis config should have new limit"
+    );
+}
+
+fn verify_bank_values(
+    bank: Bank,
+    expected_ns_per_slot: u128,
+    expected_hashes_per_tick: u64,
+    expected_ticks_per_slot: u64,
+    expected_slots_per_year: f64,
+    expected_signatures_per_slot: u64,
+    base_cost_tracker: Option<&CostTracker>,
+) {
+    assert_eq!(bank.ns_per_slot, expected_ns_per_slot);
+    assert_eq!(bank.hashes_per_tick().unwrap(), expected_hashes_per_tick,);
+    assert_eq!(bank.ticks_per_slot(), expected_ticks_per_slot,);
+    assert_eq!(bank.slots_per_year(), expected_slots_per_year,);
+    assert_eq!(
+        bank.rent_collector().slots_per_year,
+        expected_slots_per_year,
+    );
+    assert_eq!(
+        bank.fee_rate_governor.target_signatures_per_slot,
+        expected_signatures_per_slot,
+    );
+    assert_eq!(bank.max_processing_age(), MAX_PROCESSING_AGE * 2,);
+    assert_eq!(
+        bank.blockhash_queue.read().unwrap().get_max_age(),
+        MAX_RECENT_BLOCKHASHES * 2,
+    );
+    assert_eq!(
+        bank.status_cache.read().unwrap().max_root_entries(),
+        MAX_RECENT_BLOCKHASHES * 2,
+    );
+    assert_eq!(
+        bank.partitioned_rewards_stake_account_stores_per_block(),
+        MAX_PARTITIONED_REWARDS_PER_BLOCK_HALVE_SLOTS,
+    );
+    let Some(base_cost_tracker) = base_cost_tracker else {
+        return;
+    };
+    let cost_tracker = bank.read_cost_tracker().unwrap();
+    assert_eq!(
+        cost_tracker.get_block_limit(),
+        base_cost_tracker.get_block_limit() / 2
+    );
+    assert_eq!(
+        cost_tracker.get_account_limit(),
+        base_cost_tracker.get_account_limit() / 2,
+    );
+    assert_eq!(
+        cost_tracker.get_vote_limit(),
+        base_cost_tracker.get_vote_limit() / 2,
+    );
+    assert_eq!(
+        cost_tracker.get_allocated_data_size_limit(),
+        base_cost_tracker.get_allocated_data_size_limit() / 2,
+    );
+}
+
+#[test]
+fn test_halve_slot_times_feature_activate() {
+    // Setup the parent bank with some non-default values to ensure the feature
+    // properly updates them.
+    let (bank0, bank_forks) = {
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        let features_to_deactivate = vec![feature_set::halve_slot_times::id()];
+        deactivate_features(&mut genesis_config, &features_to_deactivate);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.set_hashes_per_tick(Some(1000));
+        bank.wrap_with_bank_forks_for_tests()
+    };
+    let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+    bank1.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
+
+    // Activate and apply the `halve_slot_times` feature.
+    bank1.store_account(
+        &feature_set::halve_slot_times::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    bank1.compute_and_apply_new_feature_activations();
+
+    // Verify expectations.
+    assert!(bank1.halve_slot_times_active());
+    assert_eq!(bank1.halve_slot_times_slot(), Some(1));
+    verify_bank_values(
+        bank1,
+        bank0.ns_per_slot / 2,
+        bank0.hashes_per_tick().unwrap() / 2,
+        bank0.ticks_per_slot(),
+        bank0.slots_per_year() * 2.0,
+        bank0.fee_rate_governor.target_signatures_per_slot / 2,
+        Some(&bank0.read_cost_tracker().unwrap()),
+    );
+}
+
+#[test]
+fn test_halve_slot_times_feature_active_at_genesis() {
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = genesis_utils::create_genesis_config(1_000_000);
+    assert_eq!(
+        genesis_config.hashes_per_tick(),
+        None,
+        "genesis hashes-per-tick should remain unset when no explicit value is configured",
+    );
+    genesis_config.poh_config.hashes_per_tick = Some(2);
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(bank.halve_slot_times_active());
+    assert_eq!(bank.halve_slot_times_slot(), Some(0));
+    verify_bank_values(
+        bank,
+        genesis_config.ns_per_slot() / 2,
+        genesis_config.hashes_per_tick().unwrap() / 2,
+        genesis_config.ticks_per_slot(),
+        genesis_config.slots_per_year() * 2.0,
+        genesis_config.fee_rate_governor.target_signatures_per_slot,
+        None,
+    )
+}
+
+#[test]
+fn test_halve_slot_times_feature_preserves_inflation_real_time() {
+    // Setup.
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH;
+    genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+    let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_from_parent(bank0, SlotLeader::default(), slots_per_epoch);
+    bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
+
+    // Snapshot pre-activation values.
+    let pre_feature_slots_per_year = bank.slots_per_year();
+    let slot_in_years_before_activation = bank.slot_in_year_for_inflation();
+    let expected_epoch_duration_before_activation =
+        slots_per_epoch as f64 / pre_feature_slots_per_year;
+    let pre_activation_epoch = bank.epoch().saturating_sub(1);
+
+    // Activate halve slots feature.
+    bank.store_account(
+        &feature_set::halve_slot_times::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    bank.compute_and_apply_new_feature_activations();
+
+    // Snapshot post-activation values.
+    let slot_in_years_after_activation = bank.slot_in_year_for_inflation();
+    let expected_epoch_duration_after_activation = expected_epoch_duration_before_activation / 2.0;
+
+    // Verify expectations.
+    assert_eq!(
+        slot_in_years_after_activation,
+        slot_in_years_before_activation
+    );
+    assert_eq!(
+        bank.epoch_duration_in_years(pre_activation_epoch),
+        expected_epoch_duration_before_activation
+    );
+    assert_eq!(
+        bank.epoch_duration_in_years(bank.epoch()),
+        expected_epoch_duration_after_activation
+    );
+    let child_slot = bank.slot();
+    let bank_next_epoch = Bank::new_from_parent(
+        Arc::new(bank),
+        SlotLeader::default(),
+        child_slot + slots_per_epoch,
+    );
+    let inflation_years_advanced =
+        bank_next_epoch.slot_in_year_for_inflation() - slot_in_years_after_activation;
+    assert_eq!(
+        inflation_years_advanced,
+        expected_epoch_duration_after_activation
     );
 }
 
@@ -10977,8 +11160,9 @@ fn test_blockhash_last_valid_block_height() {
         assert!(bank.is_blockhash_valid(&last_blockhash));
     }
 
-    // Make sure it stays in the queue until `MAX_RECENT_BLOCKHASHES`
-    for i in max_processing_age + 1..=MAX_RECENT_BLOCKHASHES {
+    // Make sure it stays in the queue until `max_recent_blockhashes`
+    let max_recent_blockhashes = bank.max_status_cache_entries_for_active_features();
+    for i in max_processing_age + 1..=max_recent_blockhashes {
         goto_end_of_slot(bank.clone());
         bank = Arc::new(new_from_parent(bank));
         assert_eq!(bank.block_height, i as u64);
@@ -10994,7 +11178,7 @@ fn test_blockhash_last_valid_block_height() {
         assert!(!bank.is_blockhash_valid(&last_blockhash));
     }
 
-    // one past MAX_RECENT_BLOCKHASHES is no longer present at all
+    // one past `max_recent_blockhashes` is no longer present at all
     goto_end_of_slot(bank.clone());
     bank = Arc::new(new_from_parent(bank));
     assert_eq!(

@@ -148,12 +148,7 @@ impl BlockhashQueue {
         })
     }
 
-    #[deprecated(
-        since = "2.0.0",
-        note = "Please use `solana_clock::MAX_PROCESSING_AGE`"
-    )]
     pub fn get_max_age(&self) -> usize {
-        #[allow(deprecated)]
         self.max_age
     }
 }

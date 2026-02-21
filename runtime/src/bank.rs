@@ -101,13 +101,19 @@ use {
     },
     solana_builtins::{BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        BankId, Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
-        Slot, SlotIndex, UnixTimestamp,
+        BankId, Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
+        MAX_TRANSACTION_FORWARDING_DELAY, Slot, SlotIndex, UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0286_block_limit, cost_tracker::CostTracker},
+    solana_cost_model::{
+        block_cost_limits::{
+            MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA, MAX_BLOCK_UNITS, MAX_VOTE_UNITS,
+            simd_0286_block_limit,
+        },
+        cost_tracker::CostTracker,
+    },
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -170,7 +176,6 @@ use {
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, SysvarSerialize, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
-    solana_time_utils::years_as_slots,
     solana_transaction::{
         Transaction, TransactionVerificationMode,
         sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
@@ -188,6 +193,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt,
+        num::NonZeroUsize,
         ops::AddAssign,
         path::PathBuf,
         slice,
@@ -237,6 +243,7 @@ mod sysvar_cache;
 pub(crate) mod tests;
 
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
+pub(crate) const HALVE_SLOT_TIMES_FACTOR: u64 = 2;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
@@ -546,6 +553,7 @@ impl PartialEq for Bank {
             status_cache: _,
             blockhash_queue,
             max_processing_age,
+            partitioned_rewards_stake_account_stores_per_block,
             ancestors: _,
             hash,
             parent_hash,
@@ -616,6 +624,8 @@ impl PartialEq for Bank {
         } = self;
         *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
             && *max_processing_age == other.max_processing_age
+            && *partitioned_rewards_stake_account_stores_per_block
+                == other.partitioned_rewards_stake_account_stores_per_block
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && parent_hash == &other.parent_hash
             && parent_slot == &other.parent_slot
@@ -769,6 +779,10 @@ pub struct Bank {
 
     /// Maximum age in slots a blockhash can be for a tx to be processed.
     max_processing_age: usize,
+
+    /// Effective number of stake accounts to store in each block during
+    /// partitioned rewards distribution for this bank.
+    partitioned_rewards_stake_account_stores_per_block: u64,
 
     /// The set of parents including this bank
     pub ancestors: Ancestors,
@@ -1087,11 +1101,16 @@ struct NewEpochBundle {
 
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
+        let partitioned_rewards_stake_account_stores_per_block = accounts
+            .accounts_db
+            .partitioned_epoch_rewards_config
+            .stake_account_stores_per_block;
         let mut bank = Self {
             rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             max_processing_age: MAX_PROCESSING_AGE,
+            partitioned_rewards_stake_account_stores_per_block,
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
             parent_hash: Hash::default(),
@@ -1331,6 +1350,8 @@ impl Bank {
             epoch,
             blockhash_queue,
             max_processing_age: parent.max_processing_age,
+            partitioned_rewards_stake_account_stores_per_block: parent
+                .partitioned_rewards_stake_account_stores_per_block,
             // TODO: clean this up, so much special-case copying...
             hashes_per_tick: parent.hashes_per_tick,
             ticks_per_slot: parent.ticks_per_slot,
@@ -1942,11 +1963,17 @@ impl Bank {
             from_account::<sysvar::rent::Rent, _>(&rent_sysvar)
                 .expect("snapshot must contain well-formed rent sysvar account")
         };
+        let partitioned_rewards_stake_account_stores_per_block = bank_rc
+            .accounts
+            .accounts_db
+            .partitioned_epoch_rewards_config
+            .stake_account_stores_per_block;
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             max_processing_age: MAX_PROCESSING_AGE,
+            partitioned_rewards_stake_account_stores_per_block,
             ancestors,
             hash: RwLock::new(fields.hash),
             parent_hash: fields.parent_hash,
@@ -2029,20 +2056,7 @@ impl Bank {
              snapshot and genesis.bin might pertain to different clusters"
         );
         assert_eq!(bank.ticks_per_slot, genesis_config.ticks_per_slot);
-        assert_eq!(
-            bank.ns_per_slot,
-            genesis_config.poh_config.target_tick_duration.as_nanos()
-                * genesis_config.ticks_per_slot as u128
-        );
         assert_eq!(bank.max_tick_height, (bank.slot + 1) * bank.ticks_per_slot);
-        assert_eq!(
-            bank.slots_per_year,
-            years_as_slots(
-                1.0,
-                &genesis_config.poh_config.target_tick_duration,
-                bank.ticks_per_slot,
-            )
-        );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
         bank.initialize_after_snapshot_restore(|| {
@@ -2513,15 +2527,48 @@ impl Bank {
         });
     }
 
+    // Get number of slots per year when slots were 400ms.
+    fn pre_halve_slot_times_slots_per_year(&self) -> f64 {
+        debug_assert!(
+            self.halve_slot_times_slot().is_some(),
+            "pre_halve_slot_times_slots_per_year should only be called when the feature is active"
+        );
+        self.slots_per_year / HALVE_SLOT_TIMES_FACTOR as f64
+    }
+
+    // Get slots per year given slot times during this epoch.
+    fn slots_per_year_for_epoch(&self, epoch: Epoch) -> f64 {
+        let Some(activation_slot) = self.halve_slot_times_slot() else {
+            return self.slots_per_year;
+        };
+        let activation_epoch = self.epoch_schedule().get_epoch(activation_slot);
+        if epoch < activation_epoch {
+            self.pre_halve_slot_times_slots_per_year()
+        } else {
+            self.slots_per_year
+        }
+    }
+
+    // Get epoch duration in years given slot times during this epoch.
     pub fn epoch_duration_in_years(&self, epoch: Epoch) -> f64 {
-        // period: time that has passed as a fraction of a year, basically the length of
-        //  an epoch as a fraction of a year
-        //  calculated as: slots_elapsed / (slots / year)
-        self.epoch_schedule().get_slots_in_epoch(epoch) as f64 / self.slots_per_year
+        self.epoch_schedule().get_slots_in_epoch(epoch) as f64
+            / self.slots_per_year_for_epoch(epoch)
     }
 
     pub fn max_processing_age(&self) -> usize {
         self.max_processing_age
+    }
+
+    fn max_recent_blockhashes_for_active_features(&self) -> usize {
+        if self.halve_slot_times_active() {
+            MAX_RECENT_BLOCKHASHES.saturating_mul(HALVE_SLOT_TIMES_FACTOR as usize)
+        } else {
+            MAX_RECENT_BLOCKHASHES
+        }
+    }
+
+    fn max_status_cache_entries_for_active_features(&self) -> usize {
+        self.max_recent_blockhashes_for_active_features()
     }
 
     // Calculates the starting-slot for inflation from the activation slot.
@@ -2544,19 +2591,40 @@ impl Bank {
         })
     }
 
+    // Number of slots since inflation started, aligned to the first slot of the
+    // epoch for rewards calculation.
     fn get_inflation_num_slots(&self) -> u64 {
-        let inflation_activation_slot = self.get_inflation_start_slot();
-        // Normalize inflation_start to align with the start of rewards accrual.
-        let inflation_start_slot = self.epoch_schedule().get_first_slot_in_epoch(
-            self.epoch_schedule()
-                .get_epoch(inflation_activation_slot)
-                .saturating_sub(1),
-        );
+        let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
         self.epoch_schedule().get_first_slot_in_epoch(self.epoch()) - inflation_start_slot
     }
 
+    // The starting slot for inflation rewards calculation, aligned to the first
+    // slot of the epoch.
+    fn inflation_start_slot_aligned_to_rewards(&self) -> Slot {
+        let inflation_activation_slot = self.get_inflation_start_slot();
+        self.epoch_schedule().get_first_slot_in_epoch(
+            self.epoch_schedule()
+                .get_epoch(inflation_activation_slot)
+                .saturating_sub(1),
+        )
+    }
+
+    // Since the time inflation started, translate number of slots --> years.
     pub fn slot_in_year_for_inflation(&self) -> f64 {
         let num_slots = self.get_inflation_num_slots();
+
+        if let Some(activation_slot) = self.halve_slot_times_slot() {
+            // Need to understand how many slots were ~400ms vs ~200ms to
+            // translate the slot range properly to number of years.
+            let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
+            if activation_slot > inflation_start_slot {
+                let slots_before_feature = activation_slot - inflation_start_slot;
+                let slots_after_feature = num_slots.saturating_sub(slots_before_feature);
+                let pre_halve_slots_per_year = self.pre_halve_slot_times_slots_per_year();
+                return slots_before_feature as f64 / pre_halve_slots_per_year
+                    + slots_after_feature as f64 / self.slots_per_year;
+            }
+        }
 
         // calculated as: num_slots / (slots / year)
         num_slots as f64 / self.slots_per_year
@@ -4375,22 +4443,103 @@ impl Bank {
         self.rc.accounts.clone()
     }
 
+    pub fn halve_slot_times_active(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::halve_slot_times::id())
+    }
+
+    fn halve_slot_times_slot(&self) -> Option<u64> {
+        self.feature_set
+            .activated_slot(&feature_set::halve_slot_times::id())
+    }
+
     fn apply_cost_tracker_limits_for_active_features(&mut self) {
-        let mut cost_tracker = self.write_cost_tracker().unwrap();
-        let block_cost_limit = if self.feature_set.snapshot().raise_block_limits_to_100m {
+        let mut block_cost_limit = if self
+            .feature_set
+            .is_active(&feature_set::raise_block_limits_to_100m::id())
+        {
             simd_0286_block_limit()
         } else {
-            cost_tracker.get_block_limit()
+            MAX_BLOCK_UNITS
         };
-        let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
-        let vote_cost_limit = cost_tracker.get_vote_limit();
-        let allocated_data_size_limit = cost_tracker.get_allocated_data_size_limit();
+        let mut account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
+        let mut vote_cost_limit = MAX_VOTE_UNITS;
+        let mut allocated_data_size_limit = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA;
+
+        if self.halve_slot_times_active() {
+            block_cost_limit = block_cost_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
+            account_cost_limit = account_cost_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
+            vote_cost_limit = vote_cost_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
+            allocated_data_size_limit =
+                allocated_data_size_limit.saturating_div(HALVE_SLOT_TIMES_FACTOR);
+        }
+
+        let mut cost_tracker = self.write_cost_tracker().unwrap();
         cost_tracker.set_limits(
             account_cost_limit,
             block_cost_limit,
             vote_cost_limit,
             allocated_data_size_limit,
         );
+    }
+
+    fn apply_status_cache_limits_for_active_features(&self) {
+        self.status_cache.write().unwrap().set_max_root_entries(
+            NonZeroUsize::new(self.max_status_cache_entries_for_active_features())
+                .expect("status-cache limit must be non-zero"),
+        );
+    }
+
+    fn apply_partitioned_epoch_rewards_config_for_active_features(&mut self) {
+        if self.halve_slot_times_active() {
+            self.partitioned_rewards_stake_account_stores_per_block = self
+                .rc
+                .accounts
+                .accounts_db
+                .partitioned_epoch_rewards_config
+                .stake_account_stores_per_block
+                .saturating_div(HALVE_SLOT_TIMES_FACTOR)
+                .max(1)
+        }
+    }
+
+    // These fields are persisted across restarts.
+    fn apply_halve_slot_times_persistent_changes(&mut self) {
+        self.ns_per_slot = self
+            .ns_per_slot
+            .saturating_div(u128::from(HALVE_SLOT_TIMES_FACTOR));
+        self.slots_per_year *= HALVE_SLOT_TIMES_FACTOR as f64;
+        self.rent_collector.slots_per_year *= HALVE_SLOT_TIMES_FACTOR as f64;
+        if !self.feature_set.is_active(&feature_set::alpenglow::id()) {
+            if let Some(hashes_per_tick) = self.hashes_per_tick {
+                self.hashes_per_tick = Some(
+                    hashes_per_tick
+                        .saturating_div(HALVE_SLOT_TIMES_FACTOR)
+                        .max(1),
+                );
+            }
+        }
+        if self.fee_rate_governor.target_signatures_per_slot > 0 {
+            self.fee_rate_governor.target_signatures_per_slot = self
+                .fee_rate_governor
+                .target_signatures_per_slot
+                .saturating_div(HALVE_SLOT_TIMES_FACTOR)
+                .max(1);
+        }
+    }
+
+    // These fields are not persisted across restarts and must be reactivated.
+    // This function is idempotent.
+    fn apply_halve_slot_times_runtime_changes(&mut self) {
+        self.max_processing_age =
+            MAX_PROCESSING_AGE.saturating_mul(HALVE_SLOT_TIMES_FACTOR as usize);
+        self.blockhash_queue
+            .write()
+            .unwrap()
+            .set_max_age(self.max_recent_blockhashes_for_active_features());
+        self.apply_cost_tracker_limits_for_active_features();
+        self.apply_status_cache_limits_for_active_features();
+        self.apply_partitioned_epoch_rewards_config_for_active_features();
     }
 
     fn apply_simd_0339_invoke_cost_changes(&mut self) {
@@ -4417,11 +4566,17 @@ impl Bank {
         // Update the transaction processor with all active built-in programs
         self.add_active_builtin_programs();
 
-        // Cost-Tracker is not serialized in snapshot or any configs.
-        // We must apply previously activated features related to limits here
+        // Many fields are not serialized in snapshot or any configs.
+        // We must apply previously activated features related to values here
         // so that the initial bank state is consistent with the feature set.
-        // Cost-tracker limits are propagated through children banks.
-        self.apply_cost_tracker_limits_for_active_features();
+        if self.halve_slot_times_active() {
+            // Cost tracker and status cache limits are updated as part of halve
+            // slot times updates.
+            self.apply_halve_slot_times_runtime_changes();
+        } else {
+            self.apply_cost_tracker_limits_for_active_features();
+            self.apply_status_cache_limits_for_active_features();
+        }
         self.apply_simd_0339_invoke_cost_changes();
 
         let program_runtime_environment =
@@ -5548,6 +5703,10 @@ impl Bank {
             self.rent_collector.deprecate_rent_exemption_threshold();
         }
 
+        if self.halve_slot_times_active() {
+            self.apply_halve_slot_times_persistent_changes();
+        }
+
         // Add built-in program accounts to the bank if they don't already exist
         self.add_builtin_program_accounts();
 
@@ -5642,10 +5801,13 @@ impl Bank {
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
-        self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
-        if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
+        if new_feature_activations.contains(&feature_set::halve_slot_times::id()) {
+            self.apply_halve_slot_times_persistent_changes();
+            self.apply_halve_slot_times_runtime_changes();
+        } else if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
             self.apply_cost_tracker_limits_for_active_features();
         }
+        self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
         if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
             if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
