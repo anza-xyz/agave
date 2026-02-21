@@ -472,11 +472,25 @@ where
 
 pub fn is_non_zero(value: impl AsRef<str>) -> Result<(), String> {
     let value = value.as_ref();
-    if value.eq("0") {
-        Err(String::from("cannot be zero"))
-    } else {
-        Ok(())
+
+    // Try parsing as f64 first
+    if let Ok(float_val) = value.parse::<f64>() {
+        if float_val == 0.0 {
+            return Err(String::from("cannot be zero"));
+        }
+        return Ok(());
     }
+
+    // Fall back to u128 for large integers
+    if let Ok(int_val) = value.parse::<u128>() {
+        if int_val == 0 {
+            return Err(String::from("cannot be zero"));
+        }
+        return Ok(());
+    }
+
+    // Other validators should catch parse errors.
+    Ok(())
 }
 
 #[cfg(test)]
