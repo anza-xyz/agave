@@ -108,7 +108,12 @@ use {
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0286_block_limits, cost_tracker::CostTracker},
+    solana_cost_model::{
+        block_cost_limits::{
+            simd_0286_block_limits, MAX_BLOCK_UNITS, MAX_VOTE_UNITS, MAX_WRITABLE_ACCOUNT_UNITS,
+        },
+        cost_tracker::CostTracker,
+    },
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -167,7 +172,6 @@ use {
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot, SysvarSerialize},
     solana_sysvar_id::SysvarId,
-    solana_time_utils::years_as_slots,
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         versioned::VersionedTransaction,
@@ -229,6 +233,9 @@ mod sysvar_cache;
 pub(crate) mod tests;
 
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
+const HALVE_SLOT_TIMES_DIVISOR: u64 = 2;
+const HALVE_SLOT_TIMES_MULTIPLIER: f64 = 2.0;
+const HALVE_BLOCK_LIMITS_DIVISOR: u64 = 2;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
@@ -1956,20 +1963,7 @@ impl Bank {
              snapshot and genesis.bin might pertain to different clusters"
         );
         assert_eq!(bank.ticks_per_slot, genesis_config.ticks_per_slot);
-        assert_eq!(
-            bank.ns_per_slot,
-            genesis_config.poh_config.target_tick_duration.as_nanos()
-                * genesis_config.ticks_per_slot as u128
-        );
         assert_eq!(bank.max_tick_height, (bank.slot + 1) * bank.ticks_per_slot);
-        assert_eq!(
-            bank.slots_per_year,
-            years_as_slots(
-                1.0,
-                &genesis_config.poh_config.target_tick_duration,
-                bank.ticks_per_slot,
-            )
-        );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
         assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
 
@@ -2374,11 +2368,37 @@ impl Bank {
         });
     }
 
+    // Get number of slots per year when slots were 400ms.
+    fn pre_halve_slot_times_slots_per_year(&self) -> f64 {
+        debug_assert!(
+            self.feature_set
+                .activated_slot(&feature_set::halve_slot_times::id())
+                .is_some(),
+            "pre_halve_slot_times_slots_per_year should only be called when the feature is active"
+        );
+        self.slots_per_year / HALVE_SLOT_TIMES_MULTIPLIER
+    }
+
+    // Get slots per year given slot times during this epoch.
+    fn slots_per_year_for_epoch(&self, epoch: Epoch) -> f64 {
+        let Some(activation_slot) = self
+            .feature_set
+            .activated_slot(&feature_set::halve_slot_times::id())
+        else {
+            return self.slots_per_year;
+        };
+        let activation_epoch = self.epoch_schedule().get_epoch(activation_slot);
+        if epoch < activation_epoch {
+            self.pre_halve_slot_times_slots_per_year()
+        } else {
+            self.slots_per_year
+        }
+    }
+
+    // Get epoch duration in years given slot times during this epoch.
     pub fn epoch_duration_in_years(&self, epoch: Epoch) -> f64 {
-        // period: time that has passed as a fraction of a year, basically the length of
-        //  an epoch as a fraction of a year
-        //  calculated as: slots_elapsed / (slots / year)
-        self.epoch_schedule().get_slots_in_epoch(epoch) as f64 / self.slots_per_year
+        self.epoch_schedule().get_slots_in_epoch(epoch) as f64
+            / self.slots_per_year_for_epoch(epoch)
     }
 
     // Calculates the starting-slot for inflation from the activation slot.
@@ -2401,19 +2421,43 @@ impl Bank {
         })
     }
 
+    // Number of slots since inflation started, aligned to the first slot of the
+    // epoch for rewards calculation.
     fn get_inflation_num_slots(&self) -> u64 {
-        let inflation_activation_slot = self.get_inflation_start_slot();
-        // Normalize inflation_start to align with the start of rewards accrual.
-        let inflation_start_slot = self.epoch_schedule().get_first_slot_in_epoch(
-            self.epoch_schedule()
-                .get_epoch(inflation_activation_slot)
-                .saturating_sub(1),
-        );
+        let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
         self.epoch_schedule().get_first_slot_in_epoch(self.epoch()) - inflation_start_slot
     }
 
+    // The starting slot for inflation rewards calculation, aligned to the first
+    // slot of the epoch.
+    fn inflation_start_slot_aligned_to_rewards(&self) -> Slot {
+        let inflation_activation_slot = self.get_inflation_start_slot();
+        self.epoch_schedule().get_first_slot_in_epoch(
+            self.epoch_schedule()
+                .get_epoch(inflation_activation_slot)
+                .saturating_sub(1),
+        )
+    }
+
+    // Since the time inflation started, translate number of slots --> years.
     pub fn slot_in_year_for_inflation(&self) -> f64 {
         let num_slots = self.get_inflation_num_slots();
+
+        if let Some(activation_slot) = self
+            .feature_set
+            .activated_slot(&feature_set::halve_slot_times::id())
+        {
+            // Need to understand how many slots were ~400ms vs ~200ms to
+            // translate the slot range properly to number of years.
+            let inflation_start_slot = self.inflation_start_slot_aligned_to_rewards();
+            if activation_slot > inflation_start_slot {
+                let slots_before_feature = activation_slot - inflation_start_slot;
+                let slots_after_feature = num_slots.saturating_sub(slots_before_feature);
+                let pre_halve_slots_per_year = self.pre_halve_slot_times_slots_per_year();
+                return slots_before_feature as f64 / pre_halve_slots_per_year
+                    + slots_after_feature as f64 / self.slots_per_year;
+            }
+        }
 
         // calculated as: num_slots / (slots / year)
         num_slots as f64 / self.slots_per_year
@@ -4246,13 +4290,56 @@ impl Bank {
         self.rc.accounts.clone()
     }
 
-    fn apply_simd_0306_cost_tracker_changes(&mut self) {
-        let mut cost_tracker = self.write_cost_tracker().unwrap();
-        let block_cost_limit = cost_tracker.get_block_limit();
-        let vote_cost_limit = cost_tracker.get_vote_limit();
+    fn cost_tracker_limits_for_active_features(&self) -> (u64, u64, u64) {
+        let mut block_cost_limit = if self
+            .feature_set
+            .is_active(&feature_set::raise_block_limits_to_100m::id())
+        {
+            simd_0286_block_limits()
+        } else {
+            MAX_BLOCK_UNITS
+        };
+
         // SIMD-0306 makes account cost limit 40% of the block cost limit.
-        let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
-        cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+        let mut account_cost_limit = if self
+            .feature_set
+            .is_active(&feature_set::raise_account_cu_limit::id())
+        {
+            block_cost_limit.saturating_mul(40).saturating_div(100)
+        } else {
+            MAX_WRITABLE_ACCOUNT_UNITS
+        };
+
+        if self
+            .feature_set
+            .is_active(&feature_set::halve_slot_times::id())
+        {
+            block_cost_limit = block_cost_limit.saturating_div(HALVE_BLOCK_LIMITS_DIVISOR);
+            account_cost_limit = account_cost_limit.saturating_div(HALVE_BLOCK_LIMITS_DIVISOR);
+        }
+
+        (account_cost_limit, block_cost_limit, MAX_VOTE_UNITS)
+    }
+
+    fn apply_cost_tracker_limits_for_active_features(&mut self) {
+        let (account_cost_limit, block_cost_limit, vote_cost_limit) =
+            self.cost_tracker_limits_for_active_features();
+        self.write_cost_tracker().unwrap().set_limits(
+            account_cost_limit,
+            block_cost_limit,
+            vote_cost_limit,
+        );
+    }
+
+    fn apply_halve_slot_times_feature_changes(&mut self) {
+        self.ns_per_slot = self
+            .ns_per_slot
+            .saturating_div(u128::from(HALVE_SLOT_TIMES_DIVISOR));
+        self.slots_per_year *= HALVE_SLOT_TIMES_MULTIPLIER;
+        self.rent_collector.slots_per_year *= HALVE_SLOT_TIMES_MULTIPLIER;
+        if let Some(hashes_per_tick) = self.hashes_per_tick {
+            self.hashes_per_tick = Some(hashes_per_tick.saturating_div(HALVE_SLOT_TIMES_DIVISOR));
+        }
     }
 
     fn apply_simd_0339_invoke_cost_changes(&mut self) {
@@ -4291,23 +4378,7 @@ impl Bank {
         // We must apply previously activated features related to limits here
         // so that the initial bank state is consistent with the feature set.
         // Cost-tracker limits are propagated through children banks.
-        if self
-            .feature_set
-            .is_active(&feature_set::raise_block_limits_to_100m::id())
-        {
-            let block_cost_limit = simd_0286_block_limits();
-            let mut cost_tracker = self.write_cost_tracker().unwrap();
-            let account_cost_limit = cost_tracker.get_account_limit();
-            let vote_cost_limit = cost_tracker.get_vote_limit();
-            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
-        }
-
-        if self
-            .feature_set
-            .is_active(&feature_set::raise_account_cu_limit::id())
-        {
-            self.apply_simd_0306_cost_tracker_changes();
-        }
+        self.apply_cost_tracker_limits_for_active_features();
 
         if self
             .feature_set
@@ -5545,26 +5616,17 @@ impl Bank {
             self.rent_collector.rent.burn_percent = 50; // 50% rent burn
         }
 
-        self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
-
-        if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
-            let block_cost_limit = simd_0286_block_limits();
-            let mut cost_tracker = self.write_cost_tracker().unwrap();
-            let account_cost_limit = cost_tracker.get_account_limit();
-            let vote_cost_limit = cost_tracker.get_vote_limit();
-            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
-            drop(cost_tracker);
-
-            if self
-                .feature_set
-                .is_active(&feature_set::raise_account_cu_limit::id())
-            {
-                self.apply_simd_0306_cost_tracker_changes();
-            }
+        if new_feature_activations.contains(&feature_set::halve_slot_times::id()) {
+            self.apply_halve_slot_times_feature_changes();
         }
 
-        if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
-            self.apply_simd_0306_cost_tracker_changes();
+        self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
+
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id())
+            || new_feature_activations.contains(&feature_set::raise_account_cu_limit::id())
+            || new_feature_activations.contains(&feature_set::halve_slot_times::id())
+        {
+            self.apply_cost_tracker_limits_for_active_features();
         }
 
         if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {
