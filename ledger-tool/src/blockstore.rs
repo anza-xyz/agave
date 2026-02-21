@@ -170,12 +170,12 @@ fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
     let (entries, _, _) = blockstore
         .get_slot_entries_with_shred_info(slot, 0, false)
         .expect("Failed to get slot entries");
-    let contains_nonvote = entries
+
+    entries
         .iter()
         .flat_map(|entry| entry.transactions.iter())
         .flat_map(get_program_ids)
-        .any(|program_id| *program_id != solana_vote_program::id());
-    contains_nonvote
+        .any(|program_id| *program_id != solana_vote_program::id())
 }
 
 type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>, bool);
