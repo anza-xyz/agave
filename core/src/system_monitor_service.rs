@@ -778,7 +778,7 @@ impl SystemMonitorService {
                 cpuid_empty
             };
             let cpuid_extended_1 = if CpuidParamValue::Extended <= max_leaf {
-                if 1 <= __get_cpuid_max(CpuidParamValue::Extended.into()).1 {
+                if 1 <= __get_cpuid_max(CpuidParamValue::Extended.into()).0 {
                     __cpuid_count(CpuidParamValue::Extended.into(), 1)
                 } else {
                     cpuid_empty
