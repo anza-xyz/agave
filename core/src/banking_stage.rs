@@ -1022,7 +1022,7 @@ mod tests {
             mut genesis_config, ..
         } = create_genesis_config(2);
         genesis_config.ticks_per_slot = 4;
-        let num_extra_ticks = 2;
+        let num_extra_ticks = 4;
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
