@@ -508,11 +508,11 @@ pub fn check_for_new_notarized_votes(
         .iter()
         .map(|ingress_node| {
             let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            let slot = client
+
+            client
                 .rpc_client()
                 .get_slot_with_commitment(CommitmentConfig::processed())
-                .unwrap_or(0);
-            slot
+                .unwrap_or(0)
         })
         .max()
     else {
