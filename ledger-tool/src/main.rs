@@ -108,6 +108,7 @@ mod error;
 mod ledger_path;
 mod ledger_utils;
 mod output;
+mod transaction_fixture;
 mod program;
 
 fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result<()> {
@@ -1527,6 +1528,19 @@ fn main() {
                              account deployment",
                         ),
                 ),
+        )
+        .subcommand(
+            SubCommand::with_name("transaction-fixture")
+                .about(
+                    "Extract a transaction and its full execution context from the ledger \
+                     into a self-contained JSON fixture for offline replay",
+                )
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
+                .arg(&hard_forks_arg)
+                .arg(&log_messages_bytes_limit_arg)
+                .args(&transaction_fixture::transaction_fixture_args()),
         )
         .subcommand(
             SubCommand::with_name("simulate-block-production")
@@ -3270,6 +3284,9 @@ fn main() {
                             eprintln!("{err}");
                         }
                     }
+                }
+                ("transaction-fixture", Some(arg_matches)) => {
+                    transaction_fixture::transaction_fixture(&ledger_path, arg_matches);
                 }
                 ("", _) => {
                     eprintln!("{}", matches.usage());
