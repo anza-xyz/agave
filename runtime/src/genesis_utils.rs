@@ -523,10 +523,6 @@ pub fn create_genesis_config_with_leader_ex(
             continue;
         }
 
-        if *feature_id == agave_feature_set::halve_slot_times::id() {
-            continue;
-        }
-
         activate_feature(&mut genesis_config, *feature_id);
     }
 

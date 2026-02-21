@@ -5524,13 +5524,6 @@ impl Bank {
             self.rent_collector.deprecate_rent_exemption_threshold();
         }
 
-        if self
-            .feature_set
-            .is_active(&feature_set::halve_slot_times::id())
-        {
-            self.apply_halve_slot_times_feature_changes();
-        }
-
         // Add built-in program accounts to the bank if they don't already exist
         self.add_builtin_program_accounts();
 
