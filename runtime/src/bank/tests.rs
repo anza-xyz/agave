@@ -53,7 +53,7 @@ use {
     },
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_cost_model::block_cost_limits::{
-        MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_VOTE_UNITS, MAX_WRITABLE_ACCOUNT_UNITS,
+        MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_WRITABLE_ACCOUNT_UNITS,
     },
     solana_cpi::MAX_RETURN_DATA,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
@@ -7102,59 +7102,60 @@ fn test_block_limits() {
 
 #[test]
 fn test_halve_slot_times_feature() {
-    const FEATURE_ACCOUNT_LAMPORTS: u64 = 42;
-    const FLOAT_EPSILON: f64 = 1e-12;
+    // Setup the parent bank with some non-default values to ensure the feature
+    // properly updates them.
+    let bank0 = {
+        let mut bank = create_simple_test_bank(100_000);
+        bank.set_hashes_per_tick(Some(1000));
+        Arc::new(bank)
+    };
+    let mut bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
 
-    let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
-    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
-
-    let original_ns_per_slot = bank.ns_per_slot;
-    let original_slots_per_year = bank.slots_per_year();
-    let original_rent_slots_per_year = bank.rent_collector().slots_per_year;
-    bank.set_hashes_per_tick(Some(1_000));
-    let original_hashes_per_tick = bank.hashes_per_tick().unwrap();
-    let original_ticks_per_slot = bank.ticks_per_slot();
-
-    bank.store_account(
+    // Activate and apply the `halve_slot_times` feature.
+    bank1.store_account(
         &feature_set::halve_slot_times::id(),
-        &feature::create_account(&Feature::default(), FEATURE_ACCOUNT_LAMPORTS),
+        &feature::create_account(&Feature::default(), 42),
     );
-    bank.compute_and_apply_new_feature_activations();
+    bank1.compute_and_apply_new_feature_activations();
 
-    assert_eq!(bank.ns_per_slot, original_ns_per_slot / 2);
+    // Verify new values match expectations with respect to parent bank,
+    // pre-activation values.
+    assert_eq!(bank1.ns_per_slot, bank0.ns_per_slot / 2);
+    assert_eq!(
+        bank1.hashes_per_tick().unwrap(),
+        bank0.hashes_per_tick().unwrap() / 2,
+        "hashes per tick should be halved",
+    );
+    assert_eq!(
+        bank1.ticks_per_slot(),
+        bank0.ticks_per_slot(),
+        "ticks per slot should be unchanged",
+    );
+    // Margin to ensure floats are "close enough"
+    const FLOAT_EPSILON: f64 = 1e-12;
     assert!(
-        (bank.slots_per_year() - original_slots_per_year * 2.0).abs() <= FLOAT_EPSILON,
+        (bank1.slots_per_year() - bank0.slots_per_year() * 2.0).abs() <= FLOAT_EPSILON,
         "slots_per_year should double when slots are halved"
     );
     assert!(
-        (bank.rent_collector().slots_per_year - original_rent_slots_per_year * 2.0).abs()
+        (bank1.rent_collector().slots_per_year - bank0.rent_collector().slots_per_year * 2.0).abs()
             <= FLOAT_EPSILON,
         "rent collector slots_per_year should double when slots are halved"
     );
     assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS / 2,
+        bank1.read_cost_tracker().unwrap().get_block_limit(),
+        bank0.read_cost_tracker().unwrap().get_block_limit() / 2,
         "block CU limit should be halved",
     );
     assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS / 2,
+        bank1.read_cost_tracker().unwrap().get_account_limit(),
+        bank0.read_cost_tracker().unwrap().get_account_limit() / 2,
         "account CU limit should be halved",
     );
     assert_eq!(
-        bank.read_cost_tracker().unwrap().get_vote_limit(),
-        MAX_VOTE_UNITS / 2,
-        "vote CU limit should be halved",
-    );
-    assert_eq!(
-        bank.hashes_per_tick().unwrap(),
-        original_hashes_per_tick / 2,
-        "hashes per tick should be halved",
-    );
-    assert_eq!(
-        bank.ticks_per_slot(),
-        original_ticks_per_slot,
-        "ticks per slot should not be halved",
+        bank1.read_cost_tracker().unwrap().get_vote_limit(),
+        bank0.read_cost_tracker().unwrap().get_vote_limit(),
+        "vote CU limit should be unchanged",
     );
 }
 

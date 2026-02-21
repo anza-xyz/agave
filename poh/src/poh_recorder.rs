@@ -682,9 +682,9 @@ impl PohRecorder {
         self.ticks_per_slot
     }
 
-    // Compute target tick duration in ns based on bank ns/ticks per slot.
-    // Working bank is used when we are leader and start bank is used when we
-    // are not.
+    // Compute target tick duration in nanoseconds based on the bank nanos per
+    // slot and ticks per slot. Working bank is used when we are leader and
+    // start bank is used when we are not.
     pub fn target_tick_duration_ns(&self) -> u64 {
         let ns_per_slot = self
             .working_bank
@@ -693,8 +693,7 @@ impl PohRecorder {
             .unwrap_or(self.start_bank.ns_per_slot);
         let ticks_per_slot = u128::from(self.ticks_per_slot.max(1));
         let target_tick_duration_ns = ns_per_slot.saturating_div(ticks_per_slot);
-        u64::try_from(target_tick_duration_ns)
-            .expect("target tick duration in ns should fit within u64")
+        u64::try_from(target_tick_duration_ns).unwrap_or(u64::MAX)
     }
 
     pub fn start_slot(&self) -> Slot {
