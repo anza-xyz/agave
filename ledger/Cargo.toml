@@ -143,6 +143,7 @@ bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 solana-account-decoder = { workspace = true }
+solana-bls-signatures = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
