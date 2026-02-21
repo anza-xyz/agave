@@ -13,8 +13,8 @@ use {
             self, GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
             activate_feature, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
-            minimum_vote_account_balance_for_vat,
+            create_lockup_stake_account, deactivate_features,
+            genesis_sysvar_and_builtin_program_lamports, minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
         serde_snapshot::fields_from_stream,
@@ -6919,6 +6919,258 @@ fn test_block_limits() {
 }
 
 #[test]
+fn test_halve_slot_times_feature() {
+    // Setup the parent bank with some non-default values to ensure the feature
+    // properly updates them.
+    let bank0 = {
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        let features_to_deactivate = vec![feature_set::halve_slot_times::id()];
+        deactivate_features(&mut genesis_config, &features_to_deactivate);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.set_hashes_per_tick(Some(1000));
+        Arc::new(bank)
+    };
+    let status_cache_max_entries_before = bank0.status_cache.read().unwrap().max_cache_entries();
+    let mut bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+
+    // Activate and apply the `halve_slot_times` feature.
+    bank1.store_account(
+        &feature_set::halve_slot_times::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    bank1.compute_and_apply_new_feature_activations();
+
+    // Verify new values match expectations with respect to parent bank,
+    // pre-activation values.
+    assert_eq!(bank1.ns_per_slot, bank0.ns_per_slot / 2);
+    assert_eq!(
+        bank1.hashes_per_tick().unwrap(),
+        bank0.hashes_per_tick().unwrap() / 2,
+        "hashes per tick should be halved",
+    );
+    assert_eq!(
+        bank1.ticks_per_slot(),
+        bank0.ticks_per_slot(),
+        "ticks per slot should be unchanged",
+    );
+    // Margin to ensure floats are "close enough"
+    const FLOAT_EPSILON: f64 = 1e-12;
+    assert!(
+        (bank1.slots_per_year() - bank0.slots_per_year() * 2.0).abs() <= FLOAT_EPSILON,
+        "slots_per_year should double when slots are halved"
+    );
+    assert!(
+        (bank1.rent_collector().slots_per_year - bank0.rent_collector().slots_per_year * 2.0).abs()
+            <= FLOAT_EPSILON,
+        "rent collector slots_per_year should double when slots are halved"
+    );
+    assert_eq!(
+        bank1.read_cost_tracker().unwrap().get_block_limit(),
+        bank0.read_cost_tracker().unwrap().get_block_limit() / 2,
+        "block CU limit should be halved",
+    );
+    assert_eq!(
+        bank1.read_cost_tracker().unwrap().get_account_limit(),
+        bank0.read_cost_tracker().unwrap().get_account_limit() / 2,
+        "account CU limit should be halved",
+    );
+    assert_eq!(
+        bank1.read_cost_tracker().unwrap().get_vote_limit(),
+        bank0.read_cost_tracker().unwrap().get_vote_limit() / 2,
+        "vote CU limit should be halved",
+    );
+    assert_eq!(
+        bank1
+            .read_cost_tracker()
+            .unwrap()
+            .get_account_data_size_limit(),
+        bank0
+            .read_cost_tracker()
+            .unwrap()
+            .get_account_data_size_limit()
+            / 2,
+        "allocated account-data limit should be halved",
+    );
+    assert_eq!(
+        bank1.max_processing_age(),
+        bank0.max_processing_age() * 2,
+        "processing age should double",
+    );
+    assert_eq!(
+        bank1.blockhash_queue.read().unwrap().max_age(),
+        bank0.blockhash_queue.read().unwrap().max_age() * 2,
+        "recent blockhash queue max age should double",
+    );
+    assert_eq!(
+        bank1.status_cache.read().unwrap().max_cache_entries(),
+        status_cache_max_entries_before * 2,
+        "status cache max entries should double",
+    );
+    assert_eq!(
+        bank1.fee_rate_governor.target_signatures_per_slot,
+        bank0.fee_rate_governor.target_signatures_per_slot / 2,
+        "fee target signatures per slot should be halved",
+    );
+}
+
+#[test]
+fn test_halve_slot_times_feature_active_at_genesis() {
+    let GenesisConfigInfo { genesis_config, .. } = genesis_utils::create_genesis_config(1_000_000);
+    assert_eq!(
+        genesis_config.hashes_per_tick(),
+        None,
+        "genesis hashes-per-tick should remain unset when no explicit value is configured",
+    );
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::halve_slot_times::id())
+    );
+    assert_eq!(bank.ns_per_slot, genesis_config.ns_per_slot());
+    assert_eq!(bank.hashes_per_tick(), &genesis_config.hashes_per_tick());
+    assert_eq!(
+        bank.max_processing_age(),
+        MAX_PROCESSING_AGE * 2,
+        "processing age should be doubled when feature is active at genesis",
+    );
+    assert_eq!(
+        bank.status_cache.read().unwrap().max_cache_entries(),
+        MAX_CACHE_ENTRIES * 2,
+        "status cache should be doubled when feature is active at genesis",
+    );
+    assert_eq!(
+        bank.fee_rate_governor.target_signatures_per_slot,
+        genesis_config.fee_rate_governor.target_signatures_per_slot,
+        "fee target signatures per slot should match normalized genesis value",
+    );
+}
+
+#[test]
+fn test_halve_slot_times_migration_is_independent_of_genesis_ns_per_slot() {
+    const FEATURE_ACCOUNT_LAMPORTS: u64 = 42;
+
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let features_to_deactivate = vec![feature_set::halve_slot_times::id()];
+    deactivate_features(&mut genesis_config, &features_to_deactivate);
+    genesis_config.fee_rate_governor.target_signatures_per_slot = 100;
+
+    let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+    let mut bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+    bank.store_account(
+        &feature_set::halve_slot_times::id(),
+        &feature::create_account(&Feature::default(), FEATURE_ACCOUNT_LAMPORTS),
+    );
+    bank.compute_and_apply_new_feature_activations();
+
+    let expected_ns_per_slot = bank.ns_per_slot;
+    let expected_slots_per_year = bank.slots_per_year;
+    let expected_rent_slots_per_year = bank.rent_collector.slots_per_year;
+    let expected_hashes_per_tick = bank.hashes_per_tick;
+    let expected_target_signatures_per_slot = bank.fee_rate_governor.target_signatures_per_slot;
+    let expected_max_age = bank.blockhash_queue.read().unwrap().max_age();
+
+    // Simulate a legacy snapshot where the feature account is active but the
+    // bank fields still carry pre-feature values.
+    bank.ns_per_slot = bank0.ns_per_slot;
+    bank.slots_per_year = bank0.slots_per_year;
+    bank.rent_collector.slots_per_year = bank0.rent_collector.slots_per_year;
+    bank.hashes_per_tick = bank0.hashes_per_tick;
+    bank.fee_rate_governor.target_signatures_per_slot =
+        bank0.fee_rate_governor.target_signatures_per_slot;
+    let pre_feature_max_age = bank0.blockhash_queue.read().unwrap().max_age();
+    bank.blockhash_queue
+        .write()
+        .unwrap()
+        .set_max_age(pre_feature_max_age);
+
+    // Mutate genesis ns_per_slot so migration cannot rely on bank-vs-genesis
+    // equality checks for wholesale feature migration.
+    genesis_config.poh_config.target_tick_duration = genesis_config
+        .poh_config
+        .target_tick_duration
+        .checked_div(HALVE_SLOT_TIMES_FACTOR as u32)
+        .unwrap_or(Duration::from_nanos(1));
+
+    bank.maybe_apply_halve_slot_times_feature_migration();
+
+    assert_eq!(bank.ns_per_slot, expected_ns_per_slot);
+    assert_eq!(bank.slots_per_year, expected_slots_per_year);
+    assert_eq!(
+        bank.rent_collector.slots_per_year,
+        expected_rent_slots_per_year
+    );
+    assert_eq!(bank.hashes_per_tick, expected_hashes_per_tick);
+    assert_eq!(
+        bank.fee_rate_governor.target_signatures_per_slot,
+        expected_target_signatures_per_slot,
+    );
+    assert_eq!(
+        bank.blockhash_queue.read().unwrap().max_age(),
+        expected_max_age
+    );
+}
+
+#[test]
+fn test_halve_slot_times_feature_preserves_inflation_real_time() {
+    const FEATURE_ACCOUNT_LAMPORTS: u64 = 42;
+    const FLOAT_EPSILON: f64 = 1e-12;
+
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let slots_per_epoch = 32;
+    genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+
+    let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), slots_per_epoch);
+
+    let pre_feature_slots_per_year = bank.slots_per_year();
+    let slot_in_year_before_activation = bank.slot_in_year_for_inflation();
+
+    bank.store_account(
+        &feature_set::halve_slot_times::id(),
+        &feature::create_account(&Feature::default(), FEATURE_ACCOUNT_LAMPORTS),
+    );
+    bank.compute_and_apply_new_feature_activations();
+
+    let slot_in_year_after_activation = bank.slot_in_year_for_inflation();
+    assert!(
+        (slot_in_year_after_activation - slot_in_year_before_activation).abs() <= FLOAT_EPSILON,
+        "slot_in_year should be continuous at activation"
+    );
+
+    let expected_epoch_duration_before_activation =
+        slots_per_epoch as f64 / pre_feature_slots_per_year;
+    let expected_epoch_duration_after_activation = expected_epoch_duration_before_activation / 2.0;
+    let pre_activation_epoch = bank.epoch().saturating_sub(1);
+    assert!(
+        (bank.epoch_duration_in_years(pre_activation_epoch)
+            - expected_epoch_duration_before_activation)
+            .abs()
+            <= FLOAT_EPSILON,
+        "pre-activation epoch duration should remain unchanged"
+    );
+    assert!(
+        (bank.epoch_duration_in_years(bank.epoch()) - expected_epoch_duration_after_activation)
+            .abs()
+            <= FLOAT_EPSILON,
+        "post-activation epoch duration should be halved"
+    );
+
+    let bank_next_epoch = Bank::new_from_parent(
+        Arc::new(bank),
+        &Pubkey::default(),
+        slots_per_epoch.saturating_mul(2),
+    );
+    let inflation_years_advanced =
+        bank_next_epoch.slot_in_year_for_inflation() - slot_in_year_after_activation;
+    assert!(
+        (inflation_years_advanced - expected_epoch_duration_after_activation).abs()
+            <= FLOAT_EPSILON,
+        "inflation time should advance according to 200ms slots after activation"
+    );
+}
+
+#[test]
 fn test_simd_0437_rent_feature_gates_epoch_transition() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
     genesis_config.rent.lamports_per_byte = 0;
@@ -7161,6 +7413,7 @@ fn test_update_clock_timestamp() {
     );
 
     // Timestamp cannot go backward from ancestor Bank to child
+    let parent_timestamp = bank.clock().unix_timestamp;
     bank = new_from_parent(Arc::new(bank));
     update_vote_account_timestamp(
         BlockTimestamp {
@@ -7171,10 +7424,7 @@ fn test_update_clock_timestamp() {
         &voting_keypair.pubkey(),
     );
     bank.update_clock(None);
-    assert_eq!(
-        bank.clock().unix_timestamp,
-        bank.unix_timestamp_from_genesis()
-    );
+    assert_eq!(bank.clock().unix_timestamp, parent_timestamp);
 }
 
 fn poh_estimate_offset(bank: &Bank) -> Duration {

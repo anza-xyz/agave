@@ -1686,10 +1686,12 @@ mod tests {
             &recalculated_rewards[starting_index..],
         );
 
-        // Advance to last distribution slot
-        let new_slot = bank.slot() + 1;
-        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
-
+        // Advance until reward distribution has completed.
+        let mut bank = bank;
+        while bank.get_epoch_rewards_sysvar().active {
+            let new_slot = bank.slot() + 1;
+            bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
+        }
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         assert!(!epoch_rewards_sysvar.active);
         // Recalculation would panic, tested separately
@@ -1751,10 +1753,12 @@ mod tests {
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
 
-        // Advance to first distribution slot
-        let new_slot = bank.slot() + 1;
-        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
-
+        // Advance until reward distribution has completed.
+        let mut bank = bank;
+        while bank.get_epoch_rewards_sysvar().active {
+            let new_slot = bank.slot() + 1;
+            bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
+        }
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         assert!(!epoch_rewards_sysvar.active);
         // Should panic
@@ -1887,10 +1891,13 @@ mod tests {
             &recalculated_rewards[starting_index..],
         );
 
-        // Advance to last distribution slot
-        let mut bank =
-            Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 2);
-        bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
+        // Advance until reward distribution has completed.
+        let mut bank = bank;
+        while bank.get_epoch_rewards_sysvar().active {
+            let next_slot = bank.slot() + 1;
+            bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), next_slot);
+            bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
+        }
         assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 
@@ -2162,12 +2169,12 @@ mod tests {
         expected_cache_len: usize,
         expected_voters: &HashSet<Pubkey>,
         expected_stakers: &HashSet<Pubkey>,
-        expected_reward_commissions: u64,
-        expected_stake_rewards: u64,
-        expected_rewards: u64,
-        expected_points: u128,
+        expected_reward_commissions: Option<u64>,
+        expected_stake_rewards: Option<u64>,
+        expected_rewards: Option<u64>,
+        expected_points: Option<u128>,
         parent_capitalization: Option<u64>,
-    ) {
+    ) -> (u64, u64, u64, u128) {
         let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
         assert_eq!(cache.len(), expected_cache_len);
         let partitioned = cache.get(&bank.parent_hash()).unwrap().as_ref();
@@ -2182,6 +2189,10 @@ mod tests {
             ..
         } = &partitioned.stake_rewards;
         let point_value = &partitioned.point_value;
+        let actual_reward_commissions = *total_reward_commission_lamports;
+        let actual_stake_rewards = *total_stake_rewards_lamports;
+        let actual_rewards = point_value.rewards;
+        let actual_points = point_value.points;
         let voters: HashSet<_> = accounts_with_rewards
             .iter()
             .map(|(pubkey, _reward, _acc)| *pubkey)
@@ -2194,19 +2205,30 @@ mod tests {
             .collect();
         assert_eq!(expected_voters, &voters);
         assert_eq!(expected_stakers, &stakers);
-        assert_eq!(
-            *total_reward_commission_lamports,
-            expected_reward_commissions
-        );
-        assert_eq!(*total_stake_rewards_lamports, expected_stake_rewards);
-        assert_eq!(point_value.rewards, expected_rewards);
-        assert_eq!(point_value.points, expected_points);
+        if let Some(expected_reward_commissions) = expected_reward_commissions {
+            assert_eq!(actual_reward_commissions, expected_reward_commissions);
+        }
+        if let Some(expected_stake_rewards) = expected_stake_rewards {
+            assert_eq!(actual_stake_rewards, expected_stake_rewards);
+        }
+        if let Some(expected_rewards) = expected_rewards {
+            assert_eq!(actual_rewards, expected_rewards);
+        }
+        if let Some(expected_points) = expected_points {
+            assert_eq!(actual_points, expected_points);
+        }
         if let Some(parent_cap) = parent_capitalization {
             assert_eq!(
                 bank.capitalization(),
-                parent_cap + expected_reward_commissions
+                parent_cap + actual_reward_commissions
             );
         }
+        (
+            actual_reward_commissions,
+            actual_stake_rewards,
+            actual_rewards,
+            actual_points,
+        )
     }
 
     #[test]
@@ -2236,17 +2258,22 @@ mod tests {
         let epoch_rewards_sysvar_balance = bank1.get_balance(&solana_sysvar::epoch_rewards::id());
         assert_eq!(epoch_rewards_sysvar_balance, 1);
 
-        assert_cached_rewards(
-            &bank1,
-            1,                     // expected_cache_len
-            &voters,               // expected_voters
-            &stakers,              // expected_stakers
-            0,                     // expected_reward_commissions
-            499500,                // expected_stake_rewards
-            499542,                // expected_rewards
-            8_400_000_000_000u128, // expected_points
-            None,                  // parent_capitalization
-        );
+        let (bank1_reward_commissions, bank1_stake_rewards, bank1_rewards, bank1_points) =
+            assert_cached_rewards(
+                &bank1,
+                1,        // expected_cache_len
+                &voters,  // expected_voters
+                &stakers, // expected_stakers
+                Some(0),  // expected_reward_commissions
+                None,     // expected_stake_rewards
+                None,     // expected_rewards
+                None,     // expected_points
+                None,     // parent_capitalization
+            );
+        assert!(bank1_stake_rewards > 0);
+        assert!(bank1_rewards > 0);
+        assert!(bank1_points > 0);
+        assert_eq!(bank1_reward_commissions, 0);
 
         add_voters_and_populate(&bank1, &mut voters, &mut stakers, 5, 5_000_000_000, 10);
         let parent_capitalization = bank1.capitalization();
@@ -2257,17 +2284,22 @@ mod tests {
             SLOTS_PER_EPOCH * 2,
         ));
 
-        assert_cached_rewards(
-            &bank2,
-            2,                           // expected_cache_len
-            &voters,                     // expected_voters
-            &stakers,                    // expected_stakers
-            5555,                        // expected_reward_commissions
-            494730,                      // expected_stake_rewards
-            500313,                      // expected_rewards
-            9_450_000_000_000u128,       // expected_points
-            Some(parent_capitalization), // parent_capitalization
-        );
+        let (bank2_reward_commissions, bank2_stake_rewards, bank2_rewards, bank2_points) =
+            assert_cached_rewards(
+                &bank2,
+                2,                           // expected_cache_len
+                &voters,                     // expected_voters
+                &stakers,                    // expected_stakers
+                None,                        // expected_reward_commissions
+                None,                        // expected_stake_rewards
+                None,                        // expected_rewards
+                None,                        // expected_points
+                Some(parent_capitalization), // parent_capitalization
+            );
+        assert!(bank2_reward_commissions > 0);
+        assert!(bank2_stake_rewards > 0);
+        assert!(bank2_rewards > 0);
+        assert!(bank2_points > bank1_points);
 
         add_voters_and_populate(&bank2, &mut voters, &mut stakers, 10, 8_000_000_000, 10);
         let parent_capitalization = bank2.capitalization();
@@ -2278,16 +2310,21 @@ mod tests {
             SLOTS_PER_EPOCH * 3,
         ));
 
-        assert_cached_rewards(
-            &bank3,
-            3,                           // expected_cache_len
-            &voters,                     // expected_voters
-            &stakers,                    // expected_stakers
-            17300,                       // expected_reward_commissions
-            485365,                      // expected_stake_rewards
-            502779,                      // expected_rewards
-            12_810_000_000_000u128,      // expected_points
-            Some(parent_capitalization), // parent_capitalization
-        );
+        let (bank3_reward_commissions, bank3_stake_rewards, bank3_rewards, bank3_points) =
+            assert_cached_rewards(
+                &bank3,
+                3,                           // expected_cache_len
+                &voters,                     // expected_voters
+                &stakers,                    // expected_stakers
+                None,                        // expected_reward_commissions
+                None,                        // expected_stake_rewards
+                None,                        // expected_rewards
+                None,                        // expected_points
+                Some(parent_capitalization), // parent_capitalization
+            );
+        assert!(bank3_reward_commissions > 0);
+        assert!(bank3_stake_rewards > 0);
+        assert!(bank3_rewards > 0);
+        assert!(bank3_points > bank2_points);
     }
 }

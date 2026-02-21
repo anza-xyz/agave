@@ -125,6 +125,22 @@ pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHRED
 pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
 pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
 
+pub const fn max_data_shreds_per_slot(halve_slot_times_active: bool) -> u32 {
+    if halve_slot_times_active {
+        (MAX_DATA_SHREDS_PER_SLOT as u32) / 2
+    } else {
+        MAX_DATA_SHREDS_PER_SLOT as u32
+    }
+}
+
+pub const fn max_code_shreds_per_slot(halve_slot_times_active: bool) -> u32 {
+    if halve_slot_times_active {
+        (MAX_CODE_SHREDS_PER_SLOT as u32) / 2
+    } else {
+        MAX_CODE_SHREDS_PER_SLOT as u32
+    }
+}
+
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
 // 2. Merkles are chained
@@ -724,6 +740,32 @@ pub fn should_discard_shred<'a, P>(
 where
     P: Into<PacketRef<'a>>,
 {
+    should_discard_shred_with_custom_limits(
+        packet,
+        root,
+        max_slot,
+        shred_version,
+        discard_unexpected_data_complete_shreds,
+        |_| MAX_DATA_SHREDS_PER_SLOT as u32,
+        |_| MAX_CODE_SHREDS_PER_SLOT as u32,
+        stats,
+    )
+}
+
+#[must_use]
+pub fn should_discard_shred_with_custom_limits<'a, P>(
+    packet: P,
+    root: Slot,
+    max_slot: Slot,
+    shred_version: u16,
+    discard_unexpected_data_complete_shreds: impl Fn(Slot) -> bool,
+    max_data_shreds_per_slot: impl Fn(Slot) -> u32,
+    max_code_shreds_per_slot: impl Fn(Slot) -> u32,
+    stats: &mut ShredFetchStats,
+) -> bool
+where
+    P: Into<PacketRef<'a>>,
+{
     debug_assert!(root < max_slot);
     let Some(shred) = layout::get_shred(packet) else {
         stats.index_overrun += 1;
@@ -769,7 +811,7 @@ where
 
     match ShredType::from(shred_variant) {
         ShredType::Code => {
-            if index >= MAX_CODE_SHREDS_PER_SLOT as u32 {
+            if index >= max_code_shreds_per_slot(slot) {
                 stats.index_out_of_bounds += 1;
                 return true;
             }
@@ -789,7 +831,7 @@ where
             }
         }
         ShredType::Data => {
-            if index >= MAX_DATA_SHREDS_PER_SLOT as u32 {
+            if index >= max_data_shreds_per_slot(slot) {
                 stats.index_out_of_bounds += 1;
                 return true;
             }

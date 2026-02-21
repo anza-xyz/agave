@@ -10,7 +10,10 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::shred::{self, ShredFetchStats, should_discard_shred},
+    solana_ledger::shred::{
+        self, ShredFetchStats, max_code_shreds_per_slot, max_data_shreds_per_slot,
+        should_discard_shred_with_custom_limits,
+    },
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
         BytesPacket, BytesPacketBatch, PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef,
@@ -79,13 +82,22 @@ impl ShredFetchStage {
         const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
         let mut last_updated = Instant::now();
         let mut keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
-        let (mut last_root, mut slots_per_epoch, mut feature_set, mut epoch_schedule) = {
+        let (
+            mut last_root,
+            mut slots_per_epoch,
+            mut feature_set,
+            mut epoch_schedule,
+            mut halve_slot_times_activated_slot,
+        ) = {
             let root_bank = sharable_banks.root();
             (
                 root_bank.slot(),
                 root_bank.get_slots_in_epoch(root_bank.epoch()),
                 root_bank.feature_set.clone(),
                 root_bank.epoch_schedule().clone(),
+                root_bank
+                    .feature_set
+                    .activated_slot(&agave_feature_set::halve_slot_times::id()),
             )
         };
         let mut stats = ShredFetchStats::default();
@@ -98,6 +110,9 @@ impl ShredFetchStage {
                 epoch_schedule = root_bank.epoch_schedule().clone();
                 last_root = root_bank.slot();
                 slots_per_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
+                halve_slot_times_activated_slot = root_bank
+                    .feature_set
+                    .activated_slot(&agave_feature_set::halve_slot_times::id());
                 keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
             }
             stats.shred_count += packet_batch.len();
@@ -145,15 +160,29 @@ impl ShredFetchStage {
                     &epoch_schedule,
                 )
             };
+            let max_data_shreds_for_slot = |shred_slot| {
+                max_data_shreds_per_slot(
+                    halve_slot_times_activated_slot
+                        .is_some_and(|feature_slot| shred_slot >= feature_slot),
+                )
+            };
+            let max_code_shreds_for_slot = |shred_slot| {
+                max_code_shreds_per_slot(
+                    halve_slot_times_activated_slot
+                        .is_some_and(|feature_slot| shred_slot >= feature_slot),
+                )
+            };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
-                    || should_discard_shred(
+                    || should_discard_shred_with_custom_limits(
                         packet.as_ref(),
                         last_root,
                         max_slot,
                         shred_version,
                         discard_unexpected_data_complete_shreds,
+                        max_data_shreds_for_slot,
+                        max_code_shreds_for_slot,
                         &mut stats,
                     )
                 {

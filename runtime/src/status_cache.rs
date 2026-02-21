@@ -52,6 +52,7 @@ pub struct StatusCache<T: Serialize + Clone> {
     // check if a tx_key was seen on a fork and for rpc to retrieve the tx_result
     cache: KeyStatusMap<T>,
     roots: HashSet<Slot>,
+    max_cache_entries: usize,
     // slot_deltas[slot][blockhash] => [(tx_key, tx_result), ...] used to serialize for snapshots
     // and to rebuild cache[blockhash][tx_key] from a snapshot
     slot_deltas: SlotDeltaMap<T>,
@@ -63,6 +64,7 @@ impl<T: Serialize + Clone> Default for StatusCache<T> {
             cache: HashMap::default(),
             // 0 is always a root
             roots: HashSet::from([0]),
+            max_cache_entries: MAX_CACHE_ENTRIES,
             slot_deltas: HashMap::default(),
         }
     }
@@ -173,6 +175,15 @@ impl<T: Serialize + Clone> StatusCache<T> {
         &self.roots
     }
 
+    pub fn max_cache_entries(&self) -> usize {
+        self.max_cache_entries
+    }
+
+    pub fn set_max_cache_entries(&mut self, max_cache_entries: usize) {
+        self.max_cache_entries = max_cache_entries.max(1);
+        self.purge_roots();
+    }
+
     /// Insert a new key using the given blockhash at the given slot.
     pub fn insert<K: AsRef<[u8]>>(
         &mut self,
@@ -211,7 +222,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        if self.roots.len() > MAX_CACHE_ENTRIES {
+        if self.roots.len() > self.max_cache_entries {
             if let Some(min) = self.roots.iter().min().cloned() {
                 self.roots.remove(&min);
                 self.cache.retain(|_, (fork, _, _)| *fork > min);

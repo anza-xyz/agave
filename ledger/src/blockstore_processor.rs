@@ -19,7 +19,7 @@ use {
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
-    solana_clock::{MAX_PROCESSING_AGE, Slot},
+    solana_clock::Slot,
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_entry::entry::{self, Entry, EntrySlice, EntryType, create_ticks},
     solana_genesis_config::GenesisConfig,
@@ -234,7 +234,7 @@ pub fn execute_batch<'a>(
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
-            MAX_PROCESSING_AGE,
+            batch.bank().max_processing_age(),
             ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
             timings,
             log_messages_bytes_limit,
@@ -924,9 +924,7 @@ pub fn process_blockstore_from_root(
         }
         if opts.no_block_cost_limits {
             warn!("setting block cost limits to MAX");
-            bank.write_cost_tracker()
-                .unwrap()
-                .set_limits(u64::MAX, u64::MAX, u64::MAX);
+            bank.write_cost_tracker().unwrap().set_limits_max();
         }
         assert!(bank.parent().is_none());
         (bank.slot(), bank.hash())
@@ -4606,7 +4604,7 @@ pub mod tests {
         let batch = bank.prepare_batch_for_tests(txs);
         let (commit_results, _) = batch.bank().load_execute_and_commit_transactions(
             &batch,
-            MAX_PROCESSING_AGE,
+            batch.bank().max_processing_age(),
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
@@ -5525,7 +5523,7 @@ pub mod tests {
         let block_limit = tx_cost.sum();
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(u64::MAX, block_limit, u64::MAX);
+            .set_limits(u64::MAX, block_limit, u64::MAX, u64::MAX);
 
         let tx_costs = vec![None, Some(tx_cost), None];
         // The transaction will fit when added the first time

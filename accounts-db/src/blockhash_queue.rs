@@ -128,6 +128,21 @@ impl BlockhashQueue {
         self.last_hash = Some(*hash);
     }
 
+    pub fn max_age(&self) -> usize {
+        self.max_age
+    }
+
+    pub fn set_max_age(&mut self, max_age: usize) {
+        assert!(max_age > 0, "max blockhash age must be >0");
+        if max_age < self.max_age {
+            // Max age is being reduced. Prune the queue of expired hashes.
+            self.hashes.retain(|_, info| {
+                Self::is_hash_index_valid(self.last_hash_index, max_age, info.hash_index)
+            });
+        }
+        self.max_age = max_age;
+    }
+
     #[deprecated(
         since = "1.9.0",
         note = "Please do not use, will no longer be available in the future"
@@ -146,6 +161,10 @@ impl BlockhashQueue {
     pub fn get_max_age(&self) -> usize {
         #[allow(deprecated)]
         self.max_age
+    }
+
+    pub fn double_max_age(&mut self) {
+        self.set_max_age(self.max_age.saturating_mul(2));
     }
 }
 

@@ -9,6 +9,7 @@ use {
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
         stake_account::StakeAccount, stake_history::StakeHistory,
     },
+    agave_feature_set as feature_set,
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -386,8 +387,17 @@ impl Bank {
 
     /// # stake accounts to store in one block during partitioned reward interval
     pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
-        self.partitioned_epoch_rewards_config()
-            .stake_account_stores_per_block
+        let stake_account_stores_per_block = self
+            .partitioned_epoch_rewards_config()
+            .stake_account_stores_per_block;
+        if self
+            .feature_set
+            .is_active(&feature_set::halve_slot_times::id())
+        {
+            stake_account_stores_per_block.saturating_div(2).max(1)
+        } else {
+            stake_account_stores_per_block
+        }
     }
 
     /// Calculate the number of blocks required to distribute rewards to all stake accounts.
@@ -910,9 +920,10 @@ mod tests {
             bank_forks,
         ) = create_reward_bank(100, 50, starting_slot - 1);
         let mut starting_hash = None;
+        let mut reward_distribution_completion_slot = None;
 
         // simulate block progress
-        for slot in starting_slot..=SLOTS_PER_EPOCH + 3 {
+        for slot in starting_slot..=SLOTS_PER_EPOCH + 4 {
             let pre_cap = previous_bank.capitalization();
 
             let pre_sysvar_account = previous_bank
@@ -948,7 +959,23 @@ mod tests {
                 );
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
                 starting_hash = Some(curr_bank.parent_hash);
-            } else if slot == SLOTS_PER_EPOCH + 1 {
+                let account = curr_bank
+                    .get_account(&solana_sysvar::epoch_rewards::id())
+                    .unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
+                reward_distribution_completion_slot =
+                    Some(SLOTS_PER_EPOCH + epoch_rewards.num_partitions);
+            } else if slot < SLOTS_PER_EPOCH {
+                assert_matches!(
+                    curr_bank.get_reward_interval(),
+                    RewardInterval::OutsideInterval
+                );
+                assert_eq!(post_cap, pre_cap);
+            } else if slot
+                < reward_distribution_completion_slot
+                    .expect("epoch boundary must set completion slot")
+            {
                 // When curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block. The
                 // cap should increase accordingly.
@@ -956,15 +983,6 @@ mod tests {
                     curr_bank.get_reward_interval(),
                     RewardInterval::InsideInterval
                 );
-
-                // The first block of the epoch has not rooted yet, so the cache
-                // should still have the results.
-                assert!(
-                    curr_bank
-                        .get_epoch_rewards_from_cache(&starting_hash.unwrap())
-                        .is_some()
-                );
-                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
 
                 // 1st reward distribution block, state should be partitioned.
                 assert!(curr_bank.is_partitioned());
@@ -979,11 +997,25 @@ mod tests {
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
                 );
 
-                // Now make a root the  first bank in the epoch.
-                // This should clear the cache.
-                let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
-                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
-            } else if slot == SLOTS_PER_EPOCH + 2 {
+                if slot == SLOTS_PER_EPOCH + 1 {
+                    // The first block of the epoch has not rooted yet, so the
+                    // cache should still have the results.
+                    assert!(
+                        curr_bank
+                            .get_epoch_rewards_from_cache(&starting_hash.unwrap())
+                            .is_some()
+                    );
+                    assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
+
+                    // Now make a root the first bank in the epoch.
+                    // This should clear the cache.
+                    let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
+                    assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
+                }
+            } else if slot
+                == reward_distribution_completion_slot
+                    .expect("epoch boundary must set completion slot")
+            {
                 // When curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
                 // epoch 1, reward distribution should happen in this block.
                 // however, all stake rewards are paid at the this block
@@ -1137,51 +1169,45 @@ mod tests {
             assert_eq!(reward.reward_type, RewardType::Voting);
         }
         assert_eq!(keyed_rewards.len(), num_rewards);
-        assert_eq!(
-            num_partitions,
-            Some(num_rewards as u64 / stake_account_stores_per_block)
-        );
+        let expected_num_partitions = epoch_boundary_bank
+            .partitioned_rewards_stake_account_stores_per_block()
+            .max(1);
+        let expected_num_partitions = (num_rewards as u64)
+            .div_ceil(expected_num_partitions)
+            .clamp(1, (SLOTS_PER_EPOCH / 10).max(1));
+        assert_eq!(num_partitions, Some(expected_num_partitions));
 
         let mut total_staking_rewards = 0;
-
-        let partition0_bank = Arc::new(Bank::new_from_parent(
-            epoch_boundary_bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH + 1,
-        ));
-        // Slot after the epoch boundary contains first partition of staking
-        // rewards, and no partitions because not at the epoch boundary
-        let KeyedRewardsAndNumPartitions {
-            keyed_rewards,
-            num_partitions,
-        } = partition0_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
-            assert_eq!(reward.reward_type, RewardType::Staking);
+        let mut previous_bank = epoch_boundary_bank;
+        for partition_index in 0..expected_num_partitions {
+            let partition_bank = Arc::new(Bank::new_from_parent(
+                previous_bank,
+                &Pubkey::default(),
+                SLOTS_PER_EPOCH + partition_index + 1,
+            ));
+            // Slot after the epoch boundary contains partitioned staking
+            // rewards, and no partition metadata because it's not an epoch
+            // boundary bank.
+            let KeyedRewardsAndNumPartitions {
+                keyed_rewards,
+                num_partitions,
+            } = partition_bank.get_rewards_and_num_partitions();
+            for (_pubkey, reward) in keyed_rewards.iter() {
+                assert_eq!(reward.reward_type, RewardType::Staking);
+            }
+            total_staking_rewards += keyed_rewards.len();
+            assert_eq!(num_partitions, None);
+            previous_bank = partition_bank;
         }
-        total_staking_rewards += keyed_rewards.len();
-        assert_eq!(num_partitions, None);
-
-        let partition1_bank = Arc::new(Bank::new_from_parent(
-            partition0_bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH + 2,
-        ));
-        // Slot 2 after the epoch boundary contains second partition of staking
-        // rewards, and no partitions because not at the epoch boundary
-        let KeyedRewardsAndNumPartitions {
-            keyed_rewards,
-            num_partitions,
-        } = partition1_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
-            assert_eq!(reward.reward_type, RewardType::Staking);
-        }
-        total_staking_rewards += keyed_rewards.len();
-        assert_eq!(num_partitions, None);
 
         // All rewards are recorded
         assert_eq!(total_staking_rewards, num_rewards);
 
-        let bank = Bank::new_from_parent(partition1_bank, &Pubkey::default(), SLOTS_PER_EPOCH + 3);
+        let bank = Bank::new_from_parent(
+            previous_bank,
+            &Pubkey::default(),
+            SLOTS_PER_EPOCH + expected_num_partitions + 1,
+        );
         // Next slot contains empty rewards (since fees are off), and no
         // partitions because not at the epoch boundary
         assert_eq!(

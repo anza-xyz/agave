@@ -6,14 +6,15 @@ use {
         *,
     },
     crate::cluster_nodes::ClusterNodesCache,
+    agave_feature_set as feature_set,
     agave_votor::event::VotorEventSender,
     agave_votor_messages::migration::MigrationStatus,
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
-        Shred, ShredType, Shredder,
+        ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder, max_code_shreds_per_slot,
+        max_data_shreds_per_slot,
     },
     solana_time_utils::AtomicInterval,
     std::{borrow::Cow, sync::RwLock},
@@ -266,6 +267,9 @@ impl StandardBroadcastRun {
         let reference_tick = last_tick_height
             .saturating_add(bank.ticks_per_slot())
             .saturating_sub(bank.max_tick_height());
+        let halve_slot_times_active = bank
+            .feature_set
+            .is_active(&feature_set::halve_slot_times::id());
         let shreds = self
             .entries_to_shreds(
                 keypair,
@@ -273,8 +277,8 @@ impl StandardBroadcastRun {
                 reference_tick as u8,
                 is_last_in_slot,
                 process_stats,
-                MAX_DATA_SHREDS_PER_SLOT as u32,
-                MAX_CODE_SHREDS_PER_SLOT as u32,
+                max_data_shreds_per_slot(halve_slot_times_active),
+                max_code_shreds_per_slot(halve_slot_times_active),
             )
             .unwrap();
         // Insert the first data shred synchronously so that blockstore stores

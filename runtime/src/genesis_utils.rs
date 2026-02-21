@@ -37,11 +37,12 @@ use {
     },
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
-    std::{borrow::Borrow, sync::Arc},
+    std::{borrow::Borrow, sync::Arc, time::Duration},
 };
 
 // Default amount received by the validator
 const VALIDATOR_LAMPORTS: u64 = 890_880;
+const HALVE_SLOT_TIMES_FACTOR: u64 = 2;
 
 // Minimum vote account balance required for VAT (SIMD-0357).
 // Vote accounts need this minimum to pass VAT filtering.
@@ -129,12 +130,13 @@ pub fn create_genesis_config_with_vote_accounts(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
 ) -> GenesisConfigInfo {
+    let feature_set = FeatureSet::all_enabled();
     create_genesis_config_with_vote_accounts_and_cluster_type(
         mint_lamports,
         voting_keypairs,
         stakes,
         ClusterType::Development,
-        &FeatureSet::all_enabled(),
+        &feature_set,
         false,
     )
 }
@@ -145,12 +147,13 @@ pub fn create_genesis_config_with_alpenglow_vote_accounts(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
 ) -> GenesisConfigInfo {
+    let feature_set = FeatureSet::all_enabled();
     create_genesis_config_with_vote_accounts_and_cluster_type(
         mint_lamports,
         voting_keypairs,
         stakes,
         ClusterType::Development,
-        &FeatureSet::all_enabled(),
+        &feature_set,
         true,
     )
 }
@@ -311,7 +314,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     let bls_keypair =
         BLSKeypair::derive_from_signer(&voting_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
     let validator_bls_pubkey = Some(bls_keypair.public.to_bytes_compressed());
-
+    let feature_set = FeatureSet::all_enabled();
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
@@ -324,7 +327,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
-        &FeatureSet::all_enabled(),
+        &feature_set,
         vec![],
     );
 
@@ -375,7 +378,13 @@ pub fn deactivate_features(
     // Remove all features in `features_to_skip` from genesis
     for deactivate_feature_pk in features_to_deactivate {
         if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
+            let should_restore_halve_slot_times_defaults = *deactivate_feature_pk
+                == agave_feature_set::halve_slot_times::id()
+                && is_feature_active_at_genesis(genesis_config, deactivate_feature_pk);
             genesis_config.accounts.remove(deactivate_feature_pk);
+            if should_restore_halve_slot_times_defaults {
+                revert_halve_slot_times_genesis_defaults(genesis_config);
+            }
         } else {
             warn!(
                 "Feature {deactivate_feature_pk:?} set for deactivation is not a known Feature \
@@ -385,7 +394,15 @@ pub fn deactivate_features(
     }
 }
 
+fn is_feature_active_at_genesis(genesis_config: &GenesisConfig, feature_id: &Pubkey) -> bool {
+    genesis_config
+        .accounts
+        .get(feature_id)
+        .is_some_and(|account| feature::from_account(account).is_some())
+}
+
 pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) {
+    let was_active = is_feature_active_at_genesis(genesis_config, &feature_id);
     genesis_config.accounts.insert(
         feature_id,
         Account::from(feature::create_account(
@@ -395,6 +412,60 @@ pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) 
             std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
         )),
     );
+    if !was_active && feature_id == agave_feature_set::halve_slot_times::id() {
+        apply_halve_slot_times_genesis_defaults(genesis_config);
+    }
+}
+
+/// Re-apply halve-slot-times genesis defaults when the feature is active.
+///
+/// This is used when tests override `poh_config` after feature accounts were
+/// already inserted (for example in local-cluster setup), which replaces values
+/// that should still reflect active feature defaults.
+pub fn reapply_halve_slot_times_genesis_defaults_if_active(genesis_config: &mut GenesisConfig) {
+    if is_feature_active_at_genesis(genesis_config, &agave_feature_set::halve_slot_times::id()) {
+        apply_halve_slot_times_genesis_defaults(genesis_config);
+    }
+}
+
+fn apply_halve_slot_times_genesis_defaults(genesis_config: &mut GenesisConfig) {
+    genesis_config.poh_config.target_tick_duration = genesis_config
+        .poh_config
+        .target_tick_duration
+        .checked_div(HALVE_SLOT_TIMES_FACTOR as u32)
+        .unwrap_or(Duration::from_nanos(1));
+    if let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick {
+        genesis_config.poh_config.hashes_per_tick = Some(
+            hashes_per_tick
+                .saturating_div(HALVE_SLOT_TIMES_FACTOR)
+                .max(1),
+        );
+    }
+    if genesis_config.fee_rate_governor.target_signatures_per_slot > 0 {
+        genesis_config.fee_rate_governor.target_signatures_per_slot = genesis_config
+            .fee_rate_governor
+            .target_signatures_per_slot
+            .saturating_div(HALVE_SLOT_TIMES_FACTOR)
+            .max(1);
+    }
+}
+
+fn revert_halve_slot_times_genesis_defaults(genesis_config: &mut GenesisConfig) {
+    genesis_config.poh_config.target_tick_duration = genesis_config
+        .poh_config
+        .target_tick_duration
+        .checked_mul(HALVE_SLOT_TIMES_FACTOR as u32)
+        .unwrap_or(Duration::MAX);
+    if let Some(hashes_per_tick) = genesis_config.poh_config.hashes_per_tick {
+        genesis_config.poh_config.hashes_per_tick =
+            Some(hashes_per_tick.saturating_mul(HALVE_SLOT_TIMES_FACTOR));
+    }
+    if genesis_config.fee_rate_governor.target_signatures_per_slot > 0 {
+        genesis_config.fee_rate_governor.target_signatures_per_slot = genesis_config
+            .fee_rate_governor
+            .target_signatures_per_slot
+            .saturating_mul(HALVE_SLOT_TIMES_FACTOR);
+    }
 }
 
 pub fn bls_pubkey_to_compressed_bytes(
@@ -507,7 +578,6 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         cluster_type,
         ..GenesisConfig::default()
     };
-
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
 
