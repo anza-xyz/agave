@@ -244,5 +244,9 @@ harness = false
 name = "scheduler"
 harness = false
 
+[[bench]]
+name = "bench_tx_dispatch"
+harness = false
+
 [lints]
 workspace = true
