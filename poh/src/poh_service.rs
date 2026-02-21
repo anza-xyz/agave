@@ -152,9 +152,13 @@ impl PohService {
                     if let Some(cores) = core_affinity::get_core_ids() {
                         core_affinity::set_for_current(cores[pinned_cpu_core]);
                     }
-                    let target_ns_per_tick = Self::target_tick_ns_from_recorder(&poh_recorder);
+                    let target_ns_per_tick = Self::target_tick_ns_from_recorder(&poh_recorder)
+                        // Testing can set bank values to insanely large numbers, so let
+                        // poh_config override these back to more sane timings.
+                        .min(poh_config.target_tick_duration.as_nanos() as u64);
                     Self::tick_producer(
                         poh_recorder,
+                        &poh_config,
                         &poh_exit,
                         ticks_per_slot,
                         hashes_per_batch,
@@ -544,6 +548,7 @@ impl PohService {
 
     fn tick_producer(
         poh_recorder: Arc<RwLock<PohRecorder>>,
+        poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
@@ -613,7 +618,10 @@ impl PohService {
                         service_message,
                         record_receiver,
                     );
-                    target_ns_per_tick = new_target_ns_per_tick;
+                    target_ns_per_tick = new_target_ns_per_tick
+                        // Testing can set bank values to insanely large numbers, so let
+                        // poh_config override these back to more sane timings.
+                        .min(poh_config.target_tick_duration.as_nanos() as u64);
                 }
             }
 
