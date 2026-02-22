@@ -6,10 +6,10 @@ use {
         cluster_nodes::{
             ClusterNodes, ClusterNodesCache, DATA_PLANE_FANOUT, Error, MAX_NUM_TURBINE_HOPS,
         },
-        xdp::XdpSender,
     },
     agave_votor::event::VotorEvent,
     agave_votor_messages::migration::MigrationStatus,
+    agave_xdp::xdp_retransmitter::XdpSender,
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
     lru::LruCache,
     rand::Rng,

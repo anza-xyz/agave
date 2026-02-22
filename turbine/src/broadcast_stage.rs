@@ -8,11 +8,9 @@ use {
         fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
-    crate::{
-        cluster_nodes::{ClusterNodes, ClusterNodesCache},
-        xdp::XdpSender,
-    },
+    crate::cluster_nodes::{ClusterNodes, ClusterNodesCache},
     agave_votor::event::VotorEventSender,
+    agave_xdp::xdp_retransmitter::XdpSender,
     crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
     itertools::Itertools,
     solana_clock::Slot,

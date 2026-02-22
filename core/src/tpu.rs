@@ -25,6 +25,7 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     agave_votor::event::VotorEventSender,
+    agave_xdp::xdp_retransmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -55,10 +56,7 @@ use {
         },
         streamer::StakedNodes,
     },
-    solana_turbine::{
-        broadcast_stage::{BroadcastStage, BroadcastStageType},
-        xdp::XdpSender,
-    },
+    solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
     std::{
         collections::HashMap,
         net::UdpSocket,
