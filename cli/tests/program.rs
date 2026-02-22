@@ -1593,6 +1593,30 @@ async fn test_cli_program_extend_program() {
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
+
+    wait_n_slots(&rpc_client, 1).await;
+
+    let different_payer = Keypair::new();
+    config.signers = vec![&different_payer];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata,
+    };
+    process_command(&config).await.unwrap();
+
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
+    let prev_len = programdata_account.data.len();
+
+    config.signers = vec![&different_payer, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+        program_pubkey: program_keypair.pubkey(),
+        authority_signer_index: 1,
+        additional_bytes: 1024,
+    });
+    process_command(&config).await.unwrap();
+
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
+    assert_eq!(prev_len + 1024, programdata_account.data.len());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

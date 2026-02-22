@@ -648,6 +648,16 @@ impl ProgramSubCommands for App<'_, '_> {
                                     "Number of bytes that will be allocated for the program's \
                                      data account",
                                 ),
+                        )
+                        .arg(
+                            Arg::with_name("authority")
+                                .long("authority")
+                                .value_name("AUTHORITY_SIGNER")
+                                .takes_value(true)
+                                .validator(is_valid_signer)
+                                .help(
+                                    "Upgrade authority [default: the default configured keypair]",
+                                ),
                         ),
                 )
                 .subcommand(
