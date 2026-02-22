@@ -1,12 +1,13 @@
-use crate::bls_sigverify::utils::{
-    send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
-};
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-
 use {
     super::{errors::SigVerifyVoteError, stats::SigVerifyVoteStats},
-    crate::cluster_info_vote_listener::VerifiedVoterSlotsSender,
+    crate::{
+        bls_sigverify::utils::{
+            send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
+        },
+        cluster_info_vote_listener::VerifiedVoterSlotsSender,
+    },
     agave_votor::{
         consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         consensus_rewards,
