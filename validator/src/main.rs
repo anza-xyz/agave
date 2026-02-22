@@ -3,7 +3,7 @@
 use jemallocator::Jemalloc;
 use {
     agave_validator::{
-        cli::{DefaultArgs, app, warn_for_deprecated_arguments},
+        cli::{DefaultArgs, app},
         commands,
     },
     log::error,
@@ -19,7 +19,6 @@ pub fn main() {
     let solana_version = solana_version::version!();
     let cli_app = app(solana_version, &default_args);
     let matches = cli_app.get_matches();
-    warn_for_deprecated_arguments(&matches);
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 

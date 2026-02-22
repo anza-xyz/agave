@@ -130,6 +130,7 @@ pub fn execute(
     }
     let use_progress_bar = logfile.is_none();
     agave_logger::initialize_logging(logfile.clone());
+    cli::warn_for_deprecated_arguments(matches);
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
