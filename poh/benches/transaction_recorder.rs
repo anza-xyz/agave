@@ -4,6 +4,7 @@ use {
     crossbeam_channel::bounded,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_leader_schedule::SlotLeader,
     solana_ledger::{
         blockstore::Blockstore, genesis_utils::create_genesis_config,
         get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
@@ -111,7 +112,7 @@ fn bench_record_transactions(c: &mut Criterion) {
                     .unwrap();
                 bank = Arc::new(Bank::new_from_parent(
                     bank.clone(),
-                    &Pubkey::default(),
+                    SlotLeader::default(),
                     next_slot,
                 ));
                 poh_controller

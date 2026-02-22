@@ -965,7 +965,12 @@ mod tests {
         itertools::Itertools,
         solana_hash::Hash,
         solana_keypair::Keypair,
+<<<<<<< HEAD
         solana_perf::{packet, sigverify},
+=======
+        solana_leader_schedule::SlotLeader,
+        solana_perf::packet,
+>>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
         solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
@@ -1031,6 +1036,7 @@ mod tests {
         // the ref count, which would prevent cleanup
         let new_voter_ = new_voter;
         vote_tracker.insert_vote(bank.slot(), new_voter_);
+<<<<<<< HEAD
         assert!(
             vote_tracker
                 .slot_vote_trackers
@@ -1039,6 +1045,14 @@ mod tests {
                 .contains_key(&bank.slot())
         );
         let bank1 = Bank::new_from_parent(bank.clone(), &Pubkey::default(), bank.slot() + 1);
+=======
+        assert!(vote_tracker
+            .slot_vote_trackers
+            .read()
+            .unwrap()
+            .contains_key(&bank.slot()));
+        let bank1 = Bank::new_from_parent(bank.clone(), SlotLeader::default(), bank.slot() + 1);
+>>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
         vote_tracker.progress_with_new_root_bank(&bank1);
         assert!(
             !vote_tracker
@@ -1054,7 +1068,7 @@ mod tests {
         let new_epoch_slot = bank
             .epoch_schedule()
             .get_first_slot_in_epoch(current_epoch + 1);
-        let new_epoch_bank = Bank::new_from_parent(bank, &Pubkey::default(), new_epoch_slot);
+        let new_epoch_bank = Bank::new_from_parent(bank, SlotLeader::default(), new_epoch_slot);
         vote_tracker.progress_with_new_root_bank(&new_epoch_bank);
     }
 
@@ -1107,7 +1121,7 @@ mod tests {
         // Votes for slots less than the provided root bank's slot should not be processed
         let bank3 = Arc::new(Bank::new_from_parent(
             Arc::new(bank0),
-            &Pubkey::default(),
+            SlotLeader::default(),
             3,
         ));
         let vote_slots = vec![1, 2];
@@ -1882,6 +1896,7 @@ mod tests {
             .collect();
 
         let new_root_bank =
+<<<<<<< HEAD
             Bank::new_from_parent(bank, &Pubkey::default(), first_slot_in_new_epoch - 2);
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
@@ -1891,6 +1906,9 @@ mod tests {
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
+=======
+            Bank::new_from_parent(bank, SlotLeader::default(), first_slot_in_new_epoch - 2);
+>>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
         ClusterInfoVoteListener::filter_and_confirm_with_new_votes(
             &vote_tracker,
             vote_txs,

@@ -43,7 +43,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader_ex},
@@ -1026,7 +1026,7 @@ impl ProgramTest {
         let bank = {
             let bank = Arc::new(bank);
             bank.fill_bank_with_ticks_for_tests();
-            let bank = Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
+            let bank = Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
             debug!("Bank slot: {}", bank.slot());
             bank
         };
@@ -1322,7 +1322,7 @@ impl ProgramTestContext {
             bank_forks
                 .insert(Bank::warp_from_parent(
                     bank,
-                    &Pubkey::default(),
+                    SlotLeader::default(),
                     pre_warp_slot,
                 ))
                 .clone_without_scheduler()
@@ -1337,7 +1337,7 @@ impl ProgramTestContext {
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(Bank::new_from_parent(
             warp_bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             warp_slot,
         ));
 
@@ -1381,7 +1381,7 @@ impl ProgramTestContext {
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;
-        let mut warp_bank = Bank::new_from_parent(bank, &Pubkey::default(), warp_slot);
+        let mut warp_bank = Bank::new_from_parent(bank, SlotLeader::default(), warp_slot);
 
         warp_bank.force_reward_interval_end_for_tests();
         bank_forks.insert(warp_bank);

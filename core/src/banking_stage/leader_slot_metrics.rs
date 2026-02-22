@@ -789,7 +789,7 @@ impl LeaderSlotMetricsTracker {
 mod tests {
     use {
         super::*,
-        solana_pubkey::Pubkey,
+        solana_leader_schedule::SlotLeader,
         solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
         std::{mem, sync::Arc},
     };
@@ -807,7 +807,7 @@ mod tests {
         // Create a child descended from the first bank
         let next_bank = Arc::new(Bank::new_from_parent(
             first_bank.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             first_bank.slot() + 1,
         ));
 

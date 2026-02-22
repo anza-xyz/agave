@@ -671,6 +671,7 @@ mod tests {
         crossbeam_channel::bounded,
         solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT},
         solana_hash::Hash,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
