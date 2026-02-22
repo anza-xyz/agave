@@ -423,7 +423,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::{tests::create_genesis_config, SlotLeader},
+            bank::{SlotLeader, tests::create_genesis_config},
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,

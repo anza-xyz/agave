@@ -500,13 +500,9 @@ pub(crate) mod tests {
         super::*,
         crate::{
             bank::{
-                Bank,
+                Bank, SlotLeader,
                 test_utils::goto_end_of_slot,
                 tests::{create_genesis_config, create_simple_test_bank},
-<<<<<<< HEAD
-=======
-                Bank, SlotLeader,
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
             },
             genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
             runtime_config::RuntimeConfig,

@@ -1,11 +1,7 @@
 use {
     crate::bank::Bank,
-<<<<<<< HEAD
     solana_clock::{Epoch, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
-=======
-    solana_clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_epoch_schedule::EpochSchedule,
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
     solana_leader_schedule::LeaderSchedule,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,

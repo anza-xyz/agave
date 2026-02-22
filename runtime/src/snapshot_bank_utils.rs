@@ -829,7 +829,7 @@ mod tests {
         super::*,
         crate::{
             bank::{BankTestConfig, tests::create_simple_test_bank},
-            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             snapshot_package::BankSnapshotPackage,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
