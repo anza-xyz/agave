@@ -2204,7 +2204,7 @@ fn main() {
 
                     if child_bank_required {
                         let mut child_bank =
-                            Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
+                            Bank::new_from_parent(bank.clone(), *bank.leader(), bank.slot() + 1);
 
                         if let Ok(rent_burn_percentage) = rent_burn_percentage {
                             child_bank.set_rent_burn_percentage(rent_burn_percentage);
@@ -2504,7 +2504,7 @@ fn main() {
                         bank.force_flush_accounts_cache();
                         Arc::new(Bank::warp_from_parent(
                             bank.clone(),
-                            bank.leader_id(),
+                            *bank.leader(),
                             warp_slot,
                         ))
                     } else {
@@ -2996,7 +2996,7 @@ fn main() {
                         };
                         let warped_bank = Bank::new_from_parent_with_tracer(
                             base_bank.clone(),
-                            base_bank.leader_id(),
+                            *base_bank.leader(),
                             next_epoch,
                             tracer,
                         );

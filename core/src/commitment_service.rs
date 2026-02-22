@@ -327,8 +327,14 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
+<<<<<<< HEAD
         solana_account::{Account, ReadableAccount, state_traits::StateMut},
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
+=======
+        solana_account::{state_traits::StateMut, Account, ReadableAccount},
+        solana_leader_schedule::SlotLeader,
+        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+>>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
         solana_pubkey::Pubkey,
         solana_runtime::{
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
@@ -652,7 +658,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 x + 1,
             );
             let tower_sync = TowerSync::new_from_slot(x, previous_bank.hash());
@@ -681,7 +687,7 @@ mod tests {
         let bank34 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             34,
         );
         let tower_sync = TowerSync::new_from_slot(33, bank33.hash());
@@ -727,7 +733,7 @@ mod tests {
         let _bank35 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33,
-            &Pubkey::default(),
+            SlotLeader::default(),
             35,
         );
 
@@ -758,7 +764,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 x + 1,
             );
             // Skip 34 as it is not part of this fork.

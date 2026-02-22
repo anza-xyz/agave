@@ -462,6 +462,7 @@ mod tests {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
         solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_leader_schedule::SlotLeader,
         solana_message::Message,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -587,9 +588,9 @@ mod tests {
         let bank0 = Bank::new_for_benches(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
         let bank = bank_forks.read().unwrap().working_bank();
-        let collector = solana_pubkey::new_rand();
+        let leader = SlotLeader::new_unique();
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 1));
+        let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), leader, 1));
         sync_update(
             &prioritization_fee_cache,
             bank1.clone(),
@@ -603,7 +604,7 @@ mod tests {
         sync_finalize_priority_fee_for_test(&prioritization_fee_cache, 1, bank1.bank_id());
 
         // add slot 2 entry to cache, but not finalize it
-        let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 2));
+        let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), leader, 2));
         let txs = [build_sanitized_transaction_for_test(
             1,
             &Pubkey::new_unique(),
@@ -611,7 +612,11 @@ mod tests {
         )];
         sync_update(&prioritization_fee_cache, bank2, txs.iter());
 
+<<<<<<< HEAD
         let bank3 = Arc::new(Bank::new_from_parent(bank, &collector, 3));
+=======
+        let bank3 = Arc::new(Bank::new_from_parent(bank.clone(), leader, 3));
+>>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
         sync_update(
             &prioritization_fee_cache,
             bank3.clone(),
@@ -639,10 +644,10 @@ mod tests {
         let bank0 = Bank::new_for_benches(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
         let bank = bank_forks.read().unwrap().working_bank();
-        let collector = solana_pubkey::new_rand();
-        let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 1));
-        let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 2));
-        let bank3 = Arc::new(Bank::new_from_parent(bank, &collector, 3));
+        let leader = SlotLeader::new_unique();
+        let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), leader, 1));
+        let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), leader, 2));
+        let bank3 = Arc::new(Bank::new_from_parent(bank, leader, 3));
 
         let prioritization_fee_cache = PrioritizationFeeCache::default();
 
@@ -915,10 +920,10 @@ mod tests {
         let bank0 = Bank::new_for_benches(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
         let bank = bank_forks.read().unwrap().working_bank();
-        let collector = solana_pubkey::new_rand();
+        let leader = SlotLeader::new_unique();
         let slot: Slot = 999;
-        let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, slot));
-        let bank2 = Arc::new(Bank::new_from_parent(bank, &collector, slot + 1));
+        let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), leader, slot));
+        let bank2 = Arc::new(Bank::new_from_parent(bank, leader, slot + 1));
 
         let prioritization_fee_cache = PrioritizationFeeCache::default();
 
