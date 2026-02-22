@@ -3,7 +3,6 @@ use solana_program_runtime::loaded_programs::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::Slot,
-    solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::loaded_programs::{
@@ -138,7 +137,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         ) => programdata_account
             .data()
             .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
-            .ok_or(Box::new(InstructionError::InvalidAccountData).into())
+            .ok_or(())
             .and_then(|programdata| {
                 ProgramCacheEntry::new(
                     program_account.owner(),
@@ -153,6 +152,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                     #[cfg(feature = "metrics")]
                     &mut load_program_metrics,
                 )
+                .map_err(|_| ())
             })
             .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV3)),
 
@@ -160,7 +160,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             program_account
                 .data()
                 .get(LoaderV4State::program_data_offset()..)
-                .ok_or(Box::new(InstructionError::InvalidAccountData).into())
+                .ok_or(())
                 .and_then(|elf_bytes| {
                     ProgramCacheEntry::new(
                         &loader_v4::id(),
@@ -172,6 +172,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                         #[cfg(feature = "metrics")]
                         &mut load_program_metrics,
                     )
+                    .map_err(|_| ())
                 })
                 .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV4))
         }
