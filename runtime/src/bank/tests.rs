@@ -11310,13 +11310,9 @@ where
 
     // create the next bank in the current epoch and populate bob's account with some lamports and data
     let slot = bank.slot() + 1;
-<<<<<<< HEAD
-    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader, slot);
     let account = AccountSharedData::new(1, len1, &program);
     bank.store_account(&bob_pubkey, &account);
-=======
-    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader, slot);
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
 
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;
@@ -12011,17 +12007,8 @@ fn test_loader_v3_to_v4_migration() {
         TransactionError::InstructionError(0, InstructionError::InvalidArgument)
     );
 
-<<<<<<< HEAD
     let bank =
-        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
-=======
-    let bank = Bank::new_from_parent_with_bank_forks(
-        &bank_forks,
-        bank.clone(),
-        SlotLeader::default(),
-        next_slot,
-    );
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
+        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), next_slot);
     next_slot += 1;
 
     // All other error cases

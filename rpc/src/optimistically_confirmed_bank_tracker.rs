@@ -418,14 +418,8 @@ mod tests {
     use {
         super::*,
         crossbeam_channel::unbounded,
-<<<<<<< HEAD
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
-        solana_pubkey::Pubkey,
-        solana_runtime::{commitment::BlockCommitmentCache, dependency_tracker},
-=======
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_runtime::{bank::SlotLeader, commitment::BlockCommitmentCache, dependency_tracker},
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
         std::sync::atomic::AtomicU64,
     };
 

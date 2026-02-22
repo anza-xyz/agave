@@ -327,14 +327,9 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-<<<<<<< HEAD
         solana_account::{Account, ReadableAccount, state_traits::StateMut},
-        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
-=======
-        solana_account::{state_traits::StateMut, Account, ReadableAccount},
         solana_leader_schedule::SlotLeader,
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},

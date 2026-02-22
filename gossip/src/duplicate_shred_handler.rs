@@ -303,15 +303,7 @@ mod tests {
         {
             let mut bank_forks = bank_forks_arc.write().unwrap();
             let bank0 = bank_forks.get(0).unwrap();
-<<<<<<< HEAD
-            bank_forks.insert(Bank::new_from_parent(bank0, &Pubkey::default(), 9));
-=======
-            bank_forks.insert(Bank::new_from_parent(
-                bank0.clone(),
-                SlotLeader::default(),
-                9,
-            ));
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
+            bank_forks.insert(Bank::new_from_parent(bank0, SlotLeader::default(), 9));
             bank_forks.set_root(9, None, None);
         }
         assert!(blockstore.set_roots([0, 9].iter()).is_ok());
@@ -403,15 +395,7 @@ mod tests {
         {
             let mut bank_forks = bank_forks_arc.write().unwrap();
             let bank0 = bank_forks.get(0).unwrap();
-<<<<<<< HEAD
-            bank_forks.insert(Bank::new_from_parent(bank0, &Pubkey::default(), 9));
-=======
-            bank_forks.insert(Bank::new_from_parent(
-                bank0.clone(),
-                SlotLeader::default(),
-                9,
-            ));
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
+            bank_forks.insert(Bank::new_from_parent(bank0, SlotLeader::default(), 9));
             bank_forks.set_root(9, None, None);
         }
         blockstore.set_roots([0, 9].iter()).unwrap();

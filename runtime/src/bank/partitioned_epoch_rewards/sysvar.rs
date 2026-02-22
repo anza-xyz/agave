@@ -106,7 +106,7 @@ impl Bank {
 mod tests {
     use {
         super::*,
-        crate::bank::{tests::create_genesis_config, SlotLeader},
+        crate::bank::{SlotLeader, tests::create_genesis_config},
         solana_account::ReadableAccount,
         solana_epoch_schedule::EpochSchedule,
         solana_native_token::LAMPORTS_PER_SOL,

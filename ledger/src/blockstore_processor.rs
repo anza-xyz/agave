@@ -5605,7 +5605,7 @@ pub mod tests {
             .expect("parent should have a merkle root");
 
         // Case 1: No shreds for child slot — should return Unavailable
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 10);
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 10);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Unavailable
@@ -5614,7 +5614,7 @@ pub mod tests {
         // Case 2: Chained merkle root matches parent block ID — should return
         // Pass
         insert_shreds_with_chained_merkle_root(11, 0, parent_block_id);
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 11);
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 11);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Pass
@@ -5623,7 +5623,7 @@ pub mod tests {
         // Case 3: Chained merkle root does NOT match parent block ID — should
         // return Mismatch
         insert_shreds_with_chained_merkle_root(12, 0, Hash::new_unique());
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 12);
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 12);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Mismatch
@@ -5632,9 +5632,9 @@ pub mod tests {
         // Case 4: Parent has no shreds (get_block_merkle_root returns Err) —
         // should return Pass regardless of chained merkle root.
         let no_shreds_parent_bank =
-            Arc::new(Bank::new_from_parent(parent_bank, &Pubkey::default(), 20));
+            Arc::new(Bank::new_from_parent(parent_bank, SlotLeader::default(), 20));
         insert_shreds_with_chained_merkle_root(21, 20, Hash::new_unique());
-        let child_bank = Bank::new_from_parent(no_shreds_parent_bank, &Pubkey::default(), 21);
+        let child_bank = Bank::new_from_parent(no_shreds_parent_bank, SlotLeader::default(), 21);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Pass

@@ -612,11 +612,7 @@ mod tests {
         )];
         sync_update(&prioritization_fee_cache, bank2, txs.iter());
 
-<<<<<<< HEAD
-        let bank3 = Arc::new(Bank::new_from_parent(bank, &collector, 3));
-=======
-        let bank3 = Arc::new(Bank::new_from_parent(bank.clone(), leader, 3));
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
+        let bank3 = Arc::new(Bank::new_from_parent(bank, leader, 3));
         sync_update(
             &prioritization_fee_cache,
             bank3.clone(),

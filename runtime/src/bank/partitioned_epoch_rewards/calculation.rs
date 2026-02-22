@@ -775,7 +775,7 @@ mod tests {
         super::*,
         crate::{
             bank::{
-                RewardCommission, RewardInfo, null_tracer,
+                RewardCommission, RewardInfo, SlotLeader, null_tracer,
                 partitioned_epoch_rewards::{
                     EpochRewardPhase, EpochRewardStatus, PartitionedStakeRewards,
                     StartBlockHeightAndPartitionedRewards,
@@ -786,10 +786,6 @@ mod tests {
                     },
                 },
                 tests::create_genesis_config,
-<<<<<<< HEAD
-=======
-                RewardCommission, RewardInfo, SlotLeader,
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
             },
             genesis_utils::{self, GenesisConfigInfo, deactivate_features},
             stake_account::StakeAccount,

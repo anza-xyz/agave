@@ -797,12 +797,8 @@ mod tests {
     use {
         super::*,
         crate::{
-<<<<<<< HEAD
             bank::{BankTestConfig, tests::create_simple_test_bank},
-=======
-            bank::{tests::create_simple_test_bank, BankTestConfig},
-            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
->>>>>>> parent of 22a73235b0 (Revert bank leader changes (#10381))
+            genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             snapshot_package::BankSnapshotPackage,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
