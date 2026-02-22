@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -32,7 +30,7 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::collections::HashMap,
+    std::collections::{HashMap, HashSet},
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
