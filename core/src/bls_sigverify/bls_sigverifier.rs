@@ -165,7 +165,6 @@ impl SigVerifier {
             .increment(extract_msgs_us)
             .unwrap();
 
-        let mut last_voted_slots: HashMap<Pubkey, Slot> = HashMap::new();
         let (votes_result, certs_result) = rayon::join(
             || {
                 verify_and_send_votes(
@@ -177,7 +176,6 @@ impl SigVerifier {
                     &self.channel_to_repair,
                     &self.channel_to_reward,
                     &self.channel_to_metrics,
-                    &mut last_voted_slots,
                 )
             },
             || {

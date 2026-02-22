@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -67,7 +69,6 @@ pub(super) fn verify_and_send_votes(
     channel_to_repair: &VerifiedVoterSlotsSender,
     channel_to_reward: &Sender<AddVoteMessage>,
     channel_to_metrics: &ConsensusMetricsEventSender,
-    last_voted_slots: &mut HashMap<Pubkey, Slot>,
 ) -> Result<(Vec<VoteToVerify>, SigVerifyVoteStats), SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
     let mut stats = SigVerifyVoteStats::default();
@@ -78,13 +79,8 @@ pub(super) fn verify_and_send_votes(
     let verified_votes = verify_votes(votes_to_verify, &mut stats);
     stats.sig_verified_votes += verified_votes.len() as u64;
 
-    let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) = process_verified_votes(
-        &verified_votes,
-        root_bank,
-        cluster_info,
-        leader_schedule,
-        last_voted_slots,
-    );
+    let (votes_for_pool, msgs_for_repair, msg_for_reward, msg_for_metrics) =
+        process_verified_votes(&verified_votes, root_bank, cluster_info, leader_schedule);
 
     send_votes_to_pool(votes_for_pool, channel_to_pool, &mut stats)?;
     send_votes_to_repair(msgs_for_repair, channel_to_repair, &mut stats)?;
@@ -101,26 +97,16 @@ pub(super) fn verify_and_send_votes(
 
 /// If the vote is relevant to repair, then adds it to the [`msgs_for_repair`] so it can eventually
 /// be sent to repair.
-fn inspect_for_repair(
-    vote: &VoteToVerify,
-    last_voted_slots: &mut HashMap<Pubkey, Slot>,
-    msgs_for_repair: &mut HashMap<Pubkey, Vec<Slot>>,
-) {
+fn inspect_for_repair(vote: &VoteToVerify, msgs_for_repair: &mut HashMap<Pubkey, HashSet<Slot>>) {
     let vote_slot = vote.vote_message.vote.slot();
-    if vote.vote_message.vote.is_notarization_or_finalization() {
-        last_voted_slots
-            .entry(vote.pubkey)
-            .and_modify(|s| *s = (*s).max(vote_slot))
-            .or_insert(vote.vote_message.vote.slot());
-    }
-
-    if vote.vote_message.vote.is_notarization_or_finalization()
-        || vote.vote_message.vote.is_notarize_fallback()
-    {
-        let slots: &mut Vec<_> = msgs_for_repair.entry(vote.pubkey).or_default();
-        if !slots.contains(&vote_slot) {
-            slots.push(vote_slot);
+    match vote.vote_message.vote {
+        Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
+            msgs_for_repair
+                .entry(vote.pubkey)
+                .or_default()
+                .insert(vote_slot);
         }
+        Vote::Skip(_) | Vote::SkipFallback(_) | Vote::Genesis(_) => (),
     }
 }
 
@@ -128,14 +114,11 @@ fn inspect_for_repair(
 ///
 /// In particular, collects and returns the relevant messages for the consensus pool; rewards;
 /// repair; and metrics;
-///
-/// Also updates `last_voted_slots`.
 fn process_verified_votes(
     verified_votes: &[VoteToVerify],
     root_bank: &Bank,
     cluster_info: &ClusterInfo,
     leader_schedule: &LeaderScheduleCache,
-    last_voted_slots: &mut HashMap<Pubkey, Slot>,
 ) -> (
     Vec<ConsensusMessage>,
     HashMap<Pubkey, Vec<Slot>>,
@@ -157,7 +140,7 @@ fn process_verified_votes(
             votes_for_reward.push(vote_message);
         }
 
-        inspect_for_repair(vote, last_voted_slots, &mut msgs_for_repair);
+        inspect_for_repair(vote, &mut msgs_for_repair);
 
         votes_for_pool.push(ConsensusMessage::Vote(vote_message));
 
@@ -166,6 +149,10 @@ fn process_verified_votes(
             vote: vote.vote_message.vote,
         });
     }
+    let msgs_for_repair = msgs_for_repair
+        .into_iter()
+        .map(|(k, v)| (k, v.into_iter().collect()))
+        .collect();
     (
         votes_for_pool,
         msgs_for_repair,
