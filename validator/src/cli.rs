@@ -143,16 +143,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-index-limit",
     );
     add_arg!(
-        // deprecated in v3.1.0
-        Arg::with_name("tpu_coalesce_ms")
-            .long("tpu-coalesce-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-            usage_warning:"tpu_coalesce will be dropped (currently ignored)",
-    );
-    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("tpu_connection_pool_size")
             .long("tpu-connection-pool-size")
