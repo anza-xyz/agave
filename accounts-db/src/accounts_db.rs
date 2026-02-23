@@ -6295,7 +6295,7 @@ impl AccountsDb {
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::with_slots_capacity(
-                                num_storages / num_threads,
+                                num_storages.div_ceil(num_threads),
                             );
                             let mut reader = append_vec::new_scan_accounts_reader();
                             for next_item in storages_orderer.iter() {
