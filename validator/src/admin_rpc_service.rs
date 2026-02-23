@@ -888,8 +888,7 @@ impl AdminRpc for AdminRpcImpl {
 
     fn generating_snapshots(&self, meta: Self::Metadata) -> Result<bool> {
         if let Some(snapshot_controller) = meta.snapshot_controller() {
-            Ok(snapshot_controller
-                .generating_snapshots())
+            Ok(snapshot_controller.generating_snapshots())
         } else {
             Err(jsonrpc_core::error::Error::invalid_params(
                 "snapshot_controller unavailable",

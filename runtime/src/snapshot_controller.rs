@@ -164,7 +164,10 @@ impl SnapshotController {
     pub fn generating_snapshots(&self) -> bool {
         let intervals = self.snapshot_generation_intervals();
         !matches!(intervals.full_snapshot_interval, SnapshotInterval::Disabled)
-            || !matches!(intervals.incremental_snapshot_interval, SnapshotInterval::Disabled)
+            || !matches!(
+                intervals.incremental_snapshot_interval,
+                SnapshotInterval::Disabled
+            )
     }
 }
 
