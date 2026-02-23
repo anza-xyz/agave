@@ -312,7 +312,7 @@ mod tests {
         );
     }
 
-    /* XXX HANA need to pr sdk
+    /* TODO HANA need to pr sdk
         #[cfg(feature = "frozen-abi")]
         mod test_bank_serialize {
             use {
