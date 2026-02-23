@@ -1,6 +1,6 @@
 use num_traits::{Float, NumCast};
 
-/// Trait alias for sample value types accepted by [`WelfordStats`].
+/// Bounds for sample values.
 pub trait SampleValue: Copy + PartialOrd + NumCast {}
 impl<T: Copy + PartialOrd + NumCast> SampleValue for T {}
 
@@ -28,8 +28,6 @@ impl<F: Float, V: SampleValue> Default for WelfordStats<F, V> {
     }
 }
 
-// Float arithmetic (+ - * /) is inherent to Welford's algorithm and cannot overflow;
-// integer operations use checked_add / saturating_sub explicitly.
 #[allow(clippy::arithmetic_side_effects)]
 impl<F: Float + NumCast, V: SampleValue> WelfordStats<F, V> {
     /// Adds a sample and updates all running statistics.
@@ -111,6 +109,7 @@ impl<F: Float + NumCast, V: SampleValue> WelfordStats<F, V> {
 }
 
 #[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use {
         super::*,
