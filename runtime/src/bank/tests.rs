@@ -83,7 +83,7 @@ use {
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
     },
     solana_pubkey::Pubkey,
-    solana_rent::Rent,
+    solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
     solana_reward_info::RewardType,
     solana_sdk_ids::{
         bpf_loader, bpf_loader_upgradeable, ed25519_program, incinerator, native_loader,
@@ -5358,10 +5358,11 @@ fn test_fuzz_instructions() {
 // new feature that affects the bank hash, you should update this test to use a
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
+#[allow(deprecated)]
 #[test_case(false ; "legacy")]
 #[test_case(true ; "deprecate rent exemption threshold")]
 fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
-    let genesis_config = GenesisConfig {
+    let mut genesis_config = GenesisConfig {
         // Override the creation time to ensure bank hash consistency
         creation_time: 0,
         accounts: BTreeMap::from([(
@@ -5371,6 +5372,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
         cluster_type: ClusterType::MainnetBeta,
         ..GenesisConfig::default()
     };
+
+    genesis_config.rent.lamports_per_byte = DEFAULT_LAMPORTS_PER_BYTE / 2;
+    genesis_config.rent.exemption_threshold = 2.0f64.to_le_bytes();
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
@@ -5414,7 +5418,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
                     "HvCfM9MQCvCDH4zW39G7UqKDB4PLR5GaqVSf9Jfe5XnS"
                 } else {
                     "6h1KzSuTW6MwkgjtEbrv6AyUZ2NHtSxCQi8epjHDFYh8"
-                }
+                },
             );
         }
         if bank.slot == 128 {
@@ -5425,7 +5429,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
                     "GS2G4uVus4U97woniYLW1f2BWqoZFGFrpSQXto7PnjTT"
                 } else {
                     "4GX3883TVK7SQfbPUHem4HXcqdHU2DZVAB6yEXspn2qe"
-                }
+                },
             );
             break;
         }
