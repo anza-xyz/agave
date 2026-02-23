@@ -3554,7 +3554,7 @@ impl AccountsDb {
         let mut ancestors = Ancestors::default();
         ancestors.insert(slot, 1);
 
-        // Limit the max root to the slot being queried to returning newer rooted slots
+        // Limit the max root to the slot being queried to avoid returning newer rooted slots
         let max_root = Some(slot);
 
         self.accounts_index.get_with_and_then(
