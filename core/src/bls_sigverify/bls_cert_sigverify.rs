@@ -6,7 +6,7 @@ use {
         consensus_message::{Certificate, CertificateType, ConsensusMessage},
         fraction::Fraction,
     },
-    crossbeam_channel::{Sender, unbounded},
+    crossbeam_channel::{Sender, bounded},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
@@ -75,7 +75,7 @@ fn verify_certs(
     // set has to happen sequentially.  Following allows us to do that while minimising the number
     // of times we have to iterate over the list of certs.
 
-    let (tx, rx) = unbounded();
+    let (tx, rx) = bounded(certs.len());
     rayon::scope(|s| {
         s.spawn(|_| {
             certs.into_par_iter().for_each_with(tx, |tx, cert| {
