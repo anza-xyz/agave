@@ -1267,6 +1267,7 @@ fn unarchive_snapshot(
 
     let io_setup = IoSetupState::default()
         .with_shared_sqpoll()?
+        .with_direct_io(accounts_db_config.snapshots_use_direct_io)
         .with_buffers_registered(accounts_db_config.use_registered_io_uring_buffers);
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
