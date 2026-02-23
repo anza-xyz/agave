@@ -24,6 +24,7 @@ impl<F: Float, S: Copy + PartialOrd + NumCast> Default for WelfordStats<F, S> {
     }
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 impl<F: Float + NumCast, S: Copy + PartialOrd + NumCast> WelfordStats<F, S> {
     /// Adds a sample and updates all running statistics.
     pub fn add_sample(&mut self, value: S) {
@@ -104,6 +105,7 @@ impl<F: Float + NumCast, S: Copy + PartialOrd + NumCast> WelfordStats<F, S> {
 }
 
 #[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use {
         super::*,
