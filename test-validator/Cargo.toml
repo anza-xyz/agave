@@ -17,7 +17,6 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-snapshots = { workspace = true }
-agave-syscalls = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -58,6 +57,7 @@ solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
 solana-validator-exit = { workspace = true }

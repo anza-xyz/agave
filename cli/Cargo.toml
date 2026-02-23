@@ -29,7 +29,6 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
-agave-syscalls = { workspace = true }
 agave-votor-messages = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -93,6 +92,7 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-stake-interface = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-sysvar = { workspace = true }
 solana-tps-client = { workspace = true }

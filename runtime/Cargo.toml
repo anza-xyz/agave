@@ -57,7 +57,6 @@ agave-fs = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
-agave-syscalls = { workspace = true }
 agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
@@ -168,6 +167,7 @@ solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-callback = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true }
