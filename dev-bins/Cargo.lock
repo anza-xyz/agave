@@ -233,6 +233,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-math-utils"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "agave-precompiles"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -392,6 +399,7 @@ name = "agave-votor"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "agave-math-utils",
  "agave-votor-messages",
  "anyhow",
  "bincode",
@@ -402,7 +410,6 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "lru",
- "num-traits",
  "parking_lot 0.12.5",
  "qualifier_attr",
  "rayon",
