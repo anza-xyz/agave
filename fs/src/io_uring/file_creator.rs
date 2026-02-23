@@ -150,7 +150,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         assert_ne!(buf_capacity, 0, "write size aligned buffer is too small");
         let buf_slice_mut = &mut buffer.as_mut()[..buf_capacity];
 
-        // O_DIRECT writes have offset, size and buffer alignement restrictions, we guarantee
+        // O_DIRECT writes have offset, size and buffer alignment restrictions, we guarantee
         // those by splitting buffer and writes by `write_capacity` and requiring its alignment.
         assert!(
             self.write_capacity
@@ -432,7 +432,7 @@ impl<'a> FileCreatorState<'a> {
 
         match file_state.non_dio_eof_write.as_mut() {
             Some(eof_write) if is_eof_write => {
-                // Buffer used for the EOF aligned write might still have remaining  (non-aligned)
+                // Buffer used for the EOF aligned write might still have remaining (non-aligned)
                 // data to write. `non_dio_eof_write` has offsets into that buffer, store it. From
                 // this point the last write is possible to be submitted.
                 assert!(eof_write.buf.replace(buf).is_none())
@@ -516,8 +516,8 @@ impl OpenOp {
         let at_dir_fd = types::Fd(self.dir_handle.as_raw_fd());
         let mut flags = O_CREAT | O_TRUNC | O_NOFOLLOW | O_RDWR | DEFAULT_STATUS_FLAGS;
         if self.write_with_direct_io {
-            flags |= O_DIRECT
-        };
+            flags |= O_DIRECT;
+        }
         opcode::OpenAt::new(at_dir_fd, self.path_cstring.as_ptr() as _)
             .flags(flags)
             .mode(self.mode)
@@ -532,7 +532,7 @@ impl OpenOp {
     where
         Self: Sized,
     {
-        let fd = types::Fd(res.unwrap());
+        let fd = types::Fd(res?);
 
         let backlog =
             ring.context_mut()
@@ -754,10 +754,10 @@ impl PendingFile {
     fn ensure_direct_io_disabled(&mut self, fd: types::Fd) -> io::Result<()> {
         if self.file_uses_direct_io {
             // F_SETFL only updates O_APPEND, O_ASYNC, O_DIRECT, O_NOATIME, out of which
-            // creator only uses last two, so setting DEFAULT_STATUS_FLAGS disabled O_DIRECT.
+            // creator only uses last two, so setting DEFAULT_STATUS_FLAGS disables O_DIRECT.
             // Safety: function operates on an open file descriptor
             let fcntl_res = unsafe { libc::fcntl(fd.0, libc::F_SETFL, DEFAULT_STATUS_FLAGS) };
-            if fcntl_res != 0 {
+            if fcntl_res == -1 {
                 return Err(io::Error::last_os_error());
             }
             self.file_uses_direct_io = false;
