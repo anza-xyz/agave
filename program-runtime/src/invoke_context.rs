@@ -237,11 +237,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     /// Push a stack frame onto the invocation stack
     pub fn push(&mut self) -> Result<(), InstructionError> {
-        let instruction_context = self
-            .transaction_context
-            .get_instruction_context_at_index_in_trace(
-                self.transaction_context.get_instruction_trace_length(),
-            )?;
+        let instruction_context = self.transaction_context.get_next_instruction_context()?;
         let program_id = instruction_context
             .get_program_key()
             .map_err(|_| InstructionError::UnsupportedProgramId)?;
@@ -271,7 +267,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Pop a stack frame from the invocation stack
-    fn pop(&mut self) -> Result<(), InstructionError> {
+    pub(crate) fn pop(&mut self) -> Result<(), InstructionError> {
         self.syscall_context.pop();
         self.transaction_context.pop()
     }
