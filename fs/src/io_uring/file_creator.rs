@@ -747,7 +747,15 @@ impl PendingFile {
     /// Note: this returns `true` if current stage writes are done, there might still be
     /// last write to be scheduled using `non_dio_eof_write`
     fn required_writes_done(&self) -> bool {
-        self.writes_started == self.writes_completed && self.size_on_eof.is_some()
+        self.writes_started == self.writes_completed && self.source_fully_read()
+    }
+
+    /// Return true if all contents to be written for this file are already read
+    ///
+    /// When this condition is satisfied, all write ops are known (either added to ring,
+    /// stored in `backlog` or in `non_dio_eof_write`)
+    fn source_fully_read(&self) -> bool {
+        self.size_on_eof.is_some()
     }
 
     /// Turn off direct IO if file is in this mode
