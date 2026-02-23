@@ -205,7 +205,7 @@ impl VersionedEpochStakes {
             SerdeStakesToStakeFormat::Account(crate::stakes::Stakes::new_for_tests(
                 0,
                 solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
-                im::HashMap::default(),
+                imbl::HashMap::default(),
             )),
             leader_schedule_epoch,
         )
@@ -410,7 +410,7 @@ impl From<DeserializableEpochStakes> for EpochStakes {
 
 /// Snapshot epoch stakes contain delegations, but the main EpochStakes no longer uses them.
 /// This fn does custom deserialization to visit-and-ignore the delegations,
-/// avoiding the need to construct an expensive im::HashMap.
+/// avoiding the need to construct an expensive imbl::HashMap.
 fn deserialize_and_ignore_stake_delegations<'de, D>(deserializer: D) -> Result<(), D::Error>
 where
     D: Deserializer<'de>,
@@ -698,7 +698,7 @@ pub(crate) mod tests {
         let stakes = Stakes::new_for_tests(
             epoch,
             vote_accounts,
-            im::HashMap::from_iter([(stake_pubkey, stake_account)]),
+            imbl::HashMap::from_iter([(stake_pubkey, stake_account)]),
         );
 
         // ensure stake delegations start off *not* empty
