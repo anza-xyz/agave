@@ -6,7 +6,7 @@ use {
         consensus_message::{Certificate, CertificateType, ConsensusMessage},
         fraction::Fraction,
     },
-    crossbeam_channel::{unbounded, Sender},
+    crossbeam_channel::{Sender, unbounded},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,

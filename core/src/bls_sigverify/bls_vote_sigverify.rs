@@ -20,9 +20,9 @@ use {
     crossbeam_channel::Sender,
     rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_bls_signatures::{
+        BlsError,
         pubkey::{Pubkey as BlsPubkey, PubkeyProjective, VerifiablePubkey},
         signature::SignatureProjective,
-        BlsError,
     },
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,

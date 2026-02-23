@@ -3,7 +3,7 @@
 use {
     super::{
         bls_cert_sigverify::verify_and_send_certificates,
-        bls_vote_sigverify::{verify_and_send_votes, VoteToVerify},
+        bls_vote_sigverify::{VoteToVerify, verify_and_send_votes},
         errors::SigVerifyError,
         stats::{SigVerifierStats, StreamerRecvStats},
     },
@@ -32,8 +32,8 @@ use {
     std::{
         collections::HashSet,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder},
     },
@@ -317,7 +317,7 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,

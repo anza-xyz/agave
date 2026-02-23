@@ -91,7 +91,7 @@ pub(super) fn send_votes_to_repair(
                 stats.repair_channel_full += 1;
             }
             Err(TrySendError::Disconnected(_)) => {
-                return Err(SigVerifyVoteError::RepairChannelDisconnected)
+                return Err(SigVerifyVoteError::RepairChannelDisconnected);
             }
         }
     }

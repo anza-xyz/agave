@@ -7,12 +7,12 @@
 
 use {
     agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
-    criterion::{criterion_group, criterion_main, BatchSize, Criterion},
+    criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     solana_bls_signatures::{Keypair as BLSKeypair, Pubkey as BLSPubkey, VerifiablePubkey},
     solana_core::bls_sigverify::{
         bls_vote_sigverify::{
-            aggregate_pubkeys_by_payload, aggregate_signatures, verify_individual_votes,
-            verify_votes_optimistic, VoteToVerify,
+            VoteToVerify, aggregate_pubkeys_by_payload, aggregate_signatures,
+            verify_individual_votes, verify_votes_optimistic,
         },
         stats::SigVerifyVoteStats,
     },
