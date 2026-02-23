@@ -72,6 +72,7 @@ solana-sysvar = { workspace = true, features = ["bincode"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 thiserror = { workspace = true }
+crossbeam-channel = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

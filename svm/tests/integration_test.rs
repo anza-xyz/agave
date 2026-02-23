@@ -3431,14 +3431,19 @@ fn svm_metrics_accumulation() {
         // jit compilation only happens on non-windows && x86_64
         #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
         {
-            assert_ne!(
-                result
-                    .execute_timings
-                    .details
-                    .create_executor_jit_compile_us
-                    .0,
-                0
-            );
+            let jit_time = result
+                .execute_timings
+                .details
+                .create_executor_jit_compile_us
+                .load(Ordering::Relaxed);
+            // JIT compilation happens in a separate thread and might not
+            // complete in time before execution finishes. Give it some more
+            // time.
+            for _ in 0..1000 {
+                if jit_time != 0 { break; }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            assert_ne!(jit_time, 0);
         }
         assert_ne!(
             result.execute_timings.details.create_executor_load_elf_us.0,
