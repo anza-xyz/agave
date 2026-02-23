@@ -274,6 +274,7 @@ fn test_bank_unix_timestamp_from_genesis() {
     assert!(bank.unix_timestamp_from_genesis() - genesis_config.creation_time >= 1);
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_bank_new() {
     let dummy_leader_pubkey = solana_pubkey::new_rand();
@@ -292,6 +293,7 @@ fn test_bank_new() {
 
     genesis_config.rent = Rent {
         lamports_per_byte: 5,
+        exemption_threshold: 2.0f64.to_le_bytes(),
         ..Rent::default()
     };
 
@@ -306,7 +308,8 @@ fn test_bank_new() {
     let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
     let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
 
-    assert_eq!(rent.lamports_per_byte, 6);
+    assert_eq!(rent.lamports_per_byte, 10);
+    assert_eq!(rent.exemption_threshold, 1.0f64.to_le_bytes());
 }
 
 pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {
