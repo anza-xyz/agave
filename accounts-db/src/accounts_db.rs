@@ -425,7 +425,7 @@ struct IndexGenerationAccumulator {
     zero_lamport_pubkeys: Vec<Pubkey>,
     all_accounts_are_zero_lamports_slots: u64,
     /// List of slots with only zero lamports accounts and indices into `storages` used in `generate_index`
-    all_zeros_slots: Vec<(Slot, usize)>,
+    slots_with_only_zero_lamport_accounts: Vec<(Slot, usize)>,
     storage_info: StorageSizeAndCountList,
     /// Number of accounts in this slot that didn't already exist in the index
     num_did_not_exist: u64,
@@ -448,7 +448,7 @@ impl IndexGenerationAccumulator {
             accounts_data_len: 0,
             zero_lamport_pubkeys: Vec::new(),
             all_accounts_are_zero_lamports_slots: 0,
-            all_zeros_slots: Vec::new(),
+            slots_with_only_zero_lamport_accounts: Vec::new(),
             storage_info: Vec::with_capacity(num_slots),
             num_did_not_exist: 0,
             num_existed_in_mem: 0,
@@ -465,7 +465,8 @@ impl IndexGenerationAccumulator {
         self.zero_lamport_pubkeys
             .append(&mut other.zero_lamport_pubkeys);
         self.all_accounts_are_zero_lamports_slots += other.all_accounts_are_zero_lamports_slots;
-        self.all_zeros_slots.append(&mut other.all_zeros_slots);
+        self.slots_with_only_zero_lamport_accounts
+            .append(&mut other.slots_with_only_zero_lamport_accounts);
         self.num_did_not_exist += other.num_did_not_exist;
         self.num_existed_in_mem += other.num_existed_in_mem;
         self.num_existed_on_disk += other.num_existed_on_disk;
@@ -6261,7 +6262,9 @@ impl AccountsDb {
         accum.num_obsolete_accounts_skipped += num_obsolete_accounts_skipped;
         if all_accounts_are_zero_lamports {
             accum.all_accounts_are_zero_lamports_slots += 1;
-            accum.all_zeros_slots.push((slot, storage_index));
+            accum
+                .slots_with_only_zero_lamport_accounts
+                .push((slot, storage_index));
         }
     }
 
@@ -6542,9 +6545,9 @@ impl AccountsDb {
         // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
         info!(
             "insert all zero slots to clean at startup {}",
-            total_accum.all_zeros_slots.len()
+            total_accum.slots_with_only_zero_lamport_accounts.len()
         );
-        for (slot, storage_index) in total_accum.all_zeros_slots {
+        for (slot, storage_index) in total_accum.slots_with_only_zero_lamport_accounts {
             self.dirty_stores
                 .insert(slot, storages[storage_index].clone());
         }
