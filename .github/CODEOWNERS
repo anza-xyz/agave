@@ -4,11 +4,9 @@
 /core/src/consensus.rs @anza-xyz/consensus
 /core/src/consensus/ @anza-xyz/consensus
 /core/src/repair/ @anza-xyz/networking @anza-xyz/consensus
-/core/src/replay_stage.rs @anza-xyz/consensus
 /fee/ @anza-xyz/fees
 /gossip/ @anza-xyz/networking
 /gossip/src/duplicate*.rs @anza-xyz/networking @anza-xyz/consensus
-/ledger/src/blockstore_processor.rs @anza-xyz/consensus
 /log-collector/ @anza-xyz/svm
 /net-utils/ @anza-xyz/networking
 /program-runtime/ @anza-xyz/svm
