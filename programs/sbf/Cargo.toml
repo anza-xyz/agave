@@ -263,6 +263,13 @@ solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 test-case = { workspace = true }
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.full-dev]
+inherits = "dev"
+debug = "full"
+
 [profile.release]
 # The test programs are build in release mode
 # Minimize their file size so that they fit into the account size limit

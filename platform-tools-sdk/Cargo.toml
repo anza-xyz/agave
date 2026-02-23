@@ -49,3 +49,10 @@ semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 serial_test = "3.4.0"
 tar = "0.4.44"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.full-dev]
+inherits = "dev"
+debug = "full"
