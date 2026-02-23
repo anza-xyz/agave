@@ -12,8 +12,8 @@ edition = { workspace = true }
 crate-type = ["cdylib"]
 
 [dependencies]
-solana-account-view = "1.0"
-solana-address = "2.0"
+solana-account-view = { workspace = true }
+solana-address = { workspace = true }
 solana-cpi = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }

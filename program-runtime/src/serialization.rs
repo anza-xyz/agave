@@ -518,13 +518,13 @@ fn serialize_parameters_for_abiv1(
     + instruction_data.len()
     + size_of::<Pubkey>(); // program id;
 
-    // reserve space for account pointer array
+    // reserve space for account pointer array if SIMD-0449 is enabled
     let account_pointers_offset = if direct_account_pointers_program_input {
         let offset = (size as *const u8).align_offset(BPF_ALIGN_OF_U128);
         size += offset + accounts.len() * size_of::<u64>();
-        offset
+        Some(offset)
     } else {
-        0
+        None
     };
 
     let mut s = Serializer::new(
@@ -572,9 +572,8 @@ fn serialize_parameters_for_abiv1(
     let instruction_data_offset = s.write_all(instruction_data);
     s.write_all(program_id.as_ref());
 
-    // Write account pointer array if requested
-    if direct_account_pointers_program_input {
-        s.fill_write(account_pointers_offset, 0)
+    if let Some(offset) = account_pointers_offset {
+        s.fill_write(offset, 0)
             .map_err(|_| InstructionError::InvalidArgument)?;
         for entry in accounts_metadata.iter() {
             s.write::<u64>(entry.vm_data_addr.to_le());
