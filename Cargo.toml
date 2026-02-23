@@ -506,7 +506,7 @@ solana-quic-client = { path = "quic-client", version = "=4.0.0-alpha.0", feature
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-remote-wallet = { path = "remote-wallet", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-rent = "3.0.0"
-solana-reward-info = "3.0.0"
+solana-reward-info = "5.0.0"
 solana-rpc = { path = "rpc", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rpc-client = { path = "rpc-client", version = "=4.0.0-alpha.0", default-features = false }
 solana-rpc-client-api = { path = "rpc-client-api", version = "=4.0.0-alpha.0" }
