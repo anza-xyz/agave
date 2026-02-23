@@ -107,7 +107,7 @@ impl<F: Float + NumCast, S: Copy + PartialOrd + NumCast> WelfordStats<F, S> {
 mod tests {
     use {
         super::*,
-        rand::{rngs::StdRng, Rng, SeedableRng},
+        rand::{Rng, SeedableRng, rngs::StdRng},
         test_case::test_matrix,
     };
 
@@ -207,7 +207,11 @@ mod tests {
 
         let chunks: Vec<Vec<i64>> = chunk_sizes
             .iter()
-            .map(|&size| (0..size).map(|_| rng.random_range(0..1_000_000_000i64)).collect())
+            .map(|&size| {
+                (0..size)
+                    .map(|_| rng.random_range(0..1_000_000_000i64))
+                    .collect()
+            })
             .collect();
         let whole = make_test_stats(f, s, &chunks.iter().flatten().copied().collect::<Vec<_>>());
 
