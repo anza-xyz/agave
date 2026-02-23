@@ -6046,15 +6046,6 @@ impl Bank {
         bank.wrap_with_bank_forks_for_tests()
     }
 
-    pub fn new_no_wallclock_throttle_for_tests(
-        genesis_config: &GenesisConfig,
-    ) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
-        let mut bank = Self::new_for_tests(genesis_config);
-
-        bank.ns_per_slot = u128::MAX;
-        bank.wrap_with_bank_forks_for_tests()
-    }
-
     pub fn new_with_config_for_tests(
         genesis_config: &GenesisConfig,
         test_config: BankTestConfig,
