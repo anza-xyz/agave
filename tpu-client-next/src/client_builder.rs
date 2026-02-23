@@ -41,13 +41,13 @@
 //! ```
 use {
     crate::{
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
             StakeIdentity, WorkersBroadcaster,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
     },
     solana_keypair::Keypair,
     std::{future::Future, net::UdpSocket, pin::Pin, sync::Arc},

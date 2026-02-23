@@ -8,10 +8,10 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, leader_schedule_utils},
     std::{
-        collections::{hash_map::Entry, HashMap, VecDeque},
+        collections::{HashMap, VecDeque, hash_map::Entry},
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     },
 };
@@ -238,15 +238,15 @@ mod tests {
         crate::{
             blockstore::make_slot_entries,
             genesis_utils::{
-                bootstrap_validator_stake_lamports, create_genesis_config,
-                create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+                create_genesis_config_with_leader,
             },
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
         solana_clock::{DEFAULT_SLOTS_PER_EPOCH, NUM_CONSECUTIVE_LEADER_SLOTS},
         solana_epoch_schedule::{
-            EpochSchedule, DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
+            DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, EpochSchedule, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
         solana_leader_schedule::{LeaderSchedule, SlotLeader},
@@ -271,16 +271,22 @@ mod tests {
         for epoch in 0..=leader_schedule_epoch {
             let first_slot_in_leader_schedule_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
             let last_slot_in_leader_schedule_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
-            assert!(cache
-                .slot_leader_at(first_slot_in_leader_schedule_epoch, None)
-                .is_some());
-            assert!(cache
-                .slot_leader_at(last_slot_in_leader_schedule_epoch, None)
-                .is_some());
+            assert!(
+                cache
+                    .slot_leader_at(first_slot_in_leader_schedule_epoch, None)
+                    .is_some()
+            );
+            assert!(
+                cache
+                    .slot_leader_at(last_slot_in_leader_schedule_epoch, None)
+                    .is_some()
+            );
             if epoch == leader_schedule_epoch {
-                assert!(cache
-                    .slot_leader_at(last_slot_in_leader_schedule_epoch + 1, None)
-                    .is_none());
+                assert!(
+                    cache
+                        .slot_leader_at(last_slot_in_leader_schedule_epoch + 1, None)
+                        .is_none()
+                );
             }
         }
 
@@ -554,9 +560,11 @@ mod tests {
         expected_slot += index;
 
         // If the max root isn't set, we'll get None
-        assert!(cache
-            .next_leader_slot(&node_pubkey, 0, &bank, None, u64::MAX)
-            .is_none());
+        assert!(
+            cache
+                .next_leader_slot(&node_pubkey, 0, &bank, None, u64::MAX)
+                .is_none()
+        );
 
         cache.set_root(&bank);
         let res = cache

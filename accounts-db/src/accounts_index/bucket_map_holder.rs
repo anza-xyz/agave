@@ -1,8 +1,8 @@
 use {
     super::{
+        AccountsIndexConfig, DiskIndexValue, IndexLimit, IndexValue,
         in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
         stats::Stats,
-        AccountsIndexConfig, DiskIndexValue, IndexLimit, IndexValue,
     },
     crate::waitable_condvar::WaitableCondvar,
     log::*,
@@ -15,8 +15,8 @@ use {
         marker::PhantomData,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
         },
         time::Duration,
     },

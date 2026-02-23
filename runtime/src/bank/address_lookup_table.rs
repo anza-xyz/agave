@@ -3,8 +3,8 @@ use {
     solana_address_lookup_table_interface::error::AddressLookupError,
     solana_clock::Slot,
     solana_message::{
-        v0::{LoadedAddresses, MessageAddressTableLookup},
         AddressLoader,
+        v0::{LoadedAddresses, MessageAddressTableLookup},
     },
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
     solana_transaction_error::AddressLoaderError,

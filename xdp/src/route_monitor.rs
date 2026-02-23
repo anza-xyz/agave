@@ -1,24 +1,24 @@
 use {
     crate::{
         netlink::{
-            parse_rtm_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage,
-            NetlinkSocket,
+            NetlinkMessage, NetlinkSocket, parse_rtm_ifinfomsg, parse_rtm_newneigh,
+            parse_rtm_newroute,
         },
         route::Router,
     },
     arc_swap::ArcSwap,
     libc::{
-        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_LINK,
-        RTMGRP_NEIGH, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
-        RTM_NEWROUTE,
+        self, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE,
+        RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, RTMGRP_IPV4_ROUTE, RTMGRP_LINK, RTMGRP_NEIGH,
+        pollfd,
     },
     log::*,
     std::{
         io::{Error, ErrorKind},
         net::IpAddr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread,
         time::{Duration, Instant},

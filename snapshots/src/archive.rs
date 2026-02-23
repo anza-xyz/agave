@@ -1,7 +1,7 @@
 use {
     crate::{
-        error::ArchiveSnapshotPackageError, paths, snapshot_archive_info::SnapshotArchiveInfo,
-        snapshot_hash::SnapshotHash, ArchiveFormat, Result, SnapshotArchiveKind,
+        ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError, paths,
+        snapshot_archive_info::SnapshotArchiveInfo, snapshot_hash::SnapshotHash,
     },
     agave_fs::buffered_writer::large_file_buf_writer,
     log::info,

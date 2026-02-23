@@ -6,8 +6,8 @@ use {
     solana_time_utils::timestamp,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle},
         time::Duration,
@@ -26,28 +26,30 @@ impl RpcCompletedSlotsService {
     ) -> JoinHandle<()> {
         Builder::new()
             .name("solRpcComplSlot".to_string())
-            .spawn(move || loop {
-                // received exit signal, shutdown the service
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                match completed_slots_receiver
-                    .recv_timeout(Duration::from_millis(COMPLETE_SLOT_REPORT_SLEEP_MS))
-                {
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => {
-                        info!("RpcCompletedSlotService channel disconnected, exiting.");
+            .spawn(move || {
+                loop {
+                    // received exit signal, shutdown the service
+                    if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    Ok(slots) => {
-                        for slot in slots {
-                            rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
-                                slot,
-                                timestamp: timestamp(),
-                            });
-                            if let Some(slot_status_notifier) = &slot_status_notifier {
-                                slot_status_notifier.read().unwrap().notify_completed(slot);
+
+                    match completed_slots_receiver
+                        .recv_timeout(Duration::from_millis(COMPLETE_SLOT_REPORT_SLEEP_MS))
+                    {
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => {
+                            info!("RpcCompletedSlotService channel disconnected, exiting.");
+                            break;
+                        }
+                        Ok(slots) => {
+                            for slot in slots {
+                                rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
+                                    slot,
+                                    timestamp: timestamp(),
+                                });
+                                if let Some(slot_status_notifier) = &slot_status_notifier {
+                                    slot_status_notifier.read().unwrap().notify_completed(slot);
+                                }
                             }
                         }
                     }

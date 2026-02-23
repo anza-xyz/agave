@@ -22,7 +22,7 @@ use {
     solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
     std::{
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
     },
     thiserror::Error,
 };
@@ -251,12 +251,13 @@ pub fn try_load_bank_forks_from_snapshot(
             .accounts_db
             .set_latest_full_snapshot_slot(full_snapshot_archive_info.slot());
     } else {
-        assert!(bank
-            .rc
-            .accounts
-            .accounts_db
-            .latest_full_snapshot_slot()
-            .is_none());
+        assert!(
+            bank.rc
+                .accounts
+                .accounts_db
+                .latest_full_snapshot_slot()
+                .is_none()
+        );
     }
 
     let full_snapshot_hash = FullSnapshotHash((

@@ -13,8 +13,8 @@ use {
             outstanding_requests::OutstandingRequests,
             repair_weight::RepairWeight,
             serve_repair::{
-                self, RepairPeers, RepairProtocol, RepairRequestHeader, ServeRepair,
-                ShredRepairType, REPAIR_PEERS_CACHE_CAPACITY,
+                self, REPAIR_PEERS_CACHE_CAPACITY, RepairPeers, RepairProtocol,
+                RepairRequestHeader, ServeRepair, ShredRepairType,
             },
         },
     },
@@ -23,7 +23,7 @@ use {
     lru::LruCache,
     rand::prelude::IndexedRandom as _,
     solana_client::connection_cache::Protocol,
-    solana_clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
+    solana_clock::{DEFAULT_TICKS_PER_SECOND, MS_PER_TICK, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -38,17 +38,17 @@ use {
         bank::Bank,
         bank_forks::{BankForks, SharableBanks},
     },
-    solana_streamer::sendmmsg::{batch_send, SendPktsError},
+    solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_time_utils::timestamp,
     std::{
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{HashMap, HashSet, hash_map::Entry},
         iter::Iterator,
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
     tokio::sync::mpsc::Sender as AsyncSender,
@@ -1252,13 +1252,13 @@ mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{
-                make_chaining_slot_entries, make_many_slot_entries, make_slot_entries, Blockstore,
+                Blockstore, make_chaining_slot_entries, make_many_slot_entries, make_slot_entries,
             },
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             shred::max_ticks_per_n_shreds,
         },
-        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -1664,11 +1664,13 @@ mod test {
             &RwLock::new(OutstandingRequests::default()),
             &identity_keypair,
         );
-        assert!(duplicate_slot_repair_statuses
-            .get(&dead_slot)
-            .unwrap()
-            .repair_pubkey_and_addr
-            .is_none());
+        assert!(
+            duplicate_slot_repair_statuses
+                .get(&dead_slot)
+                .unwrap()
+                .repair_pubkey_and_addr
+                .is_none()
+        );
         assert!(duplicate_slot_repair_statuses.contains_key(&dead_slot));
 
         // Give the slot a repair address

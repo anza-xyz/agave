@@ -1,18 +1,18 @@
 use {
     super::{
-        epoch_rewards_hasher::hash_rewards_into_partitions, Bank, CachedVoteAccounts,
-        CalculateValidatorRewardsResult, EpochRewardCalculateParamInfo, FilteredStakeDelegations,
-        PartitionedRewardsCalculation, PartitionedStakeReward, PartitionedStakeRewards,
-        RewardCommissionAccounts, RewardCommissionAccountsStorable, StakeRewardCalculation,
-        REWARD_CALCULATION_NUM_BLOCKS,
+        Bank, CachedVoteAccounts, CalculateValidatorRewardsResult, EpochRewardCalculateParamInfo,
+        FilteredStakeDelegations, PartitionedRewardsCalculation, PartitionedStakeReward,
+        PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS, RewardCommissionAccounts,
+        RewardCommissionAccountsStorable, StakeRewardCalculation,
+        epoch_rewards_hasher::hash_rewards_into_partitions,
     },
     crate::{
         bank::{
-            null_tracer, EpochInflationRewards, RewardCalcTracer, RewardCalculationEvent,
-            RewardCommission, RewardCommissions, RewardsMetrics,
+            EpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardCommission,
+            RewardCommissions, RewardsMetrics, null_tracer,
         },
         inflation_rewards::{
-            points::{calculate_points, DelegatedVoteState, PointValue},
+            points::{DelegatedVoteState, PointValue, calculate_points},
             redeem_rewards,
         },
         stake_account::StakeAccount,
@@ -22,8 +22,8 @@ use {
     agave_feature_set as feature_set,
     log::{debug, info},
     rayon::{
-        iter::{IndexedParallelIterator, ParallelIterator},
         ThreadPool,
+        iter::{IndexedParallelIterator, ParallelIterator},
     },
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
@@ -31,7 +31,7 @@ use {
     solana_pubkey::Pubkey,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
-    std::sync::{atomic::Ordering::Relaxed, Arc},
+    std::sync::{Arc, atomic::Ordering::Relaxed},
 };
 
 #[derive(Debug)]
@@ -775,28 +775,27 @@ mod tests {
         super::*,
         crate::{
             bank::{
-                null_tracer,
+                RewardCommission, RewardInfo, null_tracer,
                 partitioned_epoch_rewards::{
-                    tests::{
-                        build_partitioned_stake_rewards, create_default_reward_bank,
-                        create_reward_bank, create_reward_bank_with_specific_stakes,
-                        populate_vote_accounts_with_votes, RewardBank, SLOTS_PER_EPOCH,
-                    },
                     EpochRewardPhase, EpochRewardStatus, PartitionedStakeRewards,
                     StartBlockHeightAndPartitionedRewards,
+                    tests::{
+                        RewardBank, SLOTS_PER_EPOCH, build_partitioned_stake_rewards,
+                        create_default_reward_bank, create_reward_bank,
+                        create_reward_bank_with_specific_stakes, populate_vote_accounts_with_votes,
+                    },
                 },
                 tests::create_genesis_config,
-                RewardCommission, RewardInfo,
             },
-            genesis_utils::{self, deactivate_features, GenesisConfigInfo},
+            genesis_utils::{self, GenesisConfigInfo, deactivate_features},
             stake_account::StakeAccount,
             stake_utils,
-            stakes::{tests::create_staked_node_accounts, Stakes},
+            stakes::{Stakes, tests::create_staked_node_accounts},
         },
-        agave_feature_set::{delay_commission_updates, FeatureSet},
+        agave_feature_set::{FeatureSet, delay_commission_updates},
         rayon::ThreadPoolBuilder,
         solana_account::{
-            accounts_equal, state_traits::StateMut, AccountSharedData, ReadableAccount,
+            AccountSharedData, ReadableAccount, accounts_equal, state_traits::StateMut,
         },
         solana_accounts_db::partitioned_rewards::PartitionedEpochRewardsConfig,
         solana_epoch_schedule::EpochSchedule,
@@ -808,7 +807,7 @@ mod tests {
             state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
         solana_vote_interface::state::{
-            VoteInit, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+            BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInit, VoteStateV4, VoteStateVersions,
         },
         solana_vote_program::vote_state,
         std::{

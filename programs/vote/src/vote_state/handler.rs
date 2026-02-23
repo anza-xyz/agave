@@ -19,10 +19,10 @@ use {
         authorized_voters::AuthorizedVoters,
         error::VoteError,
         state::{
-            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteInitV2, VoteState1_14_11,
-            VoteStateV3, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+            BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, LandedVote, Lockout,
             MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY, VOTE_CREDITS_GRACE_SLOTS,
-            VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteInit, VoteInitV2, VoteState1_14_11, VoteStateV3,
+            VoteStateV4, VoteStateVersions,
         },
     },
     std::collections::VecDeque,
@@ -1138,7 +1138,7 @@ mod tests {
         },
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
+            state::{BlockTimestamp, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY, VoteInit},
         },
         std::collections::VecDeque,
         test_case::test_case,
@@ -1417,10 +1417,12 @@ mod tests {
         // purged and no longer queryable
         assert_eq!(vote_state.authorized_voters().len(), 1);
         for i in 0..5 {
-            assert!(vote_state
-                .authorized_voters()
-                .get_authorized_voter(i)
-                .is_none());
+            assert!(
+                vote_state
+                    .authorized_voters()
+                    .get_authorized_voter(i)
+                    .is_none()
+            );
         }
 
         // Set an authorized voter change at slot 7
@@ -1489,10 +1491,12 @@ mod tests {
         // be purged, but only because we didn't cache an entry for current - 1.
         assert_eq!(vote_state.authorized_voters().len(), 1);
         for i in 0..5 {
-            assert!(vote_state
-                .authorized_voters()
-                .get_authorized_voter(i)
-                .is_none());
+            assert!(
+                vote_state
+                    .authorized_voters()
+                    .get_authorized_voter(i)
+                    .is_none()
+            );
         }
 
         // Say we're in epoch 7. Cache entries for both epochs 6 and 7.
@@ -1510,10 +1514,12 @@ mod tests {
 
         // 0..=5 should still be purged.
         for i in 0..=5 {
-            assert!(vote_state
-                .authorized_voters()
-                .get_authorized_voter(i)
-                .is_none());
+            assert!(
+                vote_state
+                    .authorized_voters()
+                    .get_authorized_voter(i)
+                    .is_none()
+            );
         }
 
         // Set an authorized voter change at epoch 9.

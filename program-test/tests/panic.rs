@@ -1,8 +1,8 @@
 use {
     solana_account_info::AccountInfo,
-    solana_instruction::{error::InstructionError, Instruction},
+    solana_instruction::{Instruction, error::InstructionError},
     solana_program_error::ProgramResult,
-    solana_program_test::{processor, ProgramTest},
+    solana_program_test::{ProgramTest, processor},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_transaction::Transaction,

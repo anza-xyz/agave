@@ -30,7 +30,7 @@ use {
         request::{MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_MULTIPLE_ACCOUNTS},
     },
     solana_signature::Signature,
-    solana_signer::{unique_signers, Signer},
+    solana_signer::{Signer, unique_signers},
     solana_stake_interface::{
         instruction::{self as stake_instruction, LockupArgs},
         state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
@@ -44,8 +44,8 @@ use {
         io,
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
         time::Duration,
@@ -960,7 +960,7 @@ use {
     crate::db::check_output_file,
     solana_keypair::Keypair,
     solana_pubkey::{self as pubkey, Pubkey},
-    tempfile::{tempdir, NamedTempFile},
+    tempfile::{NamedTempFile, tempdir},
 };
 
 pub fn test_process_distribute_tokens_with_client(

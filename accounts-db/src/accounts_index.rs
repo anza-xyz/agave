@@ -19,7 +19,7 @@ use {
     },
     iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
     log::*,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     roots_tracker::RootsTracker,
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
@@ -30,14 +30,14 @@ use {
     solana_pubkey::Pubkey,
     stats::Stats,
     std::{
-        collections::{btree_map::BTreeMap, HashSet},
+        collections::{HashSet, btree_map::BTreeMap},
         fmt::Debug,
         num::NonZeroUsize,
         ops::{Bound, Range, RangeBounds},
         path::PathBuf,
         sync::{
-            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
         },
     },
     thiserror::Error,
@@ -1775,7 +1775,7 @@ pub(crate) enum Startup {
 #[cfg(test)]
 pub(crate) mod test_utils {
     use {
-        super::{secondary::AccountSecondaryIndexes, AccountIndex},
+        super::{AccountIndex, secondary::AccountSecondaryIndexes},
         std::collections::HashSet,
     };
     pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {

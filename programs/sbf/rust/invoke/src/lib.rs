@@ -16,7 +16,7 @@ use {
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
         },
     },
-    solana_program_entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
+    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, ProgramResult},
     solana_program_error::ProgramError,
     solana_pubkey::{Pubkey, PubkeyError},
     solana_sbf_rust_invoke_dep::*,

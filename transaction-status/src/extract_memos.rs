@@ -1,7 +1,7 @@
 use {
-    crate::{parse_instruction::parse_memo_data, VersionedTransactionWithStatusMeta},
+    crate::{VersionedTransactionWithStatusMeta, parse_instruction::parse_memo_data},
     solana_message::{
-        compiled_instruction::CompiledInstruction, AccountKeys, Message, SanitizedMessage,
+        AccountKeys, Message, SanitizedMessage, compiled_instruction::CompiledInstruction,
     },
     solana_pubkey::Pubkey,
 };

@@ -2,9 +2,9 @@ use {
     crate::{
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
         log_transaction_service::{
-            create_log_transactions_service_and_sender, SignatureBatchSender, TransactionInfoBatch,
+            SignatureBatchSender, TransactionInfoBatch, create_log_transactions_service_and_sender,
         },
-        perf_utils::{sample_txs, SampleStats},
+        perf_utils::{SampleStats, sample_txs},
         send_batch::*,
     },
     chrono::Utc,
@@ -33,10 +33,10 @@ use {
         collections::{HashSet, VecDeque},
         process::exit,
         sync::{
-            atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -1226,7 +1226,7 @@ mod tests {
         agave_feature_set::FeatureSet,
         solana_commitment_config::CommitmentConfig,
         solana_fee_calculator::FeeRateGovernor,
-        solana_genesis_config::{create_genesis_config, GenesisConfig},
+        solana_genesis_config::{GenesisConfig, create_genesis_config},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::state::State,
         solana_runtime::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},

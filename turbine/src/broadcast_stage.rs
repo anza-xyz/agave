@@ -172,7 +172,12 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                BroadcastDuplicatesRun::new(shred_version, config.clone()),
+                BroadcastDuplicatesRun::new(
+                    shred_version,
+                    config.clone(),
+                    migration_status,
+                    votor_event_sender,
+                ),
                 xdp_sender,
             ),
         }

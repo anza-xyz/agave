@@ -1,8 +1,8 @@
 use {
     super::{
-        field_frames::{BlsPubkeyCompressedFrame, LandedVotesListFrame, ListFrame},
         AuthorizedVotersListFrame, EpochCreditsListFrame, Field, Result, RootSlotFrame,
         Simd185Field, VoteStateViewError,
+        field_frames::{BlsPubkeyCompressedFrame, LandedVotesListFrame, ListFrame},
     },
     solana_pubkey::Pubkey,
     solana_vote_interface::state::BlockTimestamp,
@@ -126,7 +126,7 @@ mod tests {
         serde::{Deserialize, Serialize},
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{LandedVote, Lockout, VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
+            state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, LandedVote, Lockout, VoteStateV4},
         },
         std::collections::VecDeque,
     };

@@ -9,7 +9,7 @@ use {
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
-    wincode::{containers::Pod, SchemaRead, SchemaWrite},
+    wincode::{SchemaRead, SchemaWrite, containers::Pod},
 };
 
 /// The seed used to derive the BLS keypair
@@ -90,6 +90,16 @@ impl CertificateType {
     /// Is this a finalize / fast finalize certificate?
     pub fn is_finalization(&self) -> bool {
         matches!(self, Self::Finalize(_) | Self::FinalizeFast(_, _))
+    }
+
+    /// Is this a slow finalize certificate?
+    pub fn is_slow_finalization(&self) -> bool {
+        matches!(self, Self::Finalize(_))
+    }
+
+    /// Is this a notarize certificate?
+    pub fn is_notarize(&self) -> bool {
+        matches!(self, Self::Notarize(_, _))
     }
 
     /// Is this a notarize fallback certificate?

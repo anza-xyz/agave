@@ -1,10 +1,10 @@
 use {
     crate::{
-        account_locks::{validate_account_locks, AccountLocks},
+        account_locks::{AccountLocks, validate_account_locks},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
-            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, ScanAccountStorageData,
-            ScanStorageResult, UpdateIndexThreadSelection,
+            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
+            ScanAccountStorageData, ScanStorageResult, UpdateIndexThreadSelection,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
@@ -30,8 +30,8 @@ use {
         cmp::Reverse,
         collections::{BinaryHeap, HashMap, HashSet},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
         },
     },
 };
@@ -167,8 +167,10 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
         load_hint: LoadHint,
+        populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(ancestors, pubkey, load_hint)
+        self.accounts_db
+            .load(ancestors, pubkey, load_hint, populate_read_cache)
     }
 
     pub fn load_with_fixed_root(
@@ -176,7 +178,12 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(ancestors, pubkey, LoadHint::FixedMaxRoot)
+        self.load_slow(
+            ancestors,
+            pubkey,
+            LoadHint::FixedMaxRoot,
+            PopulateReadCache::True,
+        )
     }
 
     /// same as `load_with_fixed_root` except:
@@ -189,7 +196,8 @@ impl Accounts {
         self.load_slow(
             ancestors,
             pubkey,
-            LoadHint::FixedMaxRootDoNotPopulateReadCache,
+            LoadHint::FixedMaxRoot,
+            PopulateReadCache::True,
         )
     }
 
@@ -198,7 +206,12 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(ancestors, pubkey, LoadHint::Unspecified)
+        self.load_slow(
+            ancestors,
+            pubkey,
+            LoadHint::Unspecified,
+            PopulateReadCache::True,
+        )
     }
 
     /// scans underlying accounts_db for this delta (slot) with a map function
@@ -554,8 +567,14 @@ impl Accounts {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        ancestors: Option<&Ancestors>,
     ) {
-        self._store_accounts(accounts, transactions, UpdateIndexThreadSelection::Inline);
+        self._store_accounts(
+            accounts,
+            transactions,
+            UpdateIndexThreadSelection::Inline,
+            ancestors,
+        );
     }
 
     /// Store `accounts` into the DB
@@ -566,11 +585,13 @@ impl Accounts {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        ancestors: Option<&Ancestors>,
     ) {
         self._store_accounts(
             accounts,
             transactions,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            ancestors,
         );
     }
 
@@ -584,6 +605,7 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        ancestors: Option<&Ancestors>,
     ) {
         let accounts_db = &self.accounts_db;
         if accounts_db.has_accounts_update_notifier() {
@@ -607,7 +629,7 @@ impl Accounts {
             }
         }
 
-        accounts_db.store_accounts_unfrozen(accounts, update_index_thread_selection);
+        accounts_db.store_accounts_unfrozen(accounts, update_index_thread_selection, ancestors);
     }
 
     /// Add a slot to root.  Root slots cannot be purged
@@ -627,13 +649,13 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{
-            compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup,
             LegacyMessage, Message, MessageHeader, SanitizedMessage,
+            compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup,
         },
         solana_sdk_ids::native_loader,
         solana_signature::Signature,
-        solana_signer::{signers::Signers, Signer},
-        solana_transaction::{sanitized::MAX_TX_ACCOUNT_LOCKS, Transaction},
+        solana_signer::{Signer, signers::Signers},
+        solana_transaction::{Transaction, sanitized::MAX_TX_ACCOUNT_LOCKS},
         solana_transaction_error::TransactionError,
         std::{
             borrow::Cow,
@@ -949,11 +971,13 @@ mod tests {
         );
 
         assert_eq!(results0, vec![Ok(())]);
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_readonly(&keypair1.pubkey()));
+        assert!(
+            accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_readonly(&keypair1.pubkey())
+        );
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -989,11 +1013,13 @@ mod tests {
                 Err(TransactionError::AccountInUse), // Read-only account (keypair1) cannot also be locked as writable
             ],
         );
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_readonly(&keypair1.pubkey()));
+        assert!(
+            accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_readonly(&keypair1.pubkey())
+        );
 
         accounts.unlock_accounts(iter::once(&tx).zip(&results0));
         accounts.unlock_accounts(txs.iter().zip(&results1));
@@ -1019,11 +1045,13 @@ mod tests {
         );
 
         // Check that read-only lock with zero references is deleted
-        assert!(!accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_readonly(&keypair1.pubkey()));
+        assert!(
+            !accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_readonly(&keypair1.pubkey())
+        );
     }
 
     #[test_case(false; "old")]
@@ -1073,22 +1101,24 @@ mod tests {
         let counter_clone = counter.clone();
         let accounts_clone = accounts_arc.clone();
         let exit_clone = exit.clone();
-        thread::spawn(move || loop {
-            let txs = [writable_tx.clone()];
-            let results = accounts_clone.clone().lock_accounts(
-                txs.iter(),
-                vec![Ok(()); txs.len()].into_iter(),
-                MAX_TX_ACCOUNT_LOCKS,
-                relax_intrabatch_account_locks,
-            );
-            for result in results.iter() {
-                if result.is_ok() {
-                    counter_clone.clone().fetch_add(1, Ordering::Release);
+        thread::spawn(move || {
+            loop {
+                let txs = [writable_tx.clone()];
+                let results = accounts_clone.clone().lock_accounts(
+                    txs.iter(),
+                    vec![Ok(()); txs.len()].into_iter(),
+                    MAX_TX_ACCOUNT_LOCKS,
+                    relax_intrabatch_account_locks,
+                );
+                for result in results.iter() {
+                    if result.is_ok() {
+                        counter_clone.clone().fetch_add(1, Ordering::Release);
+                    }
                 }
-            }
-            accounts_clone.unlock_accounts(txs.iter().zip(&results));
-            if exit_clone.clone().load(Ordering::Relaxed) {
-                break;
+                accounts_clone.unlock_accounts(txs.iter().zip(&results));
+                if exit_clone.clone().load(Ordering::Relaxed) {
+                    break;
+                }
             }
         });
         let counter_clone = counter;
@@ -1150,22 +1180,28 @@ mod tests {
 
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_readonly(&native_loader::id()));
+        assert!(
+            accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_readonly(&native_loader::id())
+        );
         // Non-program accounts remain writable
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_write(&keypair0.pubkey()));
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_write(&keypair1.pubkey()));
+        assert!(
+            accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_write(&keypair0.pubkey())
+        );
+        assert!(
+            accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_write(&keypair1.pubkey())
+        );
     }
 
     impl Accounts {
@@ -1257,17 +1293,21 @@ mod tests {
         );
 
         // verify that keypair0 read-only locked
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_readonly(&keypair0.pubkey()));
+        assert!(
+            accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_readonly(&keypair0.pubkey())
+        );
         // verify that keypair2 (for tx1) is not write-locked
-        assert!(!accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .is_locked_write(&keypair2.pubkey()));
+        assert!(
+            !accounts
+                .account_locks
+                .lock()
+                .unwrap()
+                .is_locked_write(&keypair2.pubkey())
+        );
     }
 
     #[test_case(false; "old")]
@@ -1607,11 +1647,10 @@ mod tests {
     #[test]
     fn test_maybe_abort_scan() {
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::default()).is_ok());
-        assert!(Accounts::maybe_abort_scan(
-            ScanResult::Ok(vec![]),
-            &ScanConfig::new(ScanOrder::Sorted)
-        )
-        .is_ok());
+        assert!(
+            Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::new(ScanOrder::Sorted))
+                .is_ok()
+        );
         let config = ScanConfig::new(ScanOrder::Sorted).recreate_with_abort();
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &config).is_ok());
         config.abort();

@@ -1,5 +1,5 @@
 use {
-    enum_iterator::{all, Sequence},
+    enum_iterator::{Sequence, all},
     std::io::{self, BufReader, Read, Write},
 };
 

@@ -126,7 +126,7 @@ pub trait TpsClient {
     fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> TpsClientResult<Vec<Option<Account>>>;
 
     fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig)
-        -> TpsClientResult<u64>;
+    -> TpsClientResult<u64>;
 
     fn get_blocks_with_commitment(
         &self,

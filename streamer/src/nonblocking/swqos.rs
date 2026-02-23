@@ -3,20 +3,20 @@ use {
         nonblocking::{
             qos::{ConnectionContext, QosController},
             quic::{
-                get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
-                ConnectionTableType, CONNECTION_CLOSE_CODE_DISALLOWED,
-                CONNECTION_CLOSE_REASON_DISALLOWED,
+                CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_REASON_DISALLOWED,
+                ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
+                ConnectionTable, ConnectionTableKey, ConnectionTableType, get_connection_stake,
+                update_open_connections_stat,
             },
             stream_throttle::{
-                throttle_stream, ConnectionStreamCounter, StakedStreamLoadEMA,
-                STREAM_THROTTLING_INTERVAL_MS,
+                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL_MS, StakedStreamLoadEMA,
+                throttle_stream,
             },
         },
         quic::{
-            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, StreamerStats,
         },
         streamer::StakedNodes,
     },
@@ -26,8 +26,8 @@ use {
     std::{
         future::Future,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     },
     tokio::sync::{Mutex, MutexGuard},

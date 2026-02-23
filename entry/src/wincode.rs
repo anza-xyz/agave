@@ -4,17 +4,17 @@
 use {
     solana_address::Address,
     solana_hash::Hash,
-    solana_message::{self, legacy, v0, MESSAGE_VERSION_PREFIX},
+    solana_message::{self, MESSAGE_VERSION_PREFIX, legacy, v0},
     solana_signature::Signature,
     solana_transaction::versioned,
     std::mem::MaybeUninit,
     wincode::{
+        ReadResult, SchemaRead, SchemaWrite, UninitBuilder, WriteResult,
         config::Config,
         containers::{self, Pod},
         error::invalid_tag_encoding,
         io::{Reader, Writer},
         len::ShortU16,
-        ReadResult, SchemaRead, SchemaWrite, UninitBuilder, WriteResult,
     },
 };
 
@@ -162,15 +162,15 @@ mod tests {
     use {
         crate::entry::{Entry, MAX_DATA_SHREDS_SIZE},
         proptest::prelude::*,
-        solana_address::{Address, ADDRESS_BYTES},
-        solana_hash::{Hash, HASH_BYTES},
+        solana_address::{ADDRESS_BYTES, Address},
+        solana_hash::{HASH_BYTES, Hash},
         solana_message::{
+            MessageHeader, VersionedMessage,
             legacy::Message as LegacyMessage,
             v0::{self, MessageAddressTableLookup},
-            MessageHeader, VersionedMessage,
         },
-        solana_signature::{Signature, SIGNATURE_BYTES},
-        solana_transaction::{versioned::VersionedTransaction, CompiledInstruction},
+        solana_signature::{SIGNATURE_BYTES, Signature},
+        solana_transaction::{CompiledInstruction, versioned::VersionedTransaction},
         wincode::Deserialize,
     };
 

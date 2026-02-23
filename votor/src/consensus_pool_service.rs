@@ -5,10 +5,10 @@ mod stats;
 
 use {
     crate::{
-        commitment::{update_commitment_cache, CommitmentAggregationData, CommitmentType},
+        commitment::{CommitmentAggregationData, CommitmentType, update_commitment_cache},
         common::DELTA_STANDSTILL,
         consensus_pool::{
-            parent_ready_tracker::BlockProductionParent, AddVoteError, ConsensusPool,
+            AddVoteError, ConsensusPool, parent_ready_tracker::BlockProductionParent,
         },
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
@@ -17,7 +17,7 @@ use {
         consensus_message::{Certificate, ConsensusMessage},
         migration::MigrationStatus,
     },
-    crossbeam_channel::{select, Receiver, Sender, TrySendError},
+    crossbeam_channel::{Receiver, Sender, TrySendError, select},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -29,8 +29,8 @@ use {
     stats::ConsensusPoolServiceStats,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -304,7 +304,7 @@ impl ConsensusPoolService {
                 ) {
                     Ok(()) => {}
                     Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                        return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str())
+                        return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str());
                     }
                     Err(e) => {
                         // This is a non critical error, a duplicate vote for example
@@ -446,7 +446,7 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::{
-            consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, CertificateType, VoteMessage},
             vote::Vote,
         },
         solana_bls_signatures::{
@@ -459,7 +459,7 @@ mod tests {
         solana_runtime::{
             bank_forks::{BankForks, SharableBanks},
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,

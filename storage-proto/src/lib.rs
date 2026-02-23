@@ -2,8 +2,8 @@
 use {
     serde::{Deserialize, Serialize},
     solana_account_decoder::{
-        parse_token::{real_number_string_trimmed, UiTokenAmount},
         StringAmount,
+        parse_token::{UiTokenAmount, real_number_string_trimmed},
     },
     solana_message::v0::LoadedAddresses,
     solana_serde::default_on_eof,

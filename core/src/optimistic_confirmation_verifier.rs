@@ -167,9 +167,11 @@ mod test {
         );
         assert_eq!(blockstore.get_latest_optimistic_slots(10).unwrap().len(), 1);
         assert_eq!(optimistic_confirmation_verifier.unchecked_slots.len(), 1);
-        assert!(optimistic_confirmation_verifier
-            .unchecked_slots
-            .contains(&(snapshot_start_slot + 1, bank_hash)));
+        assert!(
+            optimistic_confirmation_verifier
+                .unchecked_slots
+                .contains(&(snapshot_start_slot + 1, bank_hash))
+        );
     }
 
     #[test]
@@ -192,9 +194,11 @@ mod test {
             vec![(1, bad_bank_hash)]
         );
         assert_eq!(optimistic_confirmation_verifier.unchecked_slots.len(), 1);
-        assert!(optimistic_confirmation_verifier
-            .unchecked_slots
-            .contains(&(3, Hash::default())));
+        assert!(
+            optimistic_confirmation_verifier
+                .unchecked_slots
+                .contains(&(3, Hash::default()))
+        );
     }
 
     #[test]
@@ -226,9 +230,11 @@ mod test {
             .add_new_optimistic_confirmed_slots(optimistic_slots.clone(), &blockstore);
         assert_eq!(blockstore.get_latest_optimistic_slots(10).unwrap().len(), 3);
         let bank5 = vote_simulator.bank_forks.read().unwrap().get(5).unwrap();
-        assert!(optimistic_confirmation_verifier
-            .verify_for_unrooted_optimistic_slots(&bank5, &blockstore)
-            .is_empty());
+        assert!(
+            optimistic_confirmation_verifier
+                .verify_for_unrooted_optimistic_slots(&bank5, &blockstore)
+                .is_empty()
+        );
         // 5 is >= than all the unchecked slots, so should clear everything
         assert!(optimistic_confirmation_verifier.unchecked_slots.is_empty());
 
@@ -236,14 +242,18 @@ mod test {
         optimistic_confirmation_verifier
             .add_new_optimistic_confirmed_slots(optimistic_slots.clone(), &blockstore);
         let bank3 = vote_simulator.bank_forks.read().unwrap().get(3).unwrap();
-        assert!(optimistic_confirmation_verifier
-            .verify_for_unrooted_optimistic_slots(&bank3, &blockstore)
-            .is_empty());
+        assert!(
+            optimistic_confirmation_verifier
+                .verify_for_unrooted_optimistic_slots(&bank3, &blockstore)
+                .is_empty()
+        );
         // 3 is bigger than only slot 1, so slot 5 should be left over
         assert_eq!(optimistic_confirmation_verifier.unchecked_slots.len(), 1);
-        assert!(optimistic_confirmation_verifier
-            .unchecked_slots
-            .contains(&optimistic_slots[2]));
+        assert!(
+            optimistic_confirmation_verifier
+                .unchecked_slots
+                .contains(&optimistic_slots[2])
+        );
 
         // If root is on different fork, the slots < root on different fork should
         // be returned
@@ -257,9 +267,11 @@ mod test {
         );
         // 4 is bigger than only slots 1 and 3, so slot 5 should be left over
         assert_eq!(optimistic_confirmation_verifier.unchecked_slots.len(), 1);
-        assert!(optimistic_confirmation_verifier
-            .unchecked_slots
-            .contains(&optimistic_slots[2]));
+        assert!(
+            optimistic_confirmation_verifier
+                .unchecked_slots
+                .contains(&optimistic_slots[2])
+        );
 
         // Now set a root at slot 5, purging BankForks of slots < 5
         vote_simulator.set_root(5);
@@ -289,9 +301,11 @@ mod test {
         blockstore.set_roots([1, 3].iter()).unwrap();
         optimistic_confirmation_verifier
             .add_new_optimistic_confirmed_slots(optimistic_slots, &blockstore);
-        assert!(optimistic_confirmation_verifier
-            .verify_for_unrooted_optimistic_slots(&bank7, &blockstore)
-            .is_empty());
+        assert!(
+            optimistic_confirmation_verifier
+                .verify_for_unrooted_optimistic_slots(&bank7, &blockstore)
+                .is_empty()
+        );
         assert!(optimistic_confirmation_verifier.unchecked_slots.is_empty());
         assert_eq!(blockstore.get_latest_optimistic_slots(10).unwrap().len(), 3);
     }

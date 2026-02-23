@@ -74,7 +74,7 @@ impl TransactionRecorder {
                         record_transactions_timings,
                         result: Err(PohRecorderError::MaxHeightReached),
                         starting_transaction_index: None,
-                    }
+                    };
                 }
                 Err(RecordSenderError::Full) => {
                     return RecordTransactionsSummary {

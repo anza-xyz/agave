@@ -1159,7 +1159,7 @@ pub mod raise_account_cu_limit {
 }
 
 pub mod delay_commission_updates {
-    solana_pubkey::declare_id!("BRUoCu28xjjPkDcNm7iY9a8LqgftZko99ioXz84wivXh");
+    solana_pubkey::declare_id!("76dHtohc2s5dR3ahJyBxs7eJJVipFkaPdih9CLgTTb4B");
 }
 
 pub mod raise_cpi_nesting_limit_to_8 {
@@ -1175,7 +1175,7 @@ pub mod provide_instruction_data_offset_in_vm_r2 {
 }
 
 pub mod create_account_allow_prefund {
-    solana_pubkey::declare_id!("caapcFpbcsJTMQMEMcpyx1m27DcXVp4MH6faHM5h5Z5");
+    solana_pubkey::declare_id!("6sPDzwyARRExKH52LECxcGoqziH8G7SZofwuxi8Ja331");
 }
 
 pub mod static_instruction_limit {
@@ -1299,6 +1299,10 @@ pub mod block_revenue_sharing {
 
 pub mod vote_account_initialize_v2 {
     solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
+}
+
+pub mod validate_chained_block_id {
+    solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2315,6 +2319,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             vote_account_initialize_v2::id(),
             "SIMD-0464: Vote Account Initialize V2",
+        ),
+        (
+            validate_chained_block_id::id(),
+            "SIMD-0340: Validate chained block ID",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

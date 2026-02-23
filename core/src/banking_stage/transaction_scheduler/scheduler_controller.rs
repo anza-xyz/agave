@@ -10,6 +10,7 @@ use {
     },
     crate::{
         banking_stage::{
+            TOTAL_BUFFERED_PACKETS,
             consume_worker::ConsumeWorkerMetrics,
             consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
@@ -17,7 +18,6 @@ use {
                 receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
                 transaction_state_container::StateContainer,
             },
-            TOTAL_BUFFERED_PACKETS,
         },
         validator::SchedulerPacing,
     },
@@ -29,8 +29,8 @@ use {
     std::{
         num::{NonZeroU64, Saturating},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -226,16 +226,18 @@ where
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
-                    &mut self.container,
-                    scheduling_budget,
-                    bank.feature_set
-                        .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
-                    |txs, results| {
-                        Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
-                    },
-                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
-                )?);
+                let (scheduling_summary, schedule_time_us) = measure_us!(
+                    self.scheduler.schedule(
+                        &mut self.container,
+                        scheduling_budget,
+                        bank.feature_set
+                            .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
+                        |txs, results| {
+                            Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
+                        },
+                        |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
+                    )?
+                );
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -470,16 +472,16 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::{
+            TransactionViewReceiveAndBuffer,
             consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
             transaction_scheduler::prio_graph_scheduler::{
                 PrioGraphScheduler, PrioGraphSchedulerConfig,
             },
-            TransactionViewReceiveAndBuffer,
         },
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
-        crossbeam_channel::{unbounded, Receiver, Sender},
+        crossbeam_channel::{Receiver, Sender, unbounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
@@ -487,7 +489,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
-        solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
+        solana_perf::packet::{NUM_PACKETS, PacketBatch, to_packet_batches},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -637,18 +639,20 @@ mod tests {
             .unwrap_or_default()
         {}
         let now = Instant::now();
-        assert!(scheduler_controller
-            .process_transactions(
-                &decision,
-                Some(&CostPacer {
-                    block_limit: u64::MAX,
-                    shared_block_cost: SharedBlockCost::new(0),
-                    detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
-                    fill_time: Some(Duration::from_millis(300)),
-                }),
-                &now
-            )
-            .is_ok());
+        assert!(
+            scheduler_controller
+                .process_transactions(
+                    &decision,
+                    Some(&CostPacer {
+                        block_limit: u64::MAX,
+                        shared_block_cost: SharedBlockCost::new(0),
+                        detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
+                        fill_time: Some(Duration::from_millis(300)),
+                    }),
+                    &now
+                )
+                .is_ok()
+        );
     }
 
     #[test]

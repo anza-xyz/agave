@@ -3,14 +3,14 @@
 use {
     super::{SnapshotError, SnapshotFrom},
     crate::serde_snapshot::{
-        reconstruct_single_storage, remap_and_reconstruct_single_storage, SerdeObsoleteAccountsMap,
+        SerdeObsoleteAccountsMap, reconstruct_single_storage, remap_and_reconstruct_single_storage,
     },
     agave_fs::FileInfo,
-    crossbeam_channel::{select, unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, select, unbounded},
     log::*,
     rayon::{
-        iter::{IntoParallelIterator, ParallelIterator},
         ThreadPool, ThreadPoolBuilder,
+        iter::{IntoParallelIterator, ParallelIterator},
     },
     solana_accounts_db::{
         account_storage::AccountStorageMap,
@@ -23,8 +23,8 @@ use {
         path::PathBuf,
         str::FromStr as _,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
         time::Instant,
     },

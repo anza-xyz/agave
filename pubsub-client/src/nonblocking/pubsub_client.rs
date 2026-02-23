@@ -168,13 +168,13 @@
 
 use {
     futures_util::{
-        future::{ready, BoxFuture, FutureExt},
+        future::{BoxFuture, FutureExt, ready},
         sink::SinkExt,
         stream::{BoxStream, StreamExt},
     },
     log::*,
     serde::de::DeserializeOwned,
-    serde_json::{json, Map, Value},
+    serde_json::{Map, Value, json},
     solana_account_decoder_client_types::UiAccount,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -197,21 +197,20 @@ use {
         net::TcpStream,
         sync::{mpsc, oneshot},
         task::JoinHandle,
-        time::{sleep, Duration},
+        time::{Duration, sleep},
     },
     tokio_stream::wrappers::UnboundedReceiverStream,
     tokio_tungstenite::{
-        connect_async,
+        MaybeTlsStream, WebSocketStream, connect_async,
         tungstenite::{
-            protocol::frame::{coding::CloseCode, CloseFrame},
             Message,
+            protocol::frame::{CloseFrame, coding::CloseCode},
         },
-        MaybeTlsStream, WebSocketStream,
     },
     tungstenite::{
-        client::IntoClientRequest,
-        http::{header, StatusCode},
         Bytes,
+        client::IntoClientRequest,
+        http::{StatusCode, header},
     },
 };
 

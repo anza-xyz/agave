@@ -1,7 +1,7 @@
 use {
     crate::netlink::{
-        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes, GreTunnelInfo,
-        InterfaceInfo, MacAddress, NeighborEntry, RouteEntry,
+        GreTunnelInfo, InterfaceInfo, MacAddress, NeighborEntry, RouteEntry,
+        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes,
     },
     libc::{AF_INET, AF_INET6},
     std::{
@@ -489,13 +489,17 @@ mod tests {
     #[test]
     fn test_ipv6_match() {
         assert!(is_ipv6_match(
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789),
+            Ipv6Addr::new(
+                0x2001, 0xdb8, 0x1234, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789
+            ),
             Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0, 0, 0, 0),
             64
         ));
 
         assert!(!is_ipv6_match(
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1235, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789),
+            Ipv6Addr::new(
+                0x2001, 0xdb8, 0x1235, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789
+            ),
             Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0, 0, 0, 0),
             64
         ));
@@ -606,18 +610,22 @@ mod tests {
             pmtudisc: 0,
         });
         assert!(router.upsert_interface(modified_interface.clone()));
-        assert!(router
-            .interface_table
-            .iter()
-            .any(|i| i == &modified_interface));
+        assert!(
+            router
+                .interface_table
+                .iter()
+                .any(|i| i == &modified_interface)
+        );
         assert!(router.interface_table.iter().all(|i| i != &interface));
 
         // Delete interface and check that it was deleted
         assert!(router.remove_interface(test_if_index));
-        assert!(router
-            .interface_table
-            .iter()
-            .all(|i| i.if_index != test_if_index));
+        assert!(
+            router
+                .interface_table
+                .iter()
+                .all(|i| i.if_index != test_if_index)
+        );
         assert_eq!(router.interface_table.iter().len(), before_interface_len);
     }
 }

@@ -5,11 +5,11 @@ use {
         umem::{Frame, FrameOffset},
     },
     libc::{
-        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE,
-        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM,
+        AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, SYS_ioctl,
+        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset,
     },
     std::{
-        ffi::{c_char, CStr, CString},
+        ffi::{CStr, CString, c_char},
         fs,
         io::{self, ErrorKind},
         marker::PhantomData,

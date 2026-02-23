@@ -1,7 +1,7 @@
 use {
     super::Bank,
     rayon::prelude::*,
-    solana_account::{accounts_equal, AccountSharedData},
+    solana_account::{AccountSharedData, accounts_equal},
     solana_accounts_db::accounts_db::AccountsDb,
     solana_hash::Hash,
     solana_lattice_hash::lt_hash::LtHash,
@@ -393,8 +393,8 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::{
-            accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-            accounts_index::{AccountsIndexConfig, IndexLimit, ACCOUNTS_INDEX_CONFIG_FOR_TESTING},
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig, MarkObsoleteAccounts},
+            accounts_index::{ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig, IndexLimit},
         },
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{self, GenesisConfig},

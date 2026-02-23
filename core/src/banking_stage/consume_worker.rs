@@ -12,8 +12,8 @@ use {
     solana_time_utils::AtomicInterval,
     std::{
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -94,7 +94,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                     sleep_duration = backoff(idle_duration, &sleep_duration);
                 }
                 Err(TryRecvError::Disconnected) => {
-                    return Err(ConsumeWorkerError::Recv(TryRecvError::Disconnected))
+                    return Err(ConsumeWorkerError::Recv(TryRecvError::Disconnected));
                 }
             }
         }
@@ -181,18 +181,18 @@ pub(crate) mod external {
             committer::CommitTransactionDetails,
             scheduler_messages::MaxAge,
             transaction_scheduler::receive_and_buffer::{
-                translate_to_runtime_view, PacketHandlingError,
+                PacketHandlingError, translate_to_runtime_view,
             },
         },
         agave_scheduler_bindings::{
+            MAX_TRANSACTIONS_PER_MESSAGE, PackToWorkerMessage, SharablePubkeys,
+            TransactionResponseRegion, WorkerToPackMessage,
             pack_message_flags::{self, check_flags, execution_flags},
             processed_codes,
             worker_message_types::{
-                fee_payer_balance_flags, not_included_reasons, parsing_and_sanitization_flags,
-                resolve_flags, status_check_flags, CheckResponse, ExecutionResponse,
+                CheckResponse, ExecutionResponse, fee_payer_balance_flags, not_included_reasons,
+                parsing_and_sanitization_flags, resolve_flags, status_check_flags,
             },
-            PackToWorkerMessage, SharablePubkeys, TransactionResponseRegion, WorkerToPackMessage,
-            MAX_TRANSACTIONS_PER_MESSAGE,
         },
         agave_scheduling_utils::{
             error::transaction_error_to_not_included_reason,
@@ -204,7 +204,7 @@ pub(crate) mod external {
             transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
         },
         solana_account::ReadableAccount,
-        solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_clock::{MAX_PROCESSING_AGE, Slot},
         solana_cost_model::cost_model::CostModel,
         solana_message::v0::LoadedAddresses,
         solana_pubkey::Pubkey,
@@ -2155,16 +2155,16 @@ mod tests {
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
         crossbeam_channel::unbounded,
-        solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_clock::{MAX_PROCESSING_AGE, Slot},
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
-            v0::{self, LoadedAddresses},
             AddressLookupTableAccount, SimpleAddressLoader, VersionedMessage,
+            v0::{self, LoadedAddresses},
         },
         solana_poh::{
-            record_channels::{record_channels, RecordReceiver},
+            record_channels::{RecordReceiver, record_channels},
             transaction_recorder::TransactionRecorder,
         },
         solana_pubkey::Pubkey,
@@ -2183,7 +2183,7 @@ mod tests {
         solana_transaction_error::TransactionError,
         std::{
             collections::HashSet,
-            sync::{atomic::AtomicBool, RwLock},
+            sync::{RwLock, atomic::AtomicBool},
         },
         test_case::test_case,
     };

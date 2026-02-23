@@ -15,7 +15,7 @@ use {
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
                 scheduler_controller::{
-                    SchedulerConfig, SchedulerController, DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS,
+                    DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS, SchedulerConfig, SchedulerController,
                 },
                 scheduler_error::SchedulerError,
             },
@@ -23,8 +23,8 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    crossbeam_channel::{unbounded, Receiver, Sender},
-    futures::{stream::FuturesUnordered, StreamExt},
+    crossbeam_channel::{Receiver, Sender, unbounded},
+    futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
@@ -44,8 +44,8 @@ use {
         num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -931,13 +931,13 @@ mod tests {
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
             get_tmp_ledger_path_auto_delete,
         },
         solana_perf::packet::to_packet_batches,
         solana_poh::{
-            poh_recorder::{create_test_recorder, PohRecorderError},
+            poh_recorder::{PohRecorderError, create_test_recorder},
             record_channels::record_channels,
             transaction_recorder::RecordTransactionsSummary,
         },
@@ -947,7 +947,7 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::{sync::atomic::Ordering, thread::sleep, time::Instant},
@@ -1087,9 +1087,11 @@ mod tests {
             .collect();
         trace!("done");
         assert_eq!(entries.len(), genesis_config.ticks_per_slot as usize);
-        assert!(entries
-            .verify(&start_hash, &entry::thread_pool_for_tests())
-            .status());
+        assert!(
+            entries
+                .verify(&start_hash, &entry::thread_pool_for_tests())
+                .status()
+        );
         assert_eq!(entries[entries.len() - 1].hash, bank.last_blockhash());
     }
 
@@ -1207,9 +1209,11 @@ mod tests {
                 .map(|(_bank, (entry, _tick_height))| entry),
         );
 
-        assert!(entries
-            .verify(&blockhash, &entry::thread_pool_for_tests())
-            .status());
+        assert!(
+            entries
+                .verify(&blockhash, &entry::thread_pool_for_tests())
+                .status()
+        );
         for entry in entries {
             bank.process_entry_transactions(entry.transactions)
                 .iter()

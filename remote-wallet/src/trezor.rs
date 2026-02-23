@@ -9,9 +9,9 @@ use {
     solana_signature::Signature,
     std::{cell::RefCell, fmt, rc::Rc},
     trezor_client::{
+        Trezor,
         client::common::handle_interaction,
         protos::{SolanaGetPublicKey, SolanaPublicKey, SolanaSignTx, SolanaTxSignature},
-        Trezor,
     },
 };
 
@@ -151,7 +151,7 @@ mod tests {
     use {
         super::*,
         serial_test::serial,
-        trezor_client::{find_devices, Model},
+        trezor_client::{Model, find_devices},
     };
 
     fn init_emulator() -> Trezor {

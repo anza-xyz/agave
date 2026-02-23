@@ -12,7 +12,7 @@ use {
     },
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,
-    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransportError, TransportResult},
     std::{
         collections::VecDeque,

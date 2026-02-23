@@ -1,10 +1,10 @@
 use {
     crate::parse_instruction::{
-        check_num_accounts, ParsableProgram, ParseInstructionError, ParsedInstructionEnum,
+        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
     },
     bincode::deserialize,
     serde_json::json,
-    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_message::{AccountKeys, compiled_instruction::CompiledInstruction},
     solana_system_interface::instruction::SystemInstruction,
 };
 
@@ -276,11 +276,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -334,11 +336,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -377,11 +381,13 @@ mod test {
             }
         );
         // key mismatch check
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -417,11 +423,13 @@ mod test {
             }
         );
         // key mismatch check
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&[message.account_keys[0]], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&[message.account_keys[0]], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -466,11 +474,13 @@ mod test {
             }
         );
 
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         message.instructions[0].accounts.pop();
@@ -535,11 +545,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -574,11 +586,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -619,11 +633,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..2], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..2], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -652,11 +668,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..2], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..2], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -694,11 +712,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..4], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..4], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -734,11 +754,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[1],
-            &AccountKeys::new(&message.account_keys[0..3], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[1],
+                &AccountKeys::new(&message.account_keys[0..3], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
@@ -771,11 +793,13 @@ mod test {
                 }),
             }
         );
-        assert!(parse_system(
-            &message.instructions[0],
-            &AccountKeys::new(&message.account_keys[0..1], None)
-        )
-        .is_err());
+        assert!(
+            parse_system(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..1], None)
+            )
+            .is_err()
+        );
         let keys = message.account_keys.clone();
         message.instructions[0].accounts.pop();
         assert!(parse_system(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());

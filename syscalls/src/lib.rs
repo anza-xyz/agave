@@ -15,11 +15,11 @@ use solana_program_runtime::memory::translate_vm_slice;
 #[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_big_mod_exp::{big_mod_exp, BigModExpParams},
+    solana_big_mod_exp::{BigModExpParams, big_mod_exp},
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
+    solana_instruction::{AccountMeta, ProcessedSiblingInstruction, error::InstructionError},
     solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS},
     solana_program_runtime::{
@@ -29,7 +29,7 @@ use {
         memory::MemoryTranslationError,
         stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
-    solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
+    solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
@@ -37,7 +37,7 @@ use {
         vm::Config,
     },
     solana_secp256k1_recover::{
-        Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
+        SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH, Secp256k1RecoverError,
     },
     solana_sha256_hasher::Hasher,
     solana_svm_feature_set::SVMFeatureSet,
@@ -49,7 +49,7 @@ use {
         alloc::Layout,
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
-        str::{from_utf8, Utf8Error},
+        str::{Utf8Error, from_utf8},
     },
     thiserror::Error as ThisError,
 };
@@ -2685,7 +2685,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         core::slice,
-        solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_account::{AccountSharedData, create_account_shared_data_for_test},
         solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
@@ -2717,7 +2717,7 @@ mod tests {
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
         solana_sysvar_id::SysvarId,
-        solana_transaction_context::{instruction_accounts::InstructionAccount, IndexOfAccount},
+        solana_transaction_context::instruction_accounts::InstructionAccount,
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -4978,7 +4978,7 @@ mod tests {
     }
 
     #[test]
-    fn test_syscall_sol_get_processed_sibling_instruction() {
+    fn test_syscall_sol_get_processed_sibling_instruction_top_level() {
         let transaction_accounts = (0..9)
             .map(|_| {
                 (
@@ -4987,39 +4987,59 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        let instruction_trace = [1, 2, 3, 2, 2, 3, 4, 3];
-        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
-            while stack_height
-                <= invoke_context
-                    .transaction_context
-                    .get_instruction_stack_height()
-            {
-                invoke_context.transaction_context.pop().unwrap();
-            }
-            if stack_height
-                > invoke_context
-                    .transaction_context
-                    .get_instruction_stack_height()
-            {
-                let instruction_accounts = vec![InstructionAccount::new(
-                    index_in_trace.saturating_add(1) as IndexOfAccount,
-                    false,
-                    false,
-                )];
-                invoke_context
-                    .transaction_context
-                    .configure_top_level_instruction_for_tests(
-                        0,
-                        instruction_accounts,
-                        vec![index_in_trace as u8],
-                    )
-                    .unwrap();
-                invoke_context.transaction_context.push().unwrap();
-            }
+        with_mock_invoke_context!(invoke_context, transaction_context, 4, transaction_accounts);
+
+        /*
+        We are testing GetProcessedSiblingInstruction for top level instructions.
+
+        We are simulating this scenario:
+        Top level:   A | B  | C | D
+        CPI level I:   | B1 |   |
+
+        We are invoking the syscall from C.
+
+         */
+
+        // Prepare four top level instructions: A, B, C and D
+        let ixs = [b'A', b'B', b'C', b'D'];
+        for (idx, ix) in ixs.iter().enumerate() {
+            invoke_context
+                .transaction_context
+                .configure_top_level_instruction_for_tests(
+                    0,
+                    vec![InstructionAccount::new(idx as u16, false, false)],
+                    vec![*ix],
+                )
+                .unwrap();
         }
 
-        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
+        /*
+        The trace looks like this:
+        IX:    |A|B|C|D|B1|
+        INDEX: |0|1|2|3|4 |
+         */
+
+        // Execute A
+        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.pop().unwrap();
+
+        // Execute B
+        invoke_context.transaction_context.push().unwrap();
+        // B does a CPI into B1
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                1,
+                vec![InstructionAccount::new(4, false, false)],
+                vec![b'B', 1],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.pop().unwrap();
+        invoke_context.transaction_context.pop().unwrap();
+
+        // Start instruction C
+        invoke_context.transaction_context.push().unwrap();
 
         const VM_BASE_ADDRESS: u64 = 0x100000000;
         const META_OFFSET: usize = 0;
@@ -5041,6 +5061,7 @@ mod tests {
         processed_sibling_instruction.data_len = 1;
         processed_sibling_instruction.accounts_len = 1;
 
+        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
         invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
@@ -5080,17 +5101,18 @@ mod tests {
                 program_id,
                 transaction_context.get_key_of_account_at_index(0).unwrap(),
             );
-            assert_eq!(data, &[5]);
+            assert_eq!(data, b"B");
             assert_eq!(
                 accounts,
                 &[AccountMeta {
-                    pubkey: *transaction_context.get_key_of_account_at_index(6).unwrap(),
+                    pubkey: *transaction_context.get_key_of_account_at_index(1).unwrap(),
                     is_signer: false,
                     is_writable: false
                 }]
             );
         }
 
+        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
         invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
             &mut invoke_context,
@@ -5101,6 +5123,59 @@ mod tests {
             VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
             &mut memory_mapping,
         );
+
+        assert_eq!(result.unwrap(), 1);
+        {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
+            let transaction_context = &invoke_context.transaction_context;
+            assert_eq!(processed_sibling_instruction.data_len, 1);
+            assert_eq!(processed_sibling_instruction.accounts_len, 1);
+            assert_eq!(
+                program_id,
+                transaction_context.get_key_of_account_at_index(0).unwrap(),
+            );
+            assert_eq!(data, b"A");
+            assert_eq!(
+                accounts,
+                &[AccountMeta {
+                    pubkey: *transaction_context.get_key_of_account_at_index(0).unwrap(),
+                    is_signer: false,
+                    is_writable: false
+                }]
+            );
+        }
+
+        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            2,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+
         assert_eq!(result.unwrap(), 0);
 
         invoke_context.mock_set_remaining(syscall_base_cost);
@@ -5117,6 +5192,566 @@ mod tests {
             result,
             Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::CopyOverlapping
         );
+    }
+
+    #[test]
+    fn test_syscall_sol_get_processed_sibling_instruction_cpi() {
+        let transaction_accounts = (0..9)
+            .map(|_| {
+                (
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(0, 0, &bpf_loader::id()),
+                )
+            })
+            .collect::<Vec<_>>();
+        with_mock_invoke_context!(invoke_context, transaction_context, 3, transaction_accounts);
+
+        const VM_BASE_ADDRESS: u64 = 0x100000000;
+        const META_OFFSET: usize = 0;
+        const PROGRAM_ID_OFFSET: usize =
+            META_OFFSET + std::mem::size_of::<ProcessedSiblingInstruction>();
+        const DATA_OFFSET: usize = PROGRAM_ID_OFFSET + std::mem::size_of::<Pubkey>();
+        const ACCOUNTS_OFFSET: usize = DATA_OFFSET + 0x100;
+        const END_OFFSET: usize = ACCOUNTS_OFFSET + std::mem::size_of::<AccountInfo>() * 4;
+        let mut memory = [0u8; END_OFFSET];
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![MemoryRegion::new_writable(&mut memory, VM_BASE_ADDRESS)],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+        let processed_sibling_instruction =
+            unsafe { &mut *memory.as_mut_ptr().cast::<ProcessedSiblingInstruction>() };
+        processed_sibling_instruction.data_len = 2;
+        processed_sibling_instruction.accounts_len = 1;
+        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
+
+        /*
+        We are testing GetProcessedSiblingInstruction for CPIs
+        We are simulating this scenario:
+        Top level:   A | B | C
+
+        CPIs from B:
+        Level 1:         B
+                    /    |      \
+        Level 2:   B1    B3      B4
+                   |           /  |  \
+        Level 3:   B2         B5  B6 B8
+                              |
+        Level 4:              B7
+
+        CPIs from C:
+        Level 1: C
+                 | \
+        Level 2: C1 C2
+
+        We are invoking the syscall from B5, B6, B8, C, C1 and C2 for comprehensive testing.
+        */
+
+        let top_level = [b'A', b'B', b'C'];
+        // To be uncommented when we reoder the instruction trace
+        // for (idx, ix) in top_level.iter().enumerate() {
+        //     invoke_context
+        //         .transaction_context
+        //         .configure_top_level_instruction_for_tests(
+        //             0,
+        //             vec![InstructionAccount::new(idx as u16, false, false)],
+        //             vec![*ix],
+        //         )
+        //         .unwrap();
+        // }
+
+        /*
+        The trace looks like this:
+        IX:    |A|B|C|B1|B2|B3|B4|B5|B6|B7|B8|C1|C2|
+        Index: |0|1|2|3 |4 |5 |6 |7 |8 |9 |10|11|12|
+         */
+
+        // Execute Instr A
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(0, false, false)],
+                vec![*top_level.first().unwrap()],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        invoke_context.transaction_context.pop().unwrap();
+        // Execute Instr B
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, false)],
+                vec![*top_level.get(1).unwrap()],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        // CPI into B1
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                1,
+                vec![InstructionAccount::new(1, false, false)],
+                vec![b'B', 1],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        // CPI into B2
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                1,
+                vec![InstructionAccount::new(2, false, false)],
+                vec![b'B', 2],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        // Return from B2 and B1
+        invoke_context.transaction_context.pop().unwrap();
+        invoke_context.transaction_context.pop().unwrap();
+        // CPI into B3
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                1,
+                vec![InstructionAccount::new(3, false, false)],
+                vec![b'B', 3],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        // Return from B3
+        invoke_context.transaction_context.pop().unwrap();
+        // CPI into B4
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                1,
+                vec![InstructionAccount::new(4, false, false)],
+                vec![b'B', 4],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        // CPI into B5
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                1,
+                vec![InstructionAccount::new(5, false, false)],
+                vec![b'B', 5],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+
+        // Invoking the syscall from B5 should return false
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            0,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+        assert_eq!(result.unwrap(), 0);
+
+        // Return from B5
+        invoke_context.transaction_context.pop().unwrap();
+        // CPI into B6
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                2,
+                vec![InstructionAccount::new(6, false, false)],
+                vec![b'B', 6],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        // CPI into B7
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                1,
+                vec![InstructionAccount::new(6, false, false)],
+                vec![b'B', 7],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+        // Return from B7
+        invoke_context.transaction_context.pop().unwrap();
+
+        // Invoking the syscall from B6 with index zero should return ix B5
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            0,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+
+        assert_eq!(result.unwrap(), 1);
+        {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
+            let transaction_context = &invoke_context.transaction_context;
+            assert_eq!(processed_sibling_instruction.data_len, 2);
+            assert_eq!(processed_sibling_instruction.accounts_len, 1);
+            assert_eq!(
+                program_id,
+                transaction_context.get_key_of_account_at_index(1).unwrap(),
+            );
+            assert_eq!(data, &[b'B', 5]);
+            assert_eq!(
+                accounts,
+                &[AccountMeta {
+                    pubkey: *transaction_context.get_key_of_account_at_index(5).unwrap(),
+                    is_signer: false,
+                    is_writable: false
+                }]
+            );
+        }
+
+        // Invoking the syscall from B6 with index one should return false
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            1,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+        assert_eq!(result.unwrap(), 0);
+
+        // Return from B6
+        invoke_context.transaction_context.pop().unwrap();
+
+        // CPI into B8
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                3,
+                vec![InstructionAccount::new(8, false, false)],
+                vec![b'B', 8],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+
+        // Invoking the syscall from B8 with index zero should return ix B6
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            0,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+
+        assert_eq!(result.unwrap(), 1);
+        {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
+            let transaction_context = &invoke_context.transaction_context;
+            assert_eq!(processed_sibling_instruction.data_len, 2);
+            assert_eq!(processed_sibling_instruction.accounts_len, 1);
+            assert_eq!(
+                program_id,
+                transaction_context.get_key_of_account_at_index(2).unwrap(),
+            );
+            assert_eq!(data, &[b'B', 6]);
+            assert_eq!(
+                accounts,
+                &[AccountMeta {
+                    pubkey: *transaction_context.get_key_of_account_at_index(6).unwrap(),
+                    is_signer: false,
+                    is_writable: false
+                }]
+            );
+        }
+
+        // Invoking the syscall from B6 with index one should return ix B5
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            1,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+
+        assert_eq!(result.unwrap(), 1);
+        {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
+            let transaction_context = &invoke_context.transaction_context;
+            assert_eq!(processed_sibling_instruction.data_len, 2);
+            assert_eq!(processed_sibling_instruction.accounts_len, 1);
+            assert_eq!(
+                program_id,
+                transaction_context.get_key_of_account_at_index(1).unwrap(),
+            );
+            assert_eq!(data, &[b'B', 5]);
+            assert_eq!(
+                accounts,
+                &[AccountMeta {
+                    pubkey: *transaction_context.get_key_of_account_at_index(5).unwrap(),
+                    is_signer: false,
+                    is_writable: false
+                }]
+            );
+        }
+
+        // Invoking the syscall from B8 with index two should return false
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            2,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+        assert_eq!(result.unwrap(), 0);
+
+        // Return from B8
+        invoke_context.transaction_context.pop().unwrap();
+        // Return from B4
+        invoke_context.transaction_context.pop().unwrap();
+        // Return from B
+        invoke_context.transaction_context.pop().unwrap();
+
+        // Execute C
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(2, false, false)],
+                vec![*top_level.get(2).unwrap()],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+
+        // Invoking the syscall from B with index zero should return ix C
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        processed_sibling_instruction.data_len = 1;
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            0,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+
+        assert_eq!(result.unwrap(), 1);
+        {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
+            let transaction_context = &invoke_context.transaction_context;
+            assert_eq!(processed_sibling_instruction.data_len, 1);
+            assert_eq!(processed_sibling_instruction.accounts_len, 1);
+            assert_eq!(
+                program_id,
+                transaction_context.get_key_of_account_at_index(0).unwrap(),
+            );
+            assert_eq!(data, b"B");
+            assert_eq!(
+                accounts,
+                &[AccountMeta {
+                    pubkey: *transaction_context.get_key_of_account_at_index(1).unwrap(),
+                    is_signer: false,
+                    is_writable: false
+                }]
+            );
+        }
+
+        // CPI into C1
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                2,
+                vec![InstructionAccount::new(7, false, false)],
+                vec![b'C', 1],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+
+        // Invoking the CPI from C1 with index zero should return false.
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            0,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+        assert_eq!(result.unwrap(), 0);
+
+        // Return from C1
+        invoke_context.transaction_context.pop().unwrap();
+        // CPI into C2
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                2,
+                vec![InstructionAccount::new(7, false, false)],
+                vec![b'C', 2],
+            )
+            .unwrap();
+        invoke_context.transaction_context.push().unwrap();
+
+        // Invoking the syscall from C2 with index zero should return ix C1
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        processed_sibling_instruction.data_len = 2;
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            0,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+
+        assert_eq!(result.unwrap(), 1);
+        {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
+            let transaction_context = &invoke_context.transaction_context;
+            assert_eq!(processed_sibling_instruction.data_len, 2);
+            assert_eq!(processed_sibling_instruction.accounts_len, 1);
+            assert_eq!(
+                program_id,
+                transaction_context.get_key_of_account_at_index(2).unwrap(),
+            );
+            assert_eq!(data, &[b'C', 1]);
+            assert_eq!(
+                accounts,
+                &[AccountMeta {
+                    pubkey: *transaction_context.get_key_of_account_at_index(7).unwrap(),
+                    is_signer: false,
+                    is_writable: false
+                }]
+            );
+        }
+
+        // Invoking the CPI from C2 with index one should return false.
+        invoke_context.mock_set_remaining(syscall_base_cost);
+        let result = SyscallGetProcessedSiblingInstruction::rust(
+            &mut invoke_context,
+            1,
+            VM_BASE_ADDRESS.saturating_add(META_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+            &mut memory_mapping,
+        );
+        assert_eq!(result.unwrap(), 0);
     }
 
     #[test]

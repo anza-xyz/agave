@@ -2,21 +2,21 @@
 //! Core types for solana-transaction-status
 use {
     crate::option_serializer::OptionSerializer,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     core::fmt,
     serde::{
+        Deserialize, Deserializer, Serialize,
         de::{self, Deserialize as DeserializeTrait, Error as DeserializeError},
         ser::{Serialize as SerializeTrait, SerializeTupleVariant},
-        Deserialize, Deserializer, Serialize,
     },
-    serde_json::{from_value, Value},
+    serde_json::{Value, from_value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
     solana_instruction::error::InstructionError,
     solana_message::{
+        MessageHeader,
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, MessageAddressTableLookup},
-        MessageHeader,
     },
     solana_reward_info::RewardType,
     solana_signature::Signature,

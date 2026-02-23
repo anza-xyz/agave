@@ -5,7 +5,7 @@ use {
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_vote_program::vote_state::{vote_state_1_14_11::VoteState1_14_11, BlockTimestamp, Vote},
+    solana_vote_program::vote_state::{BlockTimestamp, Vote, vote_state_1_14_11::VoteState1_14_11},
 };
 
 #[cfg_attr(

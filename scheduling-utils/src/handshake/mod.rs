@@ -4,4 +4,4 @@ mod shared;
 #[cfg(test)]
 mod tests;
 
-pub use shared::{logon_flags, ClientLogon, MAX_WORKERS};
+pub use shared::{ClientLogon, MAX_WORKERS, logon_flags};

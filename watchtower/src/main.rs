@@ -2,7 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    clap::{crate_description, crate_name, value_t, value_t_or_exit, values_t, App, Arg},
+    clap::{App, Arg, crate_description, crate_name, value_t, value_t_or_exit, values_t},
     log::*,
     solana_clap_utils::{
         hidden_unless_forced,
@@ -12,7 +12,7 @@ use {
     solana_cli_output::display::format_labeled_address,
     solana_hash::Hash,
     solana_metrics::{datapoint_error, datapoint_info},
-    solana_native_token::{sol_str_to_lamports, Sol},
+    solana_native_token::{Sol, sol_str_to_lamports},
     solana_notifier::{NotificationType, Notifier},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,

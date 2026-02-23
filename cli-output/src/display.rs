@@ -1,7 +1,7 @@
 use {
     crate::cli_output::CliSignatureVerificationStatus,
     agave_reserved_account_keys::ReservedAccountKeys,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
     console::style,
     indicatif::{ProgressBar, ProgressStyle},
@@ -731,8 +731,8 @@ mod test {
         super::*,
         solana_keypair::Keypair,
         solana_message::{
-            v0::{self, LoadedAddresses},
             Message as LegacyMessage, MessageHeader, VersionedMessage,
+            v0::{self, LoadedAddresses},
         },
         solana_pubkey::Pubkey,
         solana_signer::Signer,

@@ -2,7 +2,7 @@ use {
     regex::Regex,
     std::{
         fs::File,
-        io::{prelude::*, BufReader, BufWriter},
+        io::{BufReader, BufWriter, prelude::*},
         path::PathBuf,
         str,
     },

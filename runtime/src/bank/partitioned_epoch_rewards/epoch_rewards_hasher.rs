@@ -28,9 +28,9 @@ mod tests {
     use {
         super::*,
         crate::bank::{
+            Bank,
             partitioned_epoch_rewards::{PartitionedStakeReward, REWARD_CALCULATION_NUM_BLOCKS},
             tests::create_genesis_config,
-            Bank,
         },
         solana_epoch_schedule::EpochSchedule,
         solana_native_token::LAMPORTS_PER_SOL,

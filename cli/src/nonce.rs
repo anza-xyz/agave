@@ -2,23 +2,23 @@ use {
     crate::{
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
         cli::{
-            log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
-            ProcessResult,
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            log_instruction_custom_error,
         },
         compute_budget::{
-            simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
+            ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
         },
         memo::WithMemo,
-        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
+        spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
     clap::{App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
     solana_clap_utils::{
-        compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
+        compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
         input_parsers::*,
         input_validators::*,
         keypair::{CliSigners, DefaultSigner, SignerIndex},
-        memo::{memo_arg, MEMO_ARG},
+        memo::{MEMO_ARG, memo_arg},
         nonce::*,
     },
     solana_cli_output::CliNonceAccount,
@@ -746,8 +746,8 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
-        solana_account::{state_traits::StateMut, Account},
-        solana_keypair::{read_keypair_file, write_keypair, Keypair},
+        solana_account::{Account, state_traits::StateMut},
+        solana_keypair::{Keypair, read_keypair_file, write_keypair},
         solana_nonce::{
             self as nonce,
             state::{DurableNonce, State},

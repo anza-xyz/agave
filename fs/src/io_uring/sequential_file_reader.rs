@@ -2,12 +2,12 @@
 
 use {
     super::{
-        memory::{IoBufferChunk, PageAlignedMemory},
         IO_PRIO_BE_HIGHEST,
+        memory::{IoBufferChunk, PageAlignedMemory},
     },
-    crate::{buffered_reader::FileBufRead, io_uring::sqpoll, FileSize, IoSize},
-    agave_io_uring::{Completion, Ring, RingOp},
-    io_uring::{opcode, squeue, types, IoUring},
+    crate::{FileSize, IoSize, buffered_reader::FileBufRead, io_uring::sqpoll},
+    agave_io_uring::{Completion, Ring, RingAccess as _, RingOp},
+    io_uring::{IoUring, opcode, squeue, types},
     std::{
         collections::VecDeque,
         fs::{File, OpenOptions},
@@ -825,7 +825,7 @@ impl RingOp<BuffersState> for ReadOp {
             // Safety:
             // The op points to a buffer which is guaranteed to be valid for the
             // lifetime of the operation
-            completion.push(op);
+            completion.push(op)?;
         } else {
             buffers[*reader_buf_index as usize] = ReadBufState::Full {
                 buf,

@@ -1,11 +1,11 @@
 use {
     crate::{
         bootstrap::RpcBootstrapConfig,
-        cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
+        cli::{DefaultArgs, hash_validator, port_range_validator, port_validator},
         commands::{FromClapArgMatches, Result},
     },
-    agave_snapshots::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
-    clap::{values_t, App, Arg, ArgMatches},
+    agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
+    clap::{App, Arg, ArgMatches, values_t},
     solana_accounts_db::utils::create_and_canonicalize_directory,
     solana_clap_utils::{
         hidden_unless_forced,
@@ -1286,7 +1286,7 @@ mod tests {
         std::{
             fs,
             net::{IpAddr, Ipv4Addr},
-            path::{absolute, PathBuf},
+            path::{PathBuf, absolute},
         },
     };
 

@@ -63,7 +63,7 @@ impl From<AddressLookupTable<'_>> for UiLookupTable {
 mod test {
     use {
         super::*,
-        solana_address_lookup_table_interface::state::{LookupTableMeta, LOOKUP_TABLE_META_SIZE},
+        solana_address_lookup_table_interface::state::{LOOKUP_TABLE_META_SIZE, LookupTableMeta},
         solana_pubkey::Pubkey,
         std::borrow::Cow,
     };

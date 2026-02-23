@@ -2,12 +2,12 @@
 
 use {
     super::Bank,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     log::*,
     serde::{
+        Deserialize, Serialize,
         de::{self, Deserializer},
         ser::{SerializeSeq, Serializer},
-        Deserialize, Serialize,
     },
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::Slot,

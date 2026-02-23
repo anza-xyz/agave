@@ -4,7 +4,7 @@ use {
             AddressLookupTableCliCommand, DEACTIVATE_LOOKUP_TABLE_WARNING,
             FREEZE_LOOKUP_TABLE_WARNING,
         },
-        cli::{process_command, CliCommand, CliConfig},
+        cli::{CliCommand, CliConfig, process_command},
     },
     solana_cli_output::{CliAddressLookupTable, CliAddressLookupTableCreated, OutputFormat},
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,

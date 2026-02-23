@@ -5,7 +5,7 @@ mod test_vectors;
 use {
     agave_bls12_381::*,
     bytemuck::pod_read_unaligned,
-    criterion::{criterion_group, criterion_main, BenchmarkId, Criterion},
+    criterion::{BenchmarkId, Criterion, criterion_group, criterion_main},
     test_vectors::*,
 };
 

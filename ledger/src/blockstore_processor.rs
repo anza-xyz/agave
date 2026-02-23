@@ -8,19 +8,20 @@ use {
         transaction_balances::compile_collected_balances,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
+    ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
     agave_votor_messages::migration::MigrationStatus,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::Sender,
     itertools::Itertools,
     log::*,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     scopeguard::defer,
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
-    solana_clock::{Slot, MAX_PROCESSING_AGE},
+    solana_clock::{MAX_PROCESSING_AGE, Slot},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
-    solana_entry::entry::{self, create_ticks, Entry, EntrySlice, EntryType},
+    solana_entry::entry::{self, Entry, EntrySlice, EntryType, create_ticks},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -49,11 +50,11 @@ use {
         transaction_processing_result::ProcessedTransaction,
         transaction_processor::ExecutionRecordingConfig,
     },
-    solana_svm_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
+    solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_transaction::{
-        sanitized::SanitizedTransaction, versioned::VersionedTransaction,
-        TransactionVerificationMode,
+        TransactionVerificationMode, sanitized::SanitizedTransaction,
+        versioned::VersionedTransaction,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
@@ -66,12 +67,11 @@ use {
         ops::Index,
         path::PathBuf,
         result,
-        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
+        sync::{Arc, Mutex, RwLock, atomic::AtomicBool},
         time::{Duration, Instant},
         vec::Drain,
     },
     thiserror::Error,
-    ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
@@ -101,6 +101,18 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Result of checking a child slot's chained block ID against its parent.
+pub enum ChainedBlockIdCheck {
+    /// Feature not active; no validation performed.
+    Inactive,
+    /// Chained block ID matches (or parent has no block ID to compare).
+    Pass,
+    /// Definitive mismatch between child's chained merkle root and parent's block ID.
+    Mismatch,
+    /// Data shred 0 not received yet; cannot determine chained block ID.
+    Unavailable,
 }
 
 // Includes transaction signature for unit-testing
@@ -811,6 +823,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("user transactions found in vote only mode bank at slot {0}")]
     UserTransactionsInVoteOnlyBank(Slot),
+
+    #[error("invalid parent -> child chained merkle root at slot {0} parent {1}")]
+    ChainedBlockIdFailure(Slot, Slot),
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -1128,6 +1143,9 @@ fn confirm_full_slot(
         Err(BlockstoreProcessorError::InvalidBlock(
             BlockError::Incomplete,
         ))
+    } else if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
+        timing.accumulate(&execute_time);
+        result.map_err(BlockstoreProcessorError::InvalidTransaction)
     } else {
         Ok(())
     }
@@ -1716,10 +1734,10 @@ fn process_bank_0(
         &mut ExecuteTimings::default(),
         migration_status,
     )
-    .map_err(|_| BlockstoreProcessorError::FailedToReplayBank0)?;
-    if let Some((result, _timings)) = bank0.wait_for_completed_scheduler() {
-        result.unwrap();
-    }
+    .map_err(|err| match err {
+        err @ BlockstoreProcessorError::InvalidTransaction(_) => panic!("{err}"),
+        _ => BlockstoreProcessorError::FailedToReplayBank0,
+    })?;
     bank0.freeze();
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
@@ -2086,6 +2104,53 @@ fn supermajority_root_from_vote_accounts(
     supermajority_root(&roots_stakes, total_epoch_stake)
 }
 
+/// Validates the chained block ID for a child slot against its parent.
+///
+/// Returns:
+/// - `Inactive`: feature not active, no validation performed
+/// - `Pass`: chained block ID matches parent's block ID (or parent has no
+///   block ID yet), safe to proceed with replay
+/// - `Mismatch`: definitive mismatch between child's chained merkle root
+///   and parent's block ID
+/// - `Unavailable`: data shred 0 not received yet, cannot validate
+pub fn check_chained_block_id(blockstore: &Blockstore, bank: &Bank) -> ChainedBlockIdCheck {
+    if !bank
+        .feature_set
+        .is_active(&agave_feature_set::validate_chained_block_id::id())
+    {
+        return ChainedBlockIdCheck::Inactive;
+    }
+
+    let slot = bank.slot();
+    let parent_slot = bank.parent_slot();
+
+    let Ok(expected_parent_block_id) = blockstore.get_parent_chained_block_id(slot) else {
+        return ChainedBlockIdCheck::Unavailable;
+    };
+
+    match blockstore.get_last_shred_merkle_root(parent_slot) {
+        Ok(parent_block_id) => {
+            if expected_parent_block_id != parent_block_id {
+                warn!(
+                    "Chained merkle root mismatch for slot {slot} (parent {parent_slot}): child \
+                     chains to {expected_parent_block_id}, but parent block ID is \
+                     {parent_block_id}"
+                );
+                ChainedBlockIdCheck::Mismatch
+            } else {
+                ChainedBlockIdCheck::Pass
+            }
+        }
+        Err(e) => {
+            warn!(
+                "{parent_slot} is missing from our blockstore, likely the snapshot slot. Skipping \
+                 chained block id verification: {e:?}"
+            );
+            ChainedBlockIdCheck::Pass
+        }
+    }
+}
+
 // Processes and replays the contents of a single slot, returns Error
 // if failed to play the slot
 #[allow(clippy::too_many_arguments)]
@@ -2102,6 +2167,31 @@ pub fn process_single_slot(
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
+    match check_chained_block_id(blockstore, bank) {
+        ChainedBlockIdCheck::Inactive | ChainedBlockIdCheck::Pass => (),
+        ChainedBlockIdCheck::Unavailable => {
+            // no shreds to replay
+            return Ok(());
+        }
+        ChainedBlockIdCheck::Mismatch => {
+            // Mismatch, mark dead
+            if blockstore.is_primary_access() {
+                blockstore
+                    .set_dead_slot(slot)
+                    .expect("Failed to mark slot as dead in blockstore");
+            } else {
+                info!(
+                    "Failed slot {slot} won't be marked dead due to being read-only blockstore \
+                     access"
+                );
+            }
+            return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
+                slot,
+                bank.parent_slot(),
+            ));
+        }
+    }
+
     // Mark corrupt slots as dead so validators don't replay this slot and
     // see AlreadyProcessed errors later in ReplayStage
     confirm_full_slot(
@@ -2116,13 +2206,6 @@ pub fn process_single_slot(
         timing,
         migration_status,
     )
-    .and_then(|()| {
-        if let Some((result, completed_timings)) = bank.wait_for_completed_scheduler() {
-            timing.accumulate(&completed_timings);
-            result?
-        }
-        Ok(())
-    })
     .map_err(|err| {
         warn!("slot {slot} failed to verify: {err}");
         if blockstore.is_primary_access() {
@@ -2136,10 +2219,6 @@ pub fn process_single_slot(
         }
         err
     })?;
-
-    if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
-        result?
-    }
 
     let block_id = blockstore
         .check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
@@ -2281,17 +2360,17 @@ pub mod tests {
         crate::{
             blockstore_options::{AccessType, BlockstoreOptions},
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
         },
         assert_matches::assert_matches,
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         solana_account::{AccountSharedData, WritableAccount},
         solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
-        solana_instruction::{error::InstructionError, Instruction},
+        solana_instruction::{Instruction, error::InstructionError},
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::declare_process_instruction,
@@ -2299,7 +2378,7 @@ pub mod tests {
         solana_runtime::{
             bank::bank_hash_details::SlotDetails,
             genesis_utils::{
-                self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
+                self, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
             installed_scheduler_pool::{
                 MockInstalledScheduler, MockUninstalledScheduler, SchedulerAborted,
@@ -2315,7 +2394,7 @@ pub mod tests {
         solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
-            vote_state::{TowerSync, VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
         },
         std::{collections::BTreeSet, slice, sync::RwLock},
         test_case::{test_case, test_matrix},
@@ -2695,12 +2774,14 @@ pub mod tests {
         // One fork, other one is ignored b/c not a descendant of the root
         assert_eq!(frozen_bank_slots(&bank_forks), vec![4]);
 
-        assert!(&bank_forks[4]
-            .parents()
-            .iter()
-            .map(|bank| bank.slot())
-            .next()
-            .is_none());
+        assert!(
+            &bank_forks[4]
+                .parents()
+                .iter()
+                .map(|bank| bank.slot())
+                .next()
+                .is_none()
+        );
 
         // Ensure bank_forks holds the right banks
         verify_fork_infos(&bank_forks);
@@ -2988,12 +3069,14 @@ pub mod tests {
         assert_eq!(frozen_bank_slots(&bank_forks), vec![last_slot + 1]);
 
         // The latest root should have purged all its parents
-        assert!(&bank_forks[last_slot + 1]
-            .parents()
-            .iter()
-            .map(|bank| bank.slot())
-            .next()
-            .is_none());
+        assert!(
+            &bank_forks[last_slot + 1]
+                .parents()
+                .iter()
+                .map(|bank| bank.slot())
+                .next()
+                .is_none()
+        );
     }
 
     #[test]
@@ -5323,5 +5406,85 @@ pub mod tests {
         );
         // Adding another None will noop (even though the block is already full)
         assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
+    }
+
+    #[test]
+    fn test_check_chained_block_id() {
+        use crate::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder};
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path())
+                .expect("Expected to be able to open database ledger"),
+        );
+
+        // Helper to create and insert data shreds for a slot with a specific
+        // chained merkle root.
+        let insert_shreds_with_chained_merkle_root =
+            |slot: Slot, parent: Slot, chained_merkle_root: Hash| {
+                let entries = create_ticks(8, 1, Hash::new_unique());
+                let shreds: Vec<Shred> = Shredder::new(slot, parent, 0, 0)
+                    .unwrap()
+                    .make_merkle_shreds_from_entries(
+                        &Keypair::new(),
+                        &entries,
+                        true,
+                        chained_merkle_root,
+                        0,
+                        0,
+                        &ReedSolomonCache::default(),
+                        &mut ProcessShredsStats::default(),
+                    )
+                    .filter(Shred::is_data)
+                    .collect();
+                blockstore.insert_shreds(shreds, None, true).unwrap();
+            };
+
+        // Create a genesis bank (slot 0) with all features active.
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        // Insert parent shreds at slot 0 so get_block_merkle_root returns the
+        // parent's block ID.
+        insert_shreds_with_chained_merkle_root(0, 0, Hash::new_unique());
+        let parent_block_id = blockstore
+            .get_last_shred_merkle_root(0)
+            .expect("parent should have a merkle root");
+
+        // Case 1: No shreds for child slot — should return Unavailable
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 10);
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank),
+            ChainedBlockIdCheck::Unavailable
+        ));
+
+        // Case 2: Chained merkle root matches parent block ID — should return
+        // Pass
+        insert_shreds_with_chained_merkle_root(11, 0, parent_block_id);
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 11);
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank),
+            ChainedBlockIdCheck::Pass
+        ));
+
+        // Case 3: Chained merkle root does NOT match parent block ID — should
+        // return Mismatch
+        insert_shreds_with_chained_merkle_root(12, 0, Hash::new_unique());
+        let child_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), 12);
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank),
+            ChainedBlockIdCheck::Mismatch
+        ));
+
+        // Case 4: Parent has no shreds (get_block_merkle_root returns Err) —
+        // should return Pass regardless of chained merkle root.
+        let no_shreds_parent_bank =
+            Arc::new(Bank::new_from_parent(parent_bank, &Pubkey::default(), 20));
+        insert_shreds_with_chained_merkle_root(21, 20, Hash::new_unique());
+        let child_bank = Bank::new_from_parent(no_shreds_parent_bank, &Pubkey::default(), 21);
+        assert!(matches!(
+            check_chained_block_id(&blockstore, &child_bank),
+            ChainedBlockIdCheck::Pass
+        ));
     }
 }

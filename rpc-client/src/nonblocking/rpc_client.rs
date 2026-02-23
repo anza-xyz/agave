@@ -12,24 +12,24 @@ use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
-        mock_sender::{mock_encoded_account, MockSender, MocksMap},
+        mock_sender::{MockSender, MocksMap, mock_encoded_account},
         rpc_client::{
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
         },
         rpc_sender::*,
     },
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     bincode::serialize,
     futures::join,
     log::*,
-    serde_json::{json, Value},
+    serde_json::{Value, json},
     solana_account::Account,
     solana_account_decoder_client_types::{
-        token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
         UiAccount, UiAccountData, UiAccountEncoding,
+        token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
     },
-    solana_clock::{Epoch, Slot, UnixTimestamp, DEFAULT_MS_PER_SLOT},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch, Slot, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
@@ -4805,7 +4805,7 @@ where
             return Err(ClientErrorKind::Custom(format!(
                 "unsupported encoding: {encoding}. Supported encodings: base58, base64"
             ))
-            .into())
+            .into());
         }
     };
     Ok(encoded)

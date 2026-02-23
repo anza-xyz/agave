@@ -9,15 +9,15 @@ use {
         account_storage::ShrinkInProgress,
         account_storage_entry::AccountStorageEntry,
         accounts_db::{
-            stats::{ShrinkAncientStats, ShrinkStatsSub},
             AccountFromStorage, AccountsDb, AliveAccounts, GetUniqueAccountsResult, ShrinkCollect,
             ShrinkCollectAliveSeparatedByRefs, UpdateIndexThreadSelection,
+            stats::{ShrinkAncientStats, ShrinkStatsSub},
         },
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align,
     },
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
     solana_measure::measure_us,
@@ -25,7 +25,7 @@ use {
         cmp,
         collections::{HashMap, VecDeque},
         num::{NonZeroU64, Saturating},
-        sync::{atomic::Ordering, Arc, Mutex},
+        sync::{Arc, Mutex, atomic::Ordering},
     },
 };
 
@@ -1114,13 +1114,13 @@ mod tests {
         crate::{
             account_info::{AccountInfo, StorageLocation},
             accounts_db::{
-                tests::{
-                    append_single_account_with_default_hash, compare_all_accounts,
-                    create_db_with_storages_and_index, create_storages_and_update_index,
-                    get_account_from_account_from_storage, get_all_accounts,
-                    remove_account_for_tests, CAN_RANDOMLY_SHRINK_FALSE,
-                },
                 ShrinkCollectRefs,
+                tests::{
+                    CAN_RANDOMLY_SHRINK_FALSE, append_single_account_with_default_hash,
+                    compare_all_accounts, create_db_with_storages_and_index,
+                    create_storages_and_update_index, get_account_from_account_from_storage,
+                    get_all_accounts, remove_account_for_tests,
+                },
             },
             accounts_file::StorageAccess,
             accounts_index::{
@@ -1799,13 +1799,15 @@ mod tests {
                                             alive,
                                             Some(&db.accounts_index),
                                         );
-                                        assert!(db.accounts_index.purge_exact(
-                                            &pk,
-                                            [storage.slot()]
-                                                .into_iter()
-                                                .collect::<std::collections::HashSet<Slot>>(),
-                                            &mut ReclaimsSlotList::new()
-                                        ));
+                                        assert!(
+                                            db.accounts_index.purge_exact(
+                                                &pk,
+                                                [storage.slot()]
+                                                    .into_iter()
+                                                    .collect::<std::collections::HashSet<Slot>>(),
+                                                &mut ReclaimsSlotList::new()
+                                            )
+                                        );
                                     });
                                 }
                                 let original_results = storages
@@ -1849,10 +1851,12 @@ mod tests {
                                 );
 
                                 if add_dead_account {
-                                    assert!(!accounts_to_combine
-                                        .accounts_to_combine
-                                        .iter()
-                                        .any(|a| a.pubkeys_to_unref.is_empty()));
+                                    assert!(
+                                        !accounts_to_combine
+                                            .accounts_to_combine
+                                            .iter()
+                                            .any(|a| a.pubkeys_to_unref.is_empty())
+                                    );
                                 }
                                 let expected_target_slots_sorted = if !two_refs
                                     || many_ref_slots == IncludeManyRefSlots::Include
@@ -1877,41 +1881,51 @@ mod tests {
                                 );
                                 assert!(accounts_to_combine.accounts_keep_slots.is_empty());
                                 assert!(accounts_to_combine.accounts_to_combine.iter().all(
-                                    |shrink_collect| shrink_collect
-                                        .alive_accounts
-                                        .many_refs_old_alive
-                                        .accounts
-                                        .is_empty()
+                                    |shrink_collect| {
+                                        shrink_collect
+                                            .alive_accounts
+                                            .many_refs_old_alive
+                                            .accounts
+                                            .is_empty()
+                                    }
                                 ));
                                 if two_refs {
                                     assert!(accounts_to_combine.accounts_to_combine.iter().all(
-                                        |shrink_collect| shrink_collect
-                                            .alive_accounts
-                                            .one_ref
-                                            .accounts
-                                            .is_empty()
+                                        |shrink_collect| {
+                                            shrink_collect
+                                                .alive_accounts
+                                                .one_ref
+                                                .accounts
+                                                .is_empty()
+                                        }
                                     ));
                                     assert!(accounts_to_combine.accounts_to_combine.iter().all(
-                                        |shrink_collect| !shrink_collect
-                                            .alive_accounts
-                                            .many_refs_this_is_newest_alive
-                                            .accounts
-                                            .is_empty()
+                                        |shrink_collect| {
+                                            !shrink_collect
+                                                .alive_accounts
+                                                .many_refs_this_is_newest_alive
+                                                .accounts
+                                                .is_empty()
+                                        }
                                     ));
                                 } else {
                                     assert!(accounts_to_combine.accounts_to_combine.iter().all(
-                                        |shrink_collect| !shrink_collect
-                                            .alive_accounts
-                                            .one_ref
-                                            .accounts
-                                            .is_empty()
+                                        |shrink_collect| {
+                                            !shrink_collect
+                                                .alive_accounts
+                                                .one_ref
+                                                .accounts
+                                                .is_empty()
+                                        }
                                     ));
                                     assert!(accounts_to_combine.accounts_to_combine.iter().all(
-                                        |shrink_collect| shrink_collect
-                                            .alive_accounts
-                                            .many_refs_this_is_newest_alive
-                                            .accounts
-                                            .is_empty()
+                                        |shrink_collect| {
+                                            shrink_collect
+                                                .alive_accounts
+                                                .many_refs_this_is_newest_alive
+                                                .accounts
+                                                .is_empty()
+                                        }
                                     ));
                                 }
 
@@ -2061,24 +2075,28 @@ mod tests {
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
-            assert!(accounts_to_combine
-                .accounts_to_combine
-                .iter()
-                .all(|shrink_collect| shrink_collect
-                    .alive_accounts
-                    .many_refs_this_is_newest_alive
-                    .accounts
-                    .is_empty()));
+            assert!(
+                accounts_to_combine
+                    .accounts_to_combine
+                    .iter()
+                    .all(|shrink_collect| shrink_collect
+                        .alive_accounts
+                        .many_refs_this_is_newest_alive
+                        .accounts
+                        .is_empty())
+            );
             assert_eq!(accounts_to_combine.accounts_to_combine.len(), 1);
 
-            assert!(accounts_to_combine
-                .accounts_to_combine
-                .iter()
-                .all(|shrink_collect| shrink_collect
-                    .alive_accounts
-                    .many_refs_old_alive
-                    .accounts
-                    .is_empty()));
+            assert!(
+                accounts_to_combine
+                    .accounts_to_combine
+                    .iter()
+                    .all(|shrink_collect| shrink_collect
+                        .alive_accounts
+                        .many_refs_old_alive
+                        .accounts
+                        .is_empty())
+            );
 
             // test write_ancient_accounts_to_same_slot_multiple_refs since we built interesting 'AccountsToCombine'
             let write_ancient_accounts = match method {
@@ -2254,14 +2272,16 @@ mod tests {
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
-            assert!(accounts_to_combine
-                .accounts_to_combine
-                .iter()
-                .all(|shrink_collect| !shrink_collect
-                    .alive_accounts
-                    .many_refs_this_is_newest_alive
-                    .accounts
-                    .is_empty()));
+            assert!(
+                accounts_to_combine
+                    .accounts_to_combine
+                    .iter()
+                    .all(|shrink_collect| !shrink_collect
+                        .alive_accounts
+                        .many_refs_this_is_newest_alive
+                        .accounts
+                        .is_empty())
+            );
 
             // test write_ancient_accounts_to_same_slot_multiple_refs since we built interesting 'AccountsToCombine'
             let write_ancient_accounts = match method {
@@ -2865,9 +2885,11 @@ mod tests {
             infos.all_infos.len() as u64,
             tuning.max_resulting_storages.get(),
         );
-        assert!(high_slots
-            .iter()
-            .all(|high_slot| slots_actual.contains(high_slot)));
+        assert!(
+            high_slots
+                .iter()
+                .all(|high_slot| slots_actual.contains(high_slot))
+        );
     }
 
     fn test(filter: bool, infos: &mut AncientSlotInfos, tuning: &PackedAncientStorageTuning) {
@@ -2902,7 +2924,7 @@ mod tests {
                 ..default_tuning()
             };
             infos.all_infos[0].alive_bytes = ideal_storage_size_large + 1; // too big for 1 ideal storage
-                                                                           // 1 storage, 1 max, but 1 overflows the entire new combined storage, so truncate nothing
+            // 1 storage, 1 max, but 1 overflows the entire new combined storage, so truncate nothing
             test(filter, &mut infos, &tuning);
             assert_eq!(infos.all_infos.len(), usize::from(!filter));
 
@@ -3051,10 +3073,12 @@ mod tests {
 
                 assert_eq!(infos.all_infos.len(), 2, "{method:?}");
                 storages.iter().for_each(|storage| {
-                    assert!(infos
-                        .all_infos
-                        .iter()
-                        .any(|info| info.slot == storage.slot()));
+                    assert!(
+                        infos
+                            .all_infos
+                            .iter()
+                            .any(|info| info.slot == storage.slot())
+                    );
                 });
                 // data size is so small compared to min aligned file size that the storage is marked as should_shrink
                 assert_eq!(
@@ -3612,10 +3636,12 @@ mod tests {
                             alive_accounts.add(1, &account, &slot_list);
                             assert!(!alive_accounts.one_ref.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(alive_accounts
-                                .many_refs_this_is_newest_alive
-                                .accounts
-                                .is_empty());
+                            assert!(
+                                alive_accounts
+                                    .many_refs_this_is_newest_alive
+                                    .accounts
+                                    .is_empty()
+                            );
                         }
                         1 => {
                             // non-empty slot list (but ignored) because slot_list = 1
@@ -3626,10 +3652,12 @@ mod tests {
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.one_ref.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(!alive_accounts
-                                .many_refs_this_is_newest_alive
-                                .accounts
-                                .is_empty());
+                            assert!(
+                                !alive_accounts
+                                    .many_refs_this_is_newest_alive
+                                    .accounts
+                                    .is_empty()
+                            );
                         }
                         2 => {
                             // multiple slot list, ref_count=2, this is NOT newest alive, so many_refs_old_alive
@@ -3646,10 +3674,12 @@ mod tests {
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.one_ref.accounts.is_empty());
                             assert!(!alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(alive_accounts
-                                .many_refs_this_is_newest_alive
-                                .accounts
-                                .is_empty());
+                            assert!(
+                                alive_accounts
+                                    .many_refs_this_is_newest_alive
+                                    .accounts
+                                    .is_empty()
+                            );
                         }
                         3 => {
                             // multiple slot list, ref_count=2, this is newest
@@ -3666,10 +3696,12 @@ mod tests {
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.one_ref.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                            assert!(!alive_accounts
-                                .many_refs_this_is_newest_alive
-                                .accounts
-                                .is_empty());
+                            assert!(
+                                !alive_accounts
+                                    .many_refs_this_is_newest_alive
+                                    .accounts
+                                    .is_empty()
+                            );
                         }
                         _ => {
                             panic!("unexpected");

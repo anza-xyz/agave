@@ -11,22 +11,22 @@ use {
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             quic_endpoint::RemoteRequest,
             repair_handler::RepairHandler,
-            repair_service::{OutstandingShredRepairs, RepairStats, REPAIR_MS},
+            repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairStats},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
     },
     agave_votor_messages::migration::MigrationStatus,
-    bincode::{serialize, Options},
+    bincode::{Options, serialize},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lru::LruCache,
     rand::{
-        distr::{
-            weighted::{Error as WeightedError, WeightedIndex},
-            Distribution,
-        },
         Rng,
+        distr::{
+            Distribution,
+            weighted::{Error as WeightedError, WeightedIndex},
+        },
     },
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -37,9 +37,9 @@ use {
         ping_pong::{self, Pong},
         weighted_shuffle::WeightedShuffle,
     },
-    solana_hash::{Hash, HASH_BYTES},
-    solana_keypair::{signable::Signable, Keypair},
-    solana_ledger::shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
+    solana_hash::{HASH_BYTES, Hash},
+    solana_keypair::{Keypair, signable::Signable},
+    solana_ledger::shred::{self, Nonce, SIZE_OF_NONCE, ShredFetchStats},
     solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
@@ -47,12 +47,12 @@ use {
         packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     },
     solana_poh::poh_recorder::SharedLeaderState,
-    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_runtime::bank_forks::SharableBanks,
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
     solana_streamer::{
-        sendmmsg::{batch_send, SendPktsError},
+        sendmmsg::{SendPktsError, batch_send},
         streamer::PacketBatchSender,
     },
     solana_time_utils::timestamp,
@@ -61,8 +61,8 @@ use {
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -1406,16 +1406,16 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore::{make_many_slot_entries, Blockstore},
+            blockstore::{Blockstore, make_many_slot_entries},
             blockstore_processor::fill_blockstore_slot_with_ticks,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             shred::{
-                max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+                ProcessShredsStats, ReedSolomonCache, Shred, Shredder, max_ticks_per_n_shreds,
             },
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
+        solana_perf::packet::{Packet, PacketFlags, PacketRef, deserialize_from_with_limit},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -1569,9 +1569,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&rsp[..4], &rsp[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -1612,9 +1614,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&request_bytes[..4], &request_bytes[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -1665,9 +1669,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&request_bytes[..4], &request_bytes[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -1699,9 +1705,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&request_bytes[..4], &request_bytes[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -2114,14 +2122,10 @@ mod tests {
             .expect("Expect successful ledger write");
         let nonce = 42;
         // Make sure repair response is corrupted
-        assert!(repair_response::repair_response_packet(
-            &blockstore,
-            1,
-            0,
-            &socketaddr_any!(),
-            nonce,
-        )
-        .is_none());
+        assert!(
+            repair_response::repair_response_packet(&blockstore, 1, 0, &socketaddr_any!(), nonce,)
+                .is_none()
+        );
 
         // Orphan request for slot 2 should only return slot 1 since
         // calling `repair_response_packet` on slot 1's shred will
@@ -2132,14 +2136,16 @@ mod tests {
             .expect("run_orphan packets");
 
         // Verify responses
-        let expected = RecycledPacketBatch::new(vec![repair_response::repair_response_packet(
-            &blockstore,
-            2,
-            31, // shred_index
-            &socketaddr_any!(),
-            nonce,
-        )
-        .unwrap()])
+        let expected = RecycledPacketBatch::new(vec![
+            repair_response::repair_response_packet(
+                &blockstore,
+                2,
+                31, // shred_index
+                &socketaddr_any!(),
+                nonce,
+            )
+            .unwrap(),
+        ])
         .into();
         assert_eq!(rv, expected);
     }
@@ -2255,9 +2261,11 @@ mod tests {
         // then no repairs should be generated
         for pubkey in &[solana_pubkey::new_rand(), *me.pubkey()] {
             let known_validators = Some(vec![*pubkey].into_iter().collect());
-            assert!(serve_repair
-                .repair_peers(&known_validators, 1, &identity_keypair.pubkey())
-                .is_empty());
+            assert!(
+                serve_repair
+                    .repair_peers(&known_validators, 1, &identity_keypair.pubkey())
+                    .is_empty()
+            );
             assert_matches!(
                 serve_repair.repair_request(
                     &cluster_slots,

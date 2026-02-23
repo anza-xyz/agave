@@ -9,8 +9,8 @@ use {
         collections::HashSet,
         result::Result,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },

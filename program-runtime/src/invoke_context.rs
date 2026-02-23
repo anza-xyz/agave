@@ -780,6 +780,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $invoke_context:ident,
         $transaction_context:ident,
         $feature_set:ident,
+        $top_level_instructions:literal,
         $transaction_accounts:expr $(,)?
     ) => {
         use {
@@ -805,7 +806,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
-            /* number_of_top_level_instructions */ 1,
+            $top_level_instructions,
         );
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.fill_missing_entries(|pubkey, callback| {
@@ -847,6 +848,20 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             ),
         );
     };
+    (
+        $invoke_context:ident,
+        $transaction_context:ident,
+        $feature_set:ident,
+        $transaction_accounts:expr $(,)?
+    ) => {
+        with_mock_invoke_context_with_feature_set!(
+            $invoke_context,
+            $transaction_context,
+            $feature_set,
+            1,
+            $transaction_accounts
+        );
+    };
 }
 
 #[macro_export]
@@ -854,6 +869,7 @@ macro_rules! with_mock_invoke_context {
     (
         $invoke_context:ident,
         $transaction_context:ident,
+        $top_level_instructions:literal,
         $transaction_accounts:expr $(,)?
     ) => {
         let feature_set = &solana_svm_feature_set::SVMFeatureSet::default();
@@ -861,8 +877,21 @@ macro_rules! with_mock_invoke_context {
             $invoke_context,
             $transaction_context,
             feature_set,
+            $top_level_instructions,
             $transaction_accounts
         )
+    };
+    (
+        $invoke_context:ident,
+        $transaction_context:ident,
+        $transaction_accounts:expr $(,)?
+    ) => {
+        with_mock_invoke_context!(
+            $invoke_context,
+            $transaction_context,
+            1,
+            $transaction_accounts
+        );
     };
 }
 
@@ -1170,7 +1199,7 @@ mod tests {
     }
 
     #[test]
-    fn test_max_instruction_trace_length() {
+    fn test_max_instruction_trace_length_top_level() {
         const MAX_INSTRUCTIONS: usize = 8;
         let mut transaction_context = TransactionContext::new(
             vec![(
@@ -1193,6 +1222,61 @@ mod tests {
                 .unwrap();
             transaction_context.pop().unwrap();
         }
+        assert_eq!(
+            transaction_context.push(),
+            Err(InstructionError::MaxInstructionTraceLengthExceeded)
+        );
+    }
+
+    #[test]
+    fn test_max_instruction_trace_length_cpi() {
+        // Hitting the limit with CPIs
+        const MAX_INSTRUCTIONS: usize = 8;
+        let mut transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            )],
+            Rent::default(),
+            256,
+            MAX_INSTRUCTIONS,
+            2,
+        );
+
+        // To be uncommented when we reorder the trace
+        // transaction_context
+        //     .configure_instruction_at_index(
+        //         0,
+        //         0,
+        //         vec![InstructionAccount::new(0, false, false)],
+        //         vec![u16::MAX; 256],
+        //         Cow::Owned(Vec::new()),
+        //         None,
+        //     )
+        //     .unwrap();
+        //
+        // transaction_context
+        //     .configure_instruction_at_index(
+        //         1,
+        //         0,
+        //         vec![InstructionAccount::new(0, false, false)],
+        //         vec![u16::MAX; 256],
+        //         Cow::Owned(Vec::new()),
+        //         None,
+        //     )
+        //     .unwrap();
+
+        for _ in 0..MAX_INSTRUCTIONS {
+            transaction_context.push().unwrap();
+            transaction_context
+                .configure_next_cpi_for_tests(
+                    0,
+                    vec![InstructionAccount::new(0, false, false)],
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
         assert_eq!(
             transaction_context.push(),
             Err(InstructionError::MaxInstructionTraceLengthExceeded)
@@ -1438,7 +1522,7 @@ mod tests {
             }
         }
 
-        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        with_mock_invoke_context!(invoke_context, transaction_context, 2, transaction_accounts);
 
         let instruction_1 = Instruction::new_with_bytes(program_id, &[20], account_metas.clone());
 

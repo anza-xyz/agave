@@ -1,8 +1,8 @@
 mod snapshot_gossip_manager;
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes, SnapshotKind,
+        SnapshotKind, paths as snapshot_paths, snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::account_storage_entry::AccountStorageEntry,
@@ -18,8 +18,8 @@ use {
     },
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},

@@ -183,12 +183,14 @@ mod tests {
                 .sum::<u64>(),
             total_lamports,
         );
-        assert!(genesis_config
-            .accounts
-            .iter()
-            .all(|(_pubkey, account)| account.lamports <= granularity
-                || account.lamports - granularity
-                    <= genesis_config.rent.minimum_balance(StakeStateV2::size_of())));
+        assert!(
+            genesis_config
+                .accounts
+                .iter()
+                .all(|(_pubkey, account)| account.lamports <= granularity
+                    || account.lamports - granularity
+                        <= genesis_config.rent.minimum_balance(StakeStateV2::size_of()))
+        );
     }
 
     //    #[ignore]

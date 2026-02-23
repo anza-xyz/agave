@@ -2,16 +2,16 @@ use {
     crate::{
         checks::*,
         cli::{
-            log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
-            ProcessResult,
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            log_instruction_custom_error,
         },
         compute_budget::{
-            simulate_and_update_compute_unit_limit, ComputeUnitConfig,
-            UpdateComputeUnitLimitResult, WithComputeUnitConfig,
+            ComputeUnitConfig, UpdateComputeUnitLimitResult, WithComputeUnitConfig,
+            simulate_and_update_compute_unit_limit,
         },
-        feature::{status_from_account, CliFeatureStatus},
+        feature::{CliFeatureStatus, status_from_account},
     },
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     agave_syscalls::create_program_runtime_environment_v1,
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -20,29 +20,29 @@ use {
     solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         self,
-        compute_budget::{compute_unit_price_arg, ComputeUnitLimit},
-        fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
+        compute_budget::{ComputeUnitLimit, compute_unit_price_arg},
+        fee_payer::{FEE_PAYER_ARG, fee_payer_arg},
         hidden_unless_forced,
         input_parsers::*,
         input_validators::*,
         keypair::*,
-        offline::{OfflineArgs, DUMP_TRANSACTION_MESSAGE, SIGN_ONLY_ARG},
+        offline::{DUMP_TRANSACTION_MESSAGE, OfflineArgs, SIGN_ONLY_ARG},
     },
     solana_cli_output::{
-        return_signers_with_config, CliProgram, CliProgramAccountType, CliProgramAuthority,
-        CliProgramBuffer, CliProgramId, CliUpgradeableBuffer, CliUpgradeableBuffers,
-        CliUpgradeableProgram, CliUpgradeableProgramClosed, CliUpgradeableProgramExtended,
-        CliUpgradeableProgramMigrated, CliUpgradeablePrograms, ReturnSignersConfig,
+        CliProgram, CliProgramAccountType, CliProgramAuthority, CliProgramBuffer, CliProgramId,
+        CliUpgradeableBuffer, CliUpgradeableBuffers, CliUpgradeableProgram,
+        CliUpgradeableProgramClosed, CliUpgradeableProgramExtended, CliUpgradeableProgramMigrated,
+        CliUpgradeablePrograms, ReturnSignersConfig, return_signers_with_config,
     },
     solana_client::{
         connection_cache::ConnectionCache,
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
+            SendAndConfirmConfigV2, send_and_confirm_transactions_in_parallel_v2,
         },
     },
     solana_commitment_config::CommitmentConfig,
-    solana_instruction::{error::InstructionError, Instruction},
-    solana_keypair::{keypair_from_seed, read_keypair_file, Keypair},
+    solana_instruction::{Instruction, error::InstructionError},
+    solana_keypair::{Keypair, keypair_from_seed, read_keypair_file},
     solana_loader_v3_interface::{
         get_program_data_address, instruction as loader_v3_instruction,
         state::UpgradeableLoaderState,
@@ -66,7 +66,7 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_system_interface::{error::SystemError, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, error::SystemError},
     solana_tpu_client::tpu_client::TpuClientConfig,
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
@@ -3407,8 +3407,8 @@ async fn send_deploy_messages(
     Ok(None)
 }
 
-fn create_ephemeral_keypair(
-) -> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
+fn create_ephemeral_keypair()
+-> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
     const WORDS: usize = 12;
     let mnemonic = Mnemonic::new(MnemonicType::for_word_count(WORDS)?, Language::English);
     let seed = Seed::new(&mnemonic, "");

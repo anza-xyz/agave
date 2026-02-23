@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        bank::{bank_hash_details, Bank, SquashTiming},
+        bank::{Bank, SquashTiming, bank_hash_details},
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
@@ -18,11 +18,11 @@ use {
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{HashMap, HashSet, hash_map::Entry},
         ops::Index,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         time::Instant,
     },
@@ -751,7 +751,7 @@ mod tests {
         crate::{
             bank::test_utils::update_vote_account_timestamp,
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
         },
         assert_matches::assert_matches,
