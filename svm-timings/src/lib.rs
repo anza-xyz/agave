@@ -9,6 +9,7 @@ use {
         collections::HashMap,
         num::Saturating,
         ops::{Index, IndexMut},
+        sync::atomic::Ordering,
     },
 };
 
@@ -261,7 +262,10 @@ eager_macro_rules! { $eager_1
             ),
             (
                 "execute_details_create_executor_jit_compile_us",
-                $self.details.create_executor_jit_compile_us.0,
+                $self
+                    .details
+                    .create_executor_jit_compile_us
+                    .load(std::sync::atomic::Ordering::Relaxed),
                 i64
             ),
             (
@@ -378,7 +382,7 @@ impl ExecuteAccessoryTimings {
     }
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug)]
 pub struct ExecuteDetailsTimings {
     pub serialize_us: Saturating<u64>,
     pub create_vm_us: Saturating<u64>,
@@ -390,7 +394,7 @@ pub struct ExecuteDetailsTimings {
     pub create_executor_register_syscalls_us: Saturating<u64>,
     pub create_executor_load_elf_us: Saturating<u64>,
     pub create_executor_verify_code_us: Saturating<u64>,
-    pub create_executor_jit_compile_us: Saturating<u64>,
+    pub create_executor_jit_compile_us: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub per_program_timings: HashMap<Pubkey, ProgramTiming>,
 }
 
@@ -406,7 +410,10 @@ impl ExecuteDetailsTimings {
         self.create_executor_register_syscalls_us += other.create_executor_register_syscalls_us;
         self.create_executor_load_elf_us += other.create_executor_load_elf_us;
         self.create_executor_verify_code_us += other.create_executor_verify_code_us;
-        self.create_executor_jit_compile_us += other.create_executor_jit_compile_us;
+        self.create_executor_jit_compile_us.fetch_add(
+            other.create_executor_jit_compile_us.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         for (id, other) in &other.per_program_timings {
             let program_timing = self.per_program_timings.entry(*id).or_default();
             program_timing.accumulate_program_timings(other);
@@ -494,29 +501,38 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_details_timing_acumulate() {
+    fn test_execute_details_timing_accumulate() {
         // Acumulate an erroring transaction
         let program_id = Pubkey::new_unique();
         let us = 100;
         let compute_units_consumed = 1;
-        let mut execute_details_timings = ExecuteDetailsTimings::default();
+        let mut timings1 = ExecuteDetailsTimings::default();
 
         // Construct another separate instance of ExecuteDetailsTimings with non default fields
-        let mut other_execute_details_timings =
+        let mut timings2 =
             construct_execute_timings_with_program(&program_id, us, compute_units_consumed);
         let account_count = 1;
-        other_execute_details_timings.serialize_us.0 = us;
-        other_execute_details_timings.create_vm_us.0 = us;
-        other_execute_details_timings.execute_us.0 = us;
-        other_execute_details_timings.deserialize_us.0 = us;
-        other_execute_details_timings.changed_account_count.0 = account_count;
-        other_execute_details_timings.total_account_count.0 = account_count;
-
+        timings2.serialize_us.0 = us;
+        timings2.create_vm_us.0 = us;
+        timings2.execute_us.0 = us;
+        timings2.deserialize_us.0 = us;
+        timings2.changed_account_count.0 = account_count;
+        timings2.total_account_count.0 = account_count;
         // Accumulate the other instance into the current instance
-        execute_details_timings.accumulate(&other_execute_details_timings);
+        timings1.accumulate(&timings2);
 
-        // Check that the two instances are equal
-        assert_eq!(execute_details_timings, other_execute_details_timings);
+        assert_eq!(timings1.serialize_us, timings2.serialize_us);
+        assert_eq!(timings1.create_vm_us, timings2.create_vm_us);
+        assert_eq!(timings1.execute_us, timings2.execute_us);
+        assert_eq!(timings1.deserialize_us, timings2.deserialize_us);
+        assert_eq!(timings1.get_or_create_executor_us, timings2.get_or_create_executor_us);
+        assert_eq!(timings1.changed_account_count, timings2.changed_account_count);
+        assert_eq!(timings1.total_account_count, timings2.total_account_count);
+        assert_eq!(timings1.create_executor_register_syscalls_us, timings2.create_executor_register_syscalls_us);
+        assert_eq!(timings1.create_executor_load_elf_us, timings2.create_executor_load_elf_us);
+        assert_eq!(timings1.create_executor_verify_code_us, timings2.create_executor_verify_code_us);
+        assert_eq!(timings1.create_executor_jit_compile_us.load(Ordering::Relaxed), timings2.create_executor_jit_compile_us.load(Ordering::Relaxed));
+        assert_eq!(timings1.per_program_timings, timings2.per_program_timings);
     }
 
     #[test]

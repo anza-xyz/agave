@@ -19,6 +19,7 @@ pub mod serialization;
 pub mod stable_log;
 pub mod sysvar_cache;
 pub mod vm;
+mod threaded_compilation;
 
 // re-exports for macros
 pub mod __private {
