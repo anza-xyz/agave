@@ -303,6 +303,7 @@ impl Tvu {
             let sharable_banks = bank_forks.read().unwrap().sharable_banks();
             let bls_sigverifier = bls_sigverify::bls_sigverifier::spawn_service(
                 exit.clone(),
+                migration_status.clone(),
                 bls_packet_receiver,
                 sharable_banks,
                 verified_voter_slots_sender,

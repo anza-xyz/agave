@@ -14,6 +14,7 @@ use {
     },
     agave_votor_messages::{
         consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
@@ -29,7 +30,7 @@ use {
         streamer::{self, StreamerError},
     },
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -42,6 +43,7 @@ use {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_service(
     exit: Arc<AtomicBool>,
+    migration_status: Arc<MigrationStatus>,
     packet_receiver: Receiver<PacketBatch>,
     sharable_banks: SharableBanks,
     channel_to_repair: VerifiedVoterSlotsSender,
@@ -52,6 +54,7 @@ pub(crate) fn spawn_service(
     leader_schedule: Arc<LeaderScheduleCache>,
 ) -> thread::JoinHandle<()> {
     let verifier = SigVerifier::new(
+        migration_status,
         sharable_banks,
         channel_to_repair,
         channel_to_reward,
@@ -68,6 +71,7 @@ pub(crate) fn spawn_service(
 }
 
 struct SigVerifier {
+    migration_status: Arc<MigrationStatus>,
     /// Channel to send msgs to repair on.
     channel_to_repair: VerifiedVoterSlotsSender,
     /// Channel to send msgs to consensus rewards container to.
@@ -91,6 +95,7 @@ struct SigVerifier {
 
 impl SigVerifier {
     fn new(
+        migration_status: Arc<MigrationStatus>,
         sharable_banks: SharableBanks,
         channel_to_repair: VerifiedVoterSlotsSender,
         channel_to_reward: Sender<AddVoteMessage>,
@@ -100,6 +105,7 @@ impl SigVerifier {
         leader_schedule: Arc<LeaderScheduleCache>,
     ) -> Self {
         Self {
+            migration_status,
             sharable_banks,
             channel_to_repair,
             channel_to_reward,
@@ -115,6 +121,16 @@ impl SigVerifier {
     }
 
     fn run(mut self, exit: Arc<AtomicBool>, packet_receiver: Receiver<PacketBatch>) {
+        match self.migration_status.wait_for_migration_or_exit(&exit) {
+            Some(_block) => {
+                // migration to alpenglow complete.  Start processing.
+            }
+            None => {
+                // exit flag got set.  Bail.
+                return;
+            }
+        }
+
         const SOFT_RECEIVE_CAP: usize = 5_000;
         let mut stats = StreamerRecvStats::default();
         while !exit.load(Ordering::Relaxed) {
@@ -341,6 +357,7 @@ mod tests {
         (
             validator_keypairs,
             SigVerifier::new(
+                Arc::new(MigrationStatus::default()),
                 sharable_banks,
                 votes_for_repair_sender,
                 reward_votes_sender,
@@ -1197,6 +1214,7 @@ mod tests {
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
         let mut sig_verifier = SigVerifier::new(
+            Arc::new(MigrationStatus::default()),
             sharable_banks,
             votes_for_repair_sender,
             reward_votes_sender,
