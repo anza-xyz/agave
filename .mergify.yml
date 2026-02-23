@@ -4,8 +4,6 @@ pull_request_rules:
     conditions:
       - author≠@agave-external-triage
       - author≠@anza
-      - author≠@monorepo-maintainers
-      - author≠@monorepo-write
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
@@ -18,8 +16,6 @@ pull_request_rules:
     conditions:
       - author≠@agave-external-triage
       - author≠@anza
-      - author≠@monorepo-maintainers
-      - author≠@monorepo-write
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
@@ -40,8 +36,6 @@ pull_request_rules:
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
-      - author≠@monorepo-maintainers
-      - author≠@monorepo-write
       - author=@agave-external-triage
     actions:
       label:
