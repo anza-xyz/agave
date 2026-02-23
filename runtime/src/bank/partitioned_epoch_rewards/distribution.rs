@@ -1,24 +1,24 @@
 use {
     super::{
-        epoch_rewards_hasher, Bank, EpochRewardStatus, PartitionedStakeReward, StakeRewards,
-        StartBlockHeightAndPartitionedRewards,
+        Bank, EpochRewardStatus, PartitionedStakeReward, StakeRewards,
+        StartBlockHeightAndPartitionedRewards, epoch_rewards_hasher,
     },
     crate::{
         bank::{
-            metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
+            metrics::{RewardsStoreMetrics, report_partitioned_reward_metrics},
             partitioned_epoch_rewards::EpochRewardPhase,
         },
         stake_account::StakeAccount,
     },
     log::error,
     serde::{Deserialize, Serialize},
-    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
     solana_accounts_db::stake_rewards::{StakeReward, StakeRewardInfo},
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
     solana_stake_interface::state::{Delegation, StakeStateV2},
-    std::sync::{atomic::Ordering::Relaxed, Arc},
+    std::sync::{Arc, atomic::Ordering::Relaxed},
     thiserror::Error,
 };
 
@@ -311,8 +311,8 @@ mod tests {
         crate::{
             bank::{
                 partitioned_epoch_rewards::{
-                    epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
                     PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
+                    epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
                 },
                 tests::create_genesis_config,
             },

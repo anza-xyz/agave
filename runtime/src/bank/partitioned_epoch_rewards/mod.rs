@@ -35,7 +35,7 @@ pub(crate) struct PartitionedStakeReward {
     pub stake: Stake,
     /// Stake reward for recording in the Bank on distribution
     pub stake_reward: u64,
-    /// Vote commission in basis points (0-10,000 representing 0-100%) for
+    /// Reward commission in basis points (0-10,000 representing 0-100%) for
     /// recording reward info.
     pub commission_bps: u16,
 }
@@ -151,45 +151,54 @@ pub(crate) enum EpochRewardPhase {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct VoteRewardsAccounts {
+pub(super) struct RewardCommissionAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
-    /// total lamports across all `vote_rewards`
-    pub(super) total_vote_rewards_lamports: u64,
+    /// total lamports across all `accounts_with_rewards`
+    pub(super) total_reward_commission_lamports: u64,
 }
 
-/// Wrapper struct to implement StorableAccounts for VoteRewardsAccounts
-pub(super) struct VoteRewardsAccountsStorable<'a> {
+/// Wrapper struct to implement StorableAccounts for RewardCommissionAccounts
+pub(super) struct RewardCommissionAccountsStorable<'a> {
     pub slot: Slot,
-    pub vote_rewards_accounts: &'a VoteRewardsAccounts,
+    pub reward_commission_accounts: &'a RewardCommissionAccounts,
 }
 
-impl<'a> StorableAccounts<'a> for VoteRewardsAccountsStorable<'a> {
+impl<'a> StorableAccounts<'a> for RewardCommissionAccountsStorable<'a> {
     fn account<Ret>(
         &self,
         index: usize,
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
-        let (pubkey, _, account) = &self.vote_rewards_accounts.accounts_with_rewards[index];
+        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
         callback((pubkey, account).into())
     }
 
+    fn account_for_geyser<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        let (pubkey, _, account) = &self.reward_commission_accounts.accounts_with_rewards[index];
+        callback(pubkey, account)
+    }
+
     fn is_zero_lamport(&self, index: usize) -> bool {
-        self.vote_rewards_accounts.accounts_with_rewards[index]
+        self.reward_commission_accounts.accounts_with_rewards[index]
             .2
             .lamports()
             == 0
     }
 
     fn data_len(&self, index: usize) -> usize {
-        self.vote_rewards_accounts.accounts_with_rewards[index]
+        self.reward_commission_accounts.accounts_with_rewards[index]
             .2
             .data()
             .len()
     }
 
     fn pubkey(&self, index: usize) -> &Pubkey {
-        &self.vote_rewards_accounts.accounts_with_rewards[index].0
+        &self.reward_commission_accounts.accounts_with_rewards[index].0
     }
 
     fn slot(&self, _index: usize) -> Slot {
@@ -201,7 +210,7 @@ impl<'a> StorableAccounts<'a> for VoteRewardsAccountsStorable<'a> {
     }
 
     fn len(&self) -> usize {
-        self.vote_rewards_accounts.accounts_with_rewards.len()
+        self.reward_commission_accounts.accounts_with_rewards.len()
     }
 }
 
@@ -216,7 +225,7 @@ pub(super) struct StakeRewardCalculation {
 
 #[derive(Debug)]
 struct CalculateValidatorRewardsResult {
-    vote_rewards_accounts: VoteRewardsAccounts,
+    reward_commission_accounts: RewardCommissionAccounts,
     stake_reward_calculation: StakeRewardCalculation,
     point_value: PointValue,
 }
@@ -224,7 +233,7 @@ struct CalculateValidatorRewardsResult {
 impl Default for CalculateValidatorRewardsResult {
     fn default() -> Self {
         Self {
-            vote_rewards_accounts: VoteRewardsAccounts::default(),
+            reward_commission_accounts: RewardCommissionAccounts::default(),
             stake_reward_calculation: StakeRewardCalculation::default(),
             point_value: PointValue {
                 points: 0,
@@ -300,7 +309,7 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 #[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
-    pub(super) vote_account_rewards: VoteRewardsAccounts,
+    pub(super) reward_commission_accounts: RewardCommissionAccounts,
     pub(super) stake_rewards: StakeRewardCalculation,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
@@ -417,14 +426,14 @@ mod tests {
             bank::tests::create_genesis_config,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
         },
         assert_matches::assert_matches,
-        solana_account::{state_traits::StateMut, Account},
-        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_account::{Account, state_traits::StateMut},
+        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -434,8 +443,8 @@ mod tests {
         solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
-        solana_vote_interface::state::{VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
-        solana_vote_program::vote_state::{self, handler::VoteStateHandle, TowerSync},
+        solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
+        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandle},
         std::sync::{Arc, RwLock},
     };
 
@@ -580,7 +589,7 @@ mod tests {
         } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
-        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
+        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
 
@@ -695,7 +704,7 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
 
         // Config stake reward distribution to be 10 per block
-        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
+        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(10);
 
@@ -836,9 +845,11 @@ mod tests {
                 assert!(curr_bank.is_calculated());
 
                 // after reward calculation, the cache should be filled.
-                assert!(curr_bank
-                    .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
-                    .is_some());
+                assert!(
+                    curr_bank
+                        .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
+                        .is_some()
+                );
                 assert_eq!(post_cap, pre_cap);
 
                 // Make a root the bank, which is the first bank in the epoch.
@@ -930,9 +941,11 @@ mod tests {
                 assert!(curr_bank.is_calculated());
 
                 // after reward calculation, the cache should be filled.
-                assert!(curr_bank
-                    .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
-                    .is_some());
+                assert!(
+                    curr_bank
+                        .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
+                        .is_some()
+                );
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
                 starting_hash = Some(curr_bank.parent_hash);
             } else if slot == SLOTS_PER_EPOCH + 1 {
@@ -946,9 +959,11 @@ mod tests {
 
                 // The first block of the epoch has not rooted yet, so the cache
                 // should still have the results.
-                assert!(curr_bank
-                    .get_epoch_rewards_from_cache(&starting_hash.unwrap())
-                    .is_some());
+                assert!(
+                    curr_bank
+                        .get_epoch_rewards_from_cache(&starting_hash.unwrap())
+                        .is_some()
+                );
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
 
                 // 1st reward distribution block, state should be partitioned.

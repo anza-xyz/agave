@@ -1,7 +1,7 @@
 use {
     crate::tiered_storage::{
-        file::TieredWritableFile, footer::TieredStorageFooter, mmap_utils::get_pod,
-        TieredStorageResult,
+        TieredStorageResult, file::TieredWritableFile, footer::TieredStorageFooter,
+        mmap_utils::get_pod,
     },
     indexmap::set::IndexSet,
     memmap2::Mmap,

@@ -1,19 +1,19 @@
 use {
-    clap::{crate_description, crate_name, value_t_or_exit, ArgMatches},
+    clap::{ArgMatches, crate_description, crate_name, value_t_or_exit},
     console::style,
     solana_clap_utils::{
+        DisplayError,
         input_validators::normalize_to_url_if_moniker,
         keypair::{CliSigners, DefaultSigner},
-        DisplayError,
     },
     solana_cli::{
         clap_app::get_clap_app,
-        cli::{parse_command, process_command, CliCommandInfo, CliConfig},
+        cli::{CliCommandInfo, CliConfig, parse_command, process_command},
     },
     solana_cli_config::{Config, ConfigInput},
     solana_cli_output::{
-        display::{println_name_value, println_name_value_or},
         OutputFormat,
+        display::{println_name_value, println_name_value_or},
     },
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client_api::config::RpcSendTransactionConfig,

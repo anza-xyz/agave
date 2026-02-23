@@ -1,5 +1,5 @@
 use {
-    clap::{crate_description, crate_name, crate_version, Arg},
+    clap::{Arg, crate_description, crate_name, crate_version},
     itertools::Itertools,
     log::*,
     regex::Regex,
@@ -7,9 +7,9 @@ use {
         env,
         ffi::OsStr,
         fs::File,
-        io::{prelude::*, BufWriter},
+        io::{BufWriter, prelude::*},
         path::{Path, PathBuf},
-        process::{exit, Command},
+        process::{Command, exit},
     },
 };
 
@@ -26,6 +26,8 @@ struct Config<'a> {
     no_default_features: bool,
     no_run: bool,
     offline: bool,
+    skip_tools_install: bool,
+    no_rustup_override: bool,
     verbose: bool,
     workspace: bool,
     jobs: Option<String>,
@@ -47,6 +49,8 @@ impl Default for Config<'_> {
             no_default_features: false,
             no_run: false,
             offline: false,
+            skip_tools_install: false,
+            no_rustup_override: false,
             verbose: false,
             workspace: false,
             jobs: None,
@@ -148,6 +152,13 @@ fn test_solana_package(
     if let Some(tools_version) = config.platform_tools_version.as_ref() {
         build_sbf_args.push("--tools-version");
         build_sbf_args.push(tools_version);
+    }
+
+    if config.skip_tools_install {
+        build_sbf_args.push("--skip-tools-install");
+    }
+    if config.no_rustup_override {
+        build_sbf_args.push("--no-rustup-override");
     }
 
     if !config.packages.is_empty() {
@@ -387,6 +398,23 @@ fn main() {
                 .help("All extra arguments are passed through to cargo test"),
         )
         .arg(
+            Arg::new("skip_tools_install")
+                .long("skip-tools-install")
+                .takes_value(false)
+                .help(
+                    "Passed through to cargo-build-sbf. Skip downloading and installing \
+                     platform-tools",
+                ),
+        )
+        .arg(
+            Arg::new("no_rustup_override")
+                .long("no-rustup-override")
+                .takes_value(false)
+                .help(
+                    "Passed through to cargo-build-sbf. Do not use rustup to manage the toolchain",
+                ),
+        )
+        .arg(
             Arg::new("tools_version")
                 .long("tools-version")
                 .value_name("STRING")
@@ -418,6 +446,8 @@ fn main() {
         no_default_features: matches.is_present("no_default_features"),
         no_run: matches.is_present("no_run"),
         offline: matches.is_present("offline"),
+        skip_tools_install: matches.is_present("skip_tools_install"),
+        no_rustup_override: matches.is_present("no_rustup_override"),
         verbose: matches.is_present("verbose"),
         workspace: matches.is_present("workspace"),
         jobs: matches.value_of_t("jobs").ok(),
@@ -425,9 +455,6 @@ fn main() {
         ..Config::default()
     };
 
-    if let Ok(cargo_build_sbf) = env::var("CARGO_BUILD_SBF") {
-        config.cargo_build_sbf = PathBuf::from(cargo_build_sbf);
-    }
     if let Ok(cargo_build_sbf) = env::var("CARGO") {
         config.cargo = PathBuf::from(cargo_build_sbf);
     }

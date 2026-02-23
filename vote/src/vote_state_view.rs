@@ -14,7 +14,7 @@ use {
     frame_v4::VoteStateFrameV4,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_vote_interface::state::{BlockTimestamp, Lockout, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
+    solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, Lockout},
     std::sync::Arc,
 };
 #[cfg(feature = "dev-context-only-utils")]
@@ -357,8 +357,8 @@ mod tests {
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{
-                LandedVote, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateV4,
-                VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+                LandedVote, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY, VoteInit,
+                VoteState1_14_11, VoteStateV3, VoteStateV4, VoteStateVersions,
             },
         },
         std::collections::VecDeque,

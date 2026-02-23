@@ -11,18 +11,20 @@ use {
     handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
-    solana_bls_signatures::{keypair::Keypair as BLSKeypair, VerifiableProofOfPossession},
+    solana_bls_signatures::{VerifiableProofOfPossession, keypair::Keypair as BLSKeypair},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
+    solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::system_program,
     solana_slot_hashes::SlotHash,
+    solana_system_interface::instruction as system_instruction,
     solana_transaction_context::{
-        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
-        IndexOfAccount,
+        IndexOfAccount, instruction::InstructionContext,
+        instruction_accounts::BorrowedInstructionAccount,
     },
     solana_vote_interface::{error::VoteError, instruction::CommissionKind, program::id},
     std::{
@@ -723,7 +725,7 @@ pub fn authorize<S: std::hash::BuildHasher, F>(
     vote_authorize: VoteAuthorize,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
-    is_bls_pubkey_feature_enabled: bool,
+    is_vote_authorize_with_bls_enabled: bool,
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
@@ -736,7 +738,7 @@ where
 
     match vote_authorize {
         VoteAuthorize::Voter => {
-            if is_bls_pubkey_feature_enabled && vote_state.has_bls_pubkey() {
+            if is_vote_authorize_with_bls_enabled && vote_state.has_bls_pubkey() {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let authorized_withdrawer_signer =
@@ -766,7 +768,7 @@ where
             vote_state.set_authorized_withdrawer(*authorized);
         }
         VoteAuthorize::VoterWithBLS(args) => {
-            if !is_bls_pubkey_feature_enabled {
+            if !is_vote_authorize_with_bls_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let authorized_withdrawer_signer =
@@ -866,17 +868,18 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     vote_state.set_vote_account_state(vote_account)
 }
 
-/// Update the vote account's commission in basis points (SIMD-0291).
+/// Update the vote account's commission in basis points (SIMD-0291, SIMD-0123).
 pub fn update_commission_bps<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
     commission_bps: u16,
     kind: CommissionKind,
     signers: &HashSet<Pubkey, S>,
+    block_revenue_sharing_enabled: bool,
 ) -> Result<(), InstructionError> {
-    // Per SIMD-0291: BlockRevenue returns InvalidInstructionData
-    // (Block revenue commission updates will be enabled in a future SIMD)
-    if matches!(kind, CommissionKind::BlockRevenue) {
+    // Per SIMD-0291: BlockRevenue returns InvalidInstructionData unless
+    // SIMD-0123 (block_revenue_sharing) is enabled.
+    if matches!(kind, CommissionKind::BlockRevenue) && !block_revenue_sharing_enabled {
         return Err(InstructionError::InvalidInstructionData);
     }
 
@@ -890,7 +893,14 @@ pub fn update_commission_bps<S: std::hash::BuildHasher>(
     // Require authorized withdrawer to sign.
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
-    vote_state.set_inflation_rewards_commission_bps(commission_bps);
+    match kind {
+        CommissionKind::InflationRewards => {
+            vote_state.set_inflation_rewards_commission_bps(commission_bps);
+        }
+        CommissionKind::BlockRevenue => {
+            vote_state.set_block_revenue_commission_bps(commission_bps);
+        }
+    }
 
     vote_state.set_vote_account_state(vote_account)
 }
@@ -960,6 +970,63 @@ pub fn update_commission_collector<S: std::hash::BuildHasher>(
     }
 
     vote_state.set_vote_account_state(vote_account)
+}
+
+/// Deposit delegator rewards into a vote account (SIMD-0123).
+pub fn deposit_delegator_rewards(
+    invoke_context: &mut InvokeContext,
+    deposit: u64,
+) -> Result<(), InstructionError> {
+    const VOTE_ACCOUNT_INDEX: IndexOfAccount = 0;
+    const SENDER_ACCOUNT_INDEX: IndexOfAccount = 1;
+
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+
+    // Source account must be a transaction-level signer.
+    if !instruction_context.is_instruction_account_signer(SENDER_ACCOUNT_INDEX)? {
+        return Err(InstructionError::MissingRequiredSignature);
+    }
+
+    let vote_address = *instruction_context.get_key_of_instruction_account(VOTE_ACCOUNT_INDEX)?;
+    let source_address =
+        *instruction_context.get_key_of_instruction_account(SENDER_ACCOUNT_INDEX)?;
+
+    // SIMD-0123 states we must validate the vote account deserializes to a v4
+    // *before* attempting CPI, then update the `pending_delegator_rewards`
+    // field *last*.
+    // We can deserialize it, and hold onto the deserialized payload in-memory.
+    // This way, we can drop the account borrow but avoid re-deserializing
+    // later, since we know only lamports will change.
+    let mut vote_state = {
+        let vote_account =
+            instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+
+        // Can't use `get_vote_state_handler_checked`, since it will convert
+        // the underlying vote state to v4.
+        // SIMD-0123 requires an *initialized v4*.
+        let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
+        if let VoteStateVersions::V4(vote_state_v4) = versioned {
+            Ok(VoteStateHandler::new_v4(*vote_state_v4))
+        } else {
+            Err(InstructionError::InvalidAccountData)
+        }
+    }?;
+
+    // CPI to System: Transfer from sender to vote account.
+    invoke_context.native_invoke(
+        system_instruction::transfer(&source_address, &vote_address, deposit),
+        &[],
+    )?;
+
+    // Update `pending_delegator_rewards`.
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let mut vote_account =
+        instruction_context.try_borrow_instruction_account(VOTE_ACCOUNT_INDEX)?;
+
+    vote_state.add_pending_delegator_rewards(deposit)?;
+    vote_state.set_vote_account_state(&mut vote_account)
 }
 
 /// Given the current slot and epoch schedule, determine if a commission change
@@ -1065,7 +1132,16 @@ pub fn withdraw<S: std::hash::BuildHasher>(
         .checked_sub(lamports)
         .ok_or(InstructionError::InsufficientFunds)?;
 
+    // Always zero until SIMD-0123 is activated.
+    let pending_delegator_rewards = vote_state.pending_delegator_rewards();
+
     if remaining_balance == 0 {
+        // SIMD-0123: vote account cannot be closed if
+        // pending_delegator_rewards > 0.
+        if pending_delegator_rewards > 0 {
+            return Err(InstructionError::InsufficientFunds);
+        }
+
         let reject_active_vote_account_close = vote_state
             .epoch_credits()
             .last()
@@ -1085,8 +1161,13 @@ pub fn withdraw<S: std::hash::BuildHasher>(
             VoteStateHandler::deinitialize_vote_account_state(&mut vote_account, target_version)?;
         }
     } else {
+        // SIMD-0123: withdrawable balance when pending_delegator_rewards > 0
+        // is lamports - pending_delegator_rewards - rent_exempt_minimum.
         let min_rent_exempt_balance = rent_sysvar.minimum_balance(vote_account.get_data().len());
-        if remaining_balance < min_rent_exempt_balance {
+        let min_balance = min_rent_exempt_balance
+            .checked_add(pending_delegator_rewards)
+            .ok_or(InstructionError::ArithmeticOverflow)?;
+        if remaining_balance < min_balance {
             return Err(InstructionError::InsufficientFunds);
         }
     }
@@ -1397,7 +1478,7 @@ mod tests {
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{
-            instruction_accounts::InstructionAccount, TransactionContext,
+            instruction_accounts::InstructionAccount, transaction::TransactionContext,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
         test_case::{test_case, test_matrix},
@@ -1527,7 +1608,7 @@ mod tests {
             1,
         );
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
                 vec![],
@@ -1699,7 +1780,7 @@ mod tests {
             1,
         );
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
                 vec![],
@@ -1872,7 +1953,7 @@ mod tests {
             1,
         );
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
                 vec![],
@@ -1886,7 +1967,8 @@ mod tests {
         let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
         let non_signers: HashSet<Pubkey> = HashSet::new();
 
-        // `CommissionKind::BlockRevenue` returns `InvalidInstructionData`.
+        // `CommissionKind::BlockRevenue` returns `InvalidInstructionData` when
+        // block_revenue_sharing is disabled.
         assert_eq!(
             update_commission_bps(
                 &mut borrowed_account,
@@ -1894,6 +1976,7 @@ mod tests {
                 500,
                 CommissionKind::BlockRevenue,
                 &signers,
+                false, // block_revenue_sharing disabled
             ),
             Err(InstructionError::InvalidInstructionData)
         );
@@ -1906,6 +1989,7 @@ mod tests {
                 500,
                 CommissionKind::InflationRewards,
                 &non_signers,
+                false,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -1919,6 +2003,7 @@ mod tests {
                 500,
                 CommissionKind::InflationRewards,
                 &wrong_signers,
+                false,
             ),
             Err(InstructionError::MissingRequiredSignature)
         );
@@ -1930,6 +2015,16 @@ mod tests {
                 new_commission_bps,
                 CommissionKind::InflationRewards,
                 &signers,
+                false,
+            )
+            .unwrap();
+            update_commission_bps(
+                &mut borrowed_account,
+                target_version,
+                new_commission_bps,
+                CommissionKind::BlockRevenue,
+                &signers,
+                true,
             )
             .unwrap();
             let handler = get_vote_state_handler_checked(
@@ -1937,8 +2032,14 @@ mod tests {
                 PreserveBehaviorInHandlerHelper::new(target_version, true),
             )
             .unwrap();
-            let commission_bps = handler.as_ref_v4().inflation_rewards_commission_bps;
-            assert_eq!(commission_bps, new_commission_bps);
+            assert_eq!(
+                handler.as_ref_v4().inflation_rewards_commission_bps,
+                new_commission_bps
+            );
+            assert_eq!(
+                handler.as_ref_v4().block_revenue_commission_bps,
+                new_commission_bps
+            );
         };
 
         // There's no timing check for SIMD-0291, so just go back and forth
@@ -4180,7 +4281,7 @@ mod tests {
             1,
         );
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
                 vec![],
@@ -4272,7 +4373,7 @@ mod tests {
             1,
         );
         transaction_context
-            .configure_next_instruction_for_tests(
+            .configure_top_level_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
                 vec![],
@@ -4288,20 +4389,22 @@ mod tests {
             .into_iter()
             .collect();
         let clock = Clock::default();
-        assert!(authorize(
-            &mut borrowed_account,
-            VoteStateTargetVersion::V4,
-            &new_node_pubkey,
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession
-            }),
-            &signers,
-            &clock,
-            true,
-            || Ok(()),
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                &mut borrowed_account,
+                VoteStateTargetVersion::V4,
+                &new_node_pubkey,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey,
+                    bls_proof_of_possession
+                }),
+                &signers,
+                &clock,
+                true,
+                || Ok(()),
+            )
+            .is_ok()
+        );
         let vote_state =
             VoteStateV4::deserialize(borrowed_account.get_data(), &new_node_pubkey).unwrap();
         assert_eq!(vote_state.bls_pubkey_compressed, Some(bls_pubkey));
@@ -4375,7 +4478,7 @@ mod tests {
     ) -> TransactionContext<'_> {
         let mut transaction_context = TransactionContext::new(accounts, rent.clone(), 0, 0, 1);
         transaction_context
-            .configure_next_instruction_for_tests(0, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(0, instruction_accounts, vec![])
             .unwrap();
         transaction_context
     }

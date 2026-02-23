@@ -121,7 +121,7 @@ impl Ancestors {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use {
         super::*, crate::contains::Contains, log::*, solana_measure::measure::Measure,
         std::collections::HashSet,

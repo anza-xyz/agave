@@ -1,9 +1,9 @@
 use {
     agave_scheduler_bindings::{
-        worker_message_types::{
-            self, CheckResponse, ExecutionResponse, CHECK_RESPONSE, EXECUTION_RESPONSE,
-        },
         TransactionResponseRegion,
+        worker_message_types::{
+            self, CHECK_RESPONSE, CheckResponse, EXECUTION_RESPONSE, ExecutionResponse,
+        },
     },
     rts_alloc::Allocator,
     std::ptr::NonNull,
@@ -124,7 +124,7 @@ impl CheckResponsesPtr {
     ///
     /// - The provided [`TransactionResponseRegion`] must be of type
     ///   [`worker_message_types::CHECK_RESPONSE`].
-    /// - The allocation pointed to by this region must not have previously been freed.
+    /// - The allocation pointed to by this region must be valid and not previously freed.
     pub unsafe fn from_transaction_response_region(
         transaction_response_region: &TransactionResponseRegion,
         allocator: &Allocator,
@@ -132,9 +132,11 @@ impl CheckResponsesPtr {
         debug_assert!(transaction_response_region.tag == worker_message_types::CHECK_RESPONSE);
 
         Self {
-            ptr: allocator
-                .ptr_from_offset(transaction_response_region.transaction_responses_offset)
-                .cast(),
+            // SAFETY: `transaction_response_region.transaction_responses_offset` was allocated by `allocator`.
+            ptr: unsafe {
+                allocator.ptr_from_offset(transaction_response_region.transaction_responses_offset)
+            }
+            .cast(),
             count: transaction_response_region.num_transaction_responses as usize,
         }
     }
@@ -193,7 +195,7 @@ impl ExecutionResponsesPtr {
     ///
     /// - The provided [`TransactionResponseRegion`] must be of type
     ///   [`worker_message_types::EXECUTION_RESPONSE`].
-    /// - The allocation pointed to by this region must not have previously been freed.
+    /// - The allocation pointed to by this region must be valid and not previously freed.
     pub unsafe fn from_transaction_response_region(
         transaction_response_region: &TransactionResponseRegion,
         allocator: &Allocator,
@@ -201,9 +203,11 @@ impl ExecutionResponsesPtr {
         debug_assert!(transaction_response_region.tag == worker_message_types::EXECUTION_RESPONSE);
 
         Self {
-            ptr: allocator
-                .ptr_from_offset(transaction_response_region.transaction_responses_offset)
-                .cast(),
+            // SAFETY: `transaction_response_region.transaction_responses_offset` was allocated by `allocator`.
+            ptr: unsafe {
+                allocator.ptr_from_offset(transaction_response_region.transaction_responses_offset)
+            }
+            .cast(),
             count: transaction_response_region.num_transaction_responses as usize,
         }
     }

@@ -1,13 +1,13 @@
 use {
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_message::{v0::Message, VersionedMessage},
+    solana_message::{VersionedMessage, v0::Message},
     solana_program_test::ProgramTest,
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
-    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction::{Transaction, versioned::VersionedTransaction},
 };
 
 #[tokio::test]

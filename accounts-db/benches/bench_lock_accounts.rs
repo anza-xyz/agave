@@ -1,13 +1,13 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion, Throughput},
+    criterion::{Criterion, Throughput, criterion_group, criterion_main},
     itertools::iproduct,
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
     solana_instruction::{AccountMeta, Instruction},
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
     solana_transaction::{
-        sanitized::{SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         Transaction,
+        sanitized::{MAX_TX_ACCOUNT_LOCKS, SanitizedTransaction},
     },
     std::{hint::black_box, sync::Arc},
 };

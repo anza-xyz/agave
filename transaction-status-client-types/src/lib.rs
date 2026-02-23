@@ -2,26 +2,26 @@
 //! Core types for solana-transaction-status
 use {
     crate::option_serializer::OptionSerializer,
-    base64::{prelude::BASE64_STANDARD, Engine},
+    base64::{Engine, prelude::BASE64_STANDARD},
     core::fmt,
     serde::{
+        Deserialize, Deserializer, Serialize,
         de::{self, Deserialize as DeserializeTrait, Error as DeserializeError},
         ser::{Serialize as SerializeTrait, SerializeTupleVariant},
-        Deserialize, Deserializer, Serialize,
     },
-    serde_json::{from_value, Value},
+    serde_json::{Value, from_value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
     solana_instruction::error::InstructionError,
     solana_message::{
+        MessageHeader,
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, MessageAddressTableLookup},
-        MessageHeader,
     },
     solana_reward_info::RewardType,
     solana_signature::Signature,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
-    solana_transaction_context::TransactionReturnData,
+    solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult},
     thiserror::Error,
 };
@@ -742,12 +742,14 @@ impl TransactionStatus {
         match &self.confirmation_status {
             Some(status) => status.clone(),
             None => {
-                if self.confirmations.is_none() {
-                    TransactionConfirmationStatus::Finalized
-                } else if self.confirmations.unwrap() > 0 {
-                    TransactionConfirmationStatus::Confirmed
+                if let Some(confirmations) = self.confirmations {
+                    if confirmations > 0 {
+                        TransactionConfirmationStatus::Confirmed
+                    } else {
+                        TransactionConfirmationStatus::Processed
+                    }
                 } else {
-                    TransactionConfirmationStatus::Processed
+                    TransactionConfirmationStatus::Finalized
                 }
             }
         }

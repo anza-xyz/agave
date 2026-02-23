@@ -11,21 +11,22 @@ use {
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             quic_endpoint::RemoteRequest,
             repair_handler::RepairHandler,
-            repair_service::{OutstandingShredRepairs, RepairStats, REPAIR_MS},
+            repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairStats},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
     },
-    bincode::{serialize, Options},
+    agave_votor_messages::migration::MigrationStatus,
+    bincode::{Options, serialize},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lru::LruCache,
     rand::{
-        distr::{
-            weighted::{Error as WeightedError, WeightedIndex},
-            Distribution,
-        },
         Rng,
+        distr::{
+            Distribution,
+            weighted::{Error as WeightedError, WeightedIndex},
+        },
     },
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -36,21 +37,22 @@ use {
         ping_pong::{self, Pong},
         weighted_shuffle::WeightedShuffle,
     },
-    solana_hash::{Hash, HASH_BYTES},
-    solana_keypair::{signable::Signable, Keypair},
-    solana_ledger::shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
+    solana_hash::{HASH_BYTES, Hash},
+    solana_keypair::{Keypair, signable::Signable},
+    solana_ledger::shred::{self, Nonce, SIZE_OF_NONCE, ShredFetchStats},
     solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
         packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     },
-    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_poh::poh_recorder::SharedLeaderState,
+    solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_runtime::bank_forks::SharableBanks,
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
     solana_streamer::{
-        sendmmsg::{batch_send, SendPktsError},
+        sendmmsg::{SendPktsError, batch_send},
         streamer::PacketBatchSender,
     },
     solana_time_utils::timestamp,
@@ -59,8 +61,8 @@ use {
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -345,6 +347,8 @@ pub struct ServeRepair {
     sharable_banks: SharableBanks,
     repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     repair_handler: Box<dyn RepairHandler + Send + Sync>,
+    leader_state: Option<SharedLeaderState>,
+    migration_status: Arc<MigrationStatus>,
 }
 
 // Cache entry for repair peers for a slot.
@@ -408,12 +412,33 @@ impl ServeRepair {
         sharable_banks: SharableBanks,
         repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
         repair_handler: Box<dyn RepairHandler + Send + Sync>,
+        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             cluster_info,
             sharable_banks,
             repair_whitelist,
             repair_handler,
+            leader_state: None,
+            migration_status,
+        }
+    }
+
+    pub fn new_with_leader_state(
+        cluster_info: Arc<ClusterInfo>,
+        sharable_banks: SharableBanks,
+        repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
+        repair_handler: Box<dyn RepairHandler + Send + Sync>,
+        leader_state: SharedLeaderState,
+        migration_status: Arc<MigrationStatus>,
+    ) -> Self {
+        Self {
+            cluster_info,
+            sharable_banks,
+            repair_whitelist,
+            repair_handler,
+            leader_state: Some(leader_state),
+            migration_status,
         }
     }
 
@@ -426,11 +451,13 @@ impl ServeRepair {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let repair_handler = Box::new(StandardRepairHandler::new(blockstore));
+        let bank_forks_r = bank_forks.read().unwrap();
         Self::new(
             cluster_info,
-            bank_forks.read().unwrap().sharable_banks(),
+            bank_forks_r.sharable_banks(),
             repair_whitelist,
             repair_handler,
+            bank_forks_r.migration_status(),
         )
     }
 
@@ -506,11 +533,18 @@ impl ServeRepair {
                     slot,
                 } => {
                     stats.ancestor_hashes += 1;
-                    (
-                        self.repair_handler
-                            .run_ancestor_hashes(recycler, from_addr, *slot, *nonce),
-                        "AncestorHashes",
-                    )
+                    if self
+                        .migration_status
+                        .should_respond_to_ancestor_hashes_requests(*slot)
+                    {
+                        (
+                            self.repair_handler
+                                .run_ancestor_hashes(recycler, from_addr, *slot, *nonce),
+                            "AncestorHashes",
+                        )
+                    } else {
+                        (None, "AncestorHashes")
+                    }
                 }
                 RepairProtocol::Pong(pong) => {
                     stats.pong += 1;
@@ -661,6 +695,8 @@ impl ServeRepair {
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
     ) -> std::result::Result<(), RecvTimeoutError> {
+        /// How much more expensive it is to serve bytes if we are a leader
+        const LEADER_BYTE_COST_MULTIPLIER: usize = 10;
         const TIMEOUT: Duration = Duration::from_secs(1);
         let mut requests = vec![requests_receiver.recv_timeout(TIMEOUT)?];
         const MAX_REQUESTS_PER_ITERATION: usize = 1024;
@@ -725,6 +761,19 @@ impl ServeRepair {
             decoded_requests.truncate(MAX_REQUESTS_PER_ITERATION);
         }
 
+        // Check if we are currently a leader, so we can limit the service rate
+        // If information is not available, assume we are not a leader.
+        let is_leader = self
+            .leader_state
+            .as_ref()
+            .map(|ls| ls.load().working_bank().is_some())
+            .unwrap_or(false);
+        // assign extra cost to served bytes if we are a leader
+        let byte_cost_multiplier = if is_leader {
+            LEADER_BYTE_COST_MULTIPLIER
+        } else {
+            1
+        };
         let handle_requests_start = Instant::now();
         self.handle_requests(
             ping_cache,
@@ -734,6 +783,7 @@ impl ServeRepair {
             repair_response_quic_sender,
             stats,
             data_budget,
+            byte_cost_multiplier,
         );
         stats.handle_requests_time_us += handle_requests_start.elapsed().as_micros() as u64;
 
@@ -946,7 +996,14 @@ impl ServeRepair {
         let mut rng = rand::rng();
         let (check, ping) = request
             .sender()
-            .map(|_| ping_cache.check(&mut rng, identity_keypair, Instant::now(), *from_addr))
+            .map(|&sender| {
+                ping_cache.check(
+                    &mut rng,
+                    identity_keypair,
+                    Instant::now(),
+                    (sender, *from_addr),
+                )
+            })
             .unwrap_or_default();
         let ping_pkt = if let Some(ping) = ping {
             match request {
@@ -992,6 +1049,7 @@ impl ServeRepair {
         repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
+        byte_cost_multiplier: usize,
     ) {
         let identity_keypair = self.cluster_info.keypair();
         let mut pending_pings = Vec::default();
@@ -1004,7 +1062,7 @@ impl ServeRepair {
             whitelisted: _,
         } in requests.into_iter()
         {
-            if !data_budget.check(request.max_response_bytes()) {
+            if !data_budget.check(request.max_response_bytes() * byte_cost_multiplier) {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
@@ -1026,8 +1084,8 @@ impl ServeRepair {
                 continue;
             };
             let num_response_packets = rsp.len();
-            let num_response_bytes = rsp.iter().map(|p| p.meta().size).sum();
-            if data_budget.take(num_response_bytes)
+            let num_response_bytes: usize = rsp.iter().map(|p| p.meta().size).sum();
+            if data_budget.take(num_response_bytes * byte_cost_multiplier)
                 && send_response(
                     rsp,
                     protocol,
@@ -1348,16 +1406,16 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore::{make_many_slot_entries, Blockstore},
+            blockstore::{Blockstore, make_many_slot_entries},
             blockstore_processor::fill_blockstore_slot_with_ticks,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             shred::{
-                max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+                ProcessShredsStats, ReedSolomonCache, Shred, Shredder, max_ticks_per_n_shreds,
             },
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
+        solana_perf::packet::{Packet, PacketFlags, PacketRef, deserialize_from_with_limit},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -1511,9 +1569,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&rsp[..4], &rsp[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -1554,9 +1614,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&request_bytes[..4], &request_bytes[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -1607,9 +1669,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&request_bytes[..4], &request_bytes[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -1641,9 +1705,11 @@ mod tests {
             assert_eq!(&header.sender, &serve_repair.my_id());
             assert_eq!(&header.recipient, &repair_peer_id);
             let signed_data = [&request_bytes[..4], &request_bytes[4 + SIGNATURE_BYTES..]].concat();
-            assert!(header
-                .signature
-                .verify(keypair.pubkey().as_ref(), &signed_data));
+            assert!(
+                header
+                    .signature
+                    .verify(keypair.pubkey().as_ref(), &signed_data)
+            );
         } else {
             panic!("unexpected request type {:?}", &deserialized_request);
         }
@@ -2056,14 +2122,10 @@ mod tests {
             .expect("Expect successful ledger write");
         let nonce = 42;
         // Make sure repair response is corrupted
-        assert!(repair_response::repair_response_packet(
-            &blockstore,
-            1,
-            0,
-            &socketaddr_any!(),
-            nonce,
-        )
-        .is_none());
+        assert!(
+            repair_response::repair_response_packet(&blockstore, 1, 0, &socketaddr_any!(), nonce,)
+                .is_none()
+        );
 
         // Orphan request for slot 2 should only return slot 1 since
         // calling `repair_response_packet` on slot 1's shred will
@@ -2074,14 +2136,16 @@ mod tests {
             .expect("run_orphan packets");
 
         // Verify responses
-        let expected = RecycledPacketBatch::new(vec![repair_response::repair_response_packet(
-            &blockstore,
-            2,
-            31, // shred_index
-            &socketaddr_any!(),
-            nonce,
-        )
-        .unwrap()])
+        let expected = RecycledPacketBatch::new(vec![
+            repair_response::repair_response_packet(
+                &blockstore,
+                2,
+                31, // shred_index
+                &socketaddr_any!(),
+                nonce,
+            )
+            .unwrap(),
+        ])
         .into();
         assert_eq!(rv, expected);
     }
@@ -2197,9 +2261,11 @@ mod tests {
         // then no repairs should be generated
         for pubkey in &[solana_pubkey::new_rand(), *me.pubkey()] {
             let known_validators = Some(vec![*pubkey].into_iter().collect());
-            assert!(serve_repair
-                .repair_peers(&known_validators, 1, &identity_keypair.pubkey())
-                .is_empty());
+            assert!(
+                serve_repair
+                    .repair_peers(&known_validators, 1, &identity_keypair.pubkey())
+                    .is_empty()
+            );
             assert_matches!(
                 serve_repair.repair_request(
                     &cluster_slots,

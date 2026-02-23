@@ -31,6 +31,8 @@ pub struct AccountsStats {
     pub add_zero_lamport_accounts_us: AtomicU64,
     pub num_zero_lamport_accounts_added: AtomicU64,
     pub num_ephemeral_accounts_skipped: AtomicU64,
+    pub num_duplicate_accounts_skipped: AtomicU64,
+    pub num_ancestors_zero_lamport_skipped: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -783,4 +785,12 @@ impl Sum<Self> for ObsoleteAccountsStats {
             accumulated_stats
         })
     }
+}
+
+#[derive(Debug, Default)]
+pub struct CacheAccountStoreStats {
+    pub num_accounts_stored: u64,
+    pub num_ephemeral_accounts_skipped: u64,
+    pub num_duplicate_accounts_skipped: u64,
+    pub num_ancestors_zero_lamport_skipped: u64,
 }

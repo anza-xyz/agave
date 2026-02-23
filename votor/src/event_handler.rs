@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        commitment::{update_commitment_cache, CommitmentType},
+        commitment::{CommitmentType, update_commitment_cache},
         consensus_metrics::ConsensusMetricsEvent,
         event::{CompletedBlock, VotorEvent, VotorEventReceiver},
         event_handler::stats::EventHandlerStats,
@@ -11,26 +11,28 @@ use {
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
         voting_service::BLSOp,
-        voting_utils::{generate_vote_message, VoteError, VotingContext},
+        voting_utils::{VoteError, VotingContext, generate_vote_message},
         votor::SharedContext,
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus, vote::Vote},
-    crossbeam_channel::{select, RecvError, SendError},
+    crossbeam_channel::{RecvError, SendError, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_ledger::leader_schedule_utils::{
-        first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
-    },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{
+        bank::Bank,
+        leader_schedule_utils::{
+            first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
+        },
+    },
     solana_signer::Signer,
     std::{
         collections::{BTreeMap, BTreeSet},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -252,9 +254,6 @@ impl EventHandler {
                         slot,
                     });
                 }
-                consensus_metrics_events.push(ConsensusMetricsEvent::MaybeNewEpoch {
-                    epoch: bank.epoch(),
-                });
                 vctx.consensus_metrics_sender
                     .send((now, consensus_metrics_events))
                     .map_err(|_| SendError(()))?;
@@ -426,6 +425,12 @@ impl EventHandler {
                         &mut votes,
                     )?;
                 }
+                vctx.consensus_metrics_sender
+                    .send((
+                        Instant::now(),
+                        vec![ConsensusMetricsEvent::SlotFinalized { slot: block.0 }],
+                    ))
+                    .map_err(|_| SendError(()))?;
             }
 
             // We have not observed a finalization certificate in a while, refresh our votes
@@ -535,7 +540,7 @@ impl EventHandler {
             *my_pubkey = new_pubkey;
             // The vote history file for the new identity must exist for set-identity to succeed
             vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)?;
-            vctx.identity_keypair = new_identity.clone();
+            vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }
         Ok(())
@@ -800,10 +805,10 @@ mod tests {
             voting_service::BLSOp,
         },
         agave_votor_messages::{
-            consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
-        crossbeam_channel::{unbounded, Receiver, TryRecvError},
+        crossbeam_channel::{Receiver, TryRecvError, unbounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -819,7 +824,7 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
             installed_scheduler_pool::BankWithScheduler,
         },
@@ -835,7 +840,7 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<ConsensusMessage>,
+        own_vote_receiver: Receiver<Vec<ConsensusMessage>>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -861,8 +866,8 @@ mod tests {
         let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
         let (leader_window_info_sender, leader_window_info_receiver) = unbounded();
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
-            event_sender.clone(),
-            exit.clone(),
+            event_sender,
+            exit,
             Arc::new(MigrationStatus::default()),
         )));
 
@@ -1190,7 +1195,7 @@ mod tests {
             );
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, expected_message);
+            assert_eq!(own_vote, vec![expected_message]);
         }
 
         fn check_for_commitment(&mut self, expected_type: CommitmentType, expected_slot: Slot) {
@@ -1236,9 +1241,11 @@ mod tests {
             let saved_vote_history =
                 SavedVoteHistory::new(&VoteHistory::new(new_identity.pubkey(), 0), &new_identity)
                     .unwrap();
-            assert!(file_vote_history_storage
-                .store(&SavedVoteHistoryVersions::from(saved_vote_history),)
-                .is_ok());
+            assert!(
+                file_vote_history_storage
+                    .store(&SavedVoteHistoryVersions::from(saved_vote_history),)
+                    .is_ok()
+            );
             self.cluster_info
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
 
@@ -1285,12 +1292,12 @@ mod tests {
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_2));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
         // Slot 3 somehow links to block 1, should not trigger Notarize vote because it has a wrong parent (not 2)
-        let _ = test_context.create_block_and_send_block_event(3, bank1.clone());
+        let _ = test_context.create_block_and_send_block_event(3, bank1);
         test_context.check_no_vote_or_commitment();
 
         // Slot 4 completed replay without parent ready or parent notarized should not trigger Notarize vote
         let slot = 4;
-        let bank4 = test_context.create_block_and_send_block_event(slot, bank2.clone());
+        let bank4 = test_context.create_block_and_send_block_event(slot, bank2);
         let block_id_4 = bank4.block_id().unwrap();
 
         // Send parent ready for slot 4 should trigger Notarize vote for slot 4
@@ -1324,7 +1331,7 @@ mod tests {
         test_context.send_block_notarized_event((1, block_id_1));
         test_context.check_for_vote(&Vote::new_finalization_vote(1));
 
-        let bank2 = test_context.create_block_and_send_block_event(2, bank1.clone());
+        let bank2 = test_context.create_block_and_send_block_event(2, bank1);
         let block_id_2 = bank2.block_id().unwrap();
         // Both Notarize and Finalize votes should trigger for 2
         test_context.check_for_vote(&Vote::new_notarization_vote(2, block_id_2));
@@ -1334,7 +1341,7 @@ mod tests {
 
         // Create bank3 but do not Notarize, so Finalize vote should not trigger
         let slot = 3;
-        let bank3 = test_context.create_block_only(slot, bank2.clone());
+        let bank3 = test_context.create_block_only(slot, bank2);
         let block_id_3 = bank3.block_id().unwrap();
         // Check no notarization vote for 3
         test_context.check_no_vote_or_commitment();
@@ -1357,7 +1364,7 @@ mod tests {
 
         // Simulate that block 4 never arrives, we create block 4 but send timeout event
         let slot = 4;
-        let bank4 = test_context.create_block_only(slot, bank3.clone());
+        let bank4 = test_context.create_block_only(slot, bank3);
         test_context.send_timeout_event(slot);
         // We did eventually complete replay for 4
         test_context.send_block_event(slot, bank4.clone());
@@ -1370,8 +1377,8 @@ mod tests {
         // Now we get block 5, it's replayed and we get block_notarized, but since 4~7 is a bad
         // window already, we shouldn't have notarize or finalize vote for 5
         let slot = 5;
-        let bank5 = test_context.create_block_only(slot, bank4.clone());
-        test_context.send_block_event(slot, bank5.clone());
+        let bank5 = test_context.create_block_only(slot, bank4);
+        test_context.send_block_event(slot, bank5);
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1540,7 +1547,7 @@ mod tests {
         let bank4 = test_context.create_block_and_send_block_event(4, root_bank);
         let block_id_4 = bank4.block_id().unwrap();
 
-        let bank5 = test_context.create_block_and_send_block_event(5, bank4.clone());
+        let bank5 = test_context.create_block_and_send_block_event(5, bank4);
         let block_id_5 = bank5.block_id().unwrap();
 
         test_context.send_finalized_event((5, block_id_5), true);
@@ -1550,11 +1557,11 @@ mod tests {
 
         // We are partitioned off from rest of the network, and suddenly received finalize for
         // slot 9 a little before we finished replay slot 9
-        let bank9 = test_context.create_block_only(9, bank5.clone());
+        let bank9 = test_context.create_block_only(9, bank5);
         let block_id_9 = bank9.block_id().unwrap();
         test_context.send_finalized_event((9, block_id_9), true);
 
-        test_context.send_block_event(9, bank9.clone());
+        test_context.send_block_event(9, bank9);
 
         // We should now have parent ready for slot 9
         test_context.check_parent_ready_slot((9, (5, block_id_5)));

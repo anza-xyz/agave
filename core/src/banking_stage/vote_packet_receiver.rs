@@ -1,7 +1,7 @@
 use {
     super::{
-        latest_validator_vote_packet::VoteSource, leader_slot_metrics::LeaderSlotMetricsTracker,
-        vote_storage::VoteStorage, BankingStageStats,
+        BankingStageStats, latest_validator_vote_packet::VoteSource,
+        leader_slot_metrics::LeaderSlotMetricsTracker, vote_storage::VoteStorage,
     },
     crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_banking_stage_ingress_types::BankingPacketReceiver,
@@ -12,7 +12,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     std::{
         num::Saturating,
-        sync::{atomic::Ordering, Arc},
+        sync::{Arc, atomic::Ordering},
         time::{Duration, Instant},
     },
 };
@@ -110,6 +110,9 @@ impl VotePacketReceiver {
                     // NB: It's safe to always pass false in here as simple vote
                     // transactions are guaranteed to be a single instruction.
                     false,
+                    // Vote instructions are created in the validator code, and they are not
+                    // referencing more than 255 accounts, so it is safe to set this to true.
+                    true,
                 ) {
                     Ok(pkt) => Some(pkt),
                     Err(err) => {

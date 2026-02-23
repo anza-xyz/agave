@@ -61,7 +61,7 @@ mod tests {
         super::*,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::{bytes::Bytes, Meta},
+        solana_perf::packet::{Meta, bytes::Bytes},
         solana_signature::Signature,
         solana_system_transaction as system_transaction,
     };

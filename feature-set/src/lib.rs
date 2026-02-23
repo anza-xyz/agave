@@ -170,8 +170,10 @@ impl FeatureSet {
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
             enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
-            custom_commission_collector: self.is_active(&custom_commission_collector::id()),
+            custom_commission_collector: false, // Feature disabled for now.
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
+            block_revenue_sharing: false, // Hard-coded as disabled for now. Not a fully-implemented feature yet.
+            vote_account_initialize_v2: false, // Feature disabled for now.
         }
     }
 }
@@ -1119,7 +1121,25 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
+    #[cfg(feature = "dev-context-only-utils")]
+    use {
+        solana_keypair::{Keypair, Signer},
+        std::sync::LazyLock,
+    };
+
+    // Used to activate alpenglow in local-cluster tests without exposing the actual feature's private key
+    #[cfg(feature = "dev-context-only-utils")]
+    pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
+        let keypair = Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR");
+        assert_eq!(keypair.pubkey(), super::alpenglow::id());
+        keypair
+    });
+
+    #[cfg(not(feature = "dev-context-only-utils"))]
     solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+
+    #[cfg(feature = "dev-context-only-utils")]
+    solana_pubkey::declare_id!("8KpruRFrT59jQ9NfFX9DU6j8a1hW7y6xchvZNQ5rxD4P");
 }
 
 pub mod disable_zk_elgamal_proof_program {
@@ -1139,7 +1159,7 @@ pub mod raise_account_cu_limit {
 }
 
 pub mod delay_commission_updates {
-    solana_pubkey::declare_id!("BRUoCu28xjjPkDcNm7iY9a8LqgftZko99ioXz84wivXh");
+    solana_pubkey::declare_id!("76dHtohc2s5dR3ahJyBxs7eJJVipFkaPdih9CLgTTb4B");
 }
 
 pub mod raise_cpi_nesting_limit_to_8 {
@@ -1155,7 +1175,7 @@ pub mod provide_instruction_data_offset_in_vm_r2 {
 }
 
 pub mod create_account_allow_prefund {
-    solana_pubkey::declare_id!("caapcFpbcsJTMQMEMcpyx1m27DcXVp4MH6faHM5h5Z5");
+    solana_pubkey::declare_id!("6sPDzwyARRExKH52LECxcGoqziH8G7SZofwuxi8Ja331");
 }
 
 pub mod static_instruction_limit {
@@ -1263,6 +1283,26 @@ pub mod set_lamports_per_byte_to_696 {
     solana_pubkey::declare_id!("mZdnRh9T2EbDNvqKjkCR3bvo5c816tJaojtE9Xs7iuY");
 
     pub const LAMPORTS_PER_BYTE: u64 = 696;
+}
+
+pub mod stop_use_static_simple_vote_tx_cost {
+    solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
+}
+
+pub mod limit_instruction_accounts {
+    solana_pubkey::declare_id!("DqbnFPASg7tHmZ6qfpdrt2M6MWoSeiicWPXxPhxqFCQ");
+}
+
+pub mod block_revenue_sharing {
+    solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
+}
+
+pub mod vote_account_initialize_v2 {
+    solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
+}
+
+pub mod validate_chained_block_id {
+    solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1845,7 +1885,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             last_restart_slot_sysvar::id(),
-            "enable new sysvar last_restart_slot",
+            "SIMD-0047: Enable new sysvar last_restart_slot",
         ),
         (
             reduce_stake_warmup_cooldown::id(),
@@ -1920,7 +1960,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             add_new_reserved_account_keys::id(),
-            "add new unwritable reserved accounts #34899",
+            "SIMD-0105: Maintain Dynamic Set of Reserved Account Keys",
         ),
         (
             index_erasure_conflict_duplicate_proofs::id(),
@@ -2245,10 +2285,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0291: Commission rate in basis points",
         ),
         (
-            custom_commission_collector::id(),
-            "SIMD-0232: Custom Commission Collector Account",
-        ),
-        (
             enable_bls12_381_syscall::id(),
             "SIMD-0388: BLS12-381 syscalls",
         ),
@@ -2271,6 +2307,22 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             set_lamports_per_byte_to_696::id(),
             "SIMD-0437-5: Set lamports per byte to 696",
+        ),
+        (
+            stop_use_static_simple_vote_tx_cost::id(),
+            "stop use static SimpleVote transaction cost, issue #10227",
+        ),
+        (
+            limit_instruction_accounts::id(),
+            "SIMD-406: Maximum instruction accounts",
+        ),
+        (
+            vote_account_initialize_v2::id(),
+            "SIMD-0464: Vote Account Initialize V2",
+        ),
+        (
+            validate_chained_block_id::id(),
+            "SIMD-0340: Validate chained block ID",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

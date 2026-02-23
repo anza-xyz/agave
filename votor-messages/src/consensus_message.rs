@@ -1,10 +1,15 @@
 //! Put Alpenglow consensus messages here so all clients can agree on the format.
 use {
-    crate::vote::Vote,
+    crate::{
+        fraction::Fraction,
+        migration::GENESIS_VOTE_THRESHOLD,
+        vote::{Vote, VoteType},
+    },
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
+    wincode::{SchemaRead, SchemaWrite, containers::Pod},
 };
 
 /// The seed used to derive the BLS keypair
@@ -18,11 +23,12 @@ pub type Block = (Slot, Hash);
     derive(AbiExample),
     frozen_abi(digest = "5eorzdc18a1sNEUDLAKPgrHCqHmA8ssuTwKSGsZLwBqR")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
     /// The signature.
+    #[wincode(with = "Pod<BLSSignature>")]
     pub signature: BLSSignature,
     /// The rank of the validator.
     pub rank: u16,
@@ -34,7 +40,20 @@ pub struct VoteMessage {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "CazjewshYYizgQuCgBBRv6gzasJpUvFVKoSeEirWRKgA")
 )]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    SchemaWrite,
+    SchemaRead,
+)]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
@@ -71,6 +90,16 @@ impl CertificateType {
     /// Is this a finalize / fast finalize certificate?
     pub fn is_finalization(&self) -> bool {
         matches!(self, Self::Finalize(_) | Self::FinalizeFast(_, _))
+    }
+
+    /// Is this a slow finalize certificate?
+    pub fn is_slow_finalization(&self) -> bool {
+        matches!(self, Self::Finalize(_))
+    }
+
+    /// Is this a notarize certificate?
+    pub fn is_notarize(&self) -> bool {
+        matches!(self, Self::Notarize(_, _))
     }
 
     /// Is this a notarize fallback certificate?
@@ -146,6 +175,31 @@ impl CertificateType {
             _ => None,
         }
     }
+
+    /// Returns the stake fraction required for certificate completion and the
+    /// `VoteType`s that contribute to this certificate.
+    ///
+    /// Must be in sync with `Vote::to_cert_types`
+    pub const fn limits_and_vote_types(&self) -> (Fraction, &'static [VoteType]) {
+        match self {
+            CertificateType::Notarize(_, _) => {
+                (Fraction::from_percentage(60), &[VoteType::Notarize])
+            }
+            CertificateType::NotarizeFallback(_, _) => (
+                Fraction::from_percentage(60),
+                &[VoteType::Notarize, VoteType::NotarizeFallback],
+            ),
+            CertificateType::FinalizeFast(_, _) => {
+                (Fraction::from_percentage(80), &[VoteType::Notarize])
+            }
+            CertificateType::Finalize(_) => (Fraction::from_percentage(60), &[VoteType::Finalize]),
+            CertificateType::Skip(_) => (
+                Fraction::from_percentage(60),
+                &[VoteType::Skip, VoteType::SkipFallback],
+            ),
+            CertificateType::Genesis(_, _) => (GENESIS_VOTE_THRESHOLD, &[VoteType::Genesis]),
+        }
+    }
 }
 
 /// The actual certificate with the aggregate signature and bitmap for which validators are included in the aggregate.
@@ -155,11 +209,12 @@ impl CertificateType {
     derive(AbiExample),
     frozen_abi(digest = "B5NsoWZr2Lpbbjqj8udwEKvae6bA37Pm4R92udZHxwfU")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
     /// The aggregate signature.
+    #[wincode(with = "Pod<BLSSignature>")]
     pub signature: BLSSignature,
     /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.
@@ -172,7 +227,7 @@ pub struct Certificate {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "BdKT6dbkLnTeGNMS8XtQkg6HTeHSQ6Z41Btc1rJ117PB")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
     /// A vote from a single party.

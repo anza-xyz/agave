@@ -1,9 +1,8 @@
 use {
-    crate::common::certificate_limits_and_vote_types,
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
-    solana_signer_store::{encode_base2, encode_base3, EncodeError},
+    solana_signer_store::{EncodeError, encode_base2, encode_base3},
     thiserror::Error,
 };
 
@@ -18,7 +17,7 @@ const MAXIMUM_VALIDATORS: usize = 4096;
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
 #[derive(Debug, Error, PartialEq, Eq)]
-pub(super) enum AggregateError {
+pub enum AggregateError {
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
     #[error("Invalid rank: {0}")]
@@ -28,21 +27,12 @@ pub(super) enum AggregateError {
 }
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::build()`] function.
-#[derive(Debug, Error, PartialEq)]
-pub(crate) enum BuildError {
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum BuildError {
     #[error("Encoding failed: {0:?}")]
     Encode(EncodeError),
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
-}
-
-/// Different types of errors that can be returned from the [`CertificateBuilder::build_for_rewards()`] function.
-#[derive(Debug, Error, PartialEq)]
-pub enum BuildForRewardsError {
-    #[error("Encoding failed: {0:?}")]
-    Encode(EncodeError),
-    #[error("rewards certs of these types are not needed")]
-    InvalidCertType,
 }
 
 fn default_bitvec() -> BitVec<u8, Lsb0> {
@@ -152,7 +142,7 @@ impl BuilderType {
         cert_type: &CertificateType,
         msgs: &[VoteMessage],
     ) -> Result<(), AggregateError> {
-        let vote_types = certificate_limits_and_vote_types(cert_type).1;
+        let vote_types = cert_type.limits_and_vote_types().1;
         match self {
             Self::Skip {
                 signature0,
@@ -166,8 +156,9 @@ impl BuilderType {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
                         assert_eq!(vote_type, vote_types[1]);
-                        let (_, bitmap) = sig_and_bitmap1
-                            .get_or_insert((SignatureProjective::identity(), default_bitvec()));
+                        let (_, bitmap) = sig_and_bitmap1.get_or_insert_with(|| {
+                            (SignatureProjective::identity(), default_bitvec())
+                        });
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
                 }
@@ -197,7 +188,7 @@ impl BuilderType {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
                         assert_eq!(vote_type, vote_types[1]);
-                        let bitmap = bitmap1.get_or_insert(default_bitvec());
+                        let bitmap = bitmap1.get_or_insert_with(default_bitvec);
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
                 }
@@ -246,40 +237,17 @@ impl BuilderType {
             },
         }
     }
-
-    /// Builds a [`Certificate`] for rewards purposes from the builder.
-    fn build_for_rewards(
-        self,
-        cert_type: CertificateType,
-    ) -> Result<Certificate, BuildForRewardsError> {
-        match self {
-            Self::Skip {
-                signature0,
-                bitmap0,
-                sig_and_bitmap1: _,
-            } => build_cert_from_bitmap(cert_type, signature0, bitmap0)
-                .map_err(BuildForRewardsError::Encode),
-            Self::SingleVote { signature, bitmap } => match cert_type {
-                CertificateType::Notarize(_, _) => {
-                    build_cert_from_bitmap(cert_type, signature, bitmap)
-                        .map_err(BuildForRewardsError::Encode)
-                }
-                _ => Err(BuildForRewardsError::InvalidCertType),
-            },
-            Self::NotarFallback { .. } => Err(BuildForRewardsError::InvalidCertType),
-        }
-    }
 }
 
 /// Builder for creating [`Certificate`] by using BLS signature aggregation.
-pub(super) struct CertificateBuilder {
+pub struct CertificateBuilder {
     builder_type: BuilderType,
     cert_type: CertificateType,
 }
 
 impl CertificateBuilder {
     /// Creates a new instance of the builder.
-    pub(super) fn new(cert_type: CertificateType) -> Self {
+    pub fn new(cert_type: CertificateType) -> Self {
         let builder_type = BuilderType::new(&cert_type);
         Self {
             builder_type,
@@ -288,19 +256,13 @@ impl CertificateBuilder {
     }
 
     /// Aggregates new [`VoteMessage`]s into the builder.
-    pub(super) fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
+    pub fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
         self.builder_type.aggregate(&self.cert_type, msgs)
     }
 
     /// Builds a [`Certificate`] from the builder.
-    pub(super) fn build(self) -> Result<Certificate, BuildError> {
+    pub fn build(self) -> Result<Certificate, BuildError> {
         self.builder_type.build(self.cert_type)
-    }
-
-    /// Builds a [`Certificate`] for rewards purposes from the builder.
-    #[allow(dead_code)]
-    pub(super) fn build_for_rewards(self) -> Result<Certificate, BuildForRewardsError> {
-        self.builder_type.build_for_rewards(self.cert_type)
     }
 }
 
@@ -317,7 +279,7 @@ mod tests {
             Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
         },
         solana_hash::Hash,
-        solana_signer_store::{decode, Decoded},
+        solana_signer_store::{Decoded, decode},
     };
 
     #[test]

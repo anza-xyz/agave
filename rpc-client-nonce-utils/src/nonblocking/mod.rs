@@ -3,7 +3,7 @@
 pub mod blockhash_query;
 
 use {
-    solana_account::{state_traits::StateMut, Account, ReadableAccount},
+    solana_account::{Account, ReadableAccount, state_traits::StateMut},
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_nonce::{

@@ -19,7 +19,7 @@ use {
     },
     iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
     log::*,
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     roots_tracker::RootsTracker,
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
@@ -30,19 +30,20 @@ use {
     solana_pubkey::Pubkey,
     stats::Stats,
     std::{
-        collections::{btree_map::BTreeMap, HashSet},
+        collections::{HashSet, btree_map::BTreeMap},
         fmt::Debug,
         num::NonZeroUsize,
         ops::{Bound, Range, RangeBounds},
         path::PathBuf,
         sync::{
-            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
         },
     },
     thiserror::Error,
 };
 pub use {
+    bucket_map_holder::{DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT},
     iter::ITER_BATCH_SIZE,
     secondary::{
         AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude, IndexKey,
@@ -229,14 +230,25 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 }
 
 /// specification of how much memory the in-mem portion of account index can hold
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
     /// evict from in-mem when usage exceeds threshold in bytes
-    Threshold(u64),
+    Threshold(IndexLimitThreshold),
+}
+
+/// Configuration for threshold-based accounts index limit
+#[derive(Debug, Clone)]
+pub struct IndexLimitThreshold {
+    /// The memory limit, in bytes, for the entire accounts index.
+    pub num_bytes: u64,
+    /// Number of entries below an in-mem index bin's usable capacity at which to begin evicting.
+    pub num_entries_overhead: usize,
+    /// Number of entries to evict, once we've hit the high watermark.
+    pub num_entries_to_evict: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1023,10 +1035,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.storage.set_startup(value);
     }
 
-    pub fn get_startup_remaining_items_to_flush_estimate(&self) -> usize {
-        self.storage.get_startup_remaining_items_to_flush_estimate()
-    }
-
     /// Scan AccountsIndex for a given iterator of Pubkeys.
     ///
     /// This fn takes 4 arguments.
@@ -1293,16 +1301,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.account_maps.len()
     }
 
-    // Same functionally to upsert, but:
-    // 1. operates on a batch of items
-    // 2. holds the write lock for the duration of adding the items
-    // Can save time when inserting lots of new keys.
-    // But, does NOT update secondary index
-    // This is designed to be called at startup time.
+    /// Same functionally to upsert, but:
+    /// 1. operates on a batch of items in reusable Vec, draining all elements
+    /// 2. holds the write lock for the duration of adding the items
+    ///
+    /// Can save time when inserting lots of new keys.
+    /// But, does NOT update secondary index
+    /// This is designed to be called at startup time.
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
-        mut items: Vec<(Pubkey, T)>,
+        items: &mut Vec<(Pubkey, T)>,
     ) -> InsertNewIfMissingIntoPrimaryIndexInfo {
         let use_disk = self.storage.storage.is_disk_index_enabled();
 
@@ -1688,6 +1697,30 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .max_inclusive()
     }
 
+    pub(crate) fn clean_dead_slots<'a>(
+        &'a self,
+        dead_slots_iter: impl Iterator<Item = &'a Slot>,
+    ) -> AccountsIndexRootsStats {
+        let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
+        let mut measure = Measure::start("clean_dead_slot");
+        let mut rooted_cleaned_count = 0;
+        let mut unrooted_cleaned_count = 0;
+        dead_slots_iter.for_each(|slot| {
+            if self.clean_dead_slot(*slot) {
+                rooted_cleaned_count += 1;
+            } else {
+                unrooted_cleaned_count += 1;
+            }
+        });
+        measure.stop();
+        accounts_index_root_stats.clean_dead_slot_us += measure.as_us();
+        self.update_roots_stats(&mut accounts_index_root_stats);
+        accounts_index_root_stats.rooted_cleaned_count += rooted_cleaned_count;
+        accounts_index_root_stats.unrooted_cleaned_count += unrooted_cleaned_count;
+
+        accounts_index_root_stats
+    }
+
     /// Remove the slot when the storage for the slot is freed
     /// Accounts no longer reference this slot.
     /// return true if slot was a root
@@ -1740,7 +1773,31 @@ pub(crate) enum Startup {
 }
 
 #[cfg(test)]
-pub mod tests {
+pub(crate) mod test_utils {
+    use {
+        super::{AccountIndex, secondary::AccountSecondaryIndexes},
+        std::collections::HashSet,
+    };
+    pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {
+        let mut account_indexes = HashSet::new();
+        account_indexes.insert(AccountIndex::SplTokenMint);
+        AccountSecondaryIndexes {
+            indexes: account_indexes,
+            keys: None,
+        }
+    }
+    pub fn spl_token_owner_index_enabled() -> AccountSecondaryIndexes {
+        let mut account_indexes = HashSet::new();
+        account_indexes.insert(AccountIndex::SplTokenOwner);
+        AccountSecondaryIndexes {
+            indexes: account_indexes,
+            keys: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
     use {
         super::{bucket_map_holder::BucketMapHolder, *},
         crate::accounts_index::account_map_entry::AccountMapEntryMeta,
@@ -1754,26 +1811,10 @@ pub mod tests {
         test_case::test_matrix,
     };
 
-    pub enum SecondaryIndexTypes<'a> {
+    enum SecondaryIndexTypes<'a> {
+        // We don't access the inner value, but we do use it for type checking during cmopilation.
+        #[allow(dead_code)]
         RwLock(&'a SecondaryIndex<RwLockSecondaryIndexEntry>),
-    }
-
-    pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {
-        let mut account_indexes = HashSet::new();
-        account_indexes.insert(AccountIndex::SplTokenMint);
-        AccountSecondaryIndexes {
-            indexes: account_indexes,
-            keys: None,
-        }
-    }
-
-    pub fn spl_token_owner_index_enabled() -> AccountSecondaryIndexes {
-        let mut account_indexes = HashSet::new();
-        account_indexes.insert(AccountIndex::SplTokenOwner);
-        AccountSecondaryIndexes {
-            indexes: account_indexes,
-            keys: None,
-        }
     }
 
     fn create_spl_token_mint_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
@@ -1783,7 +1824,7 @@ pub mod tests {
             let _type_check = SecondaryIndexTypes::RwLock(&index.spl_token_mint_index);
         }
 
-        (0, PUBKEY_BYTES, spl_token_mint_index_enabled())
+        (0, PUBKEY_BYTES, test_utils::spl_token_mint_index_enabled())
     }
 
     fn create_spl_token_owner_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
@@ -1796,7 +1837,7 @@ pub mod tests {
         (
             SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
             SPL_TOKEN_ACCOUNT_OWNER_OFFSET + PUBKEY_BYTES,
-            spl_token_owner_index_enabled(),
+            test_utils::spl_token_owner_index_enabled(),
         )
     }
 
@@ -1929,9 +1970,9 @@ pub mod tests {
         let account_info = true;
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let account_info2: bool = !account_info;
-        let items = vec![(*pubkey, account_info), (*pubkey, account_info2)];
+        let mut items = vec![(*pubkey, account_info), (*pubkey, account_info2)];
         index.set_startup(Startup::Startup);
-        index.insert_new_if_missing_into_primary_index(slot, items);
+        index.insert_new_if_missing_into_primary_index(slot, &mut items);
     }
 
     #[test]
@@ -1942,10 +1983,10 @@ pub mod tests {
 
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let account_info = true;
-        let items = vec![(*pubkey, account_info)];
+        let mut items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let result = index.insert_new_if_missing_into_primary_index(slot, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot, &mut items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -1979,10 +2020,10 @@ pub mod tests {
         // not zero lamports
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let account_info = false;
-        let items = vec![(*pubkey, account_info)];
+        let mut items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let result = index.insert_new_if_missing_into_primary_index(slot, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot, &mut items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2201,9 +2242,9 @@ pub mod tests {
         let account_infos = [true, false];
 
         index.set_startup(Startup::Startup);
-        let items = vec![(key0, account_infos[0]), (key1, account_infos[1])];
+        let mut items = vec![(key0, account_infos[0]), (key1, account_infos[1])];
         let expected_len = items.len();
-        let result = index.insert_new_if_missing_into_primary_index(slot0, items);
+        let result = index.insert_new_if_missing_into_primary_index(slot0, &mut items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2260,10 +2301,10 @@ pub mod tests {
                 );
             }
             None => {
-                let items = vec![(key, account_infos[0])];
+                let mut items = vec![(key, account_infos[0])];
                 index.set_startup(Startup::Startup);
                 let expected_len = items.len();
-                let result = index.insert_new_if_missing_into_primary_index(slot0, items);
+                let result = index.insert_new_if_missing_into_primary_index(slot0, &mut items);
                 assert_eq!(result.count, expected_len);
                 index.set_startup(Startup::Normal);
             }
@@ -2308,10 +2349,10 @@ pub mod tests {
                     index.set_startup(Startup::Normal);
                 }
 
-                let items = vec![(key, account_infos[1])];
+                let mut items = vec![(key, account_infos[1])];
                 index.set_startup(Startup::Startup);
                 let expected_len = items.len();
-                let result = index.insert_new_if_missing_into_primary_index(slot1, items);
+                let result = index.insert_new_if_missing_into_primary_index(slot1, &mut items);
                 assert_eq!(result.count, expected_len);
                 index.set_startup(Startup::Normal);
             }
@@ -3929,10 +3970,6 @@ pub mod tests {
                 reclaim_method,
             );
             assert!(gc.is_empty());
-        }
-
-        pub fn clear_roots(&self) {
-            self.roots_tracker.write().unwrap().alive_roots.clear()
         }
     }
 

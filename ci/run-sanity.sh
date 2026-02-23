@@ -56,26 +56,24 @@ $agave_validator --ledger config/ledger exit --force || true
 
 wait $pid
 
-for method in blockstore-processor unified-scheduler
-do
-  rm -rf config/snapshot-ledger
-  $solana_ledger_tool create-snapshot --ledger config/ledger "$snapshot_slot" config/snapshot-ledger
-  cp config/ledger/genesis.tar.bz2 config/snapshot-ledger
-  $solana_ledger_tool copy --ledger config/ledger \
-    --target-ledger config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
+rm -rf config/snapshot-ledger
+$solana_ledger_tool create-snapshot --ledger config/ledger "$snapshot_slot" config/snapshot-ledger
+cp config/ledger/genesis.tar.bz2 config/snapshot-ledger
+$solana_ledger_tool copy --ledger config/ledger \
+  --target-ledger config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
 
-  set -x
-  $solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
-    |& grep -q "Log Messages:$" && exit 1
+set -x
+$solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
+  |& grep -q "Log Messages:$" && exit 1
 
-  $solana_ledger_tool verify --abort-on-invalid-block \
-    --ledger config/snapshot-ledger --block-verification-method "$method" \
-    --enable-rpc-transaction-history --enable-extended-tx-metadata-storage
+$solana_ledger_tool verify --abort-on-invalid-block \
+  --ledger config/snapshot-ledger --enable-rpc-transaction-history \
+  --enable-extended-tx-metadata-storage
 
-  $solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
-    |& grep -q "Log Messages:$"
-  set +x
-done
+$solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
+  |& grep -q "Log Messages:$"
+set +x
+
 
 first_simulated_slot=$((latest_slot / 2))
 purge_slot=$((first_simulated_slot + latest_slot / 4))

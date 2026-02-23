@@ -22,7 +22,7 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_svm_log_collector::ic_logger_msg,
     solana_svm_measure::measure::Measure,
-    solana_transaction_context::{IndexOfAccount, TransactionContext},
+    solana_transaction_context::{IndexOfAccount, transaction::TransactionContext},
     std::{cell::RefCell, mem},
 };
 
@@ -178,6 +178,26 @@ pub fn execute<'a, 'b: 'a>(
             feature = "sbpf-debugger"
         ))] {
             let use_jit = false;
+            #[cfg(feature = "sbpf-debugger")]
+            let (debug_port, debug_metadata) = (
+                invoke_context.debug_port,
+                format!(
+                    "program_id={};cpi_level={};caller={}",
+                    program_id,
+                    instruction_context.get_stack_height().saturating_sub(1),
+                    invoke_context
+                        .get_stack_height()
+                        .checked_sub(2)
+                        .and_then(|nesting_level| {
+                            transaction_context
+                                .get_instruction_context_at_nesting_level(nesting_level)
+                                .ok()
+                        })
+                        .and_then(|ctx| ctx.get_program_key().ok())
+                        .map(|key| key.to_string())
+                        .unwrap_or_else(|| "none".into())
+                ),
+            );
         } else {
             let use_jit = executable.get_compiled_program().is_some();
         }
@@ -229,6 +249,11 @@ pub fn execute<'a, 'b: 'a>(
         };
         create_vm_time.stop();
 
+        #[cfg(feature = "sbpf-debugger")]
+        {
+            vm.debug_port = debug_port;
+            vm.debug_metadata = Some(debug_metadata);
+        }
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         vm.registers[1] = ebpf::MM_INPUT_START;
 

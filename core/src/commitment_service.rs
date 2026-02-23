@@ -1,6 +1,10 @@
 use {
-    crate::consensus::{tower_vote_state::TowerVoteState, Stake},
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crate::consensus::{Stake, tower_vote_state::TowerVoteState},
+    agave_votor::commitment::{
+        CommitmentAggregationData as AlpenglowCommitmentAggregationData,
+        CommitmentType as AlpenglowCommitmentType,
+    },
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, select, unbounded},
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
@@ -14,15 +18,15 @@ use {
         cmp::max,
         collections::HashMap,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
     },
 };
 
-pub struct CommitmentAggregationData {
+pub struct TowerCommitmentAggregationData {
     bank: Arc<Bank>,
     root: Slot,
     total_stake: Stake,
@@ -31,7 +35,7 @@ pub struct CommitmentAggregationData {
     node_vote_state: (Pubkey, TowerVoteState),
 }
 
-impl CommitmentAggregationData {
+impl TowerCommitmentAggregationData {
     pub fn new(
         bank: Arc<Bank>,
         root: Slot,
@@ -68,28 +72,44 @@ impl AggregateCommitmentService {
         exit: Arc<AtomicBool>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         subscriptions: Option<Arc<RpcSubscriptions>>,
-    ) -> (Sender<CommitmentAggregationData>, Self) {
+    ) -> (
+        Sender<TowerCommitmentAggregationData>,
+        Sender<AlpenglowCommitmentAggregationData>,
+        Self,
+    ) {
         let (sender, receiver): (
-            Sender<CommitmentAggregationData>,
-            Receiver<CommitmentAggregationData>,
+            Sender<TowerCommitmentAggregationData>,
+            Receiver<TowerCommitmentAggregationData>,
         ) = unbounded();
+        // This channel should not grow unbounded, we expect at most 2 events per slot (`Notarize` and `Finalize`)
+        // Although unlikely, we could send out a lot of `Notarize` votes during catchup, overprovision at 1000 to account
+        // for any such weirdness.
+        let (ag_sender, ag_receiver): (
+            Sender<AlpenglowCommitmentAggregationData>,
+            Receiver<AlpenglowCommitmentAggregationData>,
+        ) = bounded(1000);
+
         (
             sender,
+            ag_sender,
             Self {
                 t_commitment: Builder::new()
                     .name("solAggCommitSvc".to_string())
-                    .spawn(move || loop {
-                        if exit.load(Ordering::Relaxed) {
-                            break;
-                        }
+                    .spawn(move || {
+                        loop {
+                            if exit.load(Ordering::Relaxed) {
+                                break;
+                            }
 
-                        if let Err(RecvTimeoutError::Disconnected) = Self::run(
-                            &receiver,
-                            &block_commitment_cache,
-                            subscriptions.as_deref(),
-                            &exit,
-                        ) {
-                            break;
+                            if let Err(RecvTimeoutError::Disconnected) = Self::run(
+                                &receiver,
+                                &ag_receiver,
+                                &block_commitment_cache,
+                                subscriptions.as_deref(),
+                                &exit,
+                            ) {
+                                break;
+                            }
                         }
                     })
                     .unwrap(),
@@ -98,7 +118,8 @@ impl AggregateCommitmentService {
     }
 
     fn run(
-        receiver: &Receiver<CommitmentAggregationData>,
+        receiver: &Receiver<TowerCommitmentAggregationData>,
+        ag_receiver: &Receiver<AlpenglowCommitmentAggregationData>,
         block_commitment_cache: &RwLock<BlockCommitmentCache>,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         exit: &AtomicBool,
@@ -108,18 +129,30 @@ impl AggregateCommitmentService {
                 return Ok(());
             }
 
-            let aggregation_data = receiver.recv_timeout(Duration::from_secs(1))?;
-            let aggregation_data = receiver.try_iter().last().unwrap_or(aggregation_data);
-
-            let ancestors = aggregation_data.bank.status_cache_ancestors();
-            if ancestors.is_empty() {
-                continue;
-            }
-
             let mut aggregate_commitment_time = Measure::start("aggregate-commitment-ms");
-            let update_commitment_slots =
-                Self::update_commitment_cache(block_commitment_cache, aggregation_data, ancestors);
+            let commitment_slots = select! {
+                recv(receiver) -> msg => {
+                    let data = msg?;
+                    let data = receiver.try_iter().last().unwrap_or(data);
+                    let ancestors = data.bank.status_cache_ancestors();
+                    if ancestors.is_empty() {
+                        continue;
+                    }
+                    Self::update_commitment_cache(block_commitment_cache, data, ancestors)
+                }
+                recv(ag_receiver) -> msg => {
+                    let data = msg?;
+                    let data = ag_receiver.try_iter().last().unwrap_or(data);
+                    Self::alpenglow_update_commitment_cache(
+                        block_commitment_cache,
+                        data.commitment_type,
+                        data.slot,
+                    )
+                }
+                default(Duration::from_secs(1)) => continue
+            };
             aggregate_commitment_time.stop();
+
             datapoint_info!(
                 "block-commitment-cache",
                 (
@@ -129,12 +162,12 @@ impl AggregateCommitmentService {
                 ),
                 (
                     "highest-super-majority-root",
-                    update_commitment_slots.highest_super_majority_root as i64,
+                    commitment_slots.highest_super_majority_root as i64,
                     i64
                 ),
                 (
                     "highest-confirmed-slot",
-                    update_commitment_slots.highest_confirmed_slot as i64,
+                    commitment_slots.highest_confirmed_slot as i64,
                     i64
                 ),
             );
@@ -143,14 +176,37 @@ impl AggregateCommitmentService {
                 // Triggers rpc_subscription notifications as soon as new commitment data is
                 // available, sending just the commitment cache slot information that the
                 // notifications thread needs
-                rpc_subscriptions.notify_subscribers(update_commitment_slots);
+                rpc_subscriptions.notify_subscribers(commitment_slots);
             }
         }
     }
 
+    fn alpenglow_update_commitment_cache(
+        block_commitment_cache: &RwLock<BlockCommitmentCache>,
+        update_type: AlpenglowCommitmentType,
+        slot: Slot,
+    ) -> CommitmentSlots {
+        let mut w_block_commitment_cache = block_commitment_cache.write().unwrap();
+
+        match update_type {
+            AlpenglowCommitmentType::Notarize => {
+                // Notarize (our first round vote in favor of a block) satisfies the Processed commitment level
+                w_block_commitment_cache.set_slot(slot);
+            }
+            AlpenglowCommitmentType::Finalized => {
+                // There is no distinction of OC, root, or finalized in Alpengow commitment.
+                // When receiving a finalilzation certificate we set all of these values.
+                w_block_commitment_cache.set_highest_confirmed_slot(slot);
+                w_block_commitment_cache.set_root(slot);
+                w_block_commitment_cache.set_highest_super_majority_root(slot);
+            }
+        }
+        w_block_commitment_cache.commitment_slots()
+    }
+
     fn update_commitment_cache(
         block_commitment_cache: &RwLock<BlockCommitmentCache>,
-        aggregation_data: CommitmentAggregationData,
+        aggregation_data: TowerCommitmentAggregationData,
         ancestors: Vec<u64>,
     ) -> CommitmentSlots {
         let (block_commitment, rooted_stake) = Self::aggregate_commitment(
@@ -271,18 +327,18 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-        solana_account::{state_traits::StateMut, Account, ReadableAccount},
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_account::{Account, ReadableAccount, state_traits::StateMut},
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{
-            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
             stake_utils,
         },
         solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
-            self, process_slot_vote_unchecked, TowerSync, VoteStateV4, VoteStateVersions,
-            BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY,
+            self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4,
+            VoteStateVersions, process_slot_vote_unchecked,
         },
     };
 
@@ -645,7 +701,7 @@ mod tests {
         let ancestors = working_bank.status_cache_ancestors();
         let _ = AggregateCommitmentService::update_commitment_cache(
             &block_commitment_cache,
-            CommitmentAggregationData {
+            TowerCommitmentAggregationData {
                 bank: working_bank,
                 root: 0,
                 total_stake: 100,
@@ -679,7 +735,7 @@ mod tests {
         let ancestors = working_bank.status_cache_ancestors();
         let _ = AggregateCommitmentService::update_commitment_cache(
             &block_commitment_cache,
-            CommitmentAggregationData {
+            TowerCommitmentAggregationData {
                 bank: working_bank,
                 root: 1,
                 total_stake: 100,
@@ -728,7 +784,7 @@ mod tests {
         let ancestors = working_bank.status_cache_ancestors();
         let _ = AggregateCommitmentService::update_commitment_cache(
             &block_commitment_cache,
-            CommitmentAggregationData {
+            TowerCommitmentAggregationData {
                 bank: working_bank,
                 root: 0,
                 total_stake: 100,

@@ -1,10 +1,10 @@
 use {
-    anyhow::{anyhow, Context, Result},
+    anyhow::{Context, Result, anyhow},
     clap::{Args, ValueEnum},
     log::{debug, info},
     semver::Version,
     std::{fs, process::Command},
-    toml_edit::{value, DocumentMut},
+    toml_edit::{DocumentMut, value},
 };
 
 #[derive(Args)]

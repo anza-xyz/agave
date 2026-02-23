@@ -1,5 +1,5 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{Bencher, benchmark_group, benchmark_main},
     std::{
         hint::black_box,
         sync::atomic::{AtomicU64, Ordering},

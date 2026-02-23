@@ -1,13 +1,12 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-pub use crate::forwarding_stage::ForwardingClientOption;
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_stage::{
-            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingControlMsg,
-            BankingStage, BankingStageHandle,
+            BankingControlMsg, BankingStage, BankingStageHandle,
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
@@ -16,7 +15,8 @@ use {
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
-            spawn_forwarding_stage, ForwardAddressGetter, SpawnForwardingStageResult,
+            ForwardAddressGetter, ForwardingClientConfig, SpawnForwardingStageResult,
+            spawn_forwarding_stage,
         },
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
@@ -24,7 +24,8 @@ use {
         tpu_entry_notifier::TpuEntryNotifier,
         validator::{BlockProductionMethod, GeneratorConfig},
     },
-    crossbeam_channel::{bounded, unbounded, Receiver},
+    agave_votor::event::VotorEventSender,
+    crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -49,8 +50,8 @@ use {
     },
     solana_streamer::{
         quic::{
-            spawn_simple_qos_server, spawn_stake_wighted_qos_server, SimpleQosQuicStreamerConfig,
-            SpawnServerResult, SwQosQuicStreamerConfig,
+            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
+            spawn_simple_qos_server, spawn_stake_wighted_qos_server,
         },
         streamer::StakedNodes,
     },
@@ -63,7 +64,7 @@ use {
         net::UdpSocket,
         num::NonZeroUsize,
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
     },
     tokio::sync::mpsc,
@@ -128,7 +129,7 @@ impl Tpu {
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        client: ForwardingClientOption,
+        tpu_forwaring_client_config: ForwardingClientConfig,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
@@ -139,6 +140,7 @@ impl Tpu {
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
+        tpu_sigverify_threads: NonZeroUsize,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
@@ -148,6 +150,7 @@ impl Tpu {
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
         scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         cancel: CancellationToken,
+        votor_event_sender: VotorEventSender,
     ) -> Self {
         let TpuSockets {
             vote: tpu_vote_sockets,
@@ -197,7 +200,7 @@ impl Tpu {
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
             keypair,
-            vote_packet_sender.clone(),
+            vote_packet_sender,
             staked_nodes.clone(),
             vote_quic_server_config.quic_streamer_config,
             vote_quic_server_config.qos_config,
@@ -242,8 +245,18 @@ impl Tpu {
         .unwrap();
 
         let (forward_stage_sender, forward_stage_receiver) = bounded(1024);
+
+        let sigverify_threadpool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(tpu_sigverify_threads.get())
+                .thread_name(|i| format!("solSigVerify{i:02}"))
+                .build()
+                .expect("new rayon threadpool"),
+        );
+
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::new(
+                sigverify_threadpool.clone(),
                 non_vote_sender,
                 enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
             );
@@ -252,6 +265,7 @@ impl Tpu {
 
         let vote_sigverify_stage = {
             let verifier = TransactionSigVerifier::new_reject_non_vote(
+                sigverify_threadpool.clone(),
                 tpu_vote_sender,
                 Some(forward_stage_sender),
             );
@@ -266,6 +280,7 @@ impl Tpu {
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
             cluster_info.clone(),
+            sigverify_threadpool,
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
@@ -307,7 +322,7 @@ impl Tpu {
             client_updater,
         } = spawn_forwarding_stage(
             forward_stage_receiver,
-            client,
+            tpu_forwaring_client_config,
             vote_forwarding_client_socket,
             bank_forks.read().unwrap().sharable_banks(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
@@ -338,6 +353,7 @@ impl Tpu {
             bank_forks,
             shred_version,
             xdp_sender,
+            votor_event_sender,
         );
 
         let mut key_notifiers = key_notifiers.write().unwrap();

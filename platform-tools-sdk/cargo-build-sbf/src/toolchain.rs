@@ -1,5 +1,5 @@
 use {
-    crate::{home_dir, utils::spawn, Config},
+    crate::{Config, home_dir, utils::spawn},
     bzip2::bufread::BzDecoder,
     log::{debug, error, info, warn},
     regex::Regex,
@@ -11,13 +11,13 @@ use {
         fs::{self, File},
         io::{BufRead, BufReader, ErrorKind},
         path::{Path, PathBuf},
-        process::{exit, Command},
+        process::{Command, exit},
         sync::OnceLock,
     },
     tar::Archive,
 };
 
-pub(crate) const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.52";
+pub(crate) const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.53";
 pub(crate) const DEFAULT_RUST_VERSION: &str = "1.89.0";
 
 // Common headers used for Github API.

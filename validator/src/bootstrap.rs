@@ -1,17 +1,17 @@
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
-        SnapshotArchiveKind,
+        SnapshotArchiveKind, paths as snapshot_paths,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _,
     },
     itertools::Itertools,
     log::*,
-    rand::{rng, seq::SliceRandom, Rng},
+    rand::{Rng, rng, seq::SliceRandom},
     rayon::prelude::*,
     solana_account::ReadableAccount,
     solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
-    solana_download_utils::{download_snapshot_archive, DownloadProgressRecord},
+    solana_download_utils::{DownloadProgressRecord, download_snapshot_archive},
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{
         cluster_info::ClusterInfo,
@@ -29,13 +29,13 @@ use {
     solana_signer::Signer,
     solana_vote_program::vote_state::VoteStateV4,
     std::{
-        collections::{hash_map::RandomState, HashMap, HashSet},
+        collections::{HashMap, HashSet, hash_map::RandomState},
         net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
         path::Path,
         process::exit,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -1026,13 +1026,12 @@ fn retain_peer_snapshot_hashes_that_match_known_snapshot_hashes(
         known_snapshot_hashes
             .get(&peer_snapshot_hash.snapshot_hash.full)
             .map(|known_incremental_hashes| {
-                if peer_snapshot_hash.snapshot_hash.incr.is_none() {
+                if let Some(incr) = peer_snapshot_hash.snapshot_hash.incr.as_ref() {
+                    known_incremental_hashes.contains(incr)
+                } else {
                     // If the peer's full snapshot hashes match, but doesn't have any
                     // incremental snapshots, that's fine; keep 'em!
                     true
-                } else {
-                    known_incremental_hashes
-                        .contains(peer_snapshot_hash.snapshot_hash.incr.as_ref().unwrap())
                 }
             })
             .unwrap_or(false)

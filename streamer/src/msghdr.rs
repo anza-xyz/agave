@@ -3,7 +3,7 @@
 use {
     libc::{iovec, msghdr, sockaddr_storage, socklen_t},
     std::{
-        mem::{zeroed, MaybeUninit},
+        mem::{MaybeUninit, zeroed},
         ptr,
     },
 };

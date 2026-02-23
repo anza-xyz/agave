@@ -1,5 +1,5 @@
 use {
-    crate::{input_validators::*, offline::BLOCKHASH_ARG, ArgConstant},
+    crate::{ArgConstant, input_validators::*, offline::BLOCKHASH_ARG},
     clap::{App, Arg},
 };
 

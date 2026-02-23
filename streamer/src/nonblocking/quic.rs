@@ -4,15 +4,15 @@ use {
             connection_rate_limiter::ConnectionRateLimiter,
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
-        quic::{configure_server, QuicServerError, QuicStreamerConfig, StreamerStats},
+        quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
     crossbeam_channel::{Sender, TrySendError},
-    futures::{stream::FuturesUnordered, Future, StreamExt as _},
+    futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
     quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
-    rand::{rng, Rng},
+    rand::{Rng, rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -29,8 +29,8 @@ use {
         net::{IpAddr, SocketAddr, UdpSocket},
         pin::Pin,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         task::Poll,
         time::{Duration, Instant},
@@ -60,10 +60,6 @@ const CONNECTION_CLOSE_REASON_DROPPED_ENTRY: &[u8] = b"dropped";
 
 pub(crate) const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
 pub(crate) const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
-
-pub(crate) const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
-pub(crate) const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] =
-    b"exceed_max_stream_count";
 
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
@@ -253,12 +249,13 @@ where
     C: ConnectionContext + Send + Sync + 'static,
 {
     let quic_server_params = Arc::new(quic_server_params);
+    let num_shards = (quic_server_params.num_threads.get() * 2).next_power_of_two();
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
         // allow for 10x burst to make sure we can accommodate legitimate
         // bursts from container environments running multiple pods on same IP
         quic_server_params.max_connections_per_ipaddr_per_min * 10,
-        quic_server_params.num_threads.get() * 2,
+        num_shards,
     ));
     let overall_connection_rate_limiter = Arc::new(TokenBucket::new(
         MAX_CONNECTION_BURST,
@@ -414,7 +411,6 @@ pub fn get_connection_stake(
 #[derive(Debug)]
 pub(crate) enum ConnectionHandlerError {
     ConnectionAddError,
-    MaxStreamError,
 }
 
 pub(crate) fn update_open_connections_stat<S: OpaqueStreamerCounter>(
@@ -1120,12 +1116,12 @@ pub mod test {
             qos::NullStreamerCounter,
             swqos::SwQosConfig,
             testing_utilities::{
-                check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
-                spawn_stake_weighted_qos_server, SpawnTestServerResult,
+                SpawnTestServerResult, check_multiple_streams, get_client_config,
+                make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
             },
         },
         assert_matches::assert_matches,
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::{Receiver, unbounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
@@ -1770,34 +1766,38 @@ pub mod test {
 
         // We should NOT be able to add more entries than max_connections_per_peer, since we are
         // using the same peer pubkey.
-        assert!(table
-            .try_add_connection(
-                ConnectionTableKey::Pubkey(pubkey),
-                0,
-                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                None,
-                ConnectionPeerType::Unstaked,
-                Arc::new(AtomicU64::new(10)),
-                max_connections_per_peer,
-                || Arc::new(NullStreamerCounter {})
-            )
-            .is_none());
+        assert!(
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(10)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {})
+                )
+                .is_none()
+        );
 
         // We should be able to add an entry from another peer pubkey
         let num_entries = max_connections_per_peer + 1;
         let pubkey2 = Pubkey::new_unique();
-        assert!(table
-            .try_add_connection(
-                ConnectionTableKey::Pubkey(pubkey2),
-                0,
-                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                None,
-                ConnectionPeerType::Unstaked,
-                Arc::new(AtomicU64::new(10)),
-                max_connections_per_peer,
-                || Arc::new(NullStreamerCounter {})
-            )
-            .is_some());
+        assert!(
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey2),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    Arc::new(AtomicU64::new(10)),
+                    max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {})
+                )
+                .is_some()
+        );
 
         assert_eq!(table.total_size, num_entries);
 

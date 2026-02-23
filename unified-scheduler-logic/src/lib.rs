@@ -102,7 +102,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::{sanitized::SanitizedTransaction, Hash},
+    solana_transaction::{Hash, sanitized::SanitizedTransaction},
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -830,11 +830,7 @@ impl UsageQueueInner {
             }
         }
 
-        if is_newly_lockable {
-            self.pop()
-        } else {
-            None
-        }
+        if is_newly_lockable { self.pop() } else { None }
     }
 
     fn push_blocked(&mut self, usage_from_task: UsageFromTask) {
@@ -1348,9 +1344,7 @@ impl SchedulingStateMachine {
         //`::validate_account_locks()` regardless of whether unified-scheduler
         // is enabled or not at the blockstore
         // (`Bank::prepare_sanitized_batch()` is called in
-        // `process_entries()`). This verification will be hoisted for
-        // optimization when removing
-        // `--block-verification-method=blockstore-processor`.
+        // `process_entries()`).
         //
         // As for `banking_stage` with unified scheduler, it will need to run
         // `validate_account_locks()` at least once somewhere in the code path.
@@ -1517,11 +1511,11 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::{
             cell::RefCell,
             collections::HashMap,
-            panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+            panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
             rc::Rc,
         },
         test_case::test_matrix,

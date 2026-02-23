@@ -1,6 +1,6 @@
 pub use solana_program_runtime::execution_budget::{
-    SVMTransactionExecutionBudget, SVMTransactionExecutionCost, MAX_CALL_DEPTH,
-    MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE,
+    MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE, SVMTransactionExecutionBudget,
+    SVMTransactionExecutionCost,
 };
 use {
     solana_fee_structure::FeeDetails,

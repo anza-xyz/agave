@@ -1,12 +1,12 @@
 use {
     crate::entry_notifier_interface::EntryNotifierArc,
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     solana_clock::Slot,
     solana_entry::entry::EntrySummary,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -33,15 +33,17 @@ impl EntryNotifierService {
         let (entry_notification_sender, entry_notification_receiver) = unbounded();
         let thread_hdl = Builder::new()
             .name("solEntryNotif".to_string())
-            .spawn(move || loop {
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
+            .spawn(move || {
+                loop {
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
 
-                if let Err(RecvTimeoutError::Disconnected) =
-                    Self::notify_entry(&entry_notification_receiver, entry_notifier.clone())
-                {
-                    break;
+                    if let Err(RecvTimeoutError::Disconnected) =
+                        Self::notify_entry(&entry_notification_receiver, entry_notifier.clone())
+                    {
+                        break;
+                    }
                 }
             })
             .unwrap();

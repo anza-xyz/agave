@@ -10,8 +10,8 @@ use {
     std::{
         ops::{Index, Range},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicUsize, Ordering},
         },
     },
 };
@@ -299,13 +299,14 @@ impl Drop for ShrinkInProgress<'_> {
         );
 
         // The new store can be removed from 'shrink_in_progress_map'
-        assert!(self
-            .storage
-            .shrink_in_progress_map
-            .write()
-            .unwrap()
-            .remove(&self.slot)
-            .is_some());
+        assert!(
+            self.storage
+                .shrink_in_progress_map
+                .write()
+                .unwrap()
+                .remove(&self.slot)
+                .is_some()
+        );
     }
 }
 
@@ -403,6 +404,9 @@ impl Index<usize> for AccountStoragesOrderer<'_> {
 /// - Is **shared** between threads via references (`&self`), not moved.
 /// - Allows safe, parallel consumption where each item is yielded at most once.
 /// - Does **not** implement `Iterator` because it must take `&self` instead of `&mut self`.
+///
+/// Once `AccountStoragesConcurrentConsumer` is created, it is however possible to get `Iterator`
+/// instances using `iter` (they wrap a reference to the consumer, which must outlive them).
 pub struct AccountStoragesConcurrentConsumer<'a> {
     orderer: AccountStoragesOrderer<'a>,
     current_position: AtomicUsize,
@@ -432,6 +436,21 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
         } else {
             None
         }
+    }
+
+    /// Returns an iterator over the items. Returned iterator holds & reference to the consumer.
+    pub fn iter(&'a self) -> impl Iterator<Item = NextItem<'a>> {
+        struct Iter<'i> {
+            consumer: &'i AccountStoragesConcurrentConsumer<'i>,
+        }
+        impl<'i> Iterator for Iter<'i> {
+            type Item = NextItem<'i>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                self.consumer.next()
+            }
+        }
+        Iter { consumer: self }
     }
 }
 
@@ -751,30 +770,38 @@ pub(crate) mod tests {
         // id is missing since not in maps at all
         assert!(storage.get_account_storage_entry(slot, id).is_none());
         // missing should always be missing
-        assert!(storage
-            .get_account_storage_entry(slot, missing_id)
-            .is_none());
+        assert!(
+            storage
+                .get_account_storage_entry(slot, missing_id)
+                .is_none()
+        );
         storage.map.insert(slot, sample.clone());
         // id is found in map
         assert!(storage.get_account_storage_entry(slot, id).is_some());
-        assert!(storage
-            .get_account_storage_entry(slot, missing_id)
-            .is_none());
+        assert!(
+            storage
+                .get_account_storage_entry(slot, missing_id)
+                .is_none()
+        );
         storage
             .shrink_in_progress_map
             .write()
             .unwrap()
             .insert(slot, Arc::clone(&sample));
         // id is found in map
-        assert!(storage
-            .get_account_storage_entry(slot, missing_id)
-            .is_none());
+        assert!(
+            storage
+                .get_account_storage_entry(slot, missing_id)
+                .is_none()
+        );
         assert!(storage.get_account_storage_entry(slot, id).is_some());
         storage.map.remove(&slot);
         // id is found in shrink_in_progress_map
-        assert!(storage
-            .get_account_storage_entry(slot, missing_id)
-            .is_none());
+        assert!(
+            storage
+                .get_account_storage_entry(slot, missing_id)
+                .is_none()
+        );
         assert!(storage.get_account_storage_entry(slot, id).is_some());
     }
 
@@ -802,10 +829,12 @@ pub(crate) mod tests {
         // look 'em up
         for id in ids {
             let found = storage.get_if(|slot, _| *slot == id as Slot);
-            assert!(found
-                .iter()
-                .map(|(slot, _)| *slot)
-                .eq(iter::once(id as Slot)));
+            assert!(
+                found
+                    .iter()
+                    .map(|(slot, _)| *slot)
+                    .eq(iter::once(id as Slot))
+            );
         }
 
         assert!(storage.get_if(|_, _| false).is_empty());

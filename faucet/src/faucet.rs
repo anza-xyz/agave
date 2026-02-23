@@ -345,7 +345,10 @@ pub fn run_local_faucet_with_config(
             config.per_time_cap,
             config.per_request_cap,
         )));
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
     });
 }

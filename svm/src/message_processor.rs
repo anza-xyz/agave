@@ -114,7 +114,7 @@ mod tests {
         solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
-        solana_transaction_context::TransactionContext,
+        solana_transaction_context::transaction::TransactionContext,
         std::{collections::HashSet, sync::Arc},
     };
 
@@ -191,7 +191,8 @@ mod tests {
                 create_loadable_account_for_test("mock_system_program"),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 2);
+        let mut transaction_context =
+            TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
         let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
@@ -293,6 +294,8 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
+        let mut transaction_context =
+            TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -340,6 +343,7 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 1);
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -433,7 +437,8 @@ mod tests {
                 create_loadable_account_for_test("mock_system_program"),
             ),
         ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 2);
+        let mut transaction_context =
+            TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
         let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
@@ -518,6 +523,8 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
+        let mut transaction_context =
+            TransactionContext::new(accounts.clone(), Rent::default(), 1, 3, 1);
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -557,6 +564,7 @@ mod tests {
             &program_runtime_environments,
             &sysvar_cache,
         );
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3, 1);
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,

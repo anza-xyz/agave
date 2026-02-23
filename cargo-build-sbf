@@ -2,8 +2,9 @@
 
 here=$(dirname "$0")
 
-set -ex
-if [[ ! -f "$here"/platform-tools-sdk/sbf/syscalls.txt ]]; then
-  cargo build --manifest-path "$here"/syscalls/gen-syscall-list/Cargo.toml
+cargo --list | grep -q "^\s*build-sbf"
+found=$?
+if [[ $found -ne 0 ]]; then
+  cargo install cargo-build-sbf
 fi
-exec cargo run --manifest-path "$here"/platform-tools-sdk/cargo-build-sbf/Cargo.toml -- "$@"
+exec cargo build-sbf "$@"

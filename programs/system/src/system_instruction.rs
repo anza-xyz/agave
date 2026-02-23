@@ -11,8 +11,8 @@ use {
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
     solana_transaction_context::{
-        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
-        IndexOfAccount,
+        IndexOfAccount, instruction::InstructionContext,
+        instruction_accounts::BorrowedInstructionAccount,
     },
     std::collections::HashSet,
 };
@@ -265,7 +265,7 @@ mod test {
         ($invoke_context:expr, $instruction_context:ident, $instruction_accounts:ident) => {
             $invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(2, $instruction_accounts, vec![])
+                .configure_top_level_instruction_for_tests(2, $instruction_accounts, vec![])
                 .unwrap();
             $invoke_context.push().unwrap();
             let transaction_context = &$invoke_context.transaction_context;

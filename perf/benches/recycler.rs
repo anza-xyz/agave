@@ -1,5 +1,5 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{Bencher, benchmark_group, benchmark_main},
     solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
 };
 

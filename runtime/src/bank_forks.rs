@@ -2,8 +2,7 @@
 
 use {
     crate::{
-        bank::{bank_hash_details, Bank, SquashTiming},
-        bank_hash_cache::DumpedSlotSubscription,
+        bank::{Bank, SquashTiming, bank_hash_details},
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
@@ -19,11 +18,11 @@ use {
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{HashMap, HashSet, hash_map::Entry},
         ops::Index,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         time::Instant,
     },
@@ -99,10 +98,8 @@ pub struct BankForks {
     root: Arc<AtomicSlot>,
     working_slot: Slot,
     sharable_banks: SharableBanks,
-    in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
-    dumped_slot_subscribers: Vec<DumpedSlotSubscription>,
 
     /// The status tracker for the Alpenglow migration. Initialized via either
     /// the genesis or snapshot bank and then updated via block replay.
@@ -159,10 +156,8 @@ impl BankForks {
             },
             banks,
             descendants,
-            in_vote_only_mode: Arc::new(AtomicBool::new(false)),
             highest_slot_at_startup: 0,
             scheduler_pool: None,
-            dumped_slot_subscribers: vec![],
             migration_status,
         }));
 
@@ -185,10 +180,6 @@ impl BankForks {
 
     pub fn banks(&self) -> &HashMap<Slot, BankWithScheduler> {
         &self.banks
-    }
-
-    pub fn get_vote_only_mode_signal(&self) -> Arc<AtomicBool> {
-        self.in_vote_only_mode.clone()
     }
 
     pub fn migration_status(&self) -> Arc<MigrationStatus> {
@@ -401,25 +392,11 @@ impl BankForks {
         self.banks[&self.highest_slot()].clone_with_scheduler()
     }
 
-    /// Register to be notified when a bank has been dumped (due to duplicate block handling)
-    /// from bank_forks.
-    pub fn register_dumped_slot_subscriber(&mut self, notifier: DumpedSlotSubscription) {
-        self.dumped_slot_subscribers.push(notifier);
-    }
-
-    /// Clears associated banks from BankForks and notifies subscribers that a dump has occurred.
+    /// Clears associated banks from BankForks.
     pub fn dump_slots<'a, I>(&mut self, slots: I) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
     where
         I: Iterator<Item = &'a Slot>,
     {
-        // Notify subscribers. It is fine that the lock is immediately released, since the bank_forks
-        // lock is held until the end of this function, so subscribers will not be able to interact
-        // with bank_forks anyway.
-        for subscriber in &self.dumped_slot_subscribers {
-            let mut lock = subscriber.lock().unwrap();
-            *lock = true;
-        }
-
         slots
             .map(|slot| {
                 // Clear the banks from BankForks
@@ -473,6 +450,13 @@ impl BankForks {
                  {root}"
             );
             root_bank.clear_epoch_rewards_cache();
+
+            // If we have rooted a block in the new epoch since Alpenglow has been activated, advance MigrationStatus
+            if self.migration_status.is_alpenglow_enabled()
+                && !self.migration_status.is_full_alpenglow_epoch()
+            {
+                self.migration_status.alpenglow_rooted_new_epoch(new_epoch);
+            }
         }
         let root_tx_count = root_bank
             .parents()
@@ -767,7 +751,7 @@ mod tests {
         crate::{
             bank::test_utils::update_vote_account_timestamp,
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
         },
         assert_matches::assert_matches,

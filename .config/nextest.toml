@@ -36,14 +36,6 @@ threads-required = "num-cpus"
 filter = "package(solana-gossip) & test(/^cluster_info::tests::new_with_external_ip_test_random/)"
 threads-required = "num-cpus"
 
-[[profile.default.overrides]]
-filter = "package(solana-cargo-build-sbf)"
-test-group = "build-sbf"
-
-[[profile.ci.overrides]]
-filter = "package(solana-cargo-build-sbf)"
-test-group = "build-sbf"
-
 [[profile.ci.overrides]]
 filter = 'package(solana-local-cluster) & test(/^test_kill_partition_switch_threshold_progress$/)'
 slow-timeout = { period = "60s", terminate-after = 10 }
@@ -87,10 +79,6 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 [[profile.ci.overrides]]
 filter = 'package(solana-local-cluster)'
 slow-timeout = { period = "60s", terminate-after = 2 }
-
-[[profile.ci.overrides]]
-filter = 'package(solana-cargo-build-sbf)'
-slow-timeout = { period = "60s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
 filter = 'package(solana-ledger) & test(/^shred::merkle::test::test_merkle_tree_round_trip/)'

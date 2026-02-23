@@ -1,6 +1,6 @@
 use {
     agave_snapshots::{hardened_unpack::UnpackError, unpack_genesis_archive},
-    solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE},
+    solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, GenesisConfig},
     std::path::Path,
     thiserror::Error,
 };

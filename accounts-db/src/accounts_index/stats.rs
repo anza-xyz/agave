@@ -1,8 +1,8 @@
 use {
     super::{
+        DiskIndexValue, IndexValue, SlotListItem,
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         in_mem_accounts_index::InMemAccountsIndex,
-        DiskIndexValue, IndexValue, SlotListItem,
     },
     solana_time_utils::AtomicInterval,
     std::{
@@ -135,13 +135,13 @@ impl Stats {
             age_now += Age::MAX as u64 + 1;
         }
         let age_delta = age_now.saturating_sub(last_age);
-        if age_delta > 0 {
-            return elapsed_ms / age_delta;
+        if let Some(v) = elapsed_ms.checked_div(age_delta) {
+            return v;
         } else {
             // did not advance an age, but probably did partial work, so report that
             let bin_delta = ages_flushed.saturating_sub(last_ages_flushed);
-            if bin_delta > 0 {
-                return elapsed_ms * self.bins / bin_delta;
+            if let Some(v) = (elapsed_ms * self.bins).checked_div(bin_delta) {
+                return v;
             }
         }
         0 // avoid crazy numbers
@@ -177,20 +177,6 @@ impl Stats {
 
     pub fn total_count(&self) -> usize {
         self.count.load(Ordering::Relaxed)
-    }
-
-    /// This is an estimate of the # of items in mem that are awaiting flushing to disk.
-    /// returns (# items in mem) - (# items we intend to hold in mem for performance heuristics)
-    /// The result is also an estimate because 'held_in_mem' is based on a stat that is swapped out when stats are reported.
-    pub fn get_remaining_items_to_flush_estimate(&self) -> usize {
-        let in_mem = self.count_in_mem.load(Ordering::Relaxed) as u64;
-        // Note, `held_in_mem.clean` is purposely not included in this
-        // summation because clean items do not need to be flushed.
-        let held_in_mem = self.held_in_mem.slot_list_cached.load(Ordering::Relaxed)
-            + self.held_in_mem.slot_list_len.load(Ordering::Relaxed)
-            + self.held_in_mem.ref_count.load(Ordering::Relaxed)
-            + self.held_in_mem.age.load(Ordering::Relaxed);
-        in_mem.saturating_sub(held_in_mem) as usize
     }
 
     pub fn report_stats<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(

@@ -1,4 +1,4 @@
-use serde::{ser::Error, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::Error};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OptionSerializer<T> {

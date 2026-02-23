@@ -2,18 +2,19 @@
 
 use {
     crate::{
+        CredentialType,
         access_token::{AccessToken, Scope},
         compression::{compress_best, decompress},
-        root_ca_certificate, CredentialType,
+        root_ca_certificate,
     },
-    backoff::{future::retry, Error as BackoffError, ExponentialBackoff},
+    backoff::{Error as BackoffError, ExponentialBackoff, future::retry},
     log::*,
     std::{
         str::FromStr,
         time::{Duration, Instant},
     },
     thiserror::Error,
-    tonic::{codegen::InterceptedService, transport::ClientTlsConfig, Request, Status},
+    tonic::{Request, Status, codegen::InterceptedService, transport::ClientTlsConfig},
 };
 
 #[allow(clippy::all)]
@@ -973,7 +974,7 @@ mod tests {
         solana_storage_proto::convert::generated,
         solana_system_transaction as system_transaction,
         solana_transaction::versioned::VersionedTransaction,
-        solana_transaction_context::TransactionReturnData,
+        solana_transaction_context::transaction::TransactionReturnData,
         solana_transaction_status::{
             ConfirmedBlock, TransactionStatusMeta, TransactionWithStatusMeta,
             VersionedTransactionWithStatusMeta,

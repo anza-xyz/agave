@@ -71,7 +71,6 @@ impl GossipService {
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
             false,
-            None,
             false,
         );
         let (consume_sender, listen_receiver) =
@@ -99,7 +98,7 @@ impl GossipService {
         );
         let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_sockets.clone(),
+            gossip_sockets,
             cluster_info.bind_ip_addrs(),
             response_receiver,
             socket_addr_space,

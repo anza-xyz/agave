@@ -4,10 +4,10 @@
 
 use {
     crate::{
+        SendTransactionStats,
         connection_worker::ConnectionWorker,
         logging::{debug, trace},
         transaction_batch::TransactionBatch,
-        SendTransactionStats,
     },
     lru::LruCache,
     quinn::Endpoint,
@@ -363,13 +363,13 @@ pub fn shutdown_worker(worker: ShutdownWorker) {
 mod tests {
     use {
         crate::{
+            SendTransactionStats,
             connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             connection_workers_scheduler::BindTarget,
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
             transaction_batch::TransactionBatch,
-            workers_cache::{spawn_worker, WorkersCache, WorkersCacheError},
-            SendTransactionStats,
+            workers_cache::{WorkersCache, WorkersCacheError, spawn_worker},
         },
         quinn::Endpoint,
         solana_net_utils::sockets::{bind_to_localhost_unique, unique_port_range_for_tests},
@@ -379,7 +379,7 @@ mod tests {
             sync::Arc,
             time::Duration,
         },
-        tokio::time::{sleep, timeout, Instant},
+        tokio::time::{Instant, sleep, timeout},
         tokio_util::sync::CancellationToken,
     };
 

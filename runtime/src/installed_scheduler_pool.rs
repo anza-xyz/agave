@@ -828,7 +828,7 @@ mod tests {
         super::*,
         crate::{
             bank::test_utils::goto_end_of_slot_with_scheduler,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
         mockall::Sequence,
         solana_system_transaction as system_transaction,

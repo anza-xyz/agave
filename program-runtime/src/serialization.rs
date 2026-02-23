@@ -262,7 +262,8 @@ pub fn serialize_parameters(
         .collect::<Vec<_>>();
 
     if is_loader_deprecated {
-        serialize_parameters_unaligned(
+        // Used by loader-v1 (bpf_loader_deprecated)
+        serialize_parameters_for_abiv0(
             accounts,
             instruction_context.get_instruction_data(),
             &program_id,
@@ -270,7 +271,8 @@ pub fn serialize_parameters(
             account_data_direct_mapping,
         )
     } else {
-        serialize_parameters_aligned(
+        // Used by loader-v2 (bpf_loader) and loader-v3 (bpf_loader_upgradeable)
+        serialize_parameters_for_abiv1(
             accounts,
             instruction_context.get_instruction_data(),
             &program_id,
@@ -291,7 +293,8 @@ pub fn deserialize_parameters(
         instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
     if is_loader_deprecated {
-        deserialize_parameters_unaligned(
+        // Used by loader-v1 (bpf_loader_deprecated)
+        deserialize_parameters_for_abiv0(
             instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
@@ -299,7 +302,8 @@ pub fn deserialize_parameters(
             account_lengths,
         )
     } else {
-        deserialize_parameters_aligned(
+        // Used by loader-v2 (bpf_loader) and loader-v3 (bpf_loader_upgradeable)
+        deserialize_parameters_for_abiv1(
             instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
@@ -309,7 +313,7 @@ pub fn deserialize_parameters(
     }
 }
 
-fn serialize_parameters_unaligned(
+fn serialize_parameters_for_abiv0(
     accounts: Vec<SerializeAccount>,
     instruction_data: &[u8],
     program_id: &Pubkey,
@@ -401,7 +405,7 @@ fn serialize_parameters_unaligned(
     ))
 }
 
-fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
+fn deserialize_parameters_for_abiv0<I: IntoIterator<Item = usize>>(
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -463,7 +467,7 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
     Ok(())
 }
 
-fn serialize_parameters_aligned(
+fn serialize_parameters_for_abiv1(
     accounts: Vec<SerializeAccount>,
     instruction_data: &[u8],
     program_id: &Pubkey,
@@ -564,7 +568,7 @@ fn serialize_parameters_aligned(
     ))
 }
 
-fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
+fn deserialize_parameters_for_abiv1<I: IntoIterator<Item = usize>>(
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -667,8 +671,8 @@ mod tests {
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
-            MAX_ACCOUNTS_PER_TRANSACTION, TransactionContext,
-            instruction_accounts::InstructionAccount,
+            MAX_ACCOUNTS_PER_TRANSACTION, instruction_accounts::InstructionAccount,
+            transaction::TransactionContext,
         },
         std::{
             borrow::Cow,
@@ -776,18 +780,19 @@ mod tests {
                     let dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
                     invoke_context
                         .transaction_context
-                        .configure_next_instruction(
+                        .configure_instruction_at_index(
+                            0,
                             0,
                             instruction_accounts,
                             dedup_map,
                             Cow::Owned(instruction_data.clone()),
-                            None,
+                            Some(0),
                         )
                         .unwrap();
                 } else {
                     invoke_context
                         .transaction_context
-                        .configure_next_instruction_for_tests(
+                        .configure_top_level_instruction_for_tests(
                             0,
                             instruction_accounts,
                             instruction_data.clone(),
@@ -947,7 +952,7 @@ mod tests {
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(
+                .configure_top_level_instruction_for_tests(
                     0,
                     instruction_accounts.clone(),
                     instruction_data.clone(),
@@ -959,7 +964,7 @@ mod tests {
                 .get_current_instruction_context()
                 .unwrap();
 
-            // check serialize_parameters_aligned
+            // check serialize_parameters_for_abiv1
             let (mut serialized, regions, accounts_metadata, _instruction_data_offset) =
                 serialize_parameters(
                     &instruction_context,
@@ -1043,10 +1048,10 @@ mod tests {
                 assert_eq!(&*account, original_account);
             }
 
-            // check serialize_parameters_unaligned
+            // check serialize_parameters_for_abiv0
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(
+                .configure_top_level_instruction_for_tests(
                     7,
                     instruction_accounts,
                     instruction_data.clone(),
@@ -1068,7 +1073,7 @@ mod tests {
             let mut serialized_regions = concat_regions(&regions);
 
             let (de_program_id, de_accounts, de_instruction_data) = unsafe {
-                deserialize_unaligned(
+                deserialize_for_abiv0(
                     if !stricter_abi_and_runtime_constraints {
                         serialized.as_slice_mut()
                     } else {
@@ -1210,7 +1215,7 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(0, instruction_accounts.clone(), vec![])
+            .configure_top_level_instruction_for_tests(0, instruction_accounts.clone(), vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let instruction_context = invoke_context
@@ -1218,7 +1223,7 @@ mod tests {
             .get_current_instruction_context()
             .unwrap();
 
-        // check serialize_parameters_aligned
+        // check serialize_parameters_for_abiv1
         let (_serialized, regions, _accounts_metadata, _instruction_data_offset) =
             serialize_parameters(
                 &instruction_context,
@@ -1240,10 +1245,10 @@ mod tests {
             }
         }
 
-        // check serialize_parameters_unaligned
+        // check serialize_parameters_for_abiv0
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(7, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(7, instruction_accounts, vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let instruction_context = invoke_context
@@ -1261,7 +1266,7 @@ mod tests {
         let mut serialized_regions = concat_regions(&regions);
 
         let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
-            deserialize_unaligned(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
+            deserialize_for_abiv0(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
         };
         for account_info in de_accounts {
             #[allow(deprecated)]
@@ -1273,7 +1278,7 @@ mod tests {
 
     // the old bpf_loader in-program deserializer bpf_loader::id()
     #[deny(unsafe_op_in_unsafe_fn)]
-    unsafe fn deserialize_unaligned<'a>(
+    unsafe fn deserialize_for_abiv0<'a>(
         input: *mut u8,
     ) -> (&'a Pubkey, Vec<AccountInfo<'a>>, &'a [u8]) {
         // this boring boilerplate struct is needed until inline const...
@@ -1451,7 +1456,7 @@ mod tests {
         let instruction_accounts =
             deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
         transaction_context
-            .configure_next_instruction_for_tests(6, instruction_accounts, vec![])
+            .configure_top_level_instruction_for_tests(6, instruction_accounts, vec![])
             .unwrap();
         transaction_context.push().unwrap();
         let instruction_context = transaction_context
@@ -1508,7 +1513,10 @@ mod tests {
             .store::<u32>(0, account_start_offsets[0])
             .unwrap_err();
 
-        // Writing to shared writable account makes it unique (CoW logic)
+        // Writing to shared writable account makes it unique (CoW logic.)
+        // It has been previously been made non-unique at the beginning of
+        // the test through a clone.
+        let _shared_account_ref = shared_account;
         assert!(
             transaction_context
                 .accounts()

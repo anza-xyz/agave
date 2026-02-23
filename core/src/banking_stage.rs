@@ -15,7 +15,7 @@ use {
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
                 scheduler_controller::{
-                    SchedulerConfig, SchedulerController, DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS,
+                    DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS, SchedulerConfig, SchedulerController,
                 },
                 scheduler_error::SchedulerError,
             },
@@ -23,8 +23,8 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    crossbeam_channel::{unbounded, Receiver, Sender},
-    futures::{stream::FuturesUnordered, StreamExt},
+    crossbeam_channel::{Receiver, Sender, unbounded},
+    futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
@@ -44,8 +44,8 @@ use {
         num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -553,9 +553,10 @@ impl BankingStage {
         let exit = self.worker_exit_signal.clone();
 
         // Setup receive & buffer.
+        let sharable_banks = self.bank_forks.read().unwrap().sharable_banks();
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver: self.non_vote_receiver.clone(),
-            sharable_banks: self.bank_forks.read().unwrap().sharable_banks(),
+            sharable_banks: sharable_banks.clone(),
         };
 
         // Spawn vote worker.
@@ -606,7 +607,6 @@ impl BankingStage {
             ($scheduler:ident) => {
                 let exit = exit.clone();
                 let shutdown_signal = self.banking_shutdown_signal.clone();
-                let bank_forks = self.bank_forks.clone();
                 threads.push(
                     Builder::new()
                         .name("solBnkTxSched".to_string())
@@ -616,7 +616,7 @@ impl BankingStage {
                                 scheduler_config,
                                 decision_maker,
                                 receive_and_buffer,
-                                bank_forks,
+                                sharable_banks,
                                 $scheduler,
                                 worker_metrics,
                             );
@@ -732,10 +732,7 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::{
-            logon_flags,
-            server::{AgaveSession, AgaveWorkerSession},
-        },
+        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -743,7 +740,7 @@ mod external {
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
-                flags,
+                flags: _,
                 tpu_to_pack,
                 progress_tracker,
                 workers,
@@ -760,25 +757,8 @@ mod external {
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
-            // Potentially spawn vote worker.
-            let mut threads = Vec::with_capacity(workers.len() + 3);
-            let tpu_to_pack_receivers = if flags & logon_flags::REROUTE_VOTES != 0 {
-                BankingPacketReceivers {
-                    non_vote_receiver: self.non_vote_receiver.clone(),
-                    gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
-                    tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
-                }
-            } else {
-                threads.push(self.spawn_vote_worker());
-
-                BankingPacketReceivers {
-                    non_vote_receiver: self.non_vote_receiver.clone(),
-                    gossip_vote_receiver: None,
-                    tpu_vote_receiver: None,
-                }
-            };
-
             // Spawn the external consumer workers.
+            let mut threads = Vec::with_capacity(workers.len() + 2);
             let mut worker_metrics = Vec::with_capacity(workers.len());
             for (
                 index,
@@ -819,6 +799,11 @@ mod external {
             }
 
             // Spawn tpu to pack.
+            let tpu_to_pack_receivers = BankingPacketReceivers {
+                non_vote_receiver: self.non_vote_receiver.clone(),
+                gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
+                tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
+            };
             threads.push(tpu_to_pack::spawn(
                 self.worker_exit_signal.clone(),
                 self.banking_shutdown_signal.clone(),
@@ -946,13 +931,13 @@ mod tests {
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
             get_tmp_ledger_path_auto_delete,
         },
         solana_perf::packet::to_packet_batches,
         solana_poh::{
-            poh_recorder::{create_test_recorder, PohRecorderError},
+            poh_recorder::{PohRecorderError, create_test_recorder},
             record_channels::record_channels,
             transaction_recorder::RecordTransactionsSummary,
         },
@@ -962,7 +947,7 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::{sync::atomic::Ordering, thread::sleep, time::Instant},
@@ -1102,9 +1087,11 @@ mod tests {
             .collect();
         trace!("done");
         assert_eq!(entries.len(), genesis_config.ticks_per_slot as usize);
-        assert!(entries
-            .verify(&start_hash, &entry::thread_pool_for_tests())
-            .status());
+        assert!(
+            entries
+                .verify(&start_hash, &entry::thread_pool_for_tests())
+                .status()
+        );
         assert_eq!(entries[entries.len() - 1].hash, bank.last_blockhash());
     }
 
@@ -1222,9 +1209,11 @@ mod tests {
                 .map(|(_bank, (entry, _tick_height))| entry),
         );
 
-        assert!(entries
-            .verify(&blockhash, &entry::thread_pool_for_tests())
-            .status());
+        assert!(
+            entries
+                .verify(&blockhash, &entry::thread_pool_for_tests())
+                .status()
+        );
         for entry in entries {
             bank.process_entry_transactions(entry.transactions)
                 .iter()

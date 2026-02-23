@@ -52,7 +52,7 @@ use {
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_svm_type_overrides::sync::{Arc, RwLock, RwLockReadGuard, atomic::Ordering},
-    solana_transaction_context::{ExecutionRecord, TransactionContext},
+    solana_transaction_context::transaction::{ExecutionRecord, TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{
         collections::{HashMap, HashSet},
@@ -877,7 +877,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &key,
                     self.slot,
                     execute_timings,
-                    false,
                 )
                 .expect("called load_program_with_pubkey() with nonexistent account");
                 (key, program, last_modification_slot)
@@ -905,8 +904,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             } else if missing_programs.is_empty() {
                 break;
             } else {
-                // Sleep until the next finish_cooperative_loading_task() call.
-                // Once a task completes we'll wake up and try to load the
+                // Remember: there are multiple transaction processor threads running concurrently
+                // and those other threads may be loading this or other programs.
+                //
+                // So, sleep until some other thread submits a program with their
+                // `finish_cooperative_loading_task` call. We'll then wake up and try to load the
                 // missing programs inside the tx batch again.
                 let _new_cookie = task_waiter.wait(task_cookie);
             }
@@ -1212,7 +1214,7 @@ mod tests {
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        solana_transaction_context::TransactionContext,
+        solana_transaction_context::transaction::TransactionContext,
         solana_transaction_error::TransactionError,
         std::collections::HashMap,
         test_case::test_case,
@@ -1353,28 +1355,104 @@ mod tests {
 
     #[test]
     fn test_inner_instructions_list_from_instruction_trace() {
-        let instruction_trace = [1, 2, 1, 1, 2, 3, 2];
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
                 AccountSharedData::new(1, 1, &bpf_loader::ID),
             )],
             Rent::default(),
-            3,
-            instruction_trace.len(),
-            instruction_trace.len(),
+            4,
+            11,
+            4,
         );
-        for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
-            while stack_height <= transaction_context.get_instruction_stack_height() {
-                transaction_context.pop().unwrap();
-            }
-            if stack_height > transaction_context.get_instruction_stack_height() {
-                transaction_context
-                    .configure_next_instruction_for_tests(0, vec![], vec![index_in_trace as u8])
-                    .unwrap();
-                transaction_context.push().unwrap();
-            }
-        }
+
+        // To be uncommented when we reorder the instruction trace
+        // Four top level instructions
+        // for i in 0..4 {
+        //     transaction_context
+        //         .configure_instruction_at_index(
+        //             i,
+        //             0,
+        //             vec![],
+        //             vec![u16::MAX; 256],
+        //             Cow::Owned(vec![i as u8]),
+        //             None,
+        //         )
+        //         .unwrap();
+        // }
+
+        // Execute ix #0
+        transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![0])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // ix #0 does a CPI
+        transaction_context
+            .configure_next_cpi_for_tests(0, vec![], vec![0, 0])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // Returning from everything
+        transaction_context.pop().unwrap();
+        transaction_context.pop().unwrap();
+        // Execute ix #1
+        transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![1])
+            .unwrap();
+        transaction_context.push().unwrap();
+        transaction_context.pop().unwrap();
+        // Execute ix #2
+        transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![2])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // ix #2 does a CPI
+        transaction_context
+            .configure_next_cpi_for_tests(0, vec![], vec![2, 0])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // A nested CPI
+        transaction_context
+            .configure_next_cpi_for_tests(0, vec![], vec![2, 1])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // Return from nested CPI
+        transaction_context.pop().unwrap();
+        // Return from CPI
+        transaction_context.pop().unwrap();
+        // ix #2 does another CPI
+        transaction_context
+            .configure_next_cpi_for_tests(0, vec![], vec![2, 2])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // Return from everything related to ix #2
+        transaction_context.pop().unwrap();
+        transaction_context.pop().unwrap();
+        // Execute ix #3
+        transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![3])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // ix #3 does a CPI
+        transaction_context
+            .configure_next_cpi_for_tests(0, vec![], vec![3, 0])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // ix #3 does a nested CPI
+        transaction_context
+            .configure_next_cpi_for_tests(0, vec![], vec![3, 1])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // ix #3 does a second nested CPI
+        transaction_context
+            .configure_next_cpi_for_tests(0, vec![], vec![3, 2])
+            .unwrap();
+        transaction_context.push().unwrap();
+        // Return from everything related to ix #3
+        transaction_context.pop().unwrap();
+        transaction_context.pop().unwrap();
+        transaction_context.pop().unwrap();
+        transaction_context.pop().unwrap();
+
         let inner_instructions =
             TransactionBatchProcessor::<TestForkGraph>::deconstruct_transaction(
                 transaction_context,
@@ -1387,22 +1465,36 @@ mod tests {
             inner_instructions,
             vec![
                 vec![InnerInstruction {
-                    instruction: CompiledInstruction::new_from_raw_parts(0, vec![1], vec![]),
+                    instruction: CompiledInstruction::new_from_raw_parts(0, vec![0, 0], vec![]),
                     stack_height: 2,
                 }],
                 vec![],
                 vec![
                     InnerInstruction {
-                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![4], vec![]),
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![2, 0], vec![]),
                         stack_height: 2,
                     },
                     InnerInstruction {
-                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![5], vec![]),
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![2, 1], vec![]),
                         stack_height: 3,
                     },
                     InnerInstruction {
-                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![6], vec![]),
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![2, 2], vec![]),
                         stack_height: 2,
+                    },
+                ],
+                vec![
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![3, 0], vec![]),
+                        stack_height: 2,
+                    },
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![3, 1], vec![]),
+                        stack_height: 3,
+                    },
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![3, 2], vec![]),
+                        stack_height: 4,
                     },
                 ]
             ]
@@ -2127,7 +2219,7 @@ mod tests {
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
@@ -2171,7 +2263,7 @@ mod tests {
         let starting_balance = min_balance + transaction_fee - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
@@ -2213,7 +2305,7 @@ mod tests {
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
@@ -2465,7 +2557,7 @@ mod tests {
             .unwrap();
 
             let mut mock_accounts = HashMap::new();
-            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            mock_accounts.insert(*fee_payer_address, fee_payer_account);
             let mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()

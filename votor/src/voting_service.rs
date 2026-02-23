@@ -1,12 +1,9 @@
-#![allow(dead_code)]
-
 use {
     crate::{
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
     agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
-    bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -144,10 +141,7 @@ impl VotingService {
                 );
 
                 info!("AlpenglowVotingService has started");
-                loop {
-                    let Ok(bls_op) = bls_receiver.recv() else {
-                        break;
-                    };
+                while let Ok(bls_op) = bls_receiver.recv() {
                     Self::handle_bls_op(
                         &cluster_info,
                         vote_history_storage.as_ref(),
@@ -171,7 +165,7 @@ impl VotingService {
         additional_listeners: &[SocketAddr],
         staked_validators_cache: &mut StakedValidatorsCache,
     ) {
-        let buf = match serialize(message) {
+        let buf = match wincode::serialize(message) {
             Ok(buf) => buf,
             Err(err) => {
                 error!("Failed to serialize alpenglow message: {err:?}");
@@ -260,18 +254,18 @@ mod tests {
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
-        solana_net_utils::SocketAddrSpace,
+        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
         solana_signer::Signer,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
-            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
+            quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_wighted_qos_server},
             streamer::StakedNodes,
         },
         std::{
@@ -314,7 +308,7 @@ mod tests {
                     "TestAlpenglowConnectionCache",
                     10,
                 )),
-                bank_forks.clone(),
+                bank_forks,
                 Some(VotingServiceOverride {
                     additional_listeners: vec![listener],
                     alpenglow_port_override: AlpenglowPortOverride::default(),
@@ -354,7 +348,7 @@ mod tests {
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
         // Bind to a random UDP port
-        let socket = solana_net_utils::bind_to_localhost().unwrap();
+        let socket = bind_to_localhost_unique().unwrap();
         let listener_addr = socket.local_addr().unwrap();
 
         // Create VotingService with the listener address

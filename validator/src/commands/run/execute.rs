@@ -1,24 +1,28 @@
 use {
     crate::{
-        admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
+        admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
         bootstrap,
         cli::{self},
-        commands::{run::args::RunArgs, FromClapArgMatches},
+        commands::{FromClapArgMatches, run::args::RunArgs},
         ledger_lockfile, lock_ledger,
     },
     agave_snapshots::{
+        ArchiveFormat, SnapshotInterval, SnapshotVersion,
         paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
-        ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
-    clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
+    agave_votor::vote_history_storage,
+    clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, ScanFilter},
+        accounts_index::{
+            AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
+            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
+        },
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -27,7 +31,7 @@ use {
     solana_clap_utils::input_parsers::{
         keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
     },
-    solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
         banking_trace::DISABLED_BAKING_TRACE_DIR,
@@ -38,14 +42,13 @@ use {
         system_monitor_service::SystemMonitorService,
         tpu::MAX_VOTES_PER_SECOND,
         validator::{
-            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            SchedulerPacing, Validator, ValidatorConfig, ValidatorError, ValidatorStartProgress,
-            ValidatorTpuConfig,
+            BlockProductionMethod, BlockVerificationMethod, SchedulerPacing, Validator,
+            ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig, is_snapshot_config_valid,
         },
     },
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_gossip::{
-        cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
+        cluster_info::{DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS, NodeConfig},
         contact_info::ContactInfo,
         node::Node,
     },
@@ -67,7 +70,7 @@ use {
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
-        xdp::{set_cpu_affinity, XdpConfig},
+        xdp::{XdpConfig, set_cpu_affinity},
     },
     solana_validator_exit::Exit,
     std::{
@@ -78,7 +81,7 @@ use {
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::{self, FromStr},
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
     },
 };
 
@@ -110,6 +113,7 @@ pub fn execute(
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        tpu_sigverify_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
         tpu_vote_transaction_receive_threads,
@@ -264,7 +268,7 @@ pub fn execute(
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
-            solana_turbine::xdp::{master_ip_if_bonded, XdpRetransmitBuilder},
+            solana_turbine::xdp::{XdpRetransmitBuilder, master_ip_if_bonded},
         };
 
         let mut required_caps = HashSet::new();
@@ -521,20 +525,40 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
+    let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
+        vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
+    );
+
     let accounts_index_limit =
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
-    let index_limit = match accounts_index_limit.as_str() {
-        "minimal" => IndexLimit::Minimal,
-        "25GB" => IndexLimit::Threshold(25_000_000_000),
-        "50GB" => IndexLimit::Threshold(50_000_000_000),
-        "100GB" => IndexLimit::Threshold(100_000_000_000),
-        "200GB" => IndexLimit::Threshold(200_000_000_000),
-        "400GB" => IndexLimit::Threshold(400_000_000_000),
-        "800GB" => IndexLimit::Threshold(800_000_000_000),
-        "unlimited" => IndexLimit::InMemOnly,
-        x => {
-            // clap will enforce only the above values are possible
-            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+    let index_limit = {
+        enum CliIndexLimit {
+            Minimal,
+            Unlimited,
+            Threshold(u64),
+        }
+        let cli_index_limit = match accounts_index_limit.as_str() {
+            "minimal" => CliIndexLimit::Minimal,
+            "unlimited" => CliIndexLimit::Unlimited,
+            "25GB" => CliIndexLimit::Threshold(25_000_000_000),
+            "50GB" => CliIndexLimit::Threshold(50_000_000_000),
+            "100GB" => CliIndexLimit::Threshold(100_000_000_000),
+            "200GB" => CliIndexLimit::Threshold(200_000_000_000),
+            "400GB" => CliIndexLimit::Threshold(400_000_000_000),
+            "800GB" => CliIndexLimit::Threshold(800_000_000_000),
+            x => {
+                // clap will enforce only the above values are possible
+                unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+            }
+        };
+        match cli_index_limit {
+            CliIndexLimit::Minimal => IndexLimit::Minimal,
+            CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
+            CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
+                num_bytes,
+                num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
+                num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
+            }),
         }
     };
     // Note: need to still handle --enable-accounts-disk-index until it is removed
@@ -742,6 +766,7 @@ pub fn execute(
         logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
+        vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
@@ -815,8 +840,6 @@ pub fn execute(
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
-        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
-        wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         turbine_disabled: Arc::<AtomicBool>::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
@@ -852,6 +875,12 @@ pub fn execute(
             Arc::new(AtomicBool::new(false)),
         )]
         .into(),
+        voting_service_test_override: None,
+        snapshot_packager_niceness_adj: value_t_or_exit!(
+            matches,
+            "snapshot_packager_niceness_adj",
+            i8
+        ),
     };
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
@@ -868,17 +897,6 @@ pub fn execute(
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
 
-    match validator_config.block_verification_method {
-        BlockVerificationMethod::BlockstoreProcessor => {
-            warn!(
-                "The value \"blockstore-processor\" for --block-verification-method has been \
-                 deprecated. The value \"blockstore-processor\" is still allowed for now, but is \
-                 planned for removal in the near future. To update, either set the value \
-                 \"unified-scheduler\" or remove the --block-verification-method argument"
-            );
-        }
-        BlockVerificationMethod::UnifiedScheduler => {}
-    }
     if matches!(
         validator_config.block_production_method,
         BlockProductionMethod::UnifiedScheduler
@@ -962,10 +980,6 @@ pub fn execute(
         .collect::<Vec<_>>();
 
     if restricted_repair_only_mode {
-        if validator_config.wen_restart_proto_path.is_some() {
-            Err("--restricted-repair-only-mode is not compatible with --wen_restart".to_string())?;
-        }
-
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -1096,7 +1110,7 @@ pub fn execute(
         },
     };
 
-    let validator = match Validator::new_with_exit(
+    let validator = Validator::new_with_exit(
         node,
         identity_keypair,
         &ledger_path,
@@ -1114,28 +1128,13 @@ pub fn execute(
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
+            sigverify_threads: tpu_sigverify_threads,
         },
         admin_service_post_init,
         maybe_xdp_retransmit_builder,
         exit,
-    ) {
-        Ok(validator) => Ok(validator),
-        Err(err) => {
-            if matches!(
-                err.downcast_ref(),
-                Some(&ValidatorError::WenRestartFinished)
-            ) {
-                // 200 is a special error code, see
-                // https://github.com/solana-foundation/solana-improvement-documents/pull/46
-                error!(
-                    "Please remove --wen_restart and use --wait_for_supermajority as instructed \
-                     above"
-                );
-                std::process::exit(200);
-            }
-            Err(format!("{err:?}"))
-        }
-    }?;
+    )
+    .map_err(|err| format!("{err:?}"))?;
 
     if let Some(filename) = init_complete_file {
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
@@ -1359,9 +1358,6 @@ fn new_snapshot_config(
         NonZeroUsize
     );
 
-    let snapshot_packager_niceness_adj =
-        value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
-
     let snapshot_config = SnapshotConfig {
         usage: if full_snapshot_archive_interval == SnapshotInterval::Disabled {
             SnapshotUsage::LoadOnly
@@ -1377,7 +1373,6 @@ fn new_snapshot_config(
         snapshot_version,
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain,
-        packager_thread_niceness_adj: snapshot_packager_niceness_adj,
     };
 
     if !is_snapshot_config_valid(&snapshot_config) {

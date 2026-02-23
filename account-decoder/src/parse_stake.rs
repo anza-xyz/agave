@@ -1,7 +1,7 @@
 use {
     crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
         StringAmount,
+        parse_account_data::{ParsableAccount, ParseAccountError},
     },
     bincode::deserialize,
     serde::{Deserialize, Serialize},

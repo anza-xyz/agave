@@ -6,7 +6,7 @@ use {
     bincode::deserialize,
     serde::{Deserialize, Serialize},
     serde_json::Value,
-    solana_config_interface::state::{get_config_data, ConfigKeys},
+    solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
     solana_stake_interface::config::{
         Config as StakeConfig, {self as stake_config},

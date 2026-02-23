@@ -19,9 +19,9 @@ use {
     },
     agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
-    crossbeam_channel::{bounded, unbounded, Receiver, SendError, Sender, TrySendError},
+    crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded, unbounded},
     log::*,
-    solana_clock::{BankId, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::{BankId, NUM_CONSECUTIVE_LEADER_SLOTS, Slot},
     solana_entry::{
         entry::Entry,
         poh::{Poh, PohEntry},
@@ -36,8 +36,8 @@ use {
     std::{
         cmp,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::Instant,
     },
@@ -644,6 +644,7 @@ impl PohRecorder {
     pub fn leader_after_n_slots(&self, slots: u64) -> Option<Pubkey> {
         self.leader_schedule_cache
             .slot_leader_at(self.current_poh_slot() + slots, None)
+            .map(|leader| leader.id)
     }
 
     /// Return the leader and slot pair after `slots_in_the_future` slots.
@@ -654,7 +655,7 @@ impl PohRecorder {
         let target_slot = self.current_poh_slot().checked_add(slots_in_the_future)?;
         self.leader_schedule_cache
             .slot_leader_at(target_slot, None)
-            .map(|leader| (leader, target_slot))
+            .map(|leader| (leader.id, target_slot))
     }
 
     pub fn shared_leader_state(&self) -> SharedLeaderState {
@@ -811,7 +812,7 @@ impl PohRecorder {
 
             // If the leader for this slot is not me, then it's the previous
             // leader's last slot.
-            if leader_for_slot != *my_pubkey {
+            if leader_for_slot.id != *my_pubkey {
                 // Check if the last slot PoH reset onto was the previous leader's last slot.
                 return slot == self.start_slot();
             }
@@ -1116,12 +1117,12 @@ mod tests {
         super::*,
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_TICKS_PER_SLOT,
+        solana_leader_schedule::SlotLeader,
         solana_ledger::{
             blockstore::Blockstore,
             blockstore_meta::SlotMeta,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
-            leader_schedule::SlotLeader,
         },
         solana_perf::test_tx::test_tx,
         solana_sha256_hasher::hash,
@@ -1449,9 +1450,11 @@ mod tests {
         assert_eq!(poh_recorder.tick_height(), min_tick_height);
         let tx = test_tx();
         let h1 = hash(b"hello world!");
-        assert!(poh_recorder
-            .record(bank1.slot(), vec![h1], vec![vec![tx.into()]])
-            .is_ok());
+        assert!(
+            poh_recorder
+                .record(bank1.slot(), vec![h1], vec![vec![tx.into()]])
+                .is_ok()
+        );
         assert_eq!(poh_recorder.tick_cache.len(), 0);
 
         //tick in the cache + entry
@@ -1491,9 +1494,11 @@ mod tests {
         }
         let tx = test_tx();
         let h1 = hash(b"hello world!");
-        assert!(poh_recorder
-            .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
-            .is_err());
+        assert!(
+            poh_recorder
+                .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
+                .is_err()
+        );
         for _ in 0..num_ticks_to_max {
             let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
             assert!(entry.is_tick());
@@ -1721,9 +1726,11 @@ mod tests {
 
         let tx = test_tx();
         let h1 = hash(b"hello world!");
-        assert!(poh_recorder
-            .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
-            .is_err());
+        assert!(
+            poh_recorder
+                .record(bank.slot(), vec![h1], vec![vec![tx.into()]])
+                .is_err()
+        );
         assert!(poh_recorder.working_bank.is_none());
 
         // Even thought we ticked much further than working_bank.max_tick_height,
@@ -1804,10 +1811,10 @@ mod tests {
         slot_leaders.extend(std::iter::repeat_n(leader_c, consecutive_leader_slots));
         slot_leaders.extend(std::iter::repeat_n(leader_d, consecutive_leader_slots));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
-        let fixed_schedule = solana_ledger::leader_schedule::FixedSchedule {
-            leader_schedule: Arc::new(
-                solana_ledger::leader_schedule::LeaderSchedule::new_from_schedule(slot_leaders),
-            ),
+        let fixed_schedule = solana_leader_schedule::FixedSchedule {
+            leader_schedule: Arc::new(solana_leader_schedule::LeaderSchedule::new_from_schedule(
+                slot_leaders,
+            )),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));
 

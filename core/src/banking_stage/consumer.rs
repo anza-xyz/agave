@@ -28,6 +28,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
+    solana_vote::vote_parser,
     std::num::Saturating,
 };
 
@@ -144,8 +145,15 @@ impl Consumer {
             bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
         let check_results: Vec<_> = check_results
             .into_iter()
-            .map(|result| match result {
-                Ok(_) => Ok(()),
+            .zip(txs.iter())
+            .map(|(result, tx)| match result {
+                Ok(_) => {
+                    if bank.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(tx) {
+                        Err(TransactionError::SanitizeFailure)
+                    } else {
+                        Ok(())
+                    }
+                }
                 Err(err) => Err(err),
             })
             .collect();
@@ -329,8 +337,8 @@ impl Consumer {
             })
             .collect();
 
-        let (load_and_execute_transactions_output, load_execute_us) = measure_us!(bank
-            .load_and_execute_transactions(
+        let (load_and_execute_transactions_output, load_execute_us) =
+            measure_us!(bank.load_and_execute_transactions(
                 batch,
                 MAX_PROCESSING_AGE,
                 &mut execute_and_commit_timings.execute_timings,
@@ -381,8 +389,8 @@ impl Consumer {
             attempted_processing_count: processing_results.len() as u64,
         };
 
-        let (processed_transactions, processing_results_to_transactions_us) =
-            measure_us!(processing_results
+        let (processed_transactions, processing_results_to_transactions_us) = measure_us!(
+            processing_results
                 .iter()
                 .zip(batch.sanitized_transactions())
                 .filter_map(|(processing_result, tx)| {
@@ -392,14 +400,16 @@ impl Consumer {
                         None
                     }
                 })
-                .collect_vec());
+                .collect_vec()
+        );
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
-        let (record_transactions_summary, record_us) = measure_us!(self
-            .transaction_recorder
-            .record_transactions(bank.bank_id(), processed_transactions));
+        let (record_transactions_summary, record_us) = measure_us!(
+            self.transaction_recorder
+                .record_transactions(bank.bank_id(), processed_transactions)
+        );
         execute_and_commit_timings.record_us = record_us;
 
         let RecordTransactionsSummary {
@@ -538,7 +548,7 @@ mod tests {
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::unbounded,
-        solana_account::{state_traits::StateMut, AccountSharedData},
+        solana_account::{AccountSharedData, state_traits::StateMut},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
@@ -551,17 +561,17 @@ mod tests {
         solana_ledger::{
             blockstore_processor::{TransactionStatusMessage, TransactionStatusSender},
             genesis_utils::{
-                bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
-                GenesisConfigInfo,
+                GenesisConfigInfo, bootstrap_validator_stake_lamports,
+                create_genesis_config_with_leader,
             },
         },
         solana_message::{
-            v0::{self, MessageAddressTableLookup},
             MessageHeader, VersionedMessage,
+            v0::{self, MessageAddressTableLookup},
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account::verify_nonce_account,
-        solana_poh::record_channels::{record_channels, RecordReceiver},
+        solana_poh::record_channels::{RecordReceiver, record_channels},
         solana_pubkey::Pubkey,
         solana_runtime::bank_forks::BankForks,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -569,7 +579,7 @@ mod tests {
         solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
         solana_transaction::{
-            sanitized::MessageHash, versioned::VersionedTransaction, Transaction,
+            Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
         },
         std::{
             borrow::Cow,
@@ -1283,9 +1293,11 @@ mod tests {
         } = process_transactions_summary;
 
         // Transaction is successfully processed, but not committed due to poh recording error.
-        assert!(execute_and_commit_transactions_output
-            .commit_transactions_result
-            .is_err());
+        assert!(
+            execute_and_commit_transactions_output
+                .commit_transactions_result
+                .is_err()
+        );
         assert_eq!(
             execute_and_commit_transactions_output
                 .transaction_counts
@@ -1443,6 +1455,8 @@ mod tests {
             &ReservedAccountKeys::empty_key_set(),
             bank.feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::id()),
+            bank.feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::id()),
         )
         .unwrap();
         let batch_transactions_inner = [&sanitized_tx]

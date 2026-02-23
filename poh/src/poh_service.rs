@@ -15,8 +15,8 @@ use {
     solana_poh_config::PohConfig,
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -198,11 +198,9 @@ impl PohService {
     pub fn target_ns_per_tick(ticks_per_slot: u64, target_tick_duration_ns: u64) -> u64 {
         // Account for some extra time outside of PoH generation to account
         // for processing time outside PoH.
-        let adjustment_per_tick = if ticks_per_slot > 0 {
-            TARGET_SLOT_ADJUSTMENT_NS / ticks_per_slot
-        } else {
-            0
-        };
+        let adjustment_per_tick = TARGET_SLOT_ADJUSTMENT_NS
+            .checked_div(ticks_per_slot)
+            .unwrap_or(0);
         target_tick_duration_ns.saturating_sub(adjustment_per_tick)
     }
 
@@ -676,12 +674,12 @@ mod tests {
             record_channels::record_channels,
         },
         crossbeam_channel::bounded,
-        rand::{rng, Rng},
+        rand::{Rng, rng},
         solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_hash::Hash,
         solana_ledger::{
             blockstore::Blockstore,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },

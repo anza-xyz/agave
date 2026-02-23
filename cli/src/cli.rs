@@ -3,13 +3,13 @@ use {
         address_lookup_table::*, clap_app::*, cluster_query::*, feature::*, inflation::*, nonce::*,
         program::*, program_v4::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
-    clap::{crate_description, crate_name, value_t_or_exit, ArgMatches, Shell},
+    clap::{ArgMatches, Shell, crate_description, crate_name, value_t_or_exit},
     num_traits::FromPrimitive,
     serde_json::{self, Value},
     solana_clap_utils::{self, input_parsers::*, keypair::*},
     solana_cli_config::ConfigInput,
     solana_cli_output::{
-        display::println_name_value, CliSignature, CliValidatorsSortOrder, OutputFormat,
+        CliSignature, CliValidatorsSortOrder, OutputFormat, display::println_name_value,
     },
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Epoch, Slot},
@@ -30,7 +30,7 @@ use {
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_tpu_client::{
         nonblocking::tpu_client::TpuClient,
-        tpu_client::{TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE},
+        tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, TpuClientConfig},
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
@@ -326,7 +326,15 @@ pub enum CliCommand {
         identity_account: SignerIndex,
         authorized_voter: Option<Pubkey>,
         authorized_withdrawer: Pubkey,
-        commission: u8,
+        // VoteInit (v1) args.
+        commission: Option<u8>,
+        // VoteInitV2 args (SIMD-0464).
+        use_v2_instruction: bool,
+        inflation_rewards_commission_bps: Option<u16>,
+        inflation_rewards_collector: Option<Pubkey>,
+        block_revenue_commission_bps: Option<u16>,
+        block_revenue_collector: Option<Pubkey>,
+        // Common args.
         sign_only: bool,
         dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
@@ -369,6 +377,7 @@ pub enum CliCommand {
         vote_account_pubkey: Pubkey,
         new_authorized_pubkey: Pubkey,
         vote_authorize: VoteAuthorize,
+        use_v2_instruction: bool,
         sign_only: bool,
         dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
@@ -860,16 +869,16 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         println_name_value("Commitment:", &config.commitment.commitment.to_string());
     }
 
-    let rpc_client = if config.rpc_client.is_none() {
+    let rpc_client = if let Some(rpc_client) = config.rpc_client.as_ref() {
+        // Primarily for testing
+        rpc_client.clone()
+    } else {
         Arc::new(RpcClient::new_with_timeouts_and_commitment(
             config.json_rpc_url.to_string(),
             config.rpc_timeout,
             config.commitment,
             config.confirm_transaction_initial_timeout,
         ))
-    } else {
-        // Primarily for testing
-        config.rpc_client.as_ref().unwrap().clone()
     };
 
     match &config.command {
@@ -1570,6 +1579,11 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             authorized_voter,
             authorized_withdrawer,
             commission,
+            use_v2_instruction,
+            inflation_rewards_commission_bps,
+            inflation_rewards_collector,
+            block_revenue_commission_bps,
+            block_revenue_collector,
             sign_only,
             dump_transaction_message,
             blockhash_query,
@@ -1588,6 +1602,11 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 authorized_voter,
                 *authorized_withdrawer,
                 *commission,
+                *use_v2_instruction,
+                *inflation_rewards_commission_bps,
+                inflation_rewards_collector.as_ref(),
+                *block_revenue_commission_bps,
+                block_revenue_collector.as_ref(),
                 *sign_only,
                 *dump_transaction_message,
                 blockhash_query,
@@ -1673,6 +1692,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             vote_account_pubkey,
             new_authorized_pubkey,
             vote_authorize,
+            use_v2_instruction,
             sign_only,
             dump_transaction_message,
             blockhash_query,
@@ -1690,6 +1710,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 vote_account_pubkey,
                 new_authorized_pubkey,
                 *vote_authorize,
+                *use_v2_instruction,
                 *authorized,
                 *new_authorized,
                 *sign_only,
@@ -1936,10 +1957,10 @@ mod tests {
     use {
         super::*,
         serde_json::json,
-        solana_keypair::{keypair_from_seed, read_keypair_file, write_keypair_file, Keypair},
+        solana_keypair::{Keypair, keypair_from_seed, read_keypair_file, write_keypair_file},
         solana_presigner::Presigner,
         solana_pubkey::Pubkey,
-        solana_rpc_client::mock_sender_for_cli::SIGNATURE,
+        solana_rpc_client::{mock_sender::MocksMap, mock_sender_for_cli::SIGNATURE},
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcResponseContext},
@@ -2265,6 +2286,14 @@ mod tests {
         let bob_keypair = Keypair::new();
         let bob_pubkey = bob_keypair.pubkey();
         let identity_keypair = Keypair::new();
+        // Feature check response: null value means feature is not active.
+        let feature_check_response = json!(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
+            value: serde_json::Value::Null,
+        });
         let vote_account_info_response = json!(Response {
             context: RpcResponseContext {
                 slot: 1,
@@ -2278,9 +2307,13 @@ mod tests {
                 "rentEpoch": 1,
             }),
         });
-        let mut mocks = HashMap::new();
+        // Use MocksMap to queue multiple GetAccountInfo responses:
+        // 1. SIMD-0464 feature account (returns null = feature inactive)
+        // 2. Vote account
+        let mut mocks = MocksMap::default();
+        mocks.insert(RpcRequest::GetAccountInfo, feature_check_response);
         mocks.insert(RpcRequest::GetAccountInfo, vote_account_info_response);
-        let rpc_client = Some(Arc::new(RpcClient::new_mock_with_mocks(
+        let rpc_client = Some(Arc::new(RpcClient::new_mock_with_mocks_map(
             "".to_string(),
             mocks,
         )));
@@ -2291,7 +2324,13 @@ mod tests {
             identity_account: 2,
             authorized_voter: Some(bob_pubkey),
             authorized_withdrawer: bob_pubkey,
-            commission: 0,
+            commission: Some(0),
+            use_v2_instruction: false,
+
+            inflation_rewards_commission_bps: None,
+            inflation_rewards_collector: None,
+            block_revenue_commission_bps: None,
+            block_revenue_collector: None,
             sign_only: false,
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2333,6 +2372,7 @@ mod tests {
             vote_account_pubkey: bob_pubkey,
             new_authorized_pubkey,
             vote_authorize: VoteAuthorize::Withdrawer,
+            use_v2_instruction: false,
             sign_only: false,
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2570,7 +2610,13 @@ mod tests {
             identity_account: 2,
             authorized_voter: Some(bob_pubkey),
             authorized_withdrawer: bob_pubkey,
-            commission: 0,
+            commission: Some(0),
+            use_v2_instruction: false,
+
+            inflation_rewards_commission_bps: None,
+            inflation_rewards_collector: None,
+            block_revenue_commission_bps: None,
+            block_revenue_collector: None,
             sign_only: false,
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
@@ -2587,6 +2633,7 @@ mod tests {
             vote_account_pubkey: bob_pubkey,
             new_authorized_pubkey: bob_pubkey,
             vote_authorize: VoteAuthorize::Voter,
+            use_v2_instruction: false,
             sign_only: false,
             dump_transaction_message: false,
             blockhash_query: BlockhashQuery::Rpc(Source::Cluster),

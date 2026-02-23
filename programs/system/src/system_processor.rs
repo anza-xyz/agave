@@ -15,11 +15,11 @@ use {
     solana_sdk_ids::system_program,
     solana_svm_log_collector::ic_msg,
     solana_system_interface::{
-        error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
+        MAX_PERMITTED_DATA_LENGTH, error::SystemError, instruction::SystemInstruction,
     },
     solana_transaction_context::{
-        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
-        IndexOfAccount,
+        IndexOfAccount, instruction::InstructionContext,
+        instruction_accounts::BorrowedInstructionAccount,
     },
     std::collections::HashSet,
 };
@@ -188,7 +188,7 @@ fn create_account(
 fn create_account_allow_prefund(
     to_account_index: IndexOfAccount,
     to_address: &Address,
-    payer_and_lamports: Option<(IndexOfAccount, u64)>,
+    from_and_lamports: Option<(IndexOfAccount, u64)>,
     space: u64,
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
@@ -199,7 +199,7 @@ fn create_account_allow_prefund(
         let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
         allocate_and_assign(&mut to, to_address, space, owner, signers, invoke_context)?;
     }
-    if let Some((from_account_index, lamports)) = payer_and_lamports {
+    if let Some((from_account_index, lamports)) = from_and_lamports {
         if lamports > 0 {
             transfer(
                 from_account_index,
@@ -538,7 +538,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let payer_and_lamports = if lamports > 0 {
+            let from_and_lamports = if lamports > 0 {
                 instruction_context.check_number_of_instruction_accounts(2)?;
                 Some((1, lamports))
             } else {
@@ -553,7 +553,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             create_account_allow_prefund(
                 0,
                 &to_address,
-                payer_and_lamports,
+                from_and_lamports,
                 space,
                 &owner,
                 &signers,
@@ -569,7 +569,7 @@ mod tests {
     use {
         super::*,
         bincode::serialize,
-        solana_nonce_account::{get_system_account_kind, SystemAccountKind},
+        solana_nonce_account::{SystemAccountKind, get_system_account_kind},
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },
@@ -578,12 +578,12 @@ mod tests {
     #[allow(deprecated)]
     use {
         solana_account::{
-            self as account, create_account_shared_data_with_fields, to_account, Account,
-            AccountSharedData, ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+            self as account, Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+            ReadableAccount, create_account_shared_data_with_fields, to_account,
         },
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
-        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_instruction::{AccountMeta, Instruction, error::InstructionError},
         solana_nonce::{
             self as nonce,
             state::{Data as NonceData, DurableNonce, State as NonceState},
@@ -594,7 +594,7 @@ mod tests {
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_sysvar::{
             self as sysvar,
-            recent_blockhashes::{IntoIterSorted, IterItem, RecentBlockhashes, MAX_ENTRIES},
+            recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes},
             rent::Rent,
         },
     };

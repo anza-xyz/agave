@@ -12,6 +12,7 @@ readme = false
 [features]
 agave-unstable-api = []
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+dev-context-only-utils = []
 
 [dependencies]
 ahash = { workspace = true }
@@ -23,6 +24,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-svm-feature-set = { workspace = true }

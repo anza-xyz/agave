@@ -6,7 +6,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::Result,
     solana_account::{
-        create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
+        AccountSharedData, create_account_shared_data_for_test, state_traits::StateMut,
     },
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
@@ -14,10 +14,10 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         create_vm,
-        deploy::load_program_from_bytes,
         invoke_context::InvokeContext,
         loaded_programs::{
-            LoadProgramMetrics, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET,
+            DELAY_VISIBILITY_SLOT_OFFSET, LoadProgramMetrics, ProgramCacheEntry,
+            ProgramCacheEntryType,
         },
         serialization::serialize_parameters,
         with_mock_invoke_context,
@@ -30,7 +30,7 @@ use {
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_transaction_context::{
-        instruction::InstructionContext, instruction_accounts::InstructionAccount, IndexOfAccount,
+        IndexOfAccount, instruction::InstructionContext, instruction_accounts::InstructionAccount,
     },
     std::{
         collections::HashMap,
@@ -267,7 +267,6 @@ fn load_program<'a>(
     let mut contents = Vec::new();
     file.read_to_end(&mut contents).unwrap();
     let slot = Slot::default();
-    let log_collector = invoke_context.get_log_collector();
     let loader_key = bpf_loader_upgradeable::id();
     let mut load_program_metrics = LoadProgramMetrics {
         program_id: program_id.to_string(),
@@ -284,15 +283,14 @@ fn load_program<'a>(
     // Allowing mut here, since it may be needed for jit compile, which is under a config flag
     #[allow(unused_mut)]
     let mut verified_executable = if is_elf {
-        let result = load_program_from_bytes(
-            log_collector,
-            &mut load_program_metrics,
-            &contents,
+        let result = ProgramCacheEntry::new(
             &loader_key,
-            account_size,
-            slot,
             Arc::new(program_runtime_environment),
-            false,
+            slot,
+            slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+            &contents,
+            account_size,
+            &mut load_program_metrics,
         );
         match result {
             Ok(loaded_program) => match loaded_program.program {
@@ -487,7 +485,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     for key in cached_account_keys {
         program_cache_for_tx_batch.replenish(
             key,
-            bank.load_program(&key, false, bank.epoch())
+            bank.load_program(&key, bank.epoch())
                 .expect("Couldn't find program account"),
         );
         debug!("Loaded program {key}");
@@ -496,7 +494,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     invoke_context
         .transaction_context
-        .configure_next_instruction_for_tests(
+        .configure_top_level_instruction_for_tests(
             program_index.saturating_add(1),
             instruction_accounts,
             instruction_data,

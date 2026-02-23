@@ -1,6 +1,6 @@
 use {
     crate::rpc_subscriptions::{NotificationEntry, RpcNotification, TimestampedNotificationEntry},
-    dashmap::{mapref::entry::Entry as DashEntry, DashMap},
+    dashmap::{DashMap, mapref::entry::Entry as DashEntry},
     serde::{Deserialize, Serialize},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_clock::Slot,
@@ -18,8 +18,8 @@ use {
         collections::hash_map::{Entry, HashMap},
         fmt,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock, Weak,
+            atomic::{AtomicU64, Ordering},
         },
     },
     thiserror::Error,
@@ -598,7 +598,7 @@ mod tests {
     use {
         super::*,
         crate::rpc_pubsub_service::PubSubConfig,
-        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime::bank::Bank,
     };
 

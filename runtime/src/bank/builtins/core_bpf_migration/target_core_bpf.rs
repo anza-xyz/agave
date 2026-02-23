@@ -54,7 +54,7 @@ impl TargetCoreBpf {
             _ => {
                 return Err(CoreBpfMigrationError::InvalidProgramAccount(
                     *program_address,
-                ))
+                ));
             }
         }
 

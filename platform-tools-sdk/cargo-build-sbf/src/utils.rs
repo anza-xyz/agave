@@ -1,14 +1,14 @@
 use {
     itertools::Itertools,
     log::{error, info},
-    solana_keypair::{write_keypair_file, Keypair},
+    solana_keypair::{Keypair, write_keypair_file},
     std::{
         env,
         ffi::OsStr,
         fs::File,
         io::{BufWriter, Write},
         path::{Path, PathBuf},
-        process::{exit, Command, Stdio},
+        process::{Command, Stdio, exit},
     },
 };
 

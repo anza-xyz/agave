@@ -3,12 +3,13 @@
 extern crate solana_core;
 
 use {
-    bencher::{benchmark_main, Bencher, TDynBenchFn, TestDesc, TestDescAndFn, TestFn},
+    bencher::{Bencher, TDynBenchFn, TestDesc, TestDescAndFn, TestFn, benchmark_main},
     crossbeam_channel::unbounded,
     log::*,
     rand::{
+        Rng,
         distr::{Distribution, Uniform},
-        rng, Rng,
+        rng,
     },
     solana_core::{
         banking_trace::BankingTracer,
@@ -19,7 +20,8 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_perf::{
-        packet::{to_packet_batches, PacketBatch},
+        packet::{PacketBatch, to_packet_batches},
+        sigverify,
         test_tx::test_tx,
     },
     solana_signer::Signer,
@@ -27,6 +29,7 @@ use {
     std::{
         borrow::Cow,
         hint::black_box,
+        sync::Arc,
         time::{Duration, Instant},
     },
 };
@@ -165,7 +168,8 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     trace!("start");
     let (packet_s, packet_r) = unbounded();
     let (verified_s, verified_r) = BankingTracer::channel_for_test();
-    let verifier = TransactionSigVerifier::new(verified_s, None);
+    let threadpool = Arc::new(sigverify::threadpool_for_benches());
+    let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
     let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerBench", "bench");
 
     bencher.iter(move || {
@@ -239,30 +243,24 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
 fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32) {
     let (batches0, num_valid_packets) = prepare_batches(discard_factor);
     let (verified_s, _verified_r) = BankingTracer::channel_for_test();
-    let verifier = TransactionSigVerifier::new(verified_s, None);
+    let threadpool = Arc::new(sigverify::threadpool_for_benches());
+    let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
 
     let mut c = 0;
-    let mut total_shrink_time = 0;
     let mut total_verify_time = 0;
 
     bencher.iter(|| {
-        let batches = batches0.clone();
-        let (pre_shrink_time_us, _pre_shrink_total, batches) =
-            SigVerifyStage::maybe_shrink_batches(batches);
-
         let mut verify_time = Measure::start("sigverify_batch_time");
-        let _batches = verifier.verify_batches(batches, num_valid_packets);
+        let _batches = verifier.verify_batches(batches0.clone(), num_valid_packets);
         verify_time.stop();
 
         c += 1;
-        total_shrink_time += pre_shrink_time_us;
         total_verify_time += verify_time.as_us();
     });
 
     error!(
-        "bsv, {}, {}, {}",
+        "bsv, {}, {}",
         discard_factor,
-        (total_shrink_time as f64) / (c as f64),
         (total_verify_time as f64) / (c as f64),
     );
 }

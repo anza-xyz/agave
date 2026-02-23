@@ -48,7 +48,4 @@ impl ClientLogon {
     }
 }
 
-pub mod logon_flags {
-    /// Send the votes to the external scheduler instead of processing them internally.
-    pub const REROUTE_VOTES: u16 = 1 << 0;
-}
+pub mod logon_flags {}

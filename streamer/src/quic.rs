@@ -11,20 +11,20 @@ use {
     crossbeam_channel::Sender,
     pem::Pem,
     quinn::{
-        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
         Endpoint, IdleTimeout, ServerConfig, VarInt,
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
-    solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder, NotifyKeyUpdate},
+    solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         net::UdpSocket,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
         },
         thread::{self},
         time::Duration,
@@ -190,7 +190,6 @@ pub struct StreamerStats {
     pub(crate) connection_added_from_staked_peer: AtomicUsize,
     pub(crate) connection_added_from_unstaked_peer: AtomicUsize,
     pub(crate) connection_add_failed: AtomicUsize,
-    pub(crate) connection_add_failed_invalid_stream_count: AtomicUsize,
     pub(crate) connection_add_failed_staked_node: AtomicUsize,
     pub(crate) connection_add_failed_unstaked_node: AtomicUsize,
     pub(crate) connection_add_failed_on_pruning: AtomicUsize,
@@ -288,12 +287,6 @@ impl StreamerStats {
             (
                 "connection_add_failed",
                 self.connection_add_failed.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "connection_add_failed_invalid_stream_count",
-                self.connection_add_failed_invalid_stream_count
-                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -734,7 +727,7 @@ mod test {
             quic::test::*,
             testing_utilities::{check_multiple_streams, make_client_endpoint},
         },
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::{Receiver, unbounded},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,

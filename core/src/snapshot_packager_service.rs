@@ -1,8 +1,8 @@
 mod snapshot_gossip_manager;
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes, SnapshotKind,
+        SnapshotKind, paths as snapshot_paths, snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::account_storage_entry::AccountStorageEntry,
@@ -18,8 +18,8 @@ use {
     },
     std::{
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -44,6 +44,7 @@ impl SnapshotPackagerService {
         cluster_info: Arc<ClusterInfo>,
         snapshot_controller: Arc<SnapshotController>,
         enable_gossip_push: bool,
+        niceness_adj: i8,
     ) -> Self {
         let t_snapshot_packager = Builder::new()
             .name("solSnapshotPkgr".to_string())
@@ -53,7 +54,7 @@ impl SnapshotPackagerService {
                 }
                 info!("{} has started", Self::NAME);
                 let snapshot_config = snapshot_controller.snapshot_config();
-                renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
+                renice_this_thread(niceness_adj).unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
 

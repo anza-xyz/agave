@@ -7,9 +7,9 @@ use {
     futures::future::TryFutureExt,
     log::*,
     quinn::{
-        crypto::rustls::QuicClientConfig, ClientConfig, ClosedStream, ConnectError, Connection,
-        ConnectionError, Endpoint, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
-        WriteError,
+        ClientConfig, ClosedStream, ConnectError, Connection, ConnectionError, Endpoint,
+        EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig, WriteError,
+        crypto::rustls::QuicClientConfig,
     },
     solana_connection_cache::{
         client_connection::ClientStats, connection_cache_stats::ConnectionCacheStats,
@@ -21,13 +21,13 @@ use {
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
     solana_streamer::{nonblocking::quic::ALPN_TPU_PROTOCOL_ID, quic::QUIC_MAX_TIMEOUT},
     solana_tls_utils::{
-        new_dummy_x509_certificate, socket_addr_to_quic_server_name, tls_client_config_builder,
-        QuicClientCertificate,
+        QuicClientCertificate, new_dummy_x509_certificate, socket_addr_to_quic_server_name,
+        tls_client_config_builder,
     },
     solana_transaction_error::TransportResult,
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::{atomic::Ordering, Arc},
+        sync::{Arc, atomic::Ordering},
         thread,
         time::Duration,
     },

@@ -849,7 +849,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 let slot_versions = &mut entries.entry(key).or_default();
-                match slot_versions.binary_search_by(|at| {
+                let insertion_point = slot_versions.binary_search_by(|at| {
                     at.effective_slot
                         .cmp(&entry.effective_slot)
                         .then(at.deployment_slot.cmp(&entry.deployment_slot))
@@ -866,7 +866,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 entry.program.get_environment(),
                             )),
                         )
-                }) {
+                });
+                match insertion_point {
                     Ok(index) => {
                         let existing = slot_versions.get_mut(index).unwrap();
                         match (&existing.program, &entry.program) {
@@ -904,7 +905,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         slot_versions.insert(index, Arc::clone(&entry));
                     }
                 }
-                // Remove existing entries in the same deployment slot unless they are for a different environment.
+                // Remove existing entries in the same deployment slot unless they are for a different
+                // environment.
                 // This overwrites the current status of a program in program management instructions.
                 slot_versions.retain(|existing| {
                     existing.deployment_slot != entry.deployment_slot
@@ -969,12 +971,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     first_ancestor_env = entry.program.get_environment();
                                     return true;
                                 }
-                                // Do not prune the entry if the runtime environment of the entry is different
-                                // than the entry that was previously found (stored in first_ancestor_env).
-                                // Different environment indicates that this entry might belong to an older
-                                // epoch that had a different environment (e.g. different feature set).
-                                // Once the root moves to the new/current epoch, the entry will get pruned.
-                                // But, until then the entry might still be getting used by an older slot.
+                                // Do not prune the entry if the runtime environment of the entry is
+                                // different than the entry that was previously found (stored in
+                                // first_ancestor_env). Different environment indicates that this entry
+                                // might belong to an older epoch that had a different environment (e.g.
+                                // different feature set). Once the root moves to the new/current epoch,
+                                // the entry will get pruned. But, until then the entry might still be
+                                // getting used by an older slot.
                                 if let Some(entry_env) = entry.program.get_environment()
                                     && let Some(env) = first_ancestor_env
                                     && !Arc::ptr_eq(entry_env, env)
@@ -1058,28 +1061,36 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     if let Some(second_level) = entries.get(key) {
                         let mut filter_by_deployment_slot = None;
                         for entry in second_level.iter().rev() {
-                            if filter_by_deployment_slot
-                                .map(|slot| slot != entry.deployment_slot)
-                                .unwrap_or(false)
-                            {
+                            let required_deployment_slot =
+                                filter_by_deployment_slot.unwrap_or(entry.deployment_slot);
+                            if required_deployment_slot != entry.deployment_slot {
                                 continue;
                             }
-                            if entry.deployment_slot <= self.latest_root_slot
+                            let entry_in_same_branch = entry.deployment_slot
+                                <= self.latest_root_slot
                                 || matches!(
                                     locked_fork_graph.relationship(
                                         entry.deployment_slot,
                                         loaded_programs_for_tx_batch.slot
                                     ),
                                     BlockRelation::Equal | BlockRelation::Ancestor
-                                )
-                            {
-                                let entry_to_return = if loaded_programs_for_tx_batch.slot
-                                    >= entry.effective_slot
-                                {
+                                );
+                            if entry_in_same_branch {
+                                let entry_is_effective =
+                                    loaded_programs_for_tx_batch.slot >= entry.effective_slot;
+                                let entry_to_return = if entry_is_effective {
                                     if !Self::matches_environment(
                                         entry,
                                         program_runtime_environments_for_execution,
                                     ) {
+                                        // We found an entry that would work, had its environment matched
+                                        // the one we're planning to use for this slot.
+                                        //
+                                        // At this point we know that whatever the "current version" of
+                                        // program is, it must have had a deployment slot equal to the
+                                        // program we're looking at in this iteration. We just have to find
+                                        // one with the correct environment and can skip entries for any
+                                        // other deployment slot while searching further.
                                         filter_by_deployment_slot = filter_by_deployment_slot
                                             .or(Some(entry.deployment_slot));
                                         continue;

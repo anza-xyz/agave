@@ -1,13 +1,13 @@
 use {
-    clap::{crate_description, crate_name, value_t_or_exit, App, Arg, ArgMatches},
+    clap::{App, Arg, ArgMatches, crate_description, crate_name, value_t_or_exit},
     solana_clap_utils::{
         hidden_unless_forced,
         input_validators::{is_keypair, is_url, is_url_or_moniker, is_within_range},
     },
-    solana_cli_config::{ConfigInput, CONFIG_FILE},
+    solana_cli_config::{CONFIG_FILE, ConfigInput},
     solana_commitment_config::CommitmentConfig,
     solana_fee_calculator::FeeRateGovernor,
-    solana_keypair::{read_keypair_file, Keypair},
+    solana_keypair::{Keypair, read_keypair_file},
     solana_pubkey::Pubkey,
     solana_streamer::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
@@ -569,13 +569,13 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
 mod tests {
     use {
         super::*,
-        solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
+        solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
         solana_signer::Signer,
         std::{
             net::{IpAddr, Ipv4Addr},
             time::Duration,
         },
-        tempfile::{tempdir, TempDir},
+        tempfile::{TempDir, tempdir},
     };
 
     /// create a keypair and write it to json file in temporary directory

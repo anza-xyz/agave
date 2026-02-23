@@ -1,15 +1,15 @@
 use {
     super::{
-        bucket_map_holder::BucketMapHolder, in_mem_accounts_index::InMemAccountsIndex,
         AccountsIndexConfig, DiskIndexValue, IndexValue, Startup,
+        bucket_map_holder::BucketMapHolder, in_mem_accounts_index::InMemAccountsIndex,
     },
     crate::{accounts_index, waitable_condvar::WaitableCondvar},
     std::{
         fmt::Debug,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         },
         thread::{Builder, JoinHandle},
     },
@@ -105,15 +105,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
     pub(crate) fn set_startup(&self, startup: Startup) {
         let is_startup = startup != Startup::Normal;
         self.storage.set_startup(is_startup);
-    }
-
-    /// estimate how many items are still needing to be flushed to the disk cache.
-    pub fn get_startup_remaining_items_to_flush_estimate(&self) -> usize {
-        self.storage
-            .disk
-            .as_ref()
-            .map(|_| self.storage.stats.get_remaining_items_to_flush_estimate())
-            .unwrap_or_default()
     }
 
     /// allocate BucketMapHolder and InMemAccountsIndex[]

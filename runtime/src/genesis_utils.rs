@@ -2,20 +2,25 @@
 use solana_stake_interface::config::Config as StakeConfig;
 use {
     crate::stake_utils,
-    agave_feature_set::{vote_state_v4, FeatureSet, FEATURE_NAMES},
-    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, vote_state_v4},
+    agave_votor_messages::{
+        self,
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Certificate, CertificateType},
+        migration::GENESIS_CERTIFICATE_ACCOUNT,
+    },
     bincode::serialize,
     log::*,
-    solana_account::{state_traits::StateMut, Account, AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-        Pubkey as BLSPubkey,
+        Pubkey as BLSPubkey, Signature as BLSSignature, keypair::Keypair as BLSKeypair,
+        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_cluster_type::ClusterType,
     solana_config_interface::state::ConfigKeys,
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
@@ -26,8 +31,8 @@ use {
     solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
     solana_sysvar::{
-        epoch_rewards::{self, EpochRewards},
         SysvarSerialize,
+        epoch_rewards::{self, EpochRewards},
     },
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::vote_state,
@@ -65,23 +70,26 @@ pub struct ValidatorVoteKeypairs {
     pub node_keypair: Keypair,
     pub vote_keypair: Keypair,
     pub stake_keypair: Keypair,
+    pub bls_keypair: BLSKeypair,
 }
 
 impl ValidatorVoteKeypairs {
     pub fn new(node_keypair: Keypair, vote_keypair: Keypair, stake_keypair: Keypair) -> Self {
+        let bls_keypair =
+            BLSKeypair::derive_from_signer(&vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         Self {
             node_keypair,
             vote_keypair,
             stake_keypair,
+            bls_keypair,
         }
     }
 
     pub fn new_rand() -> Self {
-        Self {
-            node_keypair: Keypair::new(),
-            vote_keypair: Keypair::new(),
-            stake_keypair: Keypair::new(),
-        }
+        let node_keypair = Keypair::new();
+        let vote_keypair = Keypair::new();
+        let stake_keypair = Keypair::new();
+        Self::new(node_keypair, vote_keypair, stake_keypair)
     }
 }
 
@@ -150,16 +158,17 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
 
     let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
     let validator_bls_pubkey = if is_alpenglow {
-        let bls_keypair = BLSKeypair::derive_from_signer(
-            &voting_keypairs[0].borrow().vote_keypair,
-            BLS_KEYPAIR_DERIVE_SEED,
+        Some(
+            voting_keypairs[0]
+                .borrow()
+                .bls_keypair
+                .public
+                .to_bytes_compressed(),
         )
-        .unwrap();
-        Some(bls_keypair.public.to_bytes_compressed())
     } else {
         None
     };
-    let genesis_config = create_genesis_config_with_leader_ex(
+    let mut genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         &validator_pubkey,
@@ -174,6 +183,10 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         feature_set,
         vec![],
     );
+
+    if is_alpenglow {
+        activate_all_features_alpenglow(&mut genesis_config);
+    }
 
     let mut genesis_config_info = GenesisConfigInfo {
         genesis_config,
@@ -190,12 +203,11 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
         let bls_pubkey_compressed = if is_alpenglow {
-            let bls_keypair = BLSKeypair::derive_from_signer(
-                &validator_voting_keypairs.borrow().vote_keypair,
-                BLS_KEYPAIR_DERIVE_SEED,
-            )
-            .unwrap();
-            bls_keypair.public.to_bytes_compressed()
+            validator_voting_keypairs
+                .borrow()
+                .bls_keypair
+                .public
+                .to_bytes_compressed()
         } else {
             [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
         };
@@ -301,6 +313,21 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
 
 pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<true>(genesis_config);
+
+    // This is a dev cluster with alpenglow enabled at genesis. We don't want to test the migration pathway
+    // so we add a fake genesis certificate.
+    let cert = Certificate {
+        cert_type: CertificateType::Genesis(0, Hash::default()),
+        signature: BLSSignature::default(),
+        bitmap: Vec::default(),
+    };
+    let cert_size = bincode::serialized_size(&cert).unwrap();
+    let lamports = Rent::default().minimum_balance(cert_size as usize);
+    let certificate_account = Account::new_data(lamports, &cert, &system_program::ID).unwrap();
+
+    genesis_config
+        .accounts
+        .insert(*GENESIS_CERTIFICATE_ACCOUNT, certificate_account);
 }
 
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
@@ -311,9 +338,10 @@ fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut Genes
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
         if (IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id())
-            // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
-            && *feature_id
-                != agave_feature_set::bls_pubkey_management_in_vote_account::id()
+            // TODO: Remove me once SIMD-0464 is no longer hard-coded as `false` in
+            // `FeatureSet::runtime_features` and omitted from `FEATURE_NAMES` in
+            // agave-feature-set.
+            && *feature_id != agave_feature_set::vote_account_initialize_v2::id()
         {
             activate_feature(genesis_config, *feature_id);
         }
@@ -488,8 +516,10 @@ pub fn create_genesis_config_with_leader_ex(
         if *feature_id == agave_feature_set::alpenglow::id() {
             continue;
         }
-        // Skip bls_pubkey_management_in_vote_account feature activation until cli change is in place
-        if *feature_id == agave_feature_set::bls_pubkey_management_in_vote_account::id() {
+        // TODO: Remove me once SIMD-0464 is no longer hard-coded as `false` in
+        // `FeatureSet::runtime_features` and omitted from `FEATURE_NAMES` in
+        // agave-feature-set.
+        if *feature_id == agave_feature_set::vote_account_initialize_v2::id() {
             continue;
         }
         activate_feature(&mut genesis_config, *feature_id);

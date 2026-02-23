@@ -1,14 +1,13 @@
 use {
     crate::{
         input_parsers::parse_cpu_ranges,
-        keypair::{parse_signer_source, SignerSourceKind, ASK_KEYWORD},
+        keypair::{ASK_KEYWORD, SignerSourceKind, parse_signer_source},
     },
     chrono::DateTime,
-    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_keypair::read_keypair_file,
-    solana_pubkey::{Pubkey, MAX_SEED_LEN},
+    solana_pubkey::{MAX_SEED_LEN, Pubkey},
     solana_signature::Signature,
     std::{fmt::Display, ops::RangeBounds, str::FromStr},
 };
@@ -91,16 +90,6 @@ where
         return Ok(());
     }
     read_keypair_file(string.as_ref())
-        .map(|_| ())
-        .map_err(|err| format!("{err}"))
-}
-
-// Return an error if a BLS keypair file cannot be parsed.
-pub fn is_bls_keypair<T>(string: T) -> Result<(), String>
-where
-    T: AsRef<str> + Display,
-{
-    BLSKeypair::read_json_file(string.as_ref())
         .map(|_| ())
         .map_err(|err| format!("{err}"))
 }
@@ -280,6 +269,27 @@ where
             if v > 100 {
                 Err(format!(
                     "Percentage must be in range of 0 to 100, provided: {v}"
+                ))
+            } else {
+                Ok(())
+            }
+        })
+}
+
+pub fn is_valid_basis_points<T>(basis_points: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    basis_points
+        .as_ref()
+        .parse::<u16>()
+        .map_err(|e| {
+            format!("Unable to parse input basis points, provided: {basis_points}, err: {e}")
+        })
+        .and_then(|v| {
+            if v > 10000 {
+                Err(format!(
+                    "Basis points must be in range of 0 to 10000, provided: {v}"
                 ))
             } else {
                 Ok(())
@@ -471,7 +481,7 @@ pub fn is_non_zero(value: impl AsRef<str>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, tempfile::NamedTempFile};
+    use super::*;
 
     #[test]
     fn test_is_derivation() {
@@ -487,19 +497,14 @@ mod tests {
     }
 
     #[test]
-    fn test_is_bls_keypair() {
-        // Non-existent file should error
-        assert!(is_bls_keypair("nonexistent_file.json").is_err());
-
-        // Invalid content should error
-        let invalid_file = NamedTempFile::new().unwrap();
-        std::fs::write(invalid_file.path(), "invalid content").unwrap();
-        assert!(is_bls_keypair(invalid_file.path().to_str().unwrap()).is_err());
-
-        // Valid BLS keypair file should succeed
-        let bls_keypair = BLSKeypair::new();
-        let valid_file = NamedTempFile::new().unwrap();
-        bls_keypair.write_json_file(valid_file.path()).unwrap();
-        assert!(is_bls_keypair(valid_file.path().to_str().unwrap()).is_ok());
+    fn test_is_valid_basis_points() {
+        assert!(is_valid_basis_points("0").is_ok());
+        assert!(is_valid_basis_points("100").is_ok());
+        assert!(is_valid_basis_points("5000").is_ok());
+        assert!(is_valid_basis_points("10000").is_ok());
+        assert!(is_valid_basis_points("10001").is_err());
+        assert!(is_valid_basis_points("65536").is_err());
+        assert!(is_valid_basis_points("-1").is_err());
+        assert!(is_valid_basis_points("abc").is_err());
     }
 }

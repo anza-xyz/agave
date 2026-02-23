@@ -1,9 +1,9 @@
 use {
     super::{
+        EpochCreditsListFrame, Field, Result, VoteStateViewError,
         field_frames::{
             AuthorizedVotersListFrame, ListFrame, LockoutListFrame, PriorVotersFrame, RootSlotFrame,
         },
-        EpochCreditsListFrame, Field, Result, VoteStateViewError,
     },
     solana_pubkey::Pubkey,
     solana_vote_interface::state::BlockTimestamp,

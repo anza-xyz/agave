@@ -3,7 +3,7 @@ use {
         bootstrap::RpcBootstrapConfig,
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, Arg, ArgMatches},
+    clap::{Arg, ArgMatches, value_t},
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     std::sync::LazyLock,
 };
@@ -104,7 +104,7 @@ mod tests {
     use {
         super::*,
         crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            RunArgs, tests::verify_args_struct_by_command_run_with_identity_setup,
         },
         solana_pubkey::Pubkey,
         std::{

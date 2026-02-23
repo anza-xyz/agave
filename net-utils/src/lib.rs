@@ -31,8 +31,7 @@ use {
 };
 pub use {
     ip_echo_server::{
-        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE,
-        MINIMUM_IP_ECHO_SERVER_THREADS, ip_echo_server,
+        DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,
     },
     socket_addr_space::SocketAddrSpace,
 };
@@ -239,11 +238,6 @@ pub fn is_host_port(string: String) -> Result<(), String> {
 pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
     let config = sockets::SocketConfiguration::default();
     sockets::bind_in_range_with_config(ip_addr, range, config)
-}
-
-pub fn bind_to_localhost() -> io::Result<UdpSocket> {
-    let config = sockets::SocketConfiguration::default();
-    sockets::bind_to_with_config(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, config)
 }
 
 pub fn bind_to_unspecified() -> io::Result<UdpSocket> {

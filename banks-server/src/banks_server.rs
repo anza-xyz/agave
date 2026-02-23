@@ -1,6 +1,6 @@
 use {
     bincode::{deserialize, serialize},
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     futures::{future, prelude::stream::StreamExt},
     solana_account::Account,
     solana_banks_interface::{
@@ -34,18 +34,18 @@ use {
         io,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
         thread::Builder,
         time::Duration,
     },
     tarpc::{
+        ClientMessage, Response,
         context::Context,
         serde_transport::tcp,
-        server::{self, incoming::Incoming, Channel},
+        server::{self, Channel, incoming::Incoming},
         transport::{self, channel::UnboundedChannel},
-        ClientMessage, Response,
     },
     tokio::{runtime::Handle, time::sleep},
     tokio_serde::formats::Bincode,
@@ -180,6 +180,8 @@ fn simulate_transaction(
         bank.get_reserved_account_keys(),
         bank.feature_set
             .is_active(&agave_feature_set::static_instruction_limit::id()),
+        bank.feature_set
+            .is_active(&agave_feature_set::limit_instruction_accounts::id()),
     ) {
         Err(err) => {
             return BanksTransactionResultWithSimulation {
@@ -320,9 +322,12 @@ impl Banks for BanksServer {
         transaction: VersionedTransaction,
         commitment: CommitmentLevel,
     ) -> Option<transaction::Result<()>> {
+        let blockhash = *transaction.message.recent_blockhash();
+        let wire_transaction = serialize(&transaction).unwrap();
+
         let bank = self.bank(commitment);
         let sanitized_transaction = match SanitizedTransaction::try_create(
-            transaction.clone(),
+            transaction,
             MessageHash::Compute,
             Some(false), // is_simple_vote_tx
             bank.as_ref(),
@@ -337,24 +342,23 @@ impl Banks for BanksServer {
         }
 
         let message_hash = sanitized_transaction.message_hash();
-        let blockhash = transaction.message.recent_blockhash();
         let last_valid_block_height = self
             .bank(commitment)
-            .get_blockhash_last_valid_block_height(blockhash)
+            .get_blockhash_last_valid_block_height(&blockhash)
             .unwrap();
         let signature = sanitized_transaction.signature();
         let info = TransactionInfo::new(
             *message_hash,
             *signature,
-            *blockhash,
-            serialize(&transaction).unwrap(),
+            blockhash,
+            wire_transaction,
             last_valid_block_height,
             None,
             None,
             None,
         );
         self.transaction_sender.send(info).unwrap();
-        self.poll_signature_status(signature, blockhash, last_valid_block_height, commitment)
+        self.poll_signature_status(signature, &blockhash, last_valid_block_height, commitment)
             .await
     }
 

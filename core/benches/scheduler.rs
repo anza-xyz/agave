@@ -3,8 +3,8 @@ use jemallocator::Jemalloc;
 #[path = "receive_and_buffer_utils.rs"]
 mod utils;
 use {
-    criterion::{criterion_group, criterion_main, Criterion, Throughput},
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    criterion::{Criterion, Throughput, criterion_group, criterion_main},
+    crossbeam_channel::{Receiver, Sender, unbounded},
     solana_core::banking_stage::{
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
         transaction_scheduler::{

@@ -1,0 +1,51 @@
+[workspace]
+members = ["cargo-build-sbf", "cargo-test-sbf", "dummy-for-ci"]
+exclude = ["gen-headers"]
+resolver = "2"
+
+[workspace.package]
+version = "4.0.0-alpha.0"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+description = "Blockchain, Rebuilt for Scale"
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz/"
+license = "Apache-2.0"
+edition = "2021"
+
+[workspace.lints.rust]
+# List of rust-2024-compatibility lints that are already satisfied
+# See https://doc.rust-lang.org/rustc/lints/groups.html
+boxed_slice_into_iter = "deny"
+dependency_on_unit_never_type_fallback = "deny"
+deprecated_safe_2024 = "deny"
+impl_trait_overcaptures = "deny"
+missing_unsafe_on_extern = "deny"
+never_type_fallback_flowing_into_unsafe = "deny"
+rust_2024_guarded_string_incompatible_syntax = "deny"
+rust_2024_incompatible_pat = "deny"
+rust_2024_prelude_collisions = "deny"
+static_mut_refs = "deny"
+unsafe_attr_outside_unsafe = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+# Clippy lint configuration that can not be applied in clippy.toml
+[workspace.lints.clippy]
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+used_underscore_binding = "deny"
+
+[workspace.dependencies]
+agave-logger = { version = "3.1.8", features = ["agave-unstable-api"] }
+assert_cmd = "2.0"
+bzip2 = "0.6.1"
+cargo_metadata = "0.15.4"
+itertools = "0.14.0"
+log = "0.4.29"
+predicates = "3.1"
+regex = "1.12.3"
+reqwest = { version = "0.12.28", default-features = false }
+semver = "1.0.27"
+serde = { version = "1.0.228", features = ["derive"] }
+serial_test = "3.3.1"
+tar = "0.4.44"

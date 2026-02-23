@@ -1,9 +1,9 @@
 use {
     crate::{
-        hardened_unpack::{self, UnpackError},
         ArchiveFormat, ArchiveFormatDecompressor,
+        hardened_unpack::{self, UnpackError},
     },
-    agave_fs::{buffered_reader, file_io::file_creator, io_setup::IoSetupState, FileInfo},
+    agave_fs::{FileInfo, buffered_reader, file_io::file_creator, io_setup::IoSetupState},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     std::{

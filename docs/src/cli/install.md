@@ -66,9 +66,9 @@ solana --version
 - Open a Command Prompt (`cmd.exe`) as an Administrator
 
   - Search for Command Prompt in the Windows search bar. When the Command Prompt
-    app appears, right-click and select “Open as Administrator”. If you are
-    prompted by a pop-up window asking “Do you want to allow this app to make
-    changes to your device?”, click Yes.
+    app appears, right-click and select "Open as Administrator". If you are
+    prompted by a pop-up window asking "Do you want to allow this app to make
+    changes to your device?", click Yes.
 
 - Copy and paste the following command, then press Enter to download the Solana
   installer into a temporary directory:

@@ -3,7 +3,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     std::{
-        fs::{create_dir_all, File},
+        fs::{File, create_dir_all},
         io::{self, Write},
         path::{Path, PathBuf},
     },

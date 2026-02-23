@@ -182,8 +182,9 @@ cargo_build() {
 # dcou, in order to make this rather fragile grep more resilient to bitrot...
 check_dcou() {
   RUSTC_BOOTSTRAP=1 \
-    cargo_build -Z unstable-options --build-plan "$@" | \
-    grep -q -F '"feature=\"dev-context-only-utils\""'
+    cargo_build -Z unstable-options --unit-graph "$@" | \
+    jq -r 'any(.units[].features[]?; . == "dev-context-only-utils")' | \
+    grep -q -F "true"
 }
 
 # Some binaries (like the notable agave-ledger-tool) need to activate
@@ -247,10 +248,14 @@ fi
 if [[ -z "$noBuildPlatformTools" ]]; then
   # shellcheck disable=SC2086 # Don't want to double quote $rust_version
   "$cargo" $maybeRustVersion build --manifest-path syscalls/gen-syscall-list/Cargo.toml
-  # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-  "$cargo" $maybeRustVersion run --bin gen-headers
-  mkdir -p "$installDir"/bin/platform-tools-sdk/sbf
-  cp -a platform-tools-sdk/sbf/* "$installDir"/bin/platform-tools-sdk/sbf
+
+  # shellcheck source=scripts/cargo-build-sbf-version.sh
+  source "$SOLANA_ROOT"/scripts/cargo-build-sbf-version.sh
+
+  # shellcheck disable=SC2086
+  "$cargo" $maybeRustVersion install --locked cargo-build-sbf --root "$installDir" $maybeCargoBuildSbfVersionArg
+  # shellcheck disable=SC2086
+  "$cargo" $maybeRustVersion install --locked cargo-test-sbf --root "$installDir" $maybeCargoTestSbfVersionArg
 fi
 
 (

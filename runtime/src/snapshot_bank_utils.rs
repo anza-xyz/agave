@@ -4,8 +4,8 @@ use {
         bank::BankFieldsToDeserialize,
         serde_snapshot::fields_from_streams,
         snapshot_utils::{
-            deserialize_snapshot_data_files, verify_unpacked_snapshots_dir_and_version,
-            SnapshotRootPaths, UnpackedSnapshotsDirAndVersion,
+            SnapshotRootPaths, UnpackedSnapshotsDirAndVersion, deserialize_snapshot_data_files,
+            verify_unpacked_snapshots_dir_and_version,
         },
     },
     tempfile::TempDir,
@@ -16,17 +16,18 @@ use {
         epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::{
-            self, reconstruct_bank_from_fields, SnapshotAccountsDbFields, SnapshotBankFields,
+            self, SnapshotAccountsDbFields, SnapshotBankFields, reconstruct_bank_from_fields,
         },
         snapshot_package::SnapshotPackage,
         snapshot_utils::{
-            self, rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
-            BankSnapshotInfo, StorageAndNextAccountsFileId, UnarchivedSnapshots,
+            self, BankSnapshotInfo, StorageAndNextAccountsFileId, UnarchivedSnapshots,
+            rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
         },
         status_cache,
     },
     agave_fs::dirs,
     agave_snapshots::{
+        ArchiveFormat, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
         error::{
             SnapshotError, VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
@@ -39,7 +40,6 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        ArchiveFormat, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{
@@ -55,7 +55,7 @@ use {
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
         path::{Path, PathBuf},
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
     },
 };
 
@@ -791,7 +791,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::{tests::create_simple_test_bank, BankTestConfig},
+            bank::{BankTestConfig, tests::create_simple_test_bank},
             snapshot_package::BankSnapshotPackage,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
@@ -806,7 +806,7 @@ mod tests {
         agave_snapshots::{error::VerifySlotDeltasError, paths::get_bank_snapshot_dir},
         semver::Version,
         solana_accounts_db::{
-            accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, MarkObsoleteAccounts},
             accounts_file::StorageAccess,
         },
         solana_genesis_config::create_genesis_config,
@@ -817,7 +817,7 @@ mod tests {
         solana_transaction::sanitized::SanitizedTransaction,
         std::{
             fs, slice,
-            sync::{atomic::Ordering, Arc},
+            sync::{Arc, atomic::Ordering},
         },
         test_case::test_case,
     };
@@ -1744,9 +1744,11 @@ mod tests {
         fs::remove_dir_all(snapshot_dir_slot_2).unwrap();
 
         // verify the orphaned account snapshot hardlink directories are still there
-        assert!(hardlink_dirs_slot_2
-            .iter()
-            .all(|dir| fs::metadata(dir).is_ok()));
+        assert!(
+            hardlink_dirs_slot_2
+                .iter()
+                .all(|dir| fs::metadata(dir).is_ok())
+        );
 
         let account_snapshot_paths: Vec<PathBuf> = hardlink_dirs_slot_2
             .iter()
@@ -1756,9 +1758,11 @@ mod tests {
         clean_orphaned_account_snapshot_dirs(&bank_snapshots_dir, &account_snapshot_paths).unwrap();
 
         // verify the hardlink directories are gone
-        assert!(hardlink_dirs_slot_2
-            .iter()
-            .all(|dir| fs::metadata(dir).is_err()));
+        assert!(
+            hardlink_dirs_slot_2
+                .iter()
+                .all(|dir| fs::metadata(dir).is_err())
+        );
     }
 
     // Ensure that `clean_orphaned_account_snapshot_dirs()` works correctly for bank snapshots

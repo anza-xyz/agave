@@ -1,6 +1,6 @@
 //! Utility to track dependent work.
 
-use std::sync::{atomic::AtomicU64, Condvar, Mutex};
+use std::sync::{Condvar, Mutex, atomic::AtomicU64};
 
 #[derive(Debug, Default)]
 pub struct DependencyTracker {

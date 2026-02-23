@@ -1,10 +1,10 @@
 use {
     crate::{
-        encoding::{
-            swap_fq_endianness, swap_g2_c0_c1, Endianness, PodG1Compressed, PodG1Point,
-            PodG2Compressed, PodG2Point,
-        },
         Version,
+        encoding::{
+            Endianness, PodG1Compressed, PodG1Point, PodG2Compressed, PodG2Point,
+            swap_fq_endianness, swap_g2_c0_c1,
+        },
     },
     blstrs::{G1Affine, G2Affine},
 };

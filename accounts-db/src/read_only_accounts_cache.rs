@@ -4,12 +4,12 @@
 use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     ahash::random_state::RandomState as AHashRandomState,
-    dashmap::{mapref::entry::Entry, DashMap},
+    dashmap::{DashMap, mapref::entry::Entry},
     log::*,
     rand::{
-        rng,
+        Rng, SeedableRng,
+        rngs::SmallRng,
         seq::{IndexedRandom as _, IteratorRandom},
-        Rng,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
@@ -18,8 +18,8 @@ use {
     std::{
         mem::ManuallyDrop,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         thread,
         time::{Duration, Instant},
@@ -29,6 +29,13 @@ use {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const CACHE_ENTRY_SIZE: usize =
     size_of::<ReadOnlyAccountCacheEntry>() + size_of::<ReadOnlyCacheKey>();
+
+/// Number of cache shards. Using 2^16 (65 536) shards keeps the count a power
+/// of two and roughly matches the number of cached accounts we observe on
+/// mainnet-beta. The average load is still ~1 account per shard (collisions are
+/// common), but compared with the default `num_cpus * 4` shards - where we saw
+/// hot shards carrying ~200 accounts - this dramatically lowers contention.
+const NUM_SHARDS: usize = 65536;
 
 type ReadOnlyCacheKey = Pubkey;
 
@@ -105,7 +112,10 @@ impl ReadOnlyAccountsCache {
     ) -> Self {
         assert!(max_data_size_lo <= max_data_size_hi);
         assert!(evict_sample_size > 0);
-        let cache = Arc::new(DashMap::with_hasher(AHashRandomState::default()));
+        let cache = Arc::new(DashMap::with_hasher_and_shard_amount(
+            AHashRandomState::default(),
+            NUM_SHARDS,
+        ));
         let data_size = Arc::new(AtomicUsize::default());
         let stats = Arc::new(AtomicReadOnlyCacheStats::default());
         let timer = Instant::now();
@@ -130,15 +140,6 @@ impl ReadOnlyAccountsCache {
             timer,
             evictor_thread_handle: ManuallyDrop::new(evictor_thread_handle),
             evictor_exit_flag,
-        }
-    }
-
-    /// true if pubkey is in cache at slot
-    pub(crate) fn in_cache(&self, pubkey: &Pubkey, slot: Slot) -> bool {
-        if let Some(entry) = self.cache.get(pubkey) {
-            entry.slot == slot
-        } else {
-            false
         }
     }
 
@@ -288,7 +289,7 @@ impl ReadOnlyAccountsCache {
             .name("solAcctReadCache".to_string())
             .spawn(move || {
                 info!("AccountsReadCacheEvictor has started");
-                let mut rng = rng();
+                let mut rng = SmallRng::from_os_rng();
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;

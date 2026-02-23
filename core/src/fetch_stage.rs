@@ -2,7 +2,7 @@
 
 use {
     crate::result::{Error, Result},
-    crossbeam_channel::{unbounded, RecvTimeoutError},
+    crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
     solana_packet::PacketFlags,
@@ -17,10 +17,10 @@ use {
     std::{
         net::UdpSocket,
         sync::{
-            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle, sleep},
         time::Duration,
     },
 };
@@ -103,12 +103,23 @@ impl FetchStage {
             .unwrap()
             .would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET.saturating_mul(DEFAULT_TICKS_PER_SLOT))
         {
-            inc_new_counter_debug!("fetch_stage-honor_forwards", num_packets);
+            let mut packets_sent = 0usize;
+            let mut packets_dropped = 0usize;
             for packet_batch in packet_batches {
-                #[allow(clippy::question_mark)]
-                if sendr.send(packet_batch).is_err() {
-                    return Err(Error::Send);
-                }
+                let packets_in_batch = packet_batch.len();
+                match sendr.try_send(packet_batch) {
+                    Ok(()) => {
+                        packets_sent += packets_in_batch;
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        packets_dropped += packets_in_batch;
+                    }
+                    Err(TrySendError::Disconnected(_)) => return Err(Error::Send),
+                };
+            }
+            inc_new_counter_debug!("fetch_stage-honor_forwards", packets_sent);
+            if packets_dropped > 0 {
+                inc_new_counter_error!("fetch_stage-dropped_forwards", packets_dropped);
             }
         } else {
             inc_new_counter_info!("fetch_stage-discard_forwards", num_packets);
@@ -142,7 +153,6 @@ impl FetchStage {
                     tpu_vote_stats.clone(),
                     coalesce,
                     true,
-                    None,
                     true, // only staked connections should be voting
                 )
             })
@@ -153,16 +163,18 @@ impl FetchStage {
 
         let fwd_thread_hdl = Builder::new()
             .name("solFetchStgFwRx".to_string())
-            .spawn(move || loop {
-                if let Err(e) =
-                    Self::handle_forwarded_packets(&forward_receiver, &sender, &poh_recorder)
-                {
-                    match e {
-                        Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
-                        Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
-                        Error::Recv(_) => break,
-                        Error::Send => break,
-                        _ => error!("{e:?}"),
+            .spawn(move || {
+                loop {
+                    if let Err(e) =
+                        Self::handle_forwarded_packets(&forward_receiver, &sender, &poh_recorder)
+                    {
+                        match e {
+                            Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
+                            Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
+                            Error::Recv(_) => break,
+                            Error::Send => break,
+                            _ => error!("{e:?}"),
+                        }
                     }
                 }
             })
@@ -170,13 +182,15 @@ impl FetchStage {
 
         let metrics_thread_hdl = Builder::new()
             .name("solFetchStgMetr".to_string())
-            .spawn(move || loop {
-                sleep(Duration::from_secs(1));
+            .spawn(move || {
+                loop {
+                    sleep(Duration::from_secs(1));
 
-                tpu_vote_stats.report();
+                    tpu_vote_stats.report();
 
-                if exit.load(Ordering::Relaxed) {
-                    return;
+                    if exit.load(Ordering::Relaxed) {
+                        return;
+                    }
                 }
             })
             .unwrap();
