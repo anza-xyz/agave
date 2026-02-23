@@ -466,19 +466,11 @@ fn run_rpc_bench_loop(
             "t({}) rpc({:?}) iters: {} success: {} errors: {}",
             thread, rpc_bench, iters, stats.success, stats.errors
         );
-        if stats.success > 0 {
-            info!(
-                " t({}) rpc({:?} average success_time: {} us",
-                thread,
-                rpc_bench,
-                stats.total_success_time_us / stats.success
-            );
+        if let Some(avg_success) = stats.total_success_time_us.checked_div(stats.success) {
+            info!(" t({thread}) rpc({rpc_bench:?} average success_time: {avg_success} us",);
         }
-        if stats.errors > 0 {
-            info!(
-                " rpc average average errors time: {} us",
-                stats.total_errors_time_us / stats.errors
-            );
+        if let Some(avg_errors) = stats.total_errors_time_us.checked_div(stats.errors) {
+            info!(" rpc average average errors time: {avg_errors} us");
         }
         *last_print = Instant::now();
         *stats = RpcBenchStats::default();
