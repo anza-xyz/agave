@@ -310,9 +310,9 @@ impl IoUringFileCreator<'_> {
                 if align_truncated_write_len != write_len {
                     // Since file passed to `file_complete` will be switched to non-direct io mode, the last
                     // non-aligned write can be postponed until that is done
-                    file_state.non_dio_eof_write = Some(LastNonDirectIoWrite {
+                    file_state.non_dio_eof_write = Some(FinalNonDirectIoWrite {
                         buf: None,
-                        offset: offset + align_truncated_write_len as FileSize,
+                        file_offset: offset + align_truncated_write_len as FileSize,
                         buf_offset: align_truncated_write_len,
                         write_len: write_len - align_truncated_write_len,
                     });
@@ -446,7 +446,7 @@ impl<'a> FileCreatorState<'a> {
             file_state.ensure_direct_io_disabled(fd)?;
 
             // After disabling direct-IO, we may still have last write op to schedule.
-            if let Some(op) = file_state.try_take_eof_write_op(file_key, fd) {
+            if let Some(op) = file_state.try_take_final_write_op(file_key, fd) {
                 file_state.writes_started += 1;
                 this.submitted_writes_size += op.write_len as usize;
                 return ring.push(FileCreatorOp::Write(op));
@@ -718,7 +718,7 @@ struct PendingFile {
     size_on_eof: Option<FileSize>,
     file_uses_direct_io: bool,
     /// Extra write data populated for direct IO mode if there is non-aligned data at EOF
-    non_dio_eof_write: Option<LastNonDirectIoWrite>,
+    non_dio_eof_write: Option<FinalNonDirectIoWrite>,
     writes_started: usize,
     writes_completed: usize,
 }
@@ -765,11 +765,11 @@ impl PendingFile {
         Ok(())
     }
 
-    /// Extract last write to be submitted once file is switched off from direct IO mode
-    fn try_take_eof_write_op(&mut self, file_key: usize, fd: types::Fd) -> Option<WriteOp> {
-        let LastNonDirectIoWrite {
+    /// Extract the final write to be submitted once file is switched off from direct IO mode
+    fn try_take_final_write_op(&mut self, file_key: usize, fd: types::Fd) -> Option<WriteOp> {
+        let FinalNonDirectIoWrite {
             buf,
-            offset,
+            file_offset: offset,
             buf_offset,
             write_len,
         } = self.non_dio_eof_write.take()?;
@@ -802,11 +802,11 @@ impl PendingFile {
 /// * schedule LastNonDirectIoWrite if there is any
 /// * once all writes are done (no more last write to be scheduled), mark file completion
 #[derive(Debug)]
-struct LastNonDirectIoWrite {
+struct FinalNonDirectIoWrite {
     /// The buffer is the same as the one used for the aligned write at the end of the file, value
     /// gets stored once that EOF aligned write is done (or buf acquired for 0-sized op is processed).
     buf: Option<IoBufferChunk>,
-    offset: FileSize,
+    file_offset: FileSize,
     buf_offset: IoSize,
     write_len: IoSize,
 }
