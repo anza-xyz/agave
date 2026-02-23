@@ -4005,6 +4005,7 @@ impl AccountsDb {
         Some((account, slot))
     }
 
+    #[cfg_attr(test, qualifiers(pub(crate)))]
     fn get_account_accessor<'a>(
         &'a self,
         slot: Slot,

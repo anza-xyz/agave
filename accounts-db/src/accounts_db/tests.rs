@@ -3292,20 +3292,10 @@ fn test_flush_cache_clean() {
 
     // Clean should not remove anything yet as nothing has been flushed
     db.clean_accounts_for_tests();
-    assert!(
-        db.accounts_index
-            .get_with_and_then(
-                &account_key,
-                None,
-                Some(0),
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 0);
-                    assert!(!account_info.is_zero_lamport());
-                },
-            )
-            .is_some()
-    );
+    let account = db
+        .get_account_at_slot(&account_key, 0)
+        .expect("account should exist");
+    assert_eq!(account.lamports(), 1);
     // since this item is in the cache, it should not be in the read only cache
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
 
@@ -3313,11 +3303,7 @@ fn test_flush_cache_clean() {
     // because `accounts_index.uncleaned_roots` should be correct
     db.flush_accounts_cache(true, None);
     db.clean_accounts_for_tests();
-    assert!(
-        db.accounts_index
-            .get_with_and_then(&account_key, None, Some(0), false, |_| {},)
-            .is_none()
-    );
+    assert!(db.get_account_at_slot(&account_key, 0).is_none());
 }
 
 #[test_case(MarkObsoleteAccounts::Enabled)]
@@ -3530,71 +3516,62 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
 
     // Intra cache cleaning should not clean the entry for `account_key` from slot 0,
     // even though it was updated in slot `2` because of the ongoing scan
-    assert!(
-        db.accounts_index
-            .get_with_and_then(
-                &account_key,
-                None,
-                Some(0),
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 0);
-                    assert!(!account_info.is_zero_lamport());
-                },
-            )
-            .is_some()
-    );
+    let account = db
+        .get_account_at_slot(&account_key, 0)
+        .expect("account should exist");
+    assert_eq!(account.lamports(), slot0_account.lamports());
 
     // Run clean, unrooted slot 1 should not be purged, and still readable from the cache,
     // because we're still doing a scan on it.
     db.clean_accounts_for_tests();
-    assert!(
-        db.accounts_index
-            .get_with_and_then(
-                &account_key,
-                Some(&scan_ancestors),
-                Some(max_scan_root),
-                false,
-                |(slot, _)| assert_eq!(slot, 1),
-            )
-            .is_some()
-    );
+    let account = db
+        .get_account_at_slot(&account_key, 1)
+        .expect("account should exist");
+    assert_eq!(account.lamports(), slot1_account.lamports());
 
     // When the scan is over, clean should not panic and should not purge something
     // still in the cache.
     scan_tracker.exit().unwrap();
     db.clean_accounts_for_tests();
-    assert!(
-        db.accounts_index
-            .get_with_and_then(
-                &account_key,
-                Some(&scan_ancestors),
-                Some(max_scan_root),
-                false,
-                |(slot, _)| assert_eq!(slot, 1),
-            )
-            .is_some()
-    );
+    let account = db
+        .get_account_at_slot(&account_key, 1)
+        .expect("account should exist");
+    assert_eq!(account.lamports(), slot1_account.lamports());
 
     // Simulate dropping the bank, which finally removes the slot from the cache
     let bank_id = 1;
     db.purge_slot(1, bank_id, false);
-    assert!(
-        db.accounts_index
-            .get_with_and_then(
-                &account_key,
-                Some(&scan_ancestors),
-                Some(max_scan_root),
-                false,
-                |_| {},
-            )
-            .is_none()
-    );
+    assert!(db.get_account_at_slot(&account_key, 1).is_none());
 }
 
 impl AccountsDb {
     fn get_and_assert_single_storage(&self, slot: Slot) -> Arc<AccountStorageEntry> {
         self.storage.get_slot_storage_entry(slot).unwrap()
+    }
+
+    fn get_account_at_slot(&self, pubkey: &Pubkey, slot: Slot) -> Option<AccountSharedData> {
+        // Add the slot to ancestors so unrooted slots will be selected
+        let mut ancestors = Ancestors::default();
+        ancestors.insert(slot, 1);
+
+        // Limit the max root to the slot being queried to returning newer rooted slots
+        let max_root = Some(slot);
+
+        self.accounts_index.get_with_and_then(
+            pubkey,
+            Some(&ancestors),
+            max_root,
+            false,
+            |(slot_found, account_info)| {
+                // If a slot was found, ensure it was the requested slot
+                assert_eq!(slot_found, slot);
+
+                let storage_location = account_info.storage_location();
+                let mut accessor = self.get_account_accessor(slot, pubkey, &storage_location);
+
+                accessor.check_and_get_loaded_account_shared_data()
+            },
+        )
     }
 }
 
