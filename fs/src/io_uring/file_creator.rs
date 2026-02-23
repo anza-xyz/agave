@@ -34,9 +34,9 @@ use {
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
 pub const DEFAULT_WRITE_SIZE: IoSize = 512 * 1024;
 
-// This is conservative write size alignment for use with direct IO, some block devices may have
-// relaxed requirements, but detecting it is not trivial.
-const DIRECT_IO_WRITE_LEN_ALIGNMENT: IoSize = 4096;
+// Write size and file offset alignment for use with direct IO - all modern file systems
+// effectively use this constant.
+const DIRECT_IO_WRITE_LEN_ALIGNMENT: IoSize = 512;
 
 // Status flags (updatable on file-descriptor) used as default upon file creation.
 const DEFAULT_STATUS_FLAGS: libc::c_int = O_NOATIME;
