@@ -1,7 +1,7 @@
 [package]
-name = "agave-bls12-381"
-description = "Agave BLS12-381"
-documentation = "https://docs.rs/agave-bls12-381"
+name = "solana-bls12-381"
+description = "Solana BLS12-381"
+documentation = "https://docs.rs/solana-bls12-381"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
