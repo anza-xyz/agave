@@ -121,16 +121,6 @@ impl SigVerifier {
     }
 
     fn run(mut self, exit: Arc<AtomicBool>, packet_receiver: Receiver<PacketBatch>) {
-        match self.migration_status.wait_for_migration_or_exit(&exit) {
-            Some(_block) => {
-                // migration to alpenglow complete.  Start processing.
-            }
-            None => {
-                // exit flag got set.  Bail.
-                return;
-            }
-        }
-
         const SOFT_RECEIVE_CAP: usize = 5_000;
         let mut stats = StreamerRecvStats::default();
         while !exit.load(Ordering::Relaxed) {
@@ -146,6 +136,11 @@ impl SigVerifier {
                         }
                     },
                 };
+
+            // Ignore packets if alpenglow is not active yet.
+            if self.migration_status.is_pre_feature_activation() {
+                continue;
+            }
 
             let num_batches = batches.len();
             let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
