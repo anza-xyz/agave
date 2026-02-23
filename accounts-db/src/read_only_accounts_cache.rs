@@ -191,22 +191,23 @@ impl ReadOnlyAccountsCache {
     ) {
         let measure_store = Measure::start("");
         self.highest_slot_stored.fetch_max(slot, Ordering::Release);
-        let account_size = Self::account_size(&account);
-        self.data_size.fetch_add(account_size, Ordering::Relaxed);
+        let new_account_size = Self::account_size(&account);
+        let old_account_size;
         match self.cache.entry(pubkey) {
             Entry::Vacant(entry) => {
+                old_account_size = 0;
                 entry.insert(ReadOnlyAccountCacheEntry::new(account, slot, timestamp));
                 self.cache_len.fetch_add(1, Ordering::Relaxed);
             }
             Entry::Occupied(mut entry) => {
                 let entry = entry.get_mut();
-                let account_size = Self::account_size(&entry.account);
-                self.data_size.fetch_sub(account_size, Ordering::Relaxed);
+                old_account_size = Self::account_size(&entry.account);
                 entry.account = account;
                 entry.slot = slot;
                 entry.last_update_time.store(timestamp, Ordering::Relaxed);
             }
         };
+        update_stat(&self.data_size, old_account_size, new_account_size);
         let store_us = measure_store.end_as_us();
         self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
     }
@@ -462,6 +463,14 @@ impl ReadOnlyAccountCacheEntry {
     }
 }
 
+/// Updates atomic `stat` with the delta of `old` and `new`
+#[inline]
+fn update_stat(stat: &AtomicUsize, old: usize, new: usize) {
+    if new != old {
+        stat.fetch_add(new.wrapping_sub(old), Ordering::Relaxed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -475,7 +484,7 @@ mod tests {
             sync::Arc,
             time::{Duration, Instant},
         },
-        test_case::test_matrix,
+        test_case::{test_case, test_matrix},
     };
 
     impl ReadOnlyAccountsCache {
@@ -641,5 +650,15 @@ mod tests {
 
         assert_eq!(cache.cache_len(), 0);
         assert!(cache.remove(&Pubkey::new_unique()).is_none());
+    }
+
+    #[test_case(11, 11; "equal")]
+    #[test_case(22, 27; "greater")]
+    #[test_case(33, 30; "less")]
+    fn test_update_stat(old: usize, new: usize) {
+        let val = old + new;
+        let stat = val.into();
+        update_stat(&stat, old, new);
+        assert_eq!(stat.into_inner(), val - old + new);
     }
 }
