@@ -522,7 +522,6 @@ pub fn create_genesis_config_with_leader_ex(
         if *feature_id == agave_feature_set::vote_account_initialize_v2::id() {
             continue;
         }
-
         activate_feature(&mut genesis_config, *feature_id);
     }
 
