@@ -209,7 +209,6 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                     msg.push('.');
                 }
             }
-            eprintln!("{msg}");
             warn!("{msg}");
         }
     }
