@@ -455,12 +455,12 @@ dependencies = [
  "agave-xdp-ebpf",
  "arc-swap",
  "aya",
+ "bytes",
  "caps",
  "core_affinity",
  "crossbeam-channel",
  "libc",
  "log",
- "solana-ledger",
  "thiserror 2.0.18",
 ]
 

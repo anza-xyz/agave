@@ -13,10 +13,10 @@ agave-unstable-api = []
 
 [dependencies]
 arc-swap = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
-solana-ledger = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
