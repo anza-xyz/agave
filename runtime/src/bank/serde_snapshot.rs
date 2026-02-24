@@ -5,7 +5,7 @@ mod tests {
             bank::{Bank, test_utils as bank_test_utils},
             epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
             genesis_utils::{
-                activate_all_features, create_genesis_config_with_leader, GenesisConfigInfo,
+                GenesisConfigInfo, activate_all_features, create_genesis_config_with_leader,
             },
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
