@@ -205,23 +205,23 @@ impl VoteAccounts {
             entries_to_sort.retain(|(_, _, stake)| *stake > floor_stake);
         }
 
-        let mut valid_entries: HashMap<Pubkey, (u64, VoteAccount)> =
+        let mut top_entries: HashMap<Pubkey, (u64, VoteAccount)> =
             HashMap::with_capacity(entries_to_sort.len());
-        valid_entries.extend(
+        top_entries.extend(
             entries_to_sort
                 .into_iter()
                 .map(|(pubkey, vote_account, stake)| (*pubkey, (stake, vote_account.clone()))),
         );
-        if valid_entries.is_empty() {
+        if top_entries.is_empty() {
             error!("no valid vote accounts found");
         }
         info!(
             "Out of {} vote accounts, {} are valid vote accounts after filtering",
             self.vote_accounts.len(),
-            valid_entries.len()
+            top_entries.len()
         );
         VoteAccounts {
-            vote_accounts: Arc::new(valid_entries),
+            vote_accounts: Arc::new(top_entries),
             staked_nodes: OnceLock::new(),
         }
     }
