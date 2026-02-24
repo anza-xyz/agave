@@ -526,7 +526,6 @@ impl Consumer {
         let (mut fee_payer_account, _slot) = bank
             .rc
             .accounts
-            .accounts_db
             .load_with_fixed_root(&bank.ancestors, fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 

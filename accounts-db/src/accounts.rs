@@ -110,7 +110,6 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .accounts_db
             .load_with_fixed_root(ancestors, address_table_lookup.account_key)
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
