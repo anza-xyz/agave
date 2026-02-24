@@ -2,6 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
+    log::warn,
     solana_message::AccountKeys,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
@@ -163,15 +164,42 @@ pub fn validate_account_locks(
 ) -> TransactionResult<()> {
     if account_keys.len() > tx_account_lock_limit {
         Err(TransactionError::TooManyAccountLocks)
-    } else if has_duplicates(account_keys) {
-        Err(TransactionError::AccountLoadedTwice)
     } else {
-        Ok(())
+        let duplicates = find_duplicates(account_keys);
+        if !duplicates.is_empty() {
+            warn!(
+                "AccountLoadedTwice: {} duplicate key(s): {}",
+                duplicates.len(),
+                duplicates
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            Err(TransactionError::AccountLoadedTwice)
+        } else {
+            Ok(())
+        }
     }
 }
 
 thread_local! {
     static HAS_DUPLICATES_SET: RefCell<AHashSet<Pubkey>> = RefCell::new(AHashSet::with_capacity(MAX_TX_ACCOUNT_LOCKS));
+}
+
+/// Find all duplicate account keys.
+fn find_duplicates(account_keys: AccountKeys) -> Vec<Pubkey> {
+    let mut duplicates = Vec::new();
+    // For all sizes, use a set to collect every duplicate.
+    HAS_DUPLICATES_SET.with_borrow_mut(|set| {
+        for key in account_keys.iter() {
+            if !set.insert(*key) {
+                duplicates.push(*key);
+            }
+        }
+        set.clear();
+    });
+    duplicates
 }
 
 /// Check for duplicate account keys.
