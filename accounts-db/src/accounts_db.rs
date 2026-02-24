@@ -3917,25 +3917,6 @@ impl AccountsDb {
         )
     }
 
-    /// Load account with `pubkey` and maybe put into read cache.
-    ///
-    /// Return the account and the slot when the account was last stored.
-    /// Return None for ZeroLamport accounts.
-    pub fn load_account_with(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-        should_put_in_read_cache: PopulateReadCache,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load_with_populate_read_cache(
-            ancestors,
-            pubkey,
-            LoadHint::Unspecified,
-            LoadZeroLamports::None,
-            should_put_in_read_cache,
-        )
-    }
-
     fn do_load_with_populate_read_cache(
         &self,
         ancestors: &Ancestors,
