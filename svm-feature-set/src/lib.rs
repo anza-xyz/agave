@@ -52,6 +52,7 @@ pub struct SVMFeatureSet {
     pub enable_bls12_381_syscall: bool,
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
+    pub direct_account_pointers_in_program_input: bool,
 }
 
 impl SVMFeatureSet {
@@ -108,6 +109,7 @@ impl SVMFeatureSet {
             enable_bls12_381_syscall: true,
             block_revenue_sharing: true,
             vote_account_initialize_v2: true,
+            direct_account_pointers_in_program_input: true,
         }
     }
 }

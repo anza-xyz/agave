@@ -1,0 +1,22 @@
+[package]
+name = "solana-sbf-rust-direct-account-pointers"
+version = { workspace = true }
+description = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+solana-account-view = { workspace = true }
+solana-address = { workspace = true }
+solana-cpi = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-error = { workspace = true }
+
+[lints]
+workspace = true

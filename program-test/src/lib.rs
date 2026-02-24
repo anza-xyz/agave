@@ -135,12 +135,17 @@ pub fn invoke_builtin_function(
     // Copy indices_in_instruction into a HashSet to ensure there are no duplicates
     let deduplicated_indices: HashSet<IndexOfAccount> = instruction_account_indices.collect();
 
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
+
     // Serialize entrypoint parameters with SBF ABI
     let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
         serialize_parameters(
             &instruction_context,
             false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
             false, // There is no VM so account_data_direct_mapping can not be implemented here
+            direct_account_pointers_in_program_input,
         )?;
 
     // Deserialize data back into instruction params
