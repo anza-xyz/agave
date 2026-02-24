@@ -29,7 +29,6 @@ use {
         accounts_file::{AccountsFile, StorageAccess},
         accounts_hash::AccountsLtHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
     },
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -155,7 +154,7 @@ struct UnusedAccounts {
 #[derive(Clone, Deserialize)]
 struct DeserializableVersionedBank {
     blockhash_queue: BlockhashQueue,
-    ancestors: AncestorsForSerialization,
+    _unused_ancestors: HashMap<Slot, usize>,
     hash: Hash,
     parent_hash: Hash,
     parent_slot: Slot,
@@ -195,7 +194,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
         const LT_HASH_CANARY: LtHash = LtHash([0xCAFE; LtHash::NUM_ELEMENTS]);
         BankFieldsToDeserialize {
             blockhash_queue: dvb.blockhash_queue,
-            ancestors: dvb.ancestors,
             hash: dvb.hash,
             parent_hash: dvb.parent_hash,
             parent_slot: dvb.parent_slot,
@@ -233,7 +231,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 #[derive(Serialize)]
 struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
-    ancestors: AncestorsForSerialization,
+    unused_ancestors: HashMap<Slot, usize>,
     hash: Hash,
     parent_hash: Hash,
     parent_slot: Slot,
@@ -271,7 +269,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
     fn from(rhs: BankFieldsToSerialize) -> Self {
         Self {
             blockhash_queue: rhs.blockhash_queue,
-            ancestors: rhs.ancestors,
+            unused_ancestors: HashMap::default(),
             hash: rhs.hash,
             parent_hash: rhs.parent_hash,
             parent_slot: rhs.parent_slot,
