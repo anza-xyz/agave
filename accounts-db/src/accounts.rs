@@ -197,7 +197,7 @@ impl Accounts {
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
-            PopulateReadCache::True,
+            PopulateReadCache::False,
         )
     }
 
