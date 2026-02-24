@@ -410,6 +410,9 @@ pub struct ValidatorConfig {
 
 impl ValidatorConfig {
     pub fn default_for_test() -> Self {
+        let max_thread_count =
+            NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero");
+
         Self {
             logfile: None,
             expected_genesis_hash: None,
@@ -475,10 +478,8 @@ impl ValidatorConfig {
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             unified_scheduler_handler_threads: None,
-            // Fix threadpools to small and reasonable sizes; unit tests should
-            // not be creating excessive load and benches can configure more
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            rayon_global_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
+            rayon_global_threads: max_thread_count,
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
