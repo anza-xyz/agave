@@ -179,8 +179,8 @@ impl VoteAccounts {
         minimum_vote_account_balance: u64,
     ) -> VoteAccounts {
         assert!(max_vote_accounts > 0, "max_vote_accounts must be > 0");
-        let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, u64)> =
-            Vec::with_capacity(max_vote_accounts);
+        let capacity = max_vote_accounts.min(self.vote_accounts.len());
+        let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, u64)> = Vec::with_capacity(capacity);
         for (pubkey, (stake, vote_account)) in self.vote_accounts.iter() {
             let has_bls = vote_account
                 .vote_state_view()
