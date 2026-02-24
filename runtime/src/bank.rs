@@ -6085,7 +6085,7 @@ impl Bank {
     }
 
     /// If the VAT feature is active, returns the `Stakes` as filtered by SIMD-0357
-    /// See `VoteAccounts::cloneand_filter_for_vat` for the full criteria
+    /// See `VoteAccounts::clone_and_filter_for_vat` for the full criteria
     ///
     /// If the VAT feature is not active, return all stakes
     pub fn get_top_epoch_stakes(&self) -> Stakes<StakeAccount<Delegation>> {
