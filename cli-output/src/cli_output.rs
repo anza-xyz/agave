@@ -836,9 +836,7 @@ impl CliValidator {
         Self {
             identity_pubkey: format_labeled_address(&vote_account.node_pubkey, address_labels),
             vote_account_pubkey: format_labeled_address(&vote_account.vote_pubkey, address_labels),
-            commission_bps: vote_account
-                .inflation_rewards_commission
-                .unwrap_or_else(|| (vote_account.commission.unwrap_or_default() as u16) * 100),
+            commission_bps: vote_account.inflation_rewards_commission_bps,
             last_vote: vote_account.last_vote,
             root_slot: vote_account.root_slot,
             credits,

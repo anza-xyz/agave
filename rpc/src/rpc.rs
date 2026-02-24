@@ -1185,15 +1185,10 @@ impl JsonRpcRequestProcessor {
                     vote_pubkey: vote_pubkey.to_string(),
                     node_pubkey: vote_state_view.node_pubkey().to_string(),
                     activated_stake: *activated_stake,
-                    commission: if commission_rate_in_basis_points {
-                        None
+                    inflation_rewards_commission_bps: if commission_rate_in_basis_points {
+                        vote_state_view.inflation_rewards_commission()
                     } else {
-                        Some(vote_state_view.commission())
-                    },
-                    inflation_rewards_commission: if commission_rate_in_basis_points {
-                        Some(vote_state_view.inflation_rewards_commission())
-                    } else {
-                        None
+                        vote_state_view.commission() as u16 * 100
                     },
                     root_slot: vote_state_view.root_slot().unwrap_or(0),
                     epoch_credits,
