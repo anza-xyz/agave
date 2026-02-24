@@ -906,7 +906,7 @@ impl ServeRepair {
             .spawn(move || {
                 let mut last_print = Instant::now();
                 let mut stats = ServeRepairStats::default();
-                let data_budget = DataBudget::default();
+                let data_budget = DataBudget::new(MAX_BYTES_PER_INTERVAL);
                 while !exit.load(Ordering::Relaxed) {
                     let result = self.run_listen(
                         &mut ping_cache,
