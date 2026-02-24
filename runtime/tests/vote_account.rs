@@ -10,6 +10,7 @@ use {
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_pubkey::Pubkey,
+    solana_runtime::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS,
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::{
         authorized_voters::AuthorizedVoters,
@@ -447,17 +448,19 @@ fn test_clone_and_filter_for_vat_truncates() {
 #[test]
 fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
     let mut rng = rand::rng();
-    let num_alpenglow_nodes = 2000;
     // Check that non-alpenglow accounts are kicked out, 2000 accounts with bls pubkey, 1000
     // accounts without.
-    let num_nodes = num_alpenglow_nodes + 1000;
-    let vote_accounts =
-        new_staked_vote_accounts(&mut rng, num_nodes, num_alpenglow_nodes, None, |_| {
-            10_000_000_000
-        });
-    let new_limit = num_alpenglow_nodes + 500;
+    let num_nodes = MAX_ALPENGLOW_VOTE_ACCOUNTS + 1000;
+    let vote_accounts = new_staked_vote_accounts(
+        &mut rng,
+        num_nodes,
+        MAX_ALPENGLOW_VOTE_ACCOUNTS,
+        None,
+        |_| 10_000_000_000,
+    );
+    let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS + 500;
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
-    assert_eq!(filtered.len(), num_alpenglow_nodes);
+    assert_eq!(filtered.len(), MAX_ALPENGLOW_VOTE_ACCOUNTS);
     // Check that all filtered accounts have bls pubkey.
     for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
         assert!(
@@ -468,7 +471,7 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
         );
     }
     // Now get only 1500 accounts, even some alpenglow accounts are kicked out.
-    let new_limit = num_alpenglow_nodes - 500;
+    let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS - 500;
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert!(filtered.len() <= new_limit);
     for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
@@ -484,14 +487,13 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
 #[test]
 fn test_clone_and_filter_for_vat_same_stake_at_border() {
     let mut rng = rand::rng();
-    let num_alpenglow_nodes = 2000;
-    // Create exactly num_alpenglow_nodes + 2 accounts with the same stake.
-    let num_accounts = num_alpenglow_nodes + 2;
+    // Create exactly 2 accounts more than maximum to test border truncation
+    let num_accounts = MAX_ALPENGLOW_VOTE_ACCOUNTS + 2;
     let accounts = (0..num_accounts).map(|index| {
         let mut account = new_rand_vote_account(&mut rng, None, true);
         account.set_lamports(10_000_000_000);
         let vote_account = VoteAccount::try_from(account).unwrap();
-        let stake = if index < num_alpenglow_nodes - 10 {
+        let stake = if index < MAX_ALPENGLOW_VOTE_ACCOUNTS - 10 {
             100 + index as u64
         } else {
             10 // Same stake for the last 12 accounts.
@@ -505,22 +507,21 @@ fn test_clone_and_filter_for_vat_same_stake_at_border() {
     let filtered =
         vote_accounts.clone_and_filter_for_vat(num_accounts, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert_eq!(filtered.len(), num_accounts);
-    let filtered =
-        vote_accounts.clone_and_filter_for_vat(num_alpenglow_nodes, MIN_STAKE_FOR_STAKED_ACCOUNT);
-    assert_eq!(filtered.len(), num_alpenglow_nodes - 10);
+    let filtered = vote_accounts
+        .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, MIN_STAKE_FOR_STAKED_ACCOUNT);
+    assert_eq!(filtered.len(), MAX_ALPENGLOW_VOTE_ACCOUNTS - 10);
 }
 
 #[test]
 fn test_clone_and_filter_for_vat_not_enough_lamports() {
     let mut rng = rand::rng();
-    let num_alpenglow_nodes = 2000;
     let minimum_vote_account_balance = 1_600_000_000;
     // For 10% of vote accounts, set the balance below the minimum.
-    let entries_to_modify = num_alpenglow_nodes / 10;
+    let entries_to_modify = MAX_ALPENGLOW_VOTE_ACCOUNTS / 10;
     let vote_accounts = new_staked_vote_accounts(
         &mut rng,
-        num_alpenglow_nodes,
-        num_alpenglow_nodes,
+        MAX_ALPENGLOW_VOTE_ACCOUNTS,
+        MAX_ALPENGLOW_VOTE_ACCOUNTS,
         None,
         |index| {
             if index < entries_to_modify {
@@ -530,9 +531,9 @@ fn test_clone_and_filter_for_vat_not_enough_lamports() {
             }
         },
     );
-    let filtered =
-        vote_accounts.clone_and_filter_for_vat(num_alpenglow_nodes, minimum_vote_account_balance);
-    assert!(filtered.len() <= num_alpenglow_nodes - entries_to_modify);
+    let filtered = vote_accounts
+        .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance);
+    assert!(filtered.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS - entries_to_modify);
 }
 
 #[test]
