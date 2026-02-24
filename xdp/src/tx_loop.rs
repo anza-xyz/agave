@@ -10,10 +10,10 @@ use {
             write_ip_header_for_udp, write_udp_header,
         },
         route::NextHop,
-        set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
+    agave_cpu_utils::set_cpu_affinity,
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
@@ -243,7 +243,7 @@ impl<U: Umem> TxLoop<U> {
         } = self;
 
         // each queue is bound to its own CPU core
-        set_cpu_affinity([cpu_id]).unwrap();
+        set_cpu_affinity(None, [cpu_id]).unwrap();
 
         let umem = socket.umem();
         let umem_tx_capacity = umem.available();
