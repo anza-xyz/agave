@@ -73,6 +73,8 @@ fn new_rand_vote_accounts<R: Rng>(
 
 /// Creates `num_nodes` random vote accounts with the specified stake.
 /// The first `num_nodes_with_bls_pubkeys` have the bls_pubkeys set while the rest are unset.
+/// If `stake_per_node` is specified, then each node will have that stake, otherwise a random amount
+/// between `MIN_STAKE_FOR_STAKED_ACCOUNT` and `MAX_STAKE_FOR_STAKED_ACCOUNT` is chosen.
 fn new_staked_vote_accounts<R: Rng, F>(
     rng: &mut R,
     num_nodes: usize,
