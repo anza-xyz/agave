@@ -395,6 +395,7 @@ dependencies = [
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
+ "agave-xdp",
  "assert_cmd",
  "caps",
  "chrono",
@@ -598,6 +599,9 @@ dependencies = [
  "agave-xdp-ebpf",
  "arc-swap",
  "aya",
+ "bytes",
+ "caps",
+ "core_affinity",
  "crossbeam-channel",
  "libc",
  "log",
@@ -6631,9 +6635,9 @@ dependencies = [
 
 [[package]]
 name = "serial_test"
-version = "3.3.1"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d0b343e184fc3b7bb44dff0705fffcf4b3756ba6aff420dddd8b24ca145e555"
+checksum = "911bd979bf1070a3f3aa7b691a3b3e9968f339ceeec89e08c280a8a22207a32f"
 dependencies = [
  "futures-executor",
  "futures-util",
@@ -6646,9 +6650,9 @@ dependencies = [
 
 [[package]]
 name = "serial_test_derive"
-version = "3.3.1"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f50427f258fb77356e4cd4aa0e87e2bd2c66dbcee41dc405282cae2bfc26c83"
+checksum = "0a7d91949b85b0d2fb687445e448b40d322b6b3e4af6b44a29b21d9a5f33e6d9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7985,6 +7989,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
+ "agave-xdp",
  "ahash 0.8.12",
  "anyhow",
  "arc-swap",
@@ -9017,6 +9022,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-accounts-db",
  "solana-address-lookup-table-interface",
+ "solana-bls-signatures",
  "solana-bpf-loader-program",
  "solana-clock",
  "solana-cost-model",
@@ -9917,9 +9923,9 @@ dependencies = [
 
 [[package]]
 name = "solana-reward-info"
-version = "3.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82be7946105c2ee6be9f9ee7bd18a068b558389221d29efa92b906476102bfcc"
+checksum = "d8f4c5c5b5599e640c15ead65be499d60f6ee62a5ba7aa7e23f5b0537046ed49"
 dependencies = [
  "serde",
  "serde_derive",
@@ -11528,12 +11534,9 @@ dependencies = [
  "agave-xdp",
  "arc-swap",
  "assert_matches",
- "aya",
  "bencher",
  "bincode",
  "bs58",
- "caps",
- "core_affinity",
  "crossbeam-channel",
  "itertools 0.14.0",
  "lazy-lru",

@@ -13,6 +13,7 @@ use {
             activate_feature, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
             create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
+            minimum_vote_account_balance_for_vat,
         },
         stake_history::StakeHistory,
         stake_utils,
@@ -298,9 +299,10 @@ fn test_bank_new() {
 
     let bank = Bank::new_for_tests(&genesis_config);
     assert_eq!(bank.get_balance(&mint_keypair.pubkey()), mint_lamports);
+    // Vote account balance is enforced to minimum_vote_account_balance_for_vat(100) for VAT filtering
     assert_eq!(
         bank.get_balance(&voting_keypair.pubkey()),
-        dummy_leader_stake_lamports /* 1 token goes to the vote account associated with dummy_leader_lamports */
+        minimum_vote_account_balance_for_vat(100)
     );
 
     let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
@@ -8711,11 +8713,11 @@ fn test_get_largest_accounts() {
         .iter()
         .cloned()
         .zip(vec![
-            2 * LAMPORTS_PER_SOL,
-            3 * LAMPORTS_PER_SOL,
-            3 * LAMPORTS_PER_SOL,
-            4 * LAMPORTS_PER_SOL,
-            5 * LAMPORTS_PER_SOL,
+            200 * LAMPORTS_PER_SOL,
+            300 * LAMPORTS_PER_SOL,
+            300 * LAMPORTS_PER_SOL,
+            400 * LAMPORTS_PER_SOL,
+            500 * LAMPORTS_PER_SOL,
         ])
         .collect();
 
@@ -8745,17 +8747,17 @@ fn test_get_largest_accounts() {
     assert_eq!(
         bank.get_largest_accounts(1, &pubkeys_hashset, AccountAddressFilter::Include, false)
             .unwrap(),
-        vec![(pubkeys[4], 5 * LAMPORTS_PER_SOL)]
+        vec![(pubkeys[4], 500 * LAMPORTS_PER_SOL)]
     );
     assert_eq!(
         bank.get_largest_accounts(1, &exclude_hashset, AccountAddressFilter::Exclude, false)
             .unwrap(),
-        vec![(pubkeys[4], 5 * LAMPORTS_PER_SOL)]
+        vec![(pubkeys[4], 500 * LAMPORTS_PER_SOL)]
     );
     assert_eq!(
         bank.get_largest_accounts(1, &exclude4, AccountAddressFilter::Exclude, false)
             .unwrap(),
-        vec![(pubkeys[3], 4 * LAMPORTS_PER_SOL)]
+        vec![(pubkeys[3], 400 * LAMPORTS_PER_SOL)]
     );
 
     // Return all added accounts

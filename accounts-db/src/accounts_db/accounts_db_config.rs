@@ -48,6 +48,8 @@ pub struct AccountsDbConfig {
     ///
     /// Requires memlock ulimit higher than sum of buffer sizes registered at the same time.
     pub use_registered_io_uring_buffers: bool,
+    /// Enables direct I/O for operations on snapshots, their archives and contents being unpacked
+    pub snapshots_use_direct_io: bool,
 }
 
 pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
@@ -71,6 +73,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     num_background_threads: None,
     num_foreground_threads: None,
     use_registered_io_uring_buffers: true,
+    snapshots_use_direct_io: true,
 };
 
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
@@ -94,4 +97,5 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     num_background_threads: None,
     num_foreground_threads: None,
     use_registered_io_uring_buffers: true,
+    snapshots_use_direct_io: true,
 };

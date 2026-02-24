@@ -298,6 +298,7 @@ dependencies = [
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
+ "agave-xdp",
  "caps",
  "chrono",
  "clap",
@@ -454,6 +455,9 @@ dependencies = [
  "agave-xdp-ebpf",
  "arc-swap",
  "aya",
+ "bytes",
+ "caps",
+ "core_affinity",
  "crossbeam-channel",
  "libc",
  "log",
@@ -6706,6 +6710,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
+ "agave-xdp",
  "ahash 0.8.12",
  "anyhow",
  "arc-swap",
@@ -8212,9 +8217,9 @@ dependencies = [
 
 [[package]]
 name = "solana-reward-info"
-version = "3.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82be7946105c2ee6be9f9ee7bd18a068b558389221d29efa92b906476102bfcc"
+checksum = "d8f4c5c5b5599e640c15ead65be499d60f6ee62a5ba7aa7e23f5b0537046ed49"
 dependencies = [
  "serde",
  "serde_derive",
@@ -10225,10 +10230,7 @@ dependencies = [
  "agave-votor-messages",
  "agave-xdp",
  "arc-swap",
- "aya",
  "bincode",
- "caps",
- "core_affinity",
  "crossbeam-channel",
  "itertools 0.14.0",
  "lazy-lru",

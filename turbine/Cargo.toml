@@ -56,11 +56,6 @@ static_assertions = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-aya = { workspace = true }
-caps = { workspace = true }
-core_affinity = { workspace = true }
-
 [dev-dependencies]
 agave-logger = { workspace = true }
 assert_matches = { workspace = true }

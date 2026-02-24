@@ -1107,7 +1107,7 @@ where
                             "Internal error: index mismatch for account {}",
                             account_key
                         );
-                        Box::new(InstructionError::MissingAccount)
+                        Box::new(InstructionError::MissingAccount) as Error
                     })?;
 
             // build the CallerAccount corresponding to this account.
@@ -1218,7 +1218,7 @@ fn update_callee_account(
                 )?;
                 serialized_data
                     .get_mut(post_len..)
-                    .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
+                    .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall) as Error)?
                     .fill(0);
             }
             callee_account.set_data_length(post_len)?;
@@ -1270,7 +1270,7 @@ fn update_caller_account_region(
         // enforce that in CallerAccount::from_(sol_)account_info.
         let (region_index, region) = memory_mapping
             .find_region(caller_account.vm_data_addr)
-            .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
+            .ok_or_else(|| Box::new(InstructionError::MissingAccount) as Error)?;
         // vm_data_addr must always point to the beginning of the region
         debug_assert_eq!(region.vm_addr, caller_account.vm_data_addr);
         let mut new_region;
@@ -1344,7 +1344,7 @@ fn update_caller_account(
                 caller_account
                     .serialized_data
                     .get_mut(post_len..)
-                    .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
+                    .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall) as Error)?
                     .fill(0);
             }
             // Set the length of caller_account.serialized_data to post_len.

@@ -28,6 +28,8 @@ pub mod tx_loop;
 #[cfg(target_os = "linux")]
 pub mod umem;
 
+pub mod xdp_retransmitter;
+
 #[cfg(target_os = "linux")]
 pub use program::load_xdp_program;
 use std::io;

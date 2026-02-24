@@ -403,6 +403,7 @@ pub fn large_file_buf_reader(
 
         let mut reader = SequentialFileReaderBuilder::new()
             .shared_sqpoll(io_setup.shared_sqpoll_fd())
+            .use_direct_io(io_setup.use_direct_io)
             .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
             .build(buf_size)?;
         reader.set_path(path)?;

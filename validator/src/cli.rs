@@ -10,6 +10,7 @@ use {
         },
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name},
+    log::warn,
     solana_accounts_db::accounts_db::{
         DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
     },
@@ -20,9 +21,7 @@ use {
         },
     },
     solana_clock::Slot,
-    solana_core::{
-        banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, validator::TransactionStructure,
-    },
+    solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
@@ -129,30 +128,12 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
-        // deprecated in v3.1.1
-        Arg::with_name("cuda")
-            .long("cuda")
-            .takes_value(false)
-            .help("Use CUDA"),
-        usage_warning: "CUDA support will be dropped"
-    );
-    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
             .help("Enables the disk-based accounts index")
             .conflicts_with("accounts_index_limit"),
         replaced_by: "accounts-index-limit",
-    );
-    add_arg!(
-        // deprecated in v3.1.0
-        Arg::with_name("tpu_coalesce_ms")
-            .long("tpu-coalesce-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-            usage_warning:"tpu_coalesce will be dropped (currently ignored)",
     );
     add_arg!(
         // deprecated in v4.0.0
@@ -162,16 +143,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .validator(is_parsable::<usize>)
             .help("Controls the TPU connection pool size per remote address"),
          usage_warning:"This parameter is misleading, avoid setting it",
-    );
-    add_arg!(
-        // deprecated in v3.1.0
-        Arg::with_name("transaction_struct")
-            .long("transaction-structure")
-            .value_name("STRUCT")
-            .takes_value(true)
-            .possible_values(TransactionStructure::cli_names())
-            .help(TransactionStructure::cli_message()),
-        usage_warning: "Transaction structure is no longer configurable"
     );
     res
 }
@@ -208,8 +179,7 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                     msg.push('.');
                 }
             }
-            // this can not rely on logger since it is not initialized at the time of call
-            eprintln!("{msg}");
+            warn!("{msg}");
         }
     }
 }

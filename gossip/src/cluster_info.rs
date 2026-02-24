@@ -938,16 +938,10 @@ impl ClusterInfo {
     }
 
     /// Returns epoch-slots inserted since the given cursor.
-    /// Excludes entries from nodes with unknown or different shred version.
     pub fn get_epoch_slots(&self, cursor: &mut Cursor) -> Vec<EpochSlots> {
-        let self_shred_version = Some(self.my_shred_version());
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_epoch_slots(cursor)
-            .filter(|entry| {
-                let origin = entry.value.pubkey();
-                gossip_crds.get_shred_version(&origin) == self_shred_version
-            })
             .map(|entry| match entry.value.data() {
                 CrdsData::EpochSlots(_, slots) => slots.clone(),
                 _ => panic!("this should not happen!"),
@@ -2391,7 +2385,9 @@ fn discard_different_shred_version(
     let num_values = values.len();
     values.retain(|value| match value.data() {
         CrdsData::ContactInfo(ci) => ci.shred_version() == self_shred_version,
-        _ => crds.get_shred_version(&value.pubkey()) == Some(self_shred_version),
+        // for any other CRDS types we check if we store anything already
+        // for this pubkey, if we do we allow more values in
+        _ => crds.get_records(&value.pubkey()).next().is_some(),
     });
     let num_skipped = num_values - values.len();
     if num_skipped != 0 {
@@ -3173,44 +3169,6 @@ mod tests {
 
         let slots = cluster_info.get_epoch_slots(&mut cursor);
         assert!(slots.is_empty());
-
-        // Test with different shred versions.
-        let mut rng = rand::rng();
-        let node_pubkey = Pubkey::new_unique();
-        let mut node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
-        node.set_shred_version(42);
-        let epoch_slots = EpochSlots::new_rand(&mut rng, Some(node_pubkey));
-        let entries = vec![
-            CrdsValue::new_unsigned(CrdsData::from(node)),
-            CrdsValue::new_unsigned(CrdsData::EpochSlots(0, epoch_slots)),
-        ];
-        {
-            let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
-            for entry in entries {
-                assert!(
-                    gossip_crds
-                        .insert(entry, /*now=*/ 0, GossipRoute::LocalMessage)
-                        .is_ok()
-                );
-            }
-        }
-        // Should exclude other node's epoch-slot because of different
-        // shred-version.
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        assert_eq!(slots.len(), 1);
-        assert_eq!(slots[0].from, cluster_info.id());
-        // Match shred versions.
-        {
-            let mut node = cluster_info.my_contact_info.write().unwrap();
-            node.set_shred_version(42);
-        }
-        cluster_info.refresh_my_gossip_contact_info();
-        cluster_info.flush_push_queue();
-        // Should now include both epoch slots.
-        let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
-        assert_eq!(slots.len(), 2);
-        assert_eq!(slots[0].from, cluster_info.id());
-        assert_eq!(slots[1].from, node_pubkey);
     }
 
     #[test]

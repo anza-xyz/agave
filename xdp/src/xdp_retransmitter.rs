@@ -1,23 +1,23 @@
-// re-export since this is needed at validator startup
-pub use agave_xdp::{get_cpu, set_cpu_affinity};
 #[cfg(target_os = "linux")]
 use {
-    agave_xdp::{
+    crate::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
         route::Router,
         route_monitor::RouteMonitor,
+        set_cpu_affinity,
         tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder},
         umem::{OwnedUmem, PageAlignedMemory},
     },
     arc_swap::ArcSwap,
     aya::Ebpf,
     crossbeam_channel::TryRecvError,
+    log::info,
     std::{thread::Builder, time::Duration},
 };
 use {
+    bytes::Bytes,
     crossbeam_channel::{Sender, TrySendError},
-    solana_ledger::shred,
     std::{
         error::Error,
         net::{Ipv4Addr, SocketAddr},
@@ -68,7 +68,7 @@ impl XdpConfig {
 
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<(XdpAddrs, shred::Payload)>>,
+    senders: Vec<Sender<(XdpAddrs, Bytes)>>,
 }
 
 pub enum XdpAddrs {
@@ -102,13 +102,16 @@ impl AsRef<[SocketAddr]> for XdpAddrs {
 
 impl XdpSender {
     #[inline]
-    pub(crate) fn try_send(
+    pub fn try_send(
         &self,
         sender_index: usize,
         addr: impl Into<XdpAddrs>,
-        payload: shred::Payload,
-    ) -> Result<(), TrySendError<(XdpAddrs, shred::Payload)>> {
-        self.senders[sender_index % self.senders.len()].try_send((addr.into(), payload))
+        payload: Bytes,
+    ) -> Result<(), TrySendError<(XdpAddrs, Bytes)>> {
+        let idx = sender_index
+            .checked_rem(self.senders.len())
+            .expect("XdpSender::senders should not be empty");
+        self.senders[idx].try_send((addr.into(), payload))
     }
 }
 
