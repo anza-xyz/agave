@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn test_banking_stage_shutdown1() {
         let genesis_config = create_genesis_config(2).genesis_config;
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let banking_tracer = BankingTracer::new_disabled();
         let Channels {
             non_vote_sender,
@@ -1023,7 +1023,7 @@ mod tests {
         } = create_genesis_config(2);
         genesis_config.ticks_per_slot = 4;
         let num_extra_ticks = 2;
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
         let Channels {
@@ -1103,7 +1103,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10);
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
         let Channels {
@@ -1199,7 +1199,7 @@ mod tests {
         drop(poh_recorder);
 
         let blockhash = start_hash;
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         // receive entries + ticks. The sender has been dropped, so there
         // are no more entries that will ever come in after the `iter` here.
@@ -1274,7 +1274,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let entry_receiver = {
             // start a banking_stage to eat verified receiver
-            let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+            let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
             let (
                 exit,
                 poh_recorder,
@@ -1327,7 +1327,7 @@ mod tests {
             .map(|(_bank, (entry, _tick_height))| entry)
             .collect();
 
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         for entry in entries {
             let _ = bank
                 .try_process_entry_transactions(entry.transactions)
@@ -1349,7 +1349,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
@@ -1410,7 +1410,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10000);
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
         let Channels {

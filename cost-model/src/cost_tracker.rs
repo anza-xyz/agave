@@ -90,9 +90,6 @@ pub struct CostTracker {
 
 impl Default for CostTracker {
     fn default() -> Self {
-        // Clippy doesn't like asserts in const contexts, so need to explicitly allow them.  For
-        // more info, see this issue: https://github.com/rust-lang/rust-clippy/issues/8159
-        #![allow(clippy::assertions_on_constants)]
         const _: () = assert!(MAX_WRITABLE_ACCOUNT_UNITS <= MAX_BLOCK_UNITS);
         const _: () = assert!(MAX_VOTE_UNITS <= MAX_BLOCK_UNITS);
 

@@ -81,8 +81,6 @@ pub struct Crds {
     entries: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Hash of recently purged values.
     purged: VecDeque<(Hash, u64 /*timestamp*/)>,
-    // Mapping from nodes' pubkeys to their respective shred-version.
-    shred_versions: HashMap<Pubkey, u16>,
     stats: Mutex<CrdsStats>,
 }
 
@@ -179,7 +177,6 @@ impl Default for Crds {
             records: HashMap::default(),
             entries: BTreeMap::default(),
             purged: VecDeque::default(),
-            shred_versions: HashMap::default(),
             stats: Mutex::<CrdsStats>::default(),
         }
     }
@@ -235,9 +232,8 @@ impl Crds {
                 let entry_index = entry.index();
                 self.shards.insert(entry_index, &value);
                 match value.value.data() {
-                    CrdsData::ContactInfo(node) => {
+                    CrdsData::ContactInfo(_node) => {
                         self.nodes.insert(entry_index);
-                        self.shred_versions.insert(pubkey, node.shred_version());
                     }
                     CrdsData::Vote(_, _) => {
                         self.votes.insert(value.ordinal, entry_index);
@@ -262,8 +258,7 @@ impl Crds {
                 self.shards.remove(entry_index, entry.get());
                 self.shards.insert(entry_index, &value);
                 match value.value.data() {
-                    CrdsData::ContactInfo(node) => {
-                        self.shred_versions.insert(pubkey, node.shred_version());
+                    CrdsData::ContactInfo(_node) => {
                         // self.nodes does not need to be updated since the
                         // entry at this index was and stays contact-info.
                         debug_assert_matches!(entry.get().value.data(), CrdsData::ContactInfo(_));
@@ -328,8 +323,9 @@ impl Crds {
         V::get_entry(&self.table, key)
     }
 
-    pub(crate) fn get_shred_version(&self, pubkey: &Pubkey) -> Option<u16> {
-        self.shred_versions.get(pubkey).copied()
+    #[cfg(test)]
+    fn get_shred_version(&self, pubkey: &Pubkey) -> Option<u16> {
+        self.get(*pubkey).map(|ci: &ContactInfo| ci.shred_version())
     }
 
     /// Returns all entries which are ContactInfo.
@@ -581,7 +577,6 @@ impl Crds {
         records_entry.get_mut().swap_remove(&index);
         if records_entry.get().is_empty() {
             records_entry.remove();
-            self.shred_versions.remove(&pubkey);
         }
         // If index == self.table.len(), then the removed entry was the last
         // entry in the table, in which case no other keys were modified.
@@ -1317,15 +1312,13 @@ mod tests {
             Ok(())
         );
         assert_eq!(crds.get_shred_version(&pubkey), Some(8));
-        // Remove contact-info. Shred version should stay there since there
-        // are still values associated with the pubkey.
+        // Remove contact-info. Shred version should be gone now.
         crds.remove(&CrdsValueLabel::ContactInfo(pubkey), timestamp());
         assert_eq!(crds.get::<&ContactInfo>(pubkey), None);
-        assert_eq!(crds.get_shred_version(&pubkey), Some(8));
+        assert_eq!(crds.get_shred_version(&pubkey), None);
         // Remove the remaining entry with the same pubkey.
         crds.remove(&CrdsValueLabel::AccountsHashes(pubkey), timestamp());
         assert_eq!(crds.get_records(&pubkey).count(), 0);
-        assert_eq!(crds.get_shred_version(&pubkey), None);
     }
 
     #[test]

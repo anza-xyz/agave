@@ -16,8 +16,8 @@ use {
     std::{thread::Builder, time::Duration},
 };
 use {
+    bytes::Bytes,
     crossbeam_channel::{Sender, TrySendError},
-    solana_ledger::shred,
     std::{
         error::Error,
         net::{Ipv4Addr, SocketAddr},
@@ -68,7 +68,7 @@ impl XdpConfig {
 
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<(XdpAddrs, shred::Payload)>>,
+    senders: Vec<Sender<(XdpAddrs, Bytes)>>,
 }
 
 pub enum XdpAddrs {
@@ -106,8 +106,8 @@ impl XdpSender {
         &self,
         sender_index: usize,
         addr: impl Into<XdpAddrs>,
-        payload: shred::Payload,
-    ) -> Result<(), TrySendError<(XdpAddrs, shred::Payload)>> {
+        payload: Bytes,
+    ) -> Result<(), TrySendError<(XdpAddrs, Bytes)>> {
         let idx = sender_index
             .checked_rem(self.senders.len())
             .expect("XdpSender::senders should not be empty");

@@ -91,7 +91,7 @@ use {
         account_locks::validate_account_locks,
         account_storage_entry::AccountStorageEntry,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
-        accounts_db::{AccountsDb, AccountsDbConfig, PopulateReadCache},
+        accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_hash::AccountsLtHash,
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -4486,20 +4486,10 @@ impl Bank {
         &self,
         pubkey: &Pubkey,
     ) -> Option<AccountSharedData> {
-        self.load_account_with(pubkey, PopulateReadCache::False)
+        self.rc
+            .accounts
+            .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, pubkey)
             .map(|(acc, _slot)| acc)
-    }
-
-    fn load_account_with(
-        &self,
-        pubkey: &Pubkey,
-        should_put_in_read_cache: PopulateReadCache,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.rc.accounts.accounts_db.load_account_with(
-            &self.ancestors,
-            pubkey,
-            should_put_in_read_cache,
-        )
     }
 
     // Hi! leaky abstraction here....
@@ -6119,15 +6109,6 @@ impl Bank {
     ) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
         let mut bank = Self::new_for_tests(genesis_config);
         bank.add_mockup_builtin(program_id, builtin_function);
-        bank.wrap_with_bank_forks_for_tests()
-    }
-
-    pub fn new_no_wallclock_throttle_for_tests(
-        genesis_config: &GenesisConfig,
-    ) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
-        let mut bank = Self::new_for_tests(genesis_config);
-
-        bank.ns_per_slot = u128::MAX;
         bank.wrap_with_bank_forks_for_tests()
     }
 

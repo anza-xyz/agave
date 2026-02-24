@@ -541,7 +541,7 @@ mod tests {
             ..
         } = create_slow_genesis_config(u64::MAX);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
