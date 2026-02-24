@@ -103,7 +103,6 @@ impl RewardsAccumulator {
 impl Bank {
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::bank) fn begin_partitioned_rewards(
         &mut self,
         parent_epoch: Epoch,
@@ -427,7 +426,7 @@ impl Bank {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn redeem_delegation_rewards(
         &self,
         rewarded_epoch: Epoch,

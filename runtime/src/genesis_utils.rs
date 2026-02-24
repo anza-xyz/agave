@@ -1,4 +1,4 @@
-#[allow(deprecated)]
+#[expect(deprecated)]
 use solana_stake_interface::config::Config as StakeConfig;
 use {
     crate::{bank::VAT_TO_BURN_PER_EPOCH, stake_utils},
@@ -409,7 +409,7 @@ pub fn bls_pubkey_to_compressed_bytes(
     bincode::serialize(&key).unwrap().try_into().unwrap()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
@@ -519,7 +519,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     genesis_config
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn create_genesis_config_with_leader_ex(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
@@ -568,7 +568,7 @@ pub fn create_genesis_config_with_leader_ex(
     genesis_config
 }
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u64 {
     let mut data = serialize(&ConfigKeys { keys: vec![] }).unwrap();
     data.extend_from_slice(&serialize(&StakeConfig::default()).unwrap());

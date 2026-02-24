@@ -24,7 +24,6 @@ pub struct StakeAccount<T> {
 }
 
 #[derive(Debug, Error)]
-#[allow(clippy::enum_variant_names)]
 pub enum Error {
     #[error(transparent)]
     InstructionError(#[from] InstructionError),

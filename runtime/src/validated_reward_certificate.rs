@@ -33,7 +33,6 @@ pub enum Error {
     Empty,
 }
 
-#[allow(dead_code)]
 /// Extracts the slot corresponding to the provided reward certs.
 ///
 /// Returns Ok(None) if no certs were provided.
@@ -69,7 +68,6 @@ fn extract_slot(
 }
 
 /// Struct built by validating incoming reward certs.
-#[allow(dead_code)]
 pub(crate) struct ValidatedRewardCert {
     /// List of validators that were present in the reward certs.
     validators: Vec<Pubkey>,
@@ -79,7 +77,7 @@ pub(crate) struct ValidatedRewardCert {
 
 impl ValidatedRewardCert {
     /// If validation of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn try_new(
         bank: &Bank,
         skip: &Option<SkipRewardCertificate>,
@@ -136,7 +134,7 @@ impl ValidatedRewardCert {
     }
 
     /// Returns the validators that were extracted from the reward certs.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn into_parts(self) -> (Slot, Vec<Pubkey>) {
         (self.reward_slot, self.validators)
     }

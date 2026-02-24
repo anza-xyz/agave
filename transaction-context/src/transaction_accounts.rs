@@ -142,8 +142,6 @@ impl TransactionAccountViewMut<'_> {
         // We just reserved enough capacity. We set data::len to 0 to avoid
         // possible UB on panic (dropping uninitialized elements), do the copy,
         // finally set the new length once everything is initialized.
-        #[allow(clippy::uninit_vec)]
-        // this is a false positive, the lint doesn't currently special case set_len(0)
         unsafe {
             data.set_len(0);
             ptr::copy_nonoverlapping(new_data.as_ptr(), data.as_mut_ptr(), new_len);

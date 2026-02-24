@@ -51,7 +51,7 @@ pub fn create_memory_region_of_account(
     Ok(memory_region)
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 enum SerializeAccount<'a, 'ix_data> {
     Account(IndexOfAccount, BorrowedInstructionAccount<'a, 'ix_data>),
     Duplicate(IndexOfAccount),
@@ -378,7 +378,7 @@ fn serialize_parameters_for_abiv0(
                 s.write::<u64>((account.get_data().len() as u64).to_le());
                 let vm_data_addr = s.write_account(&mut account)?;
                 let vm_owner_addr = s.write_all(account.get_owner().as_ref());
-                #[allow(deprecated)]
+                #[expect(deprecated)]
                 s.write::<u8>(account.is_executable() as u8);
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
@@ -530,7 +530,7 @@ fn serialize_parameters_for_abiv1(
                 s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
-                #[allow(deprecated)]
+                #[expect(deprecated)]
                 s.write::<u8>(borrowed_account.is_executable() as u8);
                 s.write_all(&[0u8, 0, 0, 0]);
                 let vm_key_addr = s.write_all(borrowed_account.get_key().as_ref());

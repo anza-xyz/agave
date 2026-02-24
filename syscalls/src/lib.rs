@@ -11,8 +11,6 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
-use solana_program_runtime::memory::translate_vm_slice;
-#[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
     solana_big_mod_exp::{BigModExpParams, big_mod_exp},
@@ -26,7 +24,7 @@ use {
         cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        memory::MemoryTranslationError,
+        memory::{MemoryTranslationError, translate_vm_slice},
         stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
@@ -609,7 +607,7 @@ fn translate_string_and_do(
 }
 
 // Do not use this directly
-#[allow(clippy::mut_from_ref)]
+#[expect(clippy::mut_from_ref)]
 fn translate_type_mut<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
@@ -618,7 +616,7 @@ fn translate_type_mut<T>(
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
 // Do not use this directly
-#[allow(clippy::mut_from_ref)]
+#[expect(clippy::mut_from_ref)]
 fn translate_slice_mut<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
