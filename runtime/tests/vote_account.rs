@@ -10,7 +10,7 @@ use {
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_pubkey::Pubkey,
-    solana_runtime::bank::MAX_ALPENGLOW_VOTE_ACCOUNTS,
+    solana_runtime::bank::{MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH},
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::{
         authorized_voters::AuthorizedVoters,
@@ -515,7 +515,6 @@ fn test_clone_and_filter_for_vat_same_stake_at_border() {
 #[test]
 fn test_clone_and_filter_for_vat_not_enough_lamports() {
     let mut rng = rand::rng();
-    let minimum_vote_account_balance = 1_600_000_000;
     // For 10% of vote accounts, set the balance below the minimum.
     let entries_to_modify = MAX_ALPENGLOW_VOTE_ACCOUNTS / 10;
     let vote_accounts = new_staked_vote_accounts(
@@ -525,14 +524,14 @@ fn test_clone_and_filter_for_vat_not_enough_lamports() {
         None,
         |index| {
             if index < entries_to_modify {
-                minimum_vote_account_balance - 1
+                VAT_TO_BURN_PER_EPOCH - 1
             } else {
                 10_000_000_000
             }
         },
     );
-    let filtered = vote_accounts
-        .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, minimum_vote_account_balance);
+    let filtered =
+        vote_accounts.clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH);
     assert!(filtered.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS - entries_to_modify);
 }
 
