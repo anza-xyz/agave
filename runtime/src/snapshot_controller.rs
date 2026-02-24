@@ -161,13 +161,10 @@ impl SnapshotController {
 
     // Returns true if either snapshot interval is enabled, indicating that the controller will
     // generate snapshots at some slot intervals
-    pub fn generating_snapshots(&self) -> bool {
+    pub fn is_generating_snapshots(&self) -> bool {
         let intervals = self.snapshot_generation_intervals();
-        !matches!(intervals.full_snapshot_interval, SnapshotInterval::Disabled)
-            || !matches!(
-                intervals.incremental_snapshot_interval,
-                SnapshotInterval::Disabled
-            )
+        !(intervals.full_snapshot_interval == SnapshotInterval::Disabled
+            && intervals.incremental_snapshot_interval == SnapshotInterval::Disabled)
     }
 }
 
@@ -289,7 +286,7 @@ mod tests {
         let (snapshot_request_sender, _snapshot_request_receiver) = unbounded();
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
-        assert_eq!(snapshot_controller.generating_snapshots(), expected);
+        assert_eq!(snapshot_controller.is_generating_snapshots(), expected);
     }
 
     #[test_case(SnapshotInterval::Disabled, SnapshotInterval::Disabled,

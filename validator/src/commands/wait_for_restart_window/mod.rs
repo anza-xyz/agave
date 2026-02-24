@@ -112,10 +112,10 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
 fn should_skip_snapshot_check(
     skip_new_snapshot_check_arg: bool,
-    generating_snapshots: result::Result<bool, RpcError>,
+    is_generating_snapshots: result::Result<bool, RpcError>,
 ) -> bool {
     if !skip_new_snapshot_check_arg {
-        match generating_snapshots {
+        match is_generating_snapshots {
             Ok(false) => {
                 println!("Validator is not generating snapshots. Skipping new snapshot check...");
                 true
@@ -144,15 +144,15 @@ pub fn wait_for_restart_window(
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
 
-    let generating_snapshots = admin_rpc_service::runtime().block_on(async {
+    let is_generating_snapshots = admin_rpc_service::runtime().block_on(async {
         let admin_client = admin_rpc_service::connect(ledger_path).await?;
-        admin_client.generating_snapshots().await
+        admin_client.is_generating_snapshots().await
     });
 
     // Check if the snapshot check should be skipped. The snapshot check is only relevant if the validator is
     // generating snapshots.
     let skip_new_snapshot_check =
-        should_skip_snapshot_check(skip_new_snapshot_check, generating_snapshots);
+        should_skip_snapshot_check(skip_new_snapshot_check, is_generating_snapshots);
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     let rpc_addr = admin_rpc_service::runtime()
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn test_should_skip_snapshot_check_with_arg_true() {
         // Verify cases where the skip_new_snapshot_check_arg is true, which should always skip
-        // the snapshot check regardless of the result of generating_snapshots
+        // the snapshot check regardless of the result of is_generating_snapshots
         assert!(should_skip_snapshot_check(true, Ok(false)));
         assert!(should_skip_snapshot_check(true, Ok(true)));
         assert!(should_skip_snapshot_check(
@@ -501,7 +501,7 @@ mod tests {
         ));
 
         // Verify cases where the skip_new_snapshot_check_arg is false, which should only skip if
-        // generating_snapshots returns Ok(false). Notice the ! in cases 2 and 3.
+        // is_generating_snapshots returns Ok(false). Notice the ! in cases 2 and 3.
         assert!(should_skip_snapshot_check(false, Ok(false)));
         assert!(!should_skip_snapshot_check(false, Ok(true)));
         assert!(!should_skip_snapshot_check(

@@ -292,8 +292,8 @@ pub trait AdminRpc {
         scheduler_pacing: SchedulerPacing,
     ) -> Result<()>;
 
-    #[rpc(meta, name = "generatingSnapshots")]
-    fn generating_snapshots(&self, meta: Self::Metadata) -> Result<bool>;
+    #[rpc(meta, name = "isGeneratingSnapshots")]
+    fn is_generating_snapshots(&self, meta: Self::Metadata) -> Result<bool>;
 }
 
 pub struct AdminRpcImpl;
@@ -886,9 +886,9 @@ impl AdminRpc for AdminRpcImpl {
         })
     }
 
-    fn generating_snapshots(&self, meta: Self::Metadata) -> Result<bool> {
+    fn is_generating_snapshots(&self, meta: Self::Metadata) -> Result<bool> {
         if let Some(snapshot_controller) = meta.snapshot_controller() {
-            Ok(snapshot_controller.generating_snapshots())
+            Ok(snapshot_controller.is_generating_snapshots())
         } else {
             Err(jsonrpc_core::error::Error::invalid_params(
                 "snapshot_controller unavailable",
@@ -1759,12 +1759,12 @@ mod tests {
     }
 
     #[test]
-    fn test_generating_snapshots() {
+    fn test_is_generating_snapshots() {
         // Test with snapshots enabled
         let rpc = RpcHandler::start_with_config(TestConfig::default());
         let RpcHandler { io, meta, .. } = rpc;
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"generatingSnapshots","params":[]}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"isGeneratingSnapshots","params":[]}"#;
         let response = io.handle_request_sync(request, meta.clone());
         let result: Value = serde_json::from_str(&response.expect("actual response"))
             .expect("actual response deserialization");
@@ -1776,13 +1776,13 @@ mod tests {
     }
 
     #[test]
-    fn test_generating_snapshots_no_controller() {
+    fn test_is_generating_snapshots_no_controller() {
         // Test with snapshots enabled
         let rpc = RpcHandler::start_with_config(TestConfig::default());
         let RpcHandler { io, .. } = rpc;
 
         // Test with no post_init (snapshot_controller unavailable)
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"generatingSnapshots","params":[]}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"isGeneratingSnapshots","params":[]}"#;
         let validator_exit = create_validator_exit(Arc::new(AtomicBool::new(false)));
         let authorized_voter_keypairs = Arc::new(RwLock::new(vec![Arc::new(Keypair::new())]));
         let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
