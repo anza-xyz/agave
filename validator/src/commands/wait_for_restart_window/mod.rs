@@ -110,6 +110,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Returns whether to skip the check that requires a new snapshot to have been generated before
+/// restarting. If the validator is not generating snapshots, this check can never be satisfied
+/// and must be skipped.
 fn should_skip_snapshot_check(
     skip_new_snapshot_check_arg: bool,
     is_generating_snapshots: Option<bool>,
@@ -167,8 +170,6 @@ pub fn wait_for_restart_window(
         }
     };
 
-    // Check if the snapshot check should be skipped. The snapshot check is only relevant if the validator is
-    // generating snapshots.
     let skip_new_snapshot_check =
         should_skip_snapshot_check(skip_new_snapshot_check, is_generating_snapshots);
 
