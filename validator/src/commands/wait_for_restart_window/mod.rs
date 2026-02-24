@@ -6,6 +6,7 @@ use {
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     console::style,
+    jsonrpc_core::ErrorCode,
     jsonrpc_core_client::RpcError,
     solana_clap_utils::{
         input_parsers::pubkey_of,
@@ -19,7 +20,6 @@ use {
     std::{
         collections::VecDeque,
         path::Path,
-        result,
         time::{Duration, SystemTime},
     },
 };
@@ -112,20 +112,25 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
 fn should_skip_snapshot_check(
     skip_new_snapshot_check_arg: bool,
-    is_generating_snapshots: result::Result<bool, RpcError>,
+    is_generating_snapshots: Option<bool>,
 ) -> bool {
     if !skip_new_snapshot_check_arg {
         match is_generating_snapshots {
-            Ok(false) => {
+            Some(false) => {
                 println!("Validator is not generating snapshots. Skipping new snapshot check...");
                 true
             }
-            Err(err) => {
-                println!("Failed to check if validator is generating snapshots: {err}");
-                println!("Leaving snapshot check on...");
+            Some(true) => false,
+            None => {
+                // The server is an older version that does not support the isGeneratingSnapshots
+                // method. We cannot determine whether snapshots are being generated, so leave the
+                // snapshot check enabled.
+                println!(
+                    "Validator doesn't support isGeneratingSnapshots RPC method, Assuming \
+                     snapshots are being generated and leaving snapshot check enabled..."
+                );
                 false
             }
-            Ok(true) => false,
         }
     } else {
         skip_new_snapshot_check_arg
@@ -144,10 +149,23 @@ pub fn wait_for_restart_window(
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
 
-    let is_generating_snapshots = admin_rpc_service::runtime().block_on(async {
+    let is_generating_snapshots_result = admin_rpc_service::runtime().block_on(async {
         let admin_client = admin_rpc_service::connect(ledger_path).await?;
         admin_client.is_generating_snapshots().await
     });
+
+    // MethodNotFound indicates the server is an older version that does not support this method.
+    // Map to None so should_skip_snapshot_check() leaves the snapshot check enabled.
+    // All other errors are unexpected and we bail immediately.
+    let is_generating_snapshots = match is_generating_snapshots_result {
+        Ok(val) => Some(val),
+        Err(RpcError::JsonRpcError(ref e)) if e.code == ErrorCode::MethodNotFound => None,
+        Err(err) => {
+            return Err(
+                format!("Failed to check if validator is generating snapshots: {err}").into(),
+            );
+        }
+    };
 
     // Check if the snapshot check should be skipped. The snapshot check is only relevant if the validator is
     // generating snapshots.
@@ -493,20 +511,15 @@ mod tests {
     fn test_should_skip_snapshot_check_with_arg_true() {
         // Verify cases where the skip_new_snapshot_check_arg is true, which should always skip
         // the snapshot check regardless of the result of is_generating_snapshots
-        assert!(should_skip_snapshot_check(true, Ok(false)));
-        assert!(should_skip_snapshot_check(true, Ok(true)));
-        assert!(should_skip_snapshot_check(
-            true,
-            Err(RpcError::Client("test error".into()))
-        ));
+        assert!(should_skip_snapshot_check(true, Some(false)));
+        assert!(should_skip_snapshot_check(true, Some(true)));
+        assert!(should_skip_snapshot_check(true, None));
 
         // Verify cases where the skip_new_snapshot_check_arg is false, which should only skip if
-        // is_generating_snapshots returns Ok(false). Notice the ! in cases 2 and 3.
-        assert!(should_skip_snapshot_check(false, Ok(false)));
-        assert!(!should_skip_snapshot_check(false, Ok(true)));
-        assert!(!should_skip_snapshot_check(
-            false,
-            Err(RpcError::Client("test error".into()))
-        ));
+        // is_generating_snapshots returns Some(false). Notice the ! in cases 2 and 3.
+        assert!(should_skip_snapshot_check(false, Some(false)));
+        assert!(!should_skip_snapshot_check(false, Some(true)));
+        // None means old server version (MethodNotFound); leave snapshot check enabled
+        assert!(!should_skip_snapshot_check(false, None));
     }
 }
