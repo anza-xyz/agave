@@ -504,7 +504,7 @@ pub(crate) mod tests {
                 test_utils::goto_end_of_slot,
                 tests::{create_genesis_config, create_simple_test_bank},
             },
-            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
             runtime_config::RuntimeConfig,
             snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
             snapshot_utils::create_tmp_accounts_dir_for_tests,
