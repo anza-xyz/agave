@@ -376,7 +376,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
 
-    let default_target_tick_duration = PohConfig::default().target_tick_duration;
+    let default_target_tick_duration = Duration::from_micros(3125);
     let default_ticks_per_slot = &clock::DEFAULT_TICKS_PER_SLOT.to_string();
     let default_cluster_type = "mainnet-beta";
     let default_genesis_archive_unpacked_size = MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string();
@@ -761,7 +761,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 poh_config.hashes_per_tick = Some(hashes_per_tick / 2); // use 50% of peak ability
             }
             ClusterType::Devnet | ClusterType::Testnet | ClusterType::MainnetBeta => {
-                poh_config.hashes_per_tick = Some(clock::DEFAULT_HASHES_PER_TICK);
+                poh_config.hashes_per_tick = Some(31_250);
             }
         },
         "sleep" => {
