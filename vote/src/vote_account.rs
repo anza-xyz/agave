@@ -194,6 +194,8 @@ impl VoteAccounts {
             }
             entries_to_sort.push((pubkey, vote_account, *stake));
         }
+
+        let valid_len = entries_to_sort.len();
         if entries_to_sort.len() > max_vote_accounts {
             // Find the cutoff stake using partial sort (more efficient than full sort).
             let (_, cutoff_entry, _) =
@@ -216,8 +218,10 @@ impl VoteAccounts {
             error!("no valid vote accounts found");
         }
         info!(
-            "Out of {} vote accounts, {} are valid vote accounts after filtering",
+            "Out of {} vote accounts, {} are valid vote accounts after filtering, {} remain after \
+             truncation",
             self.vote_accounts.len(),
+            valid_len,
             top_entries.len()
         );
         VoteAccounts {
