@@ -7,6 +7,9 @@ pub enum LedgerToolError {
     #[error("{0}")]
     Blockstore(#[from] BlockstoreError),
 
+    #[error("sending on a disconnected channel")]
+    CrossbeamSend,
+
     #[error("{0}")]
     SerdeJson(#[from] serde_json::Error),
 

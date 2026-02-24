@@ -11,6 +11,7 @@ use {
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit, values_t_or_exit,
     },
+    crossbeam_channel::bounded,
     itertools::Itertools,
     log::*,
     regex::Regex,
@@ -35,6 +36,7 @@ use {
         io::{BufRead, BufReader, Write, stdout},
         path::{Path, PathBuf},
         sync::atomic::AtomicBool,
+        thread,
         time::{Duration, UNIX_EPOCH},
     },
 };
@@ -649,16 +651,48 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 AccessType::PrimaryForMaintenance,
             );
 
-            for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
-                if slot > ending_slot {
-                    break;
-                }
-                let shreds = source.get_data_shreds_for_slot(slot, 0)?;
-                let shreds = shreds.into_iter().map(Cow::Owned);
-                if target.insert_cow_shreds(shreds, None, true).is_err() {
-                    warn!("error inserting shreds for slot {slot}");
-                }
-            }
+            // Bound the channel to prevent the reader thread (producer) from
+            // outpacing the writer thread (consumer) and causing potentially
+            // unbounded memory growth
+            let (sender, receiver) = bounded(256);
+
+            let t_reader: thread::JoinHandle<Result<()>> = thread::Builder::new()
+                .name("solBstoreRead".to_string())
+                .spawn(move || {
+                    info!("Blockstore reader thread has started");
+
+                    for (slot, _meta) in source
+                        .slot_meta_iterator(starting_slot)?
+                        .take_while(|(slot, _meta)| *slot <= ending_slot)
+                    {
+                        let shreds = source.get_data_shreds_for_slot(slot, 0)?;
+                        sender
+                            .send(shreds)
+                            .map_err(|_| LedgerToolError::CrossbeamSend)?;
+                    }
+
+                    info!("Blockstore reader thread has stopped");
+                    Ok(())
+                })
+                .unwrap();
+
+            let t_writer: thread::JoinHandle<Result<()>> = thread::Builder::new()
+                .name("solBstoreWrite".to_string())
+                .spawn(move || {
+                    info!("Blockstore writer thread has started");
+
+                    while let Ok(shreds) = receiver.recv() {
+                        let shreds = shreds.into_iter().map(Cow::Owned);
+                        target.insert_cow_shreds(shreds, None, true)?;
+                    }
+
+                    info!("Blockstore writer thread has stopped");
+                    Ok(())
+                })
+                .unwrap();
+
+            t_reader.join().unwrap()?;
+            t_writer.join().unwrap()?;
         }
         ("dead-slots", Some(arg_matches)) => {
             let blockstore =
