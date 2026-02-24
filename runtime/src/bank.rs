@@ -2369,6 +2369,7 @@ impl Bank {
     /// to the top `MAX_ALPENGLOW_VOTE_ACCOUNTS` that contain enough balance for admission.
     fn burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
         let vote_accounts = epoch_stakes.stakes().vote_accounts();
+        debug_assert!(vote_accounts.len() <= 2000);
         // +1 for the incinerator account
         let mut accounts_to_store: Vec<(Pubkey, AccountSharedData)> =
             Vec::with_capacity(vote_accounts.len() + 1);
