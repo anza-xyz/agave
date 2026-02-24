@@ -1,8 +1,8 @@
 use {
     crate::bank::Bank,
-    agave_bls_cert_verify::cert_verify::{verify_base2, Error as BlsCertVerifyError},
+    agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
     agave_votor_messages::{
-        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate, NUM_SLOTS_FOR_REWARD},
+        reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
         vote::Vote,
     },
     solana_bls_signatures::BlsError,
@@ -147,7 +147,7 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{
-            create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
+            ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
         },
         agave_votor_messages::consensus_message::VoteMessage,
         bitvec::vec::BitVec,
