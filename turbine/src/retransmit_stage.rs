@@ -359,13 +359,15 @@ fn retransmit(
     epoch_cache_update.stop();
     stats.epoch_cache_update += epoch_cache_update.as_us();
     // Lookup slot leader and cluster nodes for each slot.
-    let cache: HashMap<Slot, _> = shred_buf
-        .iter()
-        .flatten()
-        .filter_map(|shred| shred::layout::get_slot(shred))
-        .collect::<HashSet<Slot>>()
+    let mut slot_shred_counts: HashMap<Slot, usize> = HashMap::new();
+    for shred in shred_buf.iter().flatten() {
+        if let Some(slot) = shred::layout::get_slot(shred) {
+            *slot_shred_counts.entry(slot).or_default() += 1;
+        }
+    }
+    let cache: HashMap<Slot, _> = slot_shred_counts
         .into_iter()
-        .filter_map(|slot: Slot| {
+        .filter_map(|(slot, slot_count)| {
             max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
             // TODO: consider using root-bank here for leader lookup!
             // Shreds' signatures should be verified before they reach here,
@@ -374,7 +376,7 @@ fn retransmit(
             // skip the shred.
             let Some(slot_leader) = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
             else {
-                stats.unknown_shred_slot_leader += num_shreds;
+                stats.unknown_shred_slot_leader += slot_count;
                 return None;
             };
             let cluster_nodes =
@@ -919,9 +921,14 @@ mod tests {
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
         solana_entry::entry::create_ticks,
+        solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        solana_ledger::{
+            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        },
+        solana_signer::Signer,
     };
 
     fn get_keypair() -> Keypair {
@@ -1068,5 +1075,92 @@ mod tests {
            First time seeing shred Y w/ changed header (FEC Set index 3)=>Dup because common \
              header is unique but shred ID seen twice already"
         );
+    }
+
+    #[test]
+    fn test_unknown_shred_slot_leader_counts_shreds() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
+
+        let epoch_schedule = root_bank.epoch_schedule();
+        let root_epoch = epoch_schedule.get_epoch(root_bank.slot());
+        let unknown_slot = epoch_schedule.get_first_slot_in_epoch(root_epoch + 2);
+        assert!(
+            leader_schedule_cache
+                .slot_leader_at(unknown_slot, Some(&root_bank))
+                .is_none(),
+            "expected slot with unknown leader",
+        );
+
+        let leader_keypair = Arc::new(Keypair::new());
+        let entries = create_ticks(1, 1, Hash::new_unique());
+        let shredder = Shredder::new(unknown_slot, unknown_slot.saturating_sub(1), 1, 0).unwrap();
+        let (shreds_data, _shreds_code) = shredder.entries_to_merkle_shreds_for_tests(
+            &leader_keypair,
+            &entries,
+            true,
+            Hash::new_unique(),
+            0,
+            0,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+        let num_shreds = shreds_data.len();
+        let payloads: Vec<_> = shreds_data
+            .iter()
+            .map(|shred| shred.payload().clone())
+            .collect();
+
+        let (retransmit_sender, retransmit_receiver) = crossbeam_channel::unbounded();
+        retransmit_sender.send(payloads).unwrap();
+
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let leader_keypair = Arc::new(Keypair::new());
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&leader_keypair.pubkey(), timestamp()),
+            leader_keypair,
+            SocketAddrSpace::Unspecified,
+        );
+        let socket = solana_net_utils::bind_to_localhost().unwrap();
+        let retransmit_sockets = vec![socket];
+        let (quic_endpoint_sender, _quic_endpoint_receiver) = tokio::sync::mpsc::channel(1);
+
+        let mut stats = RetransmitStats::new(Instant::now());
+        let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
+            CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
+            CLUSTER_NODES_CACHE_TTL,
+        );
+        let mut addr_cache = AddrCache::with_capacity(4);
+        let mut shred_deduper = ShredDeduper::new(&mut rand::thread_rng(), DEDUPER_NUM_BITS);
+        let max_slots = MaxSlots::default();
+        let mut shred_buf = Vec::new();
+
+        assert_eq!(stats.unknown_shred_slot_leader, 0);
+
+        retransmit(
+            &thread_pool,
+            &bank_forks,
+            &leader_schedule_cache,
+            &cluster_info,
+            &retransmit_receiver,
+            &retransmit_sockets,
+            &quic_endpoint_sender,
+            None,
+            &mut stats,
+            &cluster_nodes_cache,
+            &mut addr_cache,
+            &mut shred_deduper,
+            &max_slots,
+            None,
+            None,
+            &mut shred_buf,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(stats.unknown_shred_slot_leader, num_shreds);
     }
 }
