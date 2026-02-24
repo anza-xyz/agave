@@ -293,21 +293,17 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         instruction: Instruction,
         signer_seeds: &[&[&[u8]]],
     ) -> Result<(), InstructionError> {
-        let signers = if signer_seeds.is_empty() {
-            vec![]
-        } else {
-            let caller_program_id = *self
-                .transaction_context
-                .get_current_instruction_context()?
-                .get_program_key()?;
-            // The conversion from `PubkeyError` to `InstructionError` through
-            // num-traits is incorrect, but it's the existing behavior.
-            signer_seeds
-                .iter()
-                .map(|seeds| Pubkey::create_program_address(seeds, &caller_program_id))
-                .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()
-                .map_err(|e| e as u64)?
-        };
+        let caller_program_id = *self
+            .transaction_context
+            .get_current_instruction_context()?
+            .get_program_key()?;
+        // The conversion from `PubkeyError` to `InstructionError` through
+        // num-traits is incorrect, but it's the existing behavior.
+        let signers = signer_seeds
+            .iter()
+            .map(|seeds| Pubkey::create_program_address(seeds, &caller_program_id))
+            .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()
+            .map_err(|e| e as u64)?;
         self.prepare_next_cpi_instruction(instruction, &signers)?;
         let mut compute_units_consumed = 0;
         self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
