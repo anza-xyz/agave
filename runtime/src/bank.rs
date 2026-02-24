@@ -2335,16 +2335,8 @@ impl Bank {
                 leader_schedule_epoch,
                 new_epoch_stakes.total_stake(),
             );
-            // Only deduct and burn the VAT if both the VAT and alpenglow features are active.
-            if self
-                .feature_set
-                .is_active(&agave_feature_set::alpenglow::id())
-                && self
-                    .feature_set
-                    .is_active(&agave_feature_set::validator_admission_ticket::id())
-            {
-                self.burn_vat_from_staked_accounts(&new_epoch_stakes);
-            }
+
+            self.maybe_burn_vat_from_staked_accounts(&new_epoch_stakes);
 
             // It is expensive to log the details of epoch stakes. Only log them at "trace"
             // level for debugging purpose.
@@ -2363,11 +2355,23 @@ impl Bank {
         }
     }
 
-    /// Burn the Validator Admission ticket from each vote account.
+    /// Burn the Validator Admission ticket from each vote account if both the VAT and Alpenglow feature flags
+    /// are enabled
     ///
     /// Note: This must ONLY be called after the vote accounts have been filtered (`clone_and_filter_for_vat`)
     /// to the top `MAX_ALPENGLOW_VOTE_ACCOUNTS` that contain enough balance for admission.
-    fn burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
+    fn maybe_burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
+        // Only deduct and burn the VAT if both the VAT and alpenglow features are active.
+        if !self
+            .feature_set
+            .is_active(&agave_feature_set::alpenglow::id())
+            || !self
+                .feature_set
+                .is_active(&agave_feature_set::validator_admission_ticket::id())
+        {
+            return;
+        }
+
         let vote_accounts = epoch_stakes.stakes().vote_accounts();
         debug_assert!(vote_accounts.len() <= 2000);
         // +1 for the incinerator account
