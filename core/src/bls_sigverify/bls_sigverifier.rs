@@ -18,6 +18,7 @@ use {
         reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::Pubkey as BlsPubkey,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -52,6 +53,7 @@ pub(crate) fn spawn_service(
     channel_to_metrics: ConsensusMetricsEventSender,
     cluster_info: Arc<ClusterInfo>,
     leader_schedule: Arc<LeaderScheduleCache>,
+    num_threads: usize,
 ) -> thread::JoinHandle<()> {
     let verifier = SigVerifier::new(
         migration_status,
@@ -62,6 +64,7 @@ pub(crate) fn spawn_service(
         channel_to_metrics,
         cluster_info,
         leader_schedule,
+        num_threads,
     );
 
     Builder::new()
@@ -91,6 +94,8 @@ struct SigVerifier {
     leader_schedule: Arc<LeaderScheduleCache>,
     /// Buffer to collect votes to verify.  Stored here to reduce reallocations.
     votes_buffer: Vec<VoteToVerify>,
+    /// thread pool to use for all parallel tasks
+    thread_pool: ThreadPool,
 }
 
 impl SigVerifier {
@@ -103,7 +108,13 @@ impl SigVerifier {
         channel_to_metrics: ConsensusMetricsEventSender,
         cluster_info: Arc<ClusterInfo>,
         leader_schedule: Arc<LeaderScheduleCache>,
+        num_threads: usize,
     ) -> Self {
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .thread_name(|i| format!("solSigVerBLS{i:02}"))
+            .build()
+            .unwrap();
         Self {
             migration_status,
             sharable_banks,
@@ -117,6 +128,7 @@ impl SigVerifier {
             cluster_info,
             leader_schedule,
             votes_buffer: Vec::new(),
+            thread_pool,
         }
     }
 
@@ -176,7 +188,7 @@ impl SigVerifier {
             .increment(extract_msgs_us)
             .unwrap();
 
-        let (votes_result, certs_result) = rayon::join(
+        let (votes_result, certs_result) = self.thread_pool.join(
             || {
                 verify_and_send_votes(
                     votes_to_verify,
@@ -360,6 +372,7 @@ mod tests {
                 consensus_metrics_sender,
                 cluster_info,
                 leader_schedule,
+                4,
             ),
         )
     }
@@ -1217,6 +1230,7 @@ mod tests {
             consensus_metrics_sender,
             cluster_info,
             leader_schedule,
+            4,
         );
 
         let vote = Vote::new_skip_vote(2);

@@ -76,6 +76,8 @@ fn verify_certs(
     // of times we have to iterate over the list of certs.
 
     let (tx, rx) = bounded(certs.len());
+    // Assuming that sigverifier's dedicated thread pool was used to call this function, the
+    // following should run on that thread pool.
     rayon::scope(|s| {
         s.spawn(|_| {
             certs.into_par_iter().for_each_with(tx, |tx, cert| {

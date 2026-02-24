@@ -189,6 +189,9 @@ fn verify_votes_optimistic(
     //
     // By verifying the aggregated signature against the aggregated public keys,
     // the number of pairings required is reduced to (1 + number of distinct messages).
+    //
+    // Assuming that sigverifier's dedicated thread pool was used to call this function, the
+    // following should run on that thread pool.
     let (signature_result, (distinct_payloads, pubkeys_result)) = rayon::join(
         || aggregate_signatures(votes_to_verify),
         || aggregate_pubkeys_by_payload(votes_to_verify, stats),
@@ -211,7 +214,11 @@ fn verify_votes_optimistic(
     } else {
         // if non-unique payload, we need to apply a pairing for each distinct message,
         // which is done inside `par_verify_distinct_aggregated`.
-        let payload_slices: Vec<&[u8]> = distinct_payloads.iter().map(|p| p.as_slice()).collect();
+        //
+        // Assuming that sigverifier's dedicated thread pool was used to call this function, the
+        // following should run on that thread pool.
+        let payload_slices: Vec<&[u8]> =
+            distinct_payloads.par_iter().map(|p| p.as_slice()).collect();
         SignatureProjective::par_verify_distinct_aggregated(
             &aggregate_pubkeys,
             &aggregate_signature,
@@ -228,6 +235,8 @@ fn verify_votes_optimistic(
     verified
 }
 
+// Assuming that sigverifier's dedicated thread pool was used to call this function, the
+// following should run on that thread pool.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn aggregate_signatures(votes: &[VoteToVerify]) -> Result<SignatureProjective, BlsError> {
     let signatures = votes.par_iter().map(|v| &v.vote_message.signature);
@@ -260,6 +269,8 @@ fn aggregate_pubkeys_by_payload(
         .increment(grouped_votes.len() as u64)
         .unwrap();
 
+    // Assuming that sigverifier's dedicated thread pool was used to call this function, the
+    // following should run on that thread pool.
     let (distinct_payloads, distinct_pubkeys_results): (Vec<_>, Vec<_>) = grouped_votes
         .into_par_iter()
         .map(|(vote, pubkeys)| {
@@ -283,7 +294,9 @@ fn verify_individual_votes(
 ) -> Vec<VoteToVerify> {
     let mut measure = Measure::start("verify_individual_votes");
 
-    let verified_votes: Vec<VoteToVerify> = votes_to_verify
+    // Assuming that sigverifier's dedicated thread pool was used to call this function, the
+    // following should run on that thread pool.
+    let verified_votes = votes_to_verify
         .into_par_iter()
         .filter_map(|vote| vote.verify().then_some(vote))
         .collect();
