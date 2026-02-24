@@ -177,11 +177,17 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         }
 
         if !timed_out {
-            while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
-                let receive_start = Instant::now();
+            let mut receive_started_at = Instant::now();
+            while stats.num_received < PACKET_BURST_LIMIT {
+                let now = Instant::now();
+                if now.duration_since(start) >= TIMEOUT {
+                    break;
+                }
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
-                        stats.receive_time_us += receive_start.elapsed().as_micros() as u64;
+                        stats.receive_time_us +=
+                            now.duration_since(receive_started_at).as_micros() as u64;
+                        receive_started_at = now;
                         received_message = true;
                         let batch_stats = self.handle_packet_batch_message(
                             container,
