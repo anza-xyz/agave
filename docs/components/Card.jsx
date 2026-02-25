@@ -14,7 +14,7 @@ function Card({ to, header, body, externalIcon = false }) {
   */
 
   return (
-    <div className={clsx("col col--4 ", styles.feature)}>
+    <div className={clsx("col col--4 "}>
       <Link className="navbar__link card" to={to}>
         <div className="card__header">
           <h3>
