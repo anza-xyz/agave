@@ -156,7 +156,7 @@ solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.0.0-alp
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.0.0-alpha.0" }
 solana-sbpf = "=0.14.4"
 solana-sdk-ids = "=3.1.0"
-solana-secp256k1-recover = "=3.1.0"
+solana-secp256k1-recover = "=3.1.1"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
 solana-stake-interface = { version = "=2.0.2", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.0.0-alpha.0" }

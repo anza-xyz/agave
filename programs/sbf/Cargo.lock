@@ -9386,12 +9386,12 @@ dependencies = [
 
 [[package]]
 name = "solana-secp256k1-recover"
-version = "3.1.0"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9de18cfdab99eeb940fbedd8c981fa130c0d76252da75d05446f22fae8b51932"
+checksum = "e7c5f18893d62e6c73117dcba48f8f5e3266d90e5ec3d0a0a90f9785adac36c1"
 dependencies = [
  "k256",
- "solana-define-syscall 4.0.1",
+ "solana-define-syscall 5.0.0",
  "thiserror 2.0.18",
 ]
 
