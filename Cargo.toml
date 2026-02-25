@@ -518,7 +518,7 @@ solana-sanitize = "3.0.1"
 solana-sbpf = { version = "=0.14.4", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.1"
-solana-secp256k1-recover = "3.1.0"
+solana-secp256k1-recover = "3.1.1"
 solana-secp256r1-program = "3.0.0"
 solana-seed-derivable = "3.0.0"
 solana-seed-phrase = "3.0.0"
