@@ -170,10 +170,10 @@ impl FeatureSet {
                 .is_active(&bls_pubkey_management_in_vote_account::id()),
             enable_alt_bn128_g2_syscalls: self.is_active(&enable_alt_bn128_g2_syscalls::id()),
             commission_rate_in_basis_points: self.is_active(&commission_rate_in_basis_points::id()),
-            custom_commission_collector: false, // Feature disabled for now.
+            custom_commission_collector: self.is_active(&custom_commission_collector::id()),
             enable_bls12_381_syscall: self.is_active(&enable_bls12_381_syscall::id()),
-            block_revenue_sharing: false, // Hard-coded as disabled for now. Not a fully-implemented feature yet.
-            vote_account_initialize_v2: false, // Feature disabled for now.
+            block_revenue_sharing: self.is_active(&block_revenue_sharing::id()),
+            vote_account_initialize_v2: self.is_active(&vote_account_initialize_v2::id()),
         }
     }
 }
@@ -1243,11 +1243,11 @@ pub mod enable_alt_bn128_g2_syscalls {
 }
 
 pub mod commission_rate_in_basis_points {
-    solana_pubkey::declare_id!("Eg7tXEwMZzS98xaZ1YHUbdRHsaYZiCsSaR6sKgxreoaj");
+    solana_pubkey::declare_id!("CommissionRate1nBasisPoints1111111111111111");
 }
 
 pub mod custom_commission_collector {
-    solana_pubkey::declare_id!("GFZ5U5LUCWNecKMBJDuVR3vdepUMwSkwVUMxWKjJXkC4");
+    solana_pubkey::declare_id!("CustomCommissionCo11ector111111111111111111");
 }
 
 pub mod enable_bls12_381_syscall {
@@ -1294,11 +1294,11 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("HqUXZzYaxpbjHRCZHn8GLDCSecyCe2A7JD3An6asGdw4");
+    solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
 }
 
 pub mod vote_account_initialize_v2 {
-    solana_pubkey::declare_id!("9PtjteCDs5yLKwseLKVWgKwTBMfLBxZmTDBgmmws8vRt");
+    solana_pubkey::declare_id!("VoteAccount1nitia1izeV211111111111111111111");
 }
 
 pub mod validate_chained_block_id {
@@ -2286,7 +2286,11 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             commission_rate_in_basis_points::id(),
-            "SIMD-0291: Commission rate in basis points",
+            "SIMD-0291: Commission Rate in Basis Points",
+        ),
+        (
+            custom_commission_collector::id(),
+            "SIMD-0232: Custom Commission Collector",
         ),
         (
             enable_bls12_381_syscall::id(),
@@ -2319,6 +2323,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             limit_instruction_accounts::id(),
             "SIMD-406: Maximum instruction accounts",
+        ),
+        (
+            block_revenue_sharing::id(),
+            "SIMD-0123: Block Revenue Sharing",
         ),
         (
             vote_account_initialize_v2::id(),
