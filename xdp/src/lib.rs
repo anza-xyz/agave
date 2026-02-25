@@ -32,7 +32,7 @@ pub mod xdp_retransmitter;
 
 #[cfg(target_os = "linux")]
 pub use program::load_xdp_program;
-use std::io;
+use std::{io, net::Ipv4Addr};
 
 #[cfg(target_os = "linux")]
 pub fn set_cpu_affinity(cpus: impl IntoIterator<Item = usize>) -> Result<(), io::Error> {
@@ -76,5 +76,33 @@ pub fn get_cpu() -> Result<usize, io::Error> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn get_cpu() -> Result<usize, io::Error> {
+    unimplemented!()
+}
+
+/// Returns the IPv4 address of the specified network interface.
+///
+/// If the interface is part of a bonded interface, returns the master's IPv4 address.
+#[cfg(target_os = "linux")]
+pub fn interface_ipv4(interface: &str) -> Result<Ipv4Addr, io::Error> {
+    if let Some(ip) = crate::xdp_retransmitter::master_ip_if_bonded(interface) {
+        Ok(ip)
+    } else {
+        crate::device::NetworkDevice::new(interface)?.ipv4_addr()
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn interface_ipv4(_interface: &str) -> Result<Ipv4Addr, io::Error> {
+    unimplemented!()
+}
+
+/// Returns the IPv4 address of the device associated with the default route.
+#[cfg(target_os = "linux")]
+pub fn default_device_ipv4() -> Result<Ipv4Addr, io::Error> {
+    crate::device::NetworkDevice::new_from_default_route()?.ipv4_addr()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn default_device_ipv4() -> Result<Ipv4Addr, io::Error> {
     unimplemented!()
 }

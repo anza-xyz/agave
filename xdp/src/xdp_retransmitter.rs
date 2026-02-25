@@ -6,6 +6,7 @@ use {
         route::Router,
         route_monitor::RouteMonitor,
         set_cpu_affinity,
+        tx_loop::TransmitItem,
         tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder},
         umem::{OwnedUmem, PageAlignedMemory},
     },
@@ -13,14 +14,14 @@ use {
     aya::Ebpf,
     crossbeam_channel::TryRecvError,
     log::info,
-    std::{thread::Builder, time::Duration},
+    std::{net::Ipv4Addr, thread::Builder, time::Duration},
 };
 use {
     bytes::Bytes,
     crossbeam_channel::{Sender, TrySendError},
     std::{
         error::Error,
-        net::{Ipv4Addr, SocketAddr},
+        net::{SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
         thread,
     },
@@ -66,9 +67,57 @@ impl XdpConfig {
     }
 }
 
+/// [`XdpTransmitItem`] encapsulates the information needed to transmit a packet via XDP. Besides
+/// the payload and destination addresses, it includes the source address of the packet.
+#[cfg(target_os = "linux")]
+pub struct XdpTransmitItem {
+    src_addr: SocketAddrV4,
+    dst_addrs: XdpAddrs,
+    payload: Bytes,
+}
+
+#[cfg(not(target_os = "linux"))]
+pub struct XdpTransmitItem;
+
+#[cfg(target_os = "linux")]
+impl XdpTransmitItem {
+    pub fn new(src_addr: SocketAddrV4, dst_addrs: impl Into<XdpAddrs>, payload: Bytes) -> Self {
+        Self {
+            src_addr,
+            dst_addrs: dst_addrs.into(),
+            payload,
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl XdpTransmitItem {
+    pub fn new(_src_addr: SocketAddrV4, _dst_addrs: impl Into<XdpAddrs>, _payload: Bytes) -> Self {
+        Self
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl TransmitItem for XdpTransmitItem {
+    type Addrs = XdpAddrs;
+    type Payload = Bytes;
+
+    fn dst_addrs(&self) -> &Self::Addrs {
+        &self.dst_addrs
+    }
+
+    fn payload(&self) -> &Self::Payload {
+        &self.payload
+    }
+
+    fn src_addr(&self) -> SocketAddrV4 {
+        self.src_addr
+    }
+}
+
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<(XdpAddrs, Bytes)>>,
+    senders: Vec<Sender<XdpTransmitItem>>,
 }
 
 pub enum XdpAddrs {
@@ -105,13 +154,12 @@ impl XdpSender {
     pub fn try_send(
         &self,
         sender_index: usize,
-        addr: impl Into<XdpAddrs>,
-        payload: Bytes,
-    ) -> Result<(), TrySendError<(XdpAddrs, Bytes)>> {
+        item: XdpTransmitItem,
+    ) -> Result<(), TrySendError<XdpTransmitItem>> {
         let idx = sender_index
             .checked_rem(self.senders.len())
             .expect("XdpSender::senders should not be empty");
-        self.senders[idx].try_send((addr.into(), payload))
+        self.senders[idx].try_send(item)
     }
 }
 
@@ -133,22 +181,12 @@ pub struct XdpRetransmitBuilder {
 
 impl XdpRetransmitBuilder {
     #[cfg(not(target_os = "linux"))]
-    pub fn new(
-        _config: XdpConfig,
-        _src_port: u16,
-        _src_ip: Option<Ipv4Addr>,
-        _exit: Arc<AtomicBool>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(_config: XdpConfig, _exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
         Err("XDP is only supported on Linux".into())
     }
 
     #[cfg(target_os = "linux")]
-    pub fn new(
-        config: XdpConfig,
-        src_port: u16,
-        src_ip: Option<Ipv4Addr>,
-        exit: Arc<AtomicBool>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(config: XdpConfig, exit: Arc<AtomicBool>) -> Result<Self, Box<dyn Error>> {
         use {
             caps::{
                 CapSet,
@@ -169,11 +207,8 @@ impl XdpRetransmitBuilder {
             NetworkDevice::new_from_default_route().unwrap()
         });
 
-        let mut tx_loop_config_builder = TxLoopConfigBuilder::new(src_port);
+        let mut tx_loop_config_builder = TxLoopConfigBuilder::new();
         tx_loop_config_builder.zero_copy(zero_copy);
-        if let Some(src_ip) = src_ip {
-            tx_loop_config_builder.override_src_ip(src_ip);
-        }
         let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
         let reserved_cores = cpus.iter().cloned().collect::<HashSet<_>>();
@@ -344,7 +379,7 @@ impl XdpRetransmitter {
 
 /// Returns the IPv4 address of the master interface if the given interface is part of a bond.
 #[cfg(target_os = "linux")]
-pub fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
+pub(crate) fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
     let master_ifindex_path = format!("/sys/class/net/{interface}/master/ifindex");
     if let Ok(contents) = std::fs::read_to_string(&master_ifindex_path) {
         let idx = contents.trim().parse().unwrap();
@@ -359,10 +394,5 @@ pub fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
                 }),
         );
     }
-    None
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn master_ip_if_bonded(_interface: &str) -> Option<Ipv4Addr> {
     None
 }

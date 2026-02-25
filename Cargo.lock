@@ -11188,6 +11188,7 @@ dependencies = [
  "assert_matches",
  "bencher",
  "bs58",
+ "bytes",
  "crossbeam-channel",
  "itertools 0.14.0",
  "lazy-lru",
