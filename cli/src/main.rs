@@ -137,6 +137,21 @@ fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error
     Ok(parse_args)
 }
 
+send_transaction_config: RpcSendTransactionConfig {
+    skip_preflight,
+    preflight_commitment: Some(commitment.commitment),
+    ..RpcSendTransactionConfig::default()
+},
+// Note (2026): RpcClient::send_transaction<T: SerializableTransaction>
+// is affected by the removal/missing impl of SerializableTransaction for
+// VersionedTransaction in newer solana-transaction versions.
+// Tracked in https://github.com/anza-xyz/agave/issues/10738
+// When Agave upgrades to solana-transaction 4.x+, this may require
+// migrating subcommands to send_raw_transaction(&tx.serialize()?) or
+// equivalent. For now, assuming compatibility via current pinned crates.
+confirm_transaction_initial_timeout,
+
+
 pub fn parse_args<'a>(
     matches: &ArgMatches<'_>,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
