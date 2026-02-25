@@ -5,6 +5,7 @@ pub mod msghdr;
 pub mod nonblocking;
 pub mod packet;
 pub mod quic;
+mod quic_xdp_socket;
 pub mod recvmmsg;
 pub mod sendmmsg;
 pub mod streamer;
