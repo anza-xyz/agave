@@ -10841,7 +10841,6 @@ dependencies = [
  "ahash 0.8.12",
  "assert_matches",
  "bincode",
- "ed25519-dalek 1.0.1",
  "env_logger",
  "libsecp256k1",
  "log",

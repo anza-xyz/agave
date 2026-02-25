@@ -81,7 +81,6 @@ pub(crate) fn process_message<'ix_data>(
 mod tests {
     use {
         super::*,
-        ed25519_dalek::ed25519::signature::Signer,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
@@ -94,6 +93,7 @@ mod tests {
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+        solana_keypair::Keypair,
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_precompile_error::PrecompileError,
         solana_program_runtime::{
@@ -112,6 +112,7 @@ mod tests {
             eth_address_from_pubkey, new_secp256k1_instruction_with_signature,
         },
         solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
+        solana_signer::Signer,
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::transaction::TransactionContext,
@@ -619,10 +620,10 @@ mod tests {
     }
 
     fn ed25519_instruction_for_test() -> Instruction {
-        let secret_key = ed25519_dalek::Keypair::generate(&mut thread_rng());
-        let signature = secret_key.sign(b"hello").to_bytes();
-        let pubkey = secret_key.public.to_bytes();
-        new_ed25519_instruction_with_signature(b"hello", &signature, &pubkey)
+        let keypair = Keypair::new();
+        let signature = keypair.sign_message(b"hello");
+        let pubkey = keypair.pubkey().to_bytes();
+        new_ed25519_instruction_with_signature(b"hello", signature.as_array(), &pubkey)
     }
 
     fn secp256r1_instruction_for_test() -> Instruction {
