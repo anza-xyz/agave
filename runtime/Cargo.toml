@@ -196,7 +196,6 @@ wincode = { workspace = true }
 agave-logger = { workspace = true }
 agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
-ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
 rand_chacha = { workspace = true }

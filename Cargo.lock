@@ -10223,7 +10223,6 @@ dependencies = [
  "bytemuck",
  "crossbeam-channel",
  "dashmap",
- "ed25519-dalek 1.0.1",
  "im",
  "itertools 0.14.0",
  "libc",
