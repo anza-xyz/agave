@@ -392,6 +392,118 @@ fn test_bank_update_epoch_stakes() {
     );
 }
 
+fn new_vat_burn_test_bank(num_vote_accounts: usize) -> (Bank, Vec<Pubkey>) {
+    assert!(num_vote_accounts > 0);
+
+    let vote_keypairs: Vec<_> = (0..num_vote_accounts)
+        .map(|_| ValidatorVoteKeypairs::new_rand())
+        .collect();
+    let vote_pubkeys = vote_keypairs
+        .iter()
+        .map(|validator| validator.vote_keypair.pubkey())
+        .collect();
+    let stakes = vec![minimum_vote_account_balance_for_vat(100); num_vote_accounts];
+    let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
+        100_000 * LAMPORTS_PER_SOL,
+        &vote_keypairs,
+        stakes,
+    );
+
+    (Bank::new_for_tests(&genesis_config), vote_pubkeys)
+}
+
+#[test]
+fn test_update_epoch_stakes_burns_vat_from_staked_vote_accounts() {
+    let (mut bank, vote_pubkeys) = new_vat_burn_test_bank(3);
+    bank.activate_feature(&feature_set::alpenglow::id());
+    bank.activate_feature(&feature_set::validator_admission_ticket::id());
+
+    let vote_lamports_before: HashMap<Pubkey, u64> = vote_pubkeys
+        .iter()
+        .map(|vote_pubkey| (*vote_pubkey, bank.get_balance(vote_pubkey)))
+        .collect();
+    let incinerator_lamports_before = bank.get_balance(&incinerator::id());
+    let leader_schedule_epoch = bank
+        .epoch_stakes
+        .keys()
+        .max()
+        .copied()
+        .unwrap()
+        .saturating_add(1);
+
+    bank.update_epoch_stakes(leader_schedule_epoch);
+
+    let burned_vote_pubkeys: Vec<_> = bank
+        .epoch_stakes
+        .get(&leader_schedule_epoch)
+        .unwrap()
+        .stakes()
+        .vote_accounts()
+        .iter()
+        .map(|(vote_pubkey, _)| *vote_pubkey)
+        .collect();
+    assert!(!burned_vote_pubkeys.is_empty());
+
+    for vote_pubkey in &burned_vote_pubkeys {
+        let vote_lamports_before = vote_lamports_before.get(vote_pubkey).copied().unwrap();
+        assert_eq!(
+            bank.get_balance(vote_pubkey),
+            vote_lamports_before - VAT_TO_BURN_PER_EPOCH,
+        );
+    }
+
+    let expected_total_vat = burned_vote_pubkeys.len() as u64 * VAT_TO_BURN_PER_EPOCH;
+    assert_eq!(
+        bank.get_balance(&incinerator::id()),
+        incinerator_lamports_before + expected_total_vat
+    );
+}
+
+#[test_case(false, true ; "without alpenglow")]
+#[test_case(true, false ; "without vat feature")]
+fn test_update_epoch_stakes_skips_vat_burn_without_required_features(
+    alpenglow_active: bool,
+    vat_feature_active: bool,
+) {
+    let (mut bank, vote_pubkeys) = new_vat_burn_test_bank(3);
+    if alpenglow_active {
+        bank.activate_feature(&feature_set::alpenglow::id());
+    } else {
+        bank.deactivate_feature(&feature_set::alpenglow::id());
+    }
+    if vat_feature_active {
+        bank.activate_feature(&feature_set::validator_admission_ticket::id());
+    } else {
+        bank.deactivate_feature(&feature_set::validator_admission_ticket::id());
+    }
+
+    let vote_lamports_before: HashMap<Pubkey, u64> = vote_pubkeys
+        .iter()
+        .map(|vote_pubkey| (*vote_pubkey, bank.get_balance(vote_pubkey)))
+        .collect();
+    let incinerator_lamports_before = bank.get_balance(&incinerator::id());
+    let leader_schedule_epoch = bank
+        .epoch_stakes
+        .keys()
+        .max()
+        .copied()
+        .unwrap()
+        .saturating_add(1);
+
+    bank.update_epoch_stakes(leader_schedule_epoch);
+
+    assert_eq!(
+        bank.get_balance(&incinerator::id()),
+        incinerator_lamports_before
+    );
+    for vote_pubkey in vote_pubkeys {
+        assert_eq!(
+            bank.get_balance(&vote_pubkey),
+            vote_lamports_before.get(&vote_pubkey).copied().unwrap(),
+        );
+    }
+}
+
 fn bank0_sysvar_delta() -> u64 {
     const SLOT_HISTORY_SYSVAR_MIN_BALANCE: u64 = 913_326_000;
     SLOT_HISTORY_SYSVAR_MIN_BALANCE
