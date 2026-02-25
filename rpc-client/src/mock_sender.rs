@@ -396,7 +396,7 @@ impl RpcSender for MockSender {
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),
                 version: Some("1.0.0 c375ce1f".to_string()),
-                client_id: Some(0),
+                client_id: Some("Agave".to_string()),
                 feature_set: None,
                 shred_version: None,
             }])?,

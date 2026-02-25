@@ -26,7 +26,6 @@ use {
     ahash::AHashMap,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
-    ed25519_dalek::ed25519::signature::Signer as EdSigner,
     itertools::Itertools,
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
@@ -9469,26 +9468,13 @@ fn test_call_precomiled_program() {
     bank.process_transaction(&tx).unwrap();
 
     // ed25519
-    // Since ed25519_dalek is still using the old version of rand, this test
-    // copies the `generate` implementation at:
-    // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
-    let privkey = {
-        use rand::RngCore;
-        let mut rng = rand::rng();
-        let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
-        rng.fill_bytes(&mut seed);
-        let secret =
-            ed25519_dalek::SecretKey::from_bytes(&seed[..ed25519_dalek::SECRET_KEY_LENGTH])
-                .unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        ed25519_dalek::Keypair { secret, public }
-    };
     let message_arr = b"hello";
-    let signature = privkey.sign(message_arr).to_bytes();
-    let pubkey = privkey.public.to_bytes();
+    let keypair = Keypair::new();
+    let signature = keypair.sign_message(message_arr);
+    let pubkey = keypair.pubkey().to_bytes();
     let instruction = solana_ed25519_program::new_ed25519_instruction_with_signature(
         message_arr,
-        &signature,
+        signature.as_array(),
         &pubkey,
     );
     let tx = Transaction::new_signed_with_payer(

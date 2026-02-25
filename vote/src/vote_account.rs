@@ -1,5 +1,6 @@
 use {
     crate::vote_state_view::VoteStateView,
+    log::*,
     serde::{
         Deserialize, Serialize,
         de::{MapAccess, Visitor},
@@ -157,6 +158,76 @@ impl VoteAccounts {
                 Arc::new(staked_nodes)
             })
             .clone()
+    }
+
+    // This implements the filtering logic described in SIMD-357.
+    // 1. Filter out any vote accounts without BLS pubkey
+    // 2. Given minimum_vote_account_balance, filter out any vote account
+    //    without required balance
+    // 3. If we have more than max_vote_accounts vote accounts after above
+    //    filtering, sort by stake and truncate
+    // 4. If any vote account in the resulting list has the same stake as any
+    //    truncated vote account, just remove this vote account as well (A and
+    //    B have the same stake amount, it's unfair to keep A in and kick B out
+    //    just because of Pubkey difference, because that can be grinded)
+    // 5. If we end up with an empty list (can happen if everyone in the world
+    //    has the same stake, happens in tests, doesn't happen in real world),
+    //    log a warning
+    pub fn clone_and_filter_for_vat(
+        &self,
+        max_vote_accounts: usize,
+        minimum_vote_account_balance: u64,
+    ) -> VoteAccounts {
+        assert!(max_vote_accounts > 0, "max_vote_accounts must be > 0");
+        let capacity = max_vote_accounts.min(self.vote_accounts.len());
+        let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, u64)> = Vec::with_capacity(capacity);
+        for (pubkey, (stake, vote_account)) in self.vote_accounts.iter() {
+            let has_bls = vote_account
+                .vote_state_view()
+                .bls_pubkey_compressed()
+                .is_some();
+            let has_stake = *stake != 0u64;
+            let has_balance = vote_account.lamports() >= minimum_vote_account_balance;
+
+            if !has_bls || !has_stake || !has_balance {
+                continue;
+            }
+            entries_to_sort.push((pubkey, vote_account, *stake));
+        }
+
+        let valid_len = entries_to_sort.len();
+        if entries_to_sort.len() > max_vote_accounts {
+            // Find the cutoff stake using partial sort (more efficient than full sort).
+            let (_, cutoff_entry, _) =
+                entries_to_sort.select_nth_unstable_by(max_vote_accounts, |a, b| b.2.cmp(&a.2));
+            let floor_stake = cutoff_entry.2;
+
+            // Per SIMD 357, we remove all vote accounts with stake smaller or equal to
+            // the first truncated one.
+            entries_to_sort.retain(|(_, _, stake)| *stake > floor_stake);
+        }
+
+        let mut top_entries: HashMap<Pubkey, (u64, VoteAccount)> =
+            HashMap::with_capacity(entries_to_sort.len());
+        top_entries.extend(
+            entries_to_sort
+                .into_iter()
+                .map(|(pubkey, vote_account, stake)| (*pubkey, (stake, vote_account.clone()))),
+        );
+        if top_entries.is_empty() {
+            error!("no valid vote accounts found");
+        }
+        info!(
+            "Out of {} vote accounts, {} are valid vote accounts after filtering, {} remain after \
+             truncation",
+            self.vote_accounts.len(),
+            valid_len,
+            top_entries.len()
+        );
+        VoteAccounts {
+            vote_accounts: Arc::new(top_entries),
+            staked_nodes: OnceLock::new(),
+        }
     }
 
     pub fn get(&self, pubkey: &Pubkey) -> Option<&VoteAccount> {

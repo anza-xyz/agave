@@ -893,7 +893,6 @@ pub(crate) mod external {
                 let fee_payer_balance = working_bank
                     .rc
                     .accounts
-                    .accounts_db
                     .load_with_fixed_root(
                         &working_bank.ancestors,
                         &transaction.static_account_keys()[0],

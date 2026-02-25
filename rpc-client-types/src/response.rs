@@ -318,7 +318,7 @@ pub struct RpcContactInfo {
     /// Software version
     pub version: Option<String>,
     /// Client ID
-    pub client_id: Option<u16>,
+    pub client_id: Option<String>,
     /// First 4 bytes of the FeatureSet identifier
     pub feature_set: Option<u32>,
     /// Shred version

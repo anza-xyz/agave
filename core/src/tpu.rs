@@ -34,7 +34,6 @@ use {
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
     },
-    solana_perf::data_budget::DataBudget,
     solana_poh::{
         poh_recorder::{PohRecorder, WorkingBankEntry},
         transaction_recorder::TransactionRecorder,
@@ -324,7 +323,6 @@ impl Tpu {
             vote_forwarding_client_socket,
             bank_forks.read().unwrap().sharable_banks(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
-            DataBudget::default(),
         );
 
         let (entry_receiver, tpu_entry_notifier) =

@@ -269,7 +269,6 @@ dlopen2 = "0.8.2"
 dyn-clone = "1.0.20"
 eager = "0.1.0"
 ed25519-dalek = "=1.0.1"
-ed25519-dalek-bip32 = "0.2.0"
 enum-iterator = "2.3.0"
 env_logger = "0.11.9"
 fast-math = "0.1"
@@ -375,7 +374,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.19"
 serde_json = "1.0.149"
-serde_with = { version = "3.16.1", default-features = false }
+serde_with = { version = "3.17.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "3.4.0"
 sha2 = "0.10.9"
@@ -518,7 +517,7 @@ solana-sanitize = "3.0.1"
 solana-sbpf = { version = "=0.14.4", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.1"
-solana-secp256k1-recover = "3.1.0"
+solana-secp256k1-recover = "3.1.1"
 solana-secp256r1-program = "3.0.0"
 solana-seed-derivable = "3.0.0"
 solana-seed-phrase = "3.0.0"
@@ -629,6 +628,24 @@ winreg = "0.55"
 x509-parser = "0.18.1"
 zstd = "0.13.3"
 
+[profile.dev]
+debug = "line-tables-only"
+
+# curve25519-dalek uses the simd backend by default in v4 if possible,
+# which has very slow performance on some platforms with opt-level 0,
+# which is the default for dev and test builds.
+# This slowdown causes certain interactions in the solana-test-validator,
+# such as verifying ZK proofs in transactions, to take much more than 400ms,
+# creating problems in the testing environment.
+# To enable better performance in solana-test-validator during tests and dev builds,
+# we override the opt-level to 3 for the crate.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.full-dev]
+inherits = "dev"
+debug = "full"
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true
@@ -643,17 +660,6 @@ lto = "thin"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
-
-# curve25519-dalek uses the simd backend by default in v4 if possible,
-# which has very slow performance on some platforms with opt-level 0,
-# which is the default for dev and test builds.
-# This slowdown causes certain interactions in the solana-test-validator,
-# such as verifying ZK proofs in transactions, to take much more than 400ms,
-# creating problems in the testing environment.
-# To enable better performance in solana-test-validator during tests and dev builds,
-# we override the opt-level to 3 for the crate.
-[profile.dev.package.curve25519-dalek]
-opt-level = 3
 
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf

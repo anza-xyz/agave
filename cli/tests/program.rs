@@ -1509,6 +1509,7 @@ async fn test_cli_program_extend_program() {
     config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
         program_pubkey: program_keypair.pubkey(),
         authority_signer_index: 1,
+        payer_signer_index: 0,
         additional_bytes: additional_bytes - 1,
     });
     process_command(&config).await.unwrap();
@@ -1563,6 +1564,7 @@ async fn test_cli_program_extend_program() {
     config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
         program_pubkey: program_keypair.pubkey(),
         authority_signer_index: 1,
+        payer_signer_index: 0,
         additional_bytes: 1,
     });
     process_command(&config).await.unwrap();
@@ -1591,6 +1593,32 @@ async fn test_cli_program_extend_program() {
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
+
+    wait_n_slots(&rpc_client, 1).await;
+
+    // Extend with separate fee payer, authority, and rent payer
+    let rent_payer = Keypair::new();
+    config.signers = vec![&rent_payer];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: Rent::default().minimum_balance(1024),
+    };
+    process_command(&config).await.unwrap();
+
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
+    let prev_len = programdata_account.data.len();
+
+    config.signers = vec![&keypair, &upgrade_authority, &rent_payer];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
+        program_pubkey: program_keypair.pubkey(),
+        authority_signer_index: 1,
+        payer_signer_index: 2,
+        additional_bytes: 1024,
+    });
+    process_command(&config).await.unwrap();
+
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
+    assert_eq!(prev_len + 1024, programdata_account.data.len());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

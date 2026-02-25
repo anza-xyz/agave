@@ -225,7 +225,7 @@ fn test_scheduler_producing_blocks() {
         signal_receiver,
     ) = create_test_recorder(
         genesis_bank.clone(),
-        blockstore.clone(),
+        blockstore,
         None,
         Some(leader_schedule_cache),
     );

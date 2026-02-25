@@ -3371,7 +3371,7 @@ impl ReplayStage {
                 let replay_stats = bank_progress.replay_stats.clone();
                 let mut is_unified_scheduler_enabled = false;
 
-                if let Some((result, completed_execute_timings)) =
+                let replay_err = if let Some((result, completed_execute_timings)) =
                     bank.wait_for_completed_scheduler()
                 {
                     // It's guaranteed that wait_for_completed_scheduler() returns Some(_), iff the
@@ -3386,24 +3386,37 @@ impl ReplayStage {
                         .batch_execute
                         .accumulate(metrics, is_unified_scheduler_enabled);
 
-                    if let Err(err) = result {
-                        let root = bank_forks.read().unwrap().root();
-                        Self::mark_dead_slot(
-                            blockstore,
-                            bank,
-                            root,
-                            &BlockstoreProcessorError::InvalidTransaction(err),
-                            rpc_subscriptions,
-                            slot_status_notifier,
-                            progress,
-                            duplicate_slots_to_repair,
-                            ancestor_hashes_replay_update_sender,
-                            purge_repair_slot_counter,
-                            &mut tbft_structs,
-                        );
-                        // don't try to run the remaining normal processing for the completed bank
-                        continue;
-                    }
+                    result.map_err(BlockstoreProcessorError::InvalidTransaction)
+                } else {
+                    Ok(())
+                };
+                let verify_err = {
+                    let mut elapsed = 0;
+                    let res = bank_progress
+                        .replay_progress
+                        .write()
+                        .unwrap()
+                        .wait_for_all_verification_results(&mut elapsed);
+                    replay_stats.write().unwrap().poh_verify_elapsed += elapsed;
+                    res
+                };
+                if let Err(err) = replay_err.or(verify_err) {
+                    let root = bank_forks.read().unwrap().root();
+                    Self::mark_dead_slot(
+                        blockstore,
+                        bank,
+                        root,
+                        &err,
+                        rpc_subscriptions,
+                        slot_status_notifier,
+                        progress,
+                        duplicate_slots_to_repair,
+                        ancestor_hashes_replay_update_sender,
+                        purge_repair_slot_counter,
+                        &mut tbft_structs,
+                    );
+                    // don't try to run the remaining normal processing for the completed bank
+                    continue;
                 }
 
                 let is_leader_block = bank.leader_id() == my_pubkey;
@@ -5412,7 +5425,21 @@ pub(crate) mod tests {
                 None,
                 Some(&PrioritizationFeeCache::new(0u64)),
                 &MigrationStatus::default(),
-            );
+            )
+            .and_then(|replay_tx_count| {
+                let mut elapsed = 0;
+                bank1_progress
+                    .replay_progress
+                    .write()
+                    .unwrap()
+                    .wait_for_all_verification_results(&mut elapsed)?;
+                bank1_progress
+                    .replay_stats
+                    .write()
+                    .unwrap()
+                    .poh_verify_elapsed += elapsed;
+                Ok(replay_tx_count)
+            });
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
             let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
                 exit,

@@ -1305,6 +1305,10 @@ pub mod validate_chained_block_id {
     solana_pubkey::declare_id!("vbiddkDHTSHSvL8B21AetWvTBLxxUZ1FmU6DFjztyRn");
 }
 
+pub mod validator_admission_ticket {
+    solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2278,7 +2282,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             enable_alt_bn128_g2_syscalls::id(),
-            "SIMD-302: Add alt_bn128 G2 syscalls",
+            "SIMD-0302: Add alt_bn128 G2 syscalls",
         ),
         (
             commission_rate_in_basis_points::id(),
@@ -2314,7 +2318,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             limit_instruction_accounts::id(),
-            "SIMD-406: Maximum instruction accounts",
+            "SIMD-0406: Maximum instruction accounts",
         ),
         (
             vote_account_initialize_v2::id(),
@@ -2323,6 +2327,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validate_chained_block_id::id(),
             "SIMD-0340: Validate chained block ID",
+        ),
+        (
+            validator_admission_ticket::id(),
+            "SIMD-0357: Alpenglow VAT implementation",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

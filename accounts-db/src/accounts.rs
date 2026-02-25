@@ -110,7 +110,6 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .accounts_db
             .load_with_fixed_root(ancestors, address_table_lookup.account_key)
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
@@ -1384,9 +1383,9 @@ mod tests {
         }
 
         // ww conflict in-batch succeeds or fails based on feature
-        let accounts = Accounts::new(accounts_db.clone());
+        let accounts = Accounts::new(accounts_db);
         let results = accounts.lock_accounts(
-            [w_tx.clone(), r_tx.clone()].iter(),
+            [w_tx, r_tx].iter(),
             [Ok(()), Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,

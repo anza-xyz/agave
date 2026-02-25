@@ -6,6 +6,8 @@ use {
     },
     clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
     console::style,
+    jsonrpc_core::ErrorCode,
+    jsonrpc_core_client::RpcError,
     solana_clap_utils::{
         input_parsers::pubkey_of,
         input_validators::{is_parsable, is_pubkey_or_keypair, is_valid_percentage},
@@ -108,6 +110,36 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Returns whether to skip the check that requires a new snapshot to have been generated before
+/// restarting. If the validator is not generating snapshots, this check can never be satisfied
+/// and must be skipped.
+fn should_skip_snapshot_check(
+    skip_new_snapshot_check_arg: bool,
+    is_generating_snapshots: Option<bool>,
+) -> bool {
+    if !skip_new_snapshot_check_arg {
+        match is_generating_snapshots {
+            Some(false) => {
+                println!("Validator is not generating snapshots. Skipping new snapshot check...");
+                true
+            }
+            Some(true) => false,
+            None => {
+                // The server is an older version that does not support the isGeneratingSnapshots
+                // method. We cannot determine whether snapshots are being generated, so leave the
+                // snapshot check enabled.
+                println!(
+                    "Validator doesn't support isGeneratingSnapshots RPC method, Assuming \
+                     snapshots are being generated and leaving snapshot check enabled..."
+                );
+                false
+            }
+        }
+    } else {
+        skip_new_snapshot_check_arg
+    }
+}
+
 pub fn wait_for_restart_window(
     ledger_path: &Path,
     identity: Option<Pubkey>,
@@ -119,6 +151,27 @@ pub fn wait_for_restart_window(
     let sleep_interval = Duration::from_secs(5);
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
+
+    let is_generating_snapshots_result = admin_rpc_service::runtime().block_on(async {
+        let admin_client = admin_rpc_service::connect(ledger_path).await?;
+        admin_client.is_generating_snapshots().await
+    });
+
+    // MethodNotFound indicates the server is an older version that does not support this method.
+    // Map to None so should_skip_snapshot_check() leaves the snapshot check enabled.
+    // All other errors are unexpected and we bail immediately.
+    let is_generating_snapshots = match is_generating_snapshots_result {
+        Ok(val) => Some(val),
+        Err(RpcError::JsonRpcError(ref e)) if e.code == ErrorCode::MethodNotFound => None,
+        Err(err) => {
+            return Err(
+                format!("Failed to check if validator is generating snapshots: {err}").into(),
+            );
+        }
+    };
+
+    let skip_new_snapshot_check =
+        should_skip_snapshot_check(skip_new_snapshot_check, is_generating_snapshots);
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     let rpc_addr = admin_rpc_service::runtime()
@@ -454,5 +507,21 @@ mod tests {
                 ..WaitForRestartWindowArgs::default()
             },
         );
+    }
+
+    #[test]
+    fn test_should_skip_snapshot_check_with_arg_true() {
+        // Verify cases where the skip_new_snapshot_check_arg is true, which should always skip
+        // the snapshot check regardless of the result of is_generating_snapshots
+        assert!(should_skip_snapshot_check(true, Some(false)));
+        assert!(should_skip_snapshot_check(true, Some(true)));
+        assert!(should_skip_snapshot_check(true, None));
+
+        // Verify cases where the skip_new_snapshot_check_arg is false, which should only skip if
+        // is_generating_snapshots returns Some(false). Notice the ! in cases 2 and 3.
+        assert!(should_skip_snapshot_check(false, Some(false)));
+        assert!(!should_skip_snapshot_check(false, Some(true)));
+        // None means old server version (MethodNotFound); leave snapshot check enabled
+        assert!(!should_skip_snapshot_check(false, None));
     }
 }
