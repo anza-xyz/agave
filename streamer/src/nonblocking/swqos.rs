@@ -194,11 +194,16 @@ impl SwQos {
             match context.peer_type {
                 ConnectionPeerType::Unstaked => Some(0), // park
                 ConnectionPeerType::Staked(stake) => {
-                    let share_tps = self
-                        .capacity_tps
-                        .saturating_mul(stake)
-                        .checked_div(context.total_stake)
-                        .unwrap_or(0);
+                    // Use u128 to avoid saturating_mul overflow for large lamport
+                    // stakes: capacity_tps (u64) * stake (u64) can exceed u64::MAX
+                    // for any validator above ~37K SOL, silently collapsing all
+                    // large stakers to the same share_tps and destroying
+                    // proportionality.  The result fits back in u64 because
+                    // share_tps ≤ capacity_tps (stake ≤ total_stake).
+                    let share_tps = (self.capacity_tps as u128)
+                        .saturating_mul(stake as u128)
+                        .checked_div(context.total_stake as u128)
+                        .unwrap_or(0) as u64;
                     let quota = (share_tps as f64 * rtt.as_secs_f64()) as u32;
                     let num_connections = context
                         .stream_counter
@@ -207,6 +212,8 @@ impl SwQos {
                         .unwrap_or(1)
                         .max(1) as u32;
                     let per_conn = (quota / num_connections).max(1);
+                    // Cap at the unsaturated limit: a connection should not get
+                    // more quota under load than when the system is idle.
                     Some(per_conn.min(staked_unsat_max.max(1)))
                 }
             }
@@ -764,9 +771,9 @@ pub mod test {
 
     #[test]
     fn test_saturated_quota_capped_by_unsaturated_max() {
-        // 100% stake at 50ms RTT: saturated quota = 500K * 0.05 = 25000
-        // but unsaturated max = base_max_streams * 0.5 = 1024
-        // hard cap: min(25000, 1024) = 1024
+        // 100% stake at 50ms RTT: proportional quota = 500K * 0.05 = 25000,
+        // capped at staked_unsat_max = base_max_streams * 0.5 = 1024.
+        // A connection should not get more quota under load than when idle.
         let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             base_max_streams: 2048,
@@ -780,9 +787,8 @@ pub mod test {
     }
 
     #[test]
-    fn test_saturated_quota_not_capped_when_below_unsaturated() {
-        // 1% stake at 50ms RTT: saturated quota = 5000 * 0.05 = 250
-        // unsaturated max = 1024 → no cap applied
+    fn test_saturated_quota_proportional_small_stake() {
+        // 1% stake at 50ms RTT: quota = 5000 * 0.05 = 250 (unchanged).
         let swqos = make_swqos(SwQosConfig {
             max_streams_per_ms: 500,
             base_max_streams: 2048,
@@ -792,6 +798,49 @@ pub mod test {
         assert_eq!(
             swqos.compute_max_streams_for_rtt(&ctx, Duration::from_millis(50), true),
             Some(250),
+        );
+    }
+
+    #[test]
+    fn test_saturated_large_lamport_stakes_preserve_proportionality() {
+        // Regression test for u64 saturating_mul overflow.
+        // Without u128, capacity_tps * stake overflows for any validator above
+        // ~37K SOL, collapsing all large stakers to the same share_tps and
+        // making a 10M-SOL staker appear identical to (or worse than) a 10K-SOL
+        // staker with multiple connections.
+        let swqos = make_swqos(SwQosConfig {
+            max_streams_per_ms: 500,
+            ..SwQosConfig::default()
+        });
+        const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+        let stake_large = 10_000_000 * LAMPORTS_PER_SOL; // 10M SOL
+        let stake_small = 10_000 * LAMPORTS_PER_SOL; // 10K SOL
+        let total = stake_large + stake_small;
+        let rtt = Duration::from_millis(100);
+
+        let ctx_large = staked_context(stake_large, total, 1);
+        let ctx_small = staked_context(stake_small, total, 1);
+
+        // 500K TPS * (10M / 10.01M) * 100ms ≈ 49_950 → capped at staked_unsat_max (2048)
+        // 500K TPS * (10K / 10.01M) * 100ms ≈ 49           → below cap
+        //
+        // Without the u128 fix the 10M-SOL share_tps overflows to
+        // u64::MAX / total_stake ≈ 1_836, giving quota ≈ 183 — well below the
+        // 2048 cap and barely 3-4x the 10K-SOL staker instead of ~1000x.
+        let q_large = swqos
+            .compute_max_streams_for_rtt(&ctx_large, rtt, true)
+            .unwrap();
+        let q_small = swqos
+            .compute_max_streams_for_rtt(&ctx_small, rtt, true)
+            .unwrap();
+        // Large staker correctly hits the unsaturated cap, proving share_tps
+        // was computed without overflow.
+        assert_eq!(q_large, 2048);
+        assert_eq!(q_small, 49);
+        assert!(
+            q_large > q_small * 40,
+            "large/small ratio={}, expected large staker to dominate",
+            q_large / q_small
         );
     }
 
