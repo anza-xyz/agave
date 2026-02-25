@@ -81,6 +81,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
         new_thread_arg::<TvuReceiveThreadsArg>(&defaults.tvu_receive_threads),
         new_thread_arg::<TvuRetransmitThreadsArg>(&defaults.tvu_retransmit_threads),
         new_thread_arg::<TvuShredSigverifyThreadsArg>(&defaults.tvu_sigverify_threads),
+        new_thread_arg::<TvuBlsShredSigverifyThreadsArg>(&defaults.tvu_bls_sigverify_threads),
     ]
 }
 
