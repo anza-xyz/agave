@@ -1309,6 +1309,10 @@ pub mod validator_admission_ticket {
     solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
 }
 
+pub mod remove_block_vote_cost_limit {
+    solana_pubkey::declare_id!("VoTEDQfcnyYSQQHmX8fGRN19KaEJG5mSgSMYwvW6fXY");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2339,6 +2343,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validator_admission_ticket::id(),
             "SIMD-0357: Alpenglow VAT implementation",
+        ),
+        (
+            remove_block_vote_cost_limit::id(),
+            "remove block vote cost limit",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

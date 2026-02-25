@@ -455,6 +455,8 @@ fn compute_slot_cost(
     let feature_set = FeatureSet::all_enabled();
     let reserved_account_keys = ReservedAccountKeys::new_all_activated();
 
+    let remove_block_vote_cost_limit =
+        feature_set.is_active(&agave_feature_set::remove_block_vote_cost_limit::ID);
     for entry in entries {
         num_transactions += entry.transactions.len();
         entry
@@ -479,7 +481,7 @@ fn compute_slot_cost(
                 num_programs += transaction.message().instructions().len();
 
                 let tx_cost = CostModel::calculate_cost(&transaction, &feature_set);
-                let result = cost_tracker.try_add(&tx_cost);
+                let result = cost_tracker.try_add(&tx_cost, remove_block_vote_cost_limit);
                 if result.is_err() {
                     println!(
                         "Slot: {slot}, CostModel rejected transaction {transaction:?}, reason \
