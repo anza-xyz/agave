@@ -544,7 +544,7 @@ impl PartialEq for Bank {
             rc: _,
             status_cache: _,
             blockhash_queue,
-            ancestors,
+            ancestors: _,
             hash,
             parent_hash,
             parent_slot,
@@ -612,7 +612,6 @@ impl PartialEq for Bank {
             // is added to the struct, this PartialEq is accordingly updated.
         } = self;
         *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
-            && ancestors == &other.ancestors
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && parent_hash == &other.parent_hash
             && parent_slot == &other.parent_slot
