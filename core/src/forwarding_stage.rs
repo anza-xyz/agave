@@ -26,7 +26,7 @@ use {
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        ConnectionWorkersScheduler,
+        ConnectionWorkersScheduler, WorkersCacheStrategy,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
@@ -557,6 +557,7 @@ impl TpuClientNextClient {
             skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
+            worker_cache_strategy: WorkersCacheStrategy::Lru,
             // Send to the next leader only, but verify that connections exist
             // for the leaders of the next `4 * NUM_CONSECUTIVE_SLOTS`.
             leaders_fanout: Fanout {

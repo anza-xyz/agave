@@ -6,7 +6,7 @@ use {
     solana_measure::measure::Measure,
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        ConnectionWorkersScheduler,
+        ConnectionWorkersScheduler, WorkersCacheStrategy,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
@@ -177,6 +177,7 @@ impl TpuClientNextClient {
             // experimentally found parameter values
             worker_channel_size: 64,
             max_reconnect_attempts: 4,
+            worker_cache_strategy: WorkersCacheStrategy::Lru,
             // We open connection to one more leader in advance, which time-wise means ~1.6s
             leaders_fanout: Fanout {
                 connect: leader_forward_count + 1,
