@@ -1,0 +1,35 @@
+[package]
+name = "solana-tlv"
+description = "Solana TLV implementation"
+documentation = "https://docs.rs/solana-tlv"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+bytes = { workspace = true }
+chacha20 = "0.9.1"
+chacha20poly1305 = { version = "0.10.1" }
+poly1305 = "0.8.0"
+thiserror = { workspace = true }
+wincode = { workspace = true, features = ["derive"] }
+solana-short-vec = { workspace = true }
+
+[dev-dependencies]
+bencher = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_with = { workspace = true, features = ["macros"] }
+[lints]
+workspace = true
+
+[[bench]]
+name = "tlv_vs_wincode"
+harness = false

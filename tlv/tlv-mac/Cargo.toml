@@ -1,0 +1,28 @@
+[package]
+name = "solana-tlv-mac"
+edition = "2024"
+description = "Solana TLV message authentication code (MAC) signature support"
+documentation = "https://docs.rs/solana-tlv-mac"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+chacha20 = "0.9.1"
+chacha20poly1305 = { version = "0.10.1" }
+poly1305 = "0.8.0"
+wincode = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+bytes = { workspace = true }
+solana-short-vec = { workspace = true }
+solana-tlv = { workspace = true }
+
+[lints]
+workspace = true
