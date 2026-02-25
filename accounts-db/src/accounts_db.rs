@@ -6898,7 +6898,7 @@ impl AccountsDb {
     /// Note that this is non-deterministic if clean is running asynchronously.
     /// If a zero lamport account exists in the index, then Some is returned.
     /// Once it is cleaned from the index, None is returned.
-    pub fn load_without_fixed_root(
+    fn load_without_fixed_root(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
