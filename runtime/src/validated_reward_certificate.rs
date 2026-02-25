@@ -1,14 +1,6 @@
 use {
-    crate::bank::Bank,
-    agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
-    agave_votor_messages::{
-        reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
-        vote::Vote,
-    },
-    solana_bls_signatures::BlsError,
-    solana_clock::Slot,
-    solana_pubkey::Pubkey,
-    thiserror::Error,
+    agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
+    solana_bls_signatures::BlsError, solana_clock::Slot, solana_pubkey::Pubkey, thiserror::Error,
 };
 
 /// Different types of errors that can happen when trying to construct a [`ValidatedRewardCert`].
@@ -37,11 +29,15 @@ pub enum Error {
 ///
 /// Returns Ok(None) if no certs were provided.
 /// Returns Error if the reward slot is invalid.
+#[cfg(test)]
 fn extract_slot(
     current_slot: Slot,
     skip: &Option<SkipRewardCertificate>,
     notar: &Option<NotarRewardCertificate>,
 ) -> Result<Option<Slot>, Error> {
+    use agave_votor_messages::reward_certificate::{
+        NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate,
+    };
     let slot = match (skip, notar) {
         (None, None) => return Ok(None),
         (Some(s), None) => s.slot,
@@ -77,12 +73,14 @@ pub(crate) struct ValidatedRewardCert {
 
 impl ValidatedRewardCert {
     /// If validation of the provided reward certs succeeds, returns an instance of [`ValidatedRewardCert`].
-    #[cfg_attr(not(test), expect(dead_code))]
+    #[cfg(test)]
     pub(crate) fn try_new(
-        bank: &Bank,
+        bank: &crate::bank::Bank,
         skip: &Option<SkipRewardCertificate>,
         notar: &Option<NotarRewardCertificate>,
     ) -> Result<Self, Error> {
+        use {agave_bls_cert_verify::cert_verify::verify_base2, agave_votor_messages::vote::Vote};
+
         let Some(reward_slot) = extract_slot(bank.slot(), skip, notar)? else {
             return Err(Error::Empty);
         };

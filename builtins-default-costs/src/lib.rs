@@ -84,7 +84,7 @@ static BUILTIN_INSTRUCTION_COSTS: std::sync::LazyLock<AHashMap<Pubkey, BuiltinCo
 /// it MUST be moved from NON_MIGRATING_BUILTINS_COSTS to MIGRATING_BUILTINS_COSTS, then
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
-#[cfg_attr(not(test), expect(dead_code))]
+#[cfg(test)]
 const TOTAL_COUNT_BUILTINS: usize = 9;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
