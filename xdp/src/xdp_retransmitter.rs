@@ -20,7 +20,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     std::{
         error::Error,
-        net::{Ipv4Addr, SocketAddr},
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
         thread,
     },
@@ -68,7 +68,7 @@ impl XdpConfig {
 
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<(XdpAddrs, Bytes)>>,
+    senders: Vec<Sender<(XdpAddrs, Bytes, Option<SocketAddrV4>)>>,
 }
 
 pub enum XdpAddrs {
@@ -107,11 +107,12 @@ impl XdpSender {
         sender_index: usize,
         addr: impl Into<XdpAddrs>,
         payload: Bytes,
-    ) -> Result<(), TrySendError<(XdpAddrs, Bytes)>> {
+        custom_src_addr: Option<SocketAddrV4>,
+    ) -> Result<(), TrySendError<(XdpAddrs, Bytes, Option<SocketAddrV4>)>> {
         let idx = sender_index
             .checked_rem(self.senders.len())
             .expect("XdpSender::senders should not be empty");
-        self.senders[idx].try_send((addr.into(), payload))
+        self.senders[idx].try_send((addr.into(), payload, custom_src_addr))
     }
 }
 
