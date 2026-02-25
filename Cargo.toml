@@ -295,7 +295,7 @@ http = "0.2.12"
 humantime = "2.3.0"
 hyper = "0.14.32"
 hyper-proxy = "0.9.1"
-im = "15.1.0"
+imbl = "7.0.0"
 indexmap = "2.13.0"
 indicatif = "0.18.4"
 io-uring = { version = "0.7.11", features = ["io_safety"] }

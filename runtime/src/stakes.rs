@@ -4,7 +4,7 @@
 use solana_stake_interface::state::Stake;
 use {
     crate::{stake_account, stake_history::StakeHistory},
-    im::HashMap as ImHashMap,
+    imbl::HashMap as ImblHashMap,
     log::error,
     num_derive::ToPrimitive,
     rayon::{ThreadPool, prelude::*},
@@ -168,7 +168,7 @@ pub struct Stakes<T: Clone> {
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
-    stake_delegations: ImHashMap<Pubkey, T>,
+    stake_delegations: ImblHashMap<Pubkey, T>,
 
     /// unused
     unused: u64,
@@ -212,7 +212,7 @@ impl<T: Clone> Stakes<T> {
     pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
         Self {
             vote_accounts: stakes.vote_accounts,
-            stake_delegations: ImHashMap::from_iter(stakes.stake_delegations),
+            stake_delegations: ImblHashMap::from_iter(stakes.stake_delegations),
             unused: stakes.unused,
             epoch: stakes.epoch,
             stake_history: stakes.stake_history,
@@ -236,9 +236,9 @@ impl Stakes<StakeAccount> {
             .stake_delegations
             .into_par_iter()
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
-            // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
+            // collect()/collect_vec_list() and then imbl::HashMap::from_iter(collected.into_iter()),
             // but it does it in background threads, so effectively it's faster.
-            .try_fold(ImHashMap::new, |mut map, (pubkey, delegation)| {
+            .try_fold(ImblHashMap::new, |mut map, (pubkey, delegation)| {
                 let Some(stake_account) = get_account(&pubkey) else {
                     return Err(Error::StakeAccountNotFound(pubkey));
                 };
@@ -267,7 +267,7 @@ impl Stakes<StakeAccount> {
                     Err(Error::InvalidDelegation(pubkey))
                 }
             })
-            .try_reduce(ImHashMap::new, |a, b| Ok(a.union(b)))?;
+            .try_reduce(ImblHashMap::new, |a, b| Ok(a.union(b)))?;
 
         // Assert that cached vote accounts are consistent with accounts-db.
         //
@@ -297,7 +297,7 @@ impl Stakes<StakeAccount> {
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
-        stake_delegations: ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: ImblHashMap<Pubkey, StakeAccount>,
     ) -> Self {
         Self {
             vote_accounts,
@@ -365,7 +365,7 @@ impl Stakes<StakeAccount> {
 
     /// Sum the stakes that point to the given voter_pubkey
     fn calculate_stake(
-        stake_delegations: &ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: &ImblHashMap<Pubkey, StakeAccount>,
         voter_pubkey: &Pubkey,
         epoch: Epoch,
         stake_history: &StakeHistory,
@@ -452,14 +452,14 @@ impl Stakes<StakeAccount> {
     ///
     /// # Performance
     ///
-    /// `[im::HashMap]` is a [hash array mapped trie (HAMT)][hamt], which means
+    /// `[imbl::HashMap]` is a [hash array mapped trie (HAMT)][hamt], which means
     /// that inserts, deletions and lookups are average-case O(1) and
     /// worst-case O(log n). However, the performance of iterations is poor due
     /// to depth-first traversal and jumps. Currently it's also impossible to
     /// iterate over it with [`rayon`].
     ///
     /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {
+    pub(crate) fn stake_delegations(&self) -> &ImblHashMap<Pubkey, StakeAccount> {
         &self.stake_delegations
     }
 
@@ -469,7 +469,7 @@ impl Stakes<StakeAccount> {
     /// # Performance
     ///
     /// The execution of this method takes ~200ms and it collects elements of
-    /// the [`im::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
+    /// the [`imbl::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
     /// so that operation involves a depth-first traversal with jumps. However,
     /// it's still a reasonable tradeoff if the caller iterates over these
     /// elements.
