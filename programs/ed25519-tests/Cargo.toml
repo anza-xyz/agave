@@ -16,10 +16,10 @@ agave-unstable-api = []
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-ed25519-dalek = { workspace = true }
 rand = { workspace = true }
 solana-ed25519-program = { workspace = true }
 solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-test = { workspace = true }
 solana-signer = { workspace = true }
