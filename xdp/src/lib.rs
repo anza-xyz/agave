@@ -32,7 +32,7 @@ pub mod xdp_retransmitter;
 
 #[cfg(target_os = "linux")]
 pub use program::load_xdp_program;
-use std::io;
+use std::{io, net::Ipv4Addr};
 
 #[cfg(target_os = "linux")]
 pub fn set_cpu_affinity(cpus: impl IntoIterator<Item = usize>) -> Result<(), io::Error> {
@@ -76,5 +76,35 @@ pub fn get_cpu() -> Result<usize, io::Error> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn get_cpu() -> Result<usize, io::Error> {
+    unimplemented!()
+}
+
+#[cfg(target_os = "linux")]
+pub fn interface_ipv4(interface: &str) -> Ipv4Addr {
+    if let Some(ip) = crate::xdp_retransmitter::master_ip_if_bonded(interface) {
+        ip
+    } else {
+        crate::device::NetworkDevice::new(interface)
+            .unwrap()
+            .ipv4_addr()
+            .expect("device should have an IPv4 address")
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn interface_ipv4(_interface: &str) -> Ipv4Addr {
+    unimplemented!()
+}
+
+#[cfg(target_os = "linux")]
+pub fn default_route_ipv4() -> Ipv4Addr {
+    crate::device::NetworkDevice::new_from_default_route()
+        .unwrap()
+        .ipv4_addr()
+        .expect("default route device should have an IPv4 address")
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn default_route_ipv4() -> Ipv4Addr {
     unimplemented!()
 }

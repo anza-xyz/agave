@@ -33,7 +33,6 @@ use {
         votor::{Votor, VotorConfig},
     },
     agave_votor_messages::reward_certificate::{BuildRewardCertsRequest, BuildRewardCertsResponse},
-    agave_xdp::xdp_retransmitter::XdpSender,
     bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
@@ -67,7 +66,7 @@ use {
         quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::StakedNodes,
     },
-    solana_turbine::retransmit_stage::RetransmitStage,
+    solana_turbine::{XdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::HashSet,
         net::{SocketAddr, UdpSocket},
@@ -139,7 +138,7 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub bls_sigverify_threads: NonZeroUsize,
-    pub xdp_sender: Option<XdpSender>,
+    pub turbine_xdp_sender: Option<XdpSender>,
 }
 
 impl Default for TvuConfig {
@@ -154,7 +153,7 @@ impl Default for TvuConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            xdp_sender: None,
+            turbine_xdp_sender: None,
         }
     }
 }
@@ -375,7 +374,7 @@ impl Tvu {
             max_slots.clone(),
             rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
-            tvu_config.xdp_sender,
+            tvu_config.turbine_xdp_sender,
             votor_event_sender.clone(),
         );
 

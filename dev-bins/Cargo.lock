@@ -9242,6 +9242,7 @@ dependencies = [
  "agave-votor",
  "agave-votor-messages",
  "agave-xdp",
+ "bytes",
  "crossbeam-channel",
  "itertools 0.14.0",
  "lazy-lru",
