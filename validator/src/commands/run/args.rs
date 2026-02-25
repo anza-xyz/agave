@@ -1036,8 +1036,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  processsing. Direct I/O can improve performance by bypassing OS page cache, but \
                  requires the file systems hosting snapshots and accounts-db directories to \
                  support files opened with the O_DIRECT flag.",
-            )
-            .hidden(hidden_unless_forced()),
+            ),
     )
     .arg(
         Arg::with_name("accounts_index_scan_results_limit_mb")

@@ -152,8 +152,7 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .hidden(hidden_unless_forced()),
         Arg::with_name("no_accounts_db_snapshots_direct_io")
             .long("no-accounts-db-snapshots-direct-io")
-            .help("Disable direct I/O use for accounts-db snapshot operations")
-            .hidden(hidden_unless_forced()),
+            .help("Disable direct I/O use for accounts-db snapshot operations"),
     ]
     .into_boxed_slice()
 }
