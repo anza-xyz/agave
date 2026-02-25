@@ -198,7 +198,6 @@ agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
-rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
 solana-instruction-error = { workspace = true }
