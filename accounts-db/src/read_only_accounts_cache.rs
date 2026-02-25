@@ -600,4 +600,46 @@ mod tests {
         assert_eq!(cache.cache_len(), MAX_ENTRIES);
         assert_eq!(cache.data_size(), MAX_CACHE_SIZE);
     }
+
+    #[test]
+    fn test_cache_len_sequential_add_remove() {
+        const ACCOUNT_DATA_SIZE: usize = 16;
+        const NUM_ACCOUNTS: usize = 1_000;
+        let cache = ReadOnlyAccountsCache::new(
+            usize::MAX,
+            usize::MAX,
+            1, /* evictions never trigger */
+        );
+
+        let pubkeys: Vec<_> = (0..NUM_ACCOUNTS).map(|_| Pubkey::new_unique()).collect();
+
+        for (i, pubkey) in pubkeys.iter().enumerate() {
+            let slot = i as Slot;
+            let account = AccountSharedData::new(i as u64, ACCOUNT_DATA_SIZE, &Pubkey::default());
+            cache.store(*pubkey, slot, account);
+        }
+
+        // Updating an existing entry should not change the tracked length.
+        for (i, pubkey) in pubkeys.iter().enumerate() {
+            let slot = i.saturating_add(1) as Slot;
+            let account = AccountSharedData::new(
+                i.saturating_add(1) as u64,
+                ACCOUNT_DATA_SIZE,
+                &Pubkey::default(),
+            );
+            cache.store(*pubkey, slot, account);
+            assert_eq!(cache.cache_len(), NUM_ACCOUNTS);
+        }
+
+        for (index, pubkey) in pubkeys.iter().enumerate() {
+            let removed = cache
+                .remove(pubkey)
+                .unwrap_or_else(|| panic!("missing account #{index}"));
+            assert_eq!(removed.data().len(), ACCOUNT_DATA_SIZE);
+            assert_eq!(cache.cache_len(), NUM_ACCOUNTS - index - 1);
+        }
+
+        assert_eq!(cache.cache_len(), 0);
+        assert!(cache.remove(&Pubkey::new_unique()).is_none());
+    }
 }
