@@ -33,6 +33,7 @@ use {
     solana_streamer::{
         nonblocking::simple_qos::SimpleQosConfig,
         quic::{QuicStreamerConfig, spawn_simple_qos_server},
+        quic_xdp_socket::QuicSocket,
         streamer::StakedNodes,
     },
     solana_system_transaction as system_transaction,
@@ -479,7 +480,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     let result = spawn_simple_qos_server(
         "solAlpenglowTest",
         "alpenglow_local_cluster_test",
-        [vote_listener_socket],
+        vec![QuicSocket::new(vote_listener_socket, None)],
         &Keypair::new(),
         sender,
         staked_nodes,

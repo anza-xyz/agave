@@ -100,7 +100,7 @@ impl QuicXdpSocket {
             ingress_kernel_udp: UdpSocket::new(socket)?,
             egress_xdp: IndexedXdpSender {
                 xdp_sender,
-                src_addr: src_addr.into(),
+                src_addr,
                 next_sender: AtomicUsize::new(0),
             },
         })
@@ -132,13 +132,11 @@ impl AsyncUdpSocket for QuicXdpSocket {
     fn try_send(&self, t: &Transmit<'_>) -> io::Result<()> {
         let payload = Bytes::from(t.contents.to_vec());
         match self.egress_xdp.try_send(t.destination, payload) {
-            Ok(()) => {
-                return Ok(());
-            }
-            Err(TrySendError::Full(_)) => {
-                return Err(io::ErrorKind::WouldBlock.into());
-            }
-            Err(TrySendError::Disconnected(_)) => return Err(io::ErrorKind::BrokenPipe.into()),
+            Ok(()) => Ok(()),
+
+            Err(TrySendError::Full(_)) => Err(io::ErrorKind::WouldBlock.into()),
+
+            Err(TrySendError::Disconnected(_)) => Err(io::ErrorKind::BrokenPipe.into()),
         }
     }
 

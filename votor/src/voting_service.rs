@@ -266,6 +266,7 @@ mod tests {
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
             quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_wighted_qos_server},
+            quic_xdp_socket::QuicSocket,
             streamer::StakedNodes,
         },
         std::{
@@ -375,7 +376,7 @@ mod tests {
         } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
             "voting_service_test",
-            [socket],
+            vec![QuicSocket::new(socket, None)],
             &Keypair::new(),
             sender,
             staked_nodes,
