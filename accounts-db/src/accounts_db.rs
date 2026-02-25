@@ -3875,16 +3875,6 @@ impl AccountsDb {
         load_hint: LoadHint,
         populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.do_load_with_populate_read_cache(ancestors, pubkey, load_hint, populate_read_cache)
-    }
-
-    fn do_load_with_populate_read_cache(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-        load_hint: LoadHint,
-        populate_read_cache: PopulateReadCache,
-    ) -> Option<(AccountSharedData, Slot)> {
         let starting_max_root = self.accounts_index.max_root_inclusive();
 
         let (slot, storage_location, _maybe_account_accessor) =

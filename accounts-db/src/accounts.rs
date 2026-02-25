@@ -159,25 +159,13 @@ impl Accounts {
             Err(AddressLookupError::InvalidAccountOwner)
         }
     }
-    /// Slow because lock is held for 1 operation instead of many
-    /// This always returns None for zero-lamport accounts.
-    fn load_slow(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-        load_hint: LoadHint,
-        populate_read_cache: PopulateReadCache,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db
-            .load(ancestors, pubkey, load_hint, populate_read_cache)
-    }
 
     pub fn load_with_fixed_root(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(
+        self.accounts_db.load(
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
@@ -192,7 +180,7 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(
+        self.accounts_db.load(
             ancestors,
             pubkey,
             LoadHint::FixedMaxRoot,
@@ -205,7 +193,7 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(
+        self.accounts_db.load(
             ancestors,
             pubkey,
             LoadHint::Unspecified,
