@@ -2278,7 +2278,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             enable_alt_bn128_g2_syscalls::id(),
-            "SIMD-302: Add alt_bn128 G2 syscalls",
+            "SIMD-0302: Add alt_bn128 G2 syscalls",
         ),
         (
             commission_rate_in_basis_points::id(),
@@ -2314,7 +2314,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             limit_instruction_accounts::id(),
-            "SIMD-406: Maximum instruction accounts",
+            "SIMD-0406: Maximum instruction accounts",
         ),
         (
             vote_account_initialize_v2::id(),
