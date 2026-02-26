@@ -51,16 +51,6 @@ pub struct ExecutionFlags {
     pub all_or_nothing: bool,
 }
 
-#[allow(clippy::derivable_impls)]
-impl Default for ExecutionFlags {
-    fn default() -> Self {
-        Self {
-            drop_on_failure: false,
-            all_or_nothing: false,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RetryableIndex {
     pub index: usize,
@@ -161,7 +151,10 @@ impl Consumer {
             bank,
             txs,
             check_results.into_iter(),
-            ExecutionFlags::default(),
+            ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            },
         );
 
         // Accumulate error counters from the initial checks into final results
