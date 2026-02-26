@@ -1153,10 +1153,10 @@ mod test_utils {
     use solana_program_runtime::loaded_programs::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, agave_syscalls::create_program_runtime_environment_v1,
-        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
+        super::*, solana_account::ReadableAccount,
+        solana_loader_v4_interface::state::LoaderV4State,
         solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-        solana_sdk_ids::loader_v4,
+        solana_sdk_ids::loader_v4, solana_syscalls::create_program_runtime_environment_v1,
     };
 
     #[cfg(feature = "svm-internal")]

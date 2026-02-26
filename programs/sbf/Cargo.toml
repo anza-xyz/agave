@@ -93,7 +93,6 @@ check-cfg = [
 agave-feature-set = { path = "../../feature-set", version = "=4.0.0-alpha.0" }
 agave-logger = { path = "../../logger", version = "=4.0.0-alpha.0" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=4.0.0-alpha.0" }
-agave-syscalls = { path = "../../syscalls", version = "=4.0.0-alpha.0" }
 agave-validator = { path = "../../validator", version = "=4.0.0-alpha.0" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
@@ -167,6 +166,7 @@ solana-svm-test-harness-instr = { path = "../../svm-test-harness/instr", version
 solana-svm-timings = { path = "../../svm-timings", version = "=4.0.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.0.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.0.0-alpha.0" }
+solana-syscalls = { path = "../../syscalls", version = "=4.0.0-alpha.0" }
 solana-system-interface = { version = "=3.0", features = ["bincode"] }
 solana-sysvar = "=3.1.1"
 solana-transaction-context = { path = "../../transaction-context", version = "=4.0.0-alpha.0" }
@@ -190,7 +190,6 @@ frozen-abi = []
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
-agave-syscalls = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }
@@ -250,6 +249,7 @@ solana-svm-test-harness-instr = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = "3.1.1"
 solana-transaction = "3.0.2"

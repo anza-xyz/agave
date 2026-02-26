@@ -87,7 +87,6 @@ spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 env_logger = { workspace = true }
@@ -117,6 +116,7 @@ solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "svm-internal"] }
+solana-syscalls = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }

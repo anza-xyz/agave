@@ -19,7 +19,7 @@ name = "solana_bpf_loader_program"
 [features]
 default = ["metrics"]
 agave-unstable-api = []
-metrics = ["agave-syscalls/metrics", "solana-program-runtime/metrics"]
+metrics = ["solana-syscalls/metrics", "solana-program-runtime/metrics"]
 sbpf-debugger = ["solana-program-runtime/sbpf-debugger", "solana-sbpf/debugger"]
 shuttle-test = [
     "solana-program-runtime/shuttle-test",
@@ -29,7 +29,6 @@ shuttle-test = [
 svm-internal = []
 
 [dependencies]
-agave-syscalls = { workspace = true }
 bincode = { workspace = true }
 qualifier_attr = { workspace = true }
 solana-account = { workspace = true }
@@ -48,6 +47,7 @@ solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-measure = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 

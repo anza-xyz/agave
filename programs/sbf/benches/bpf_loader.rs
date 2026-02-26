@@ -12,7 +12,6 @@ use {solana_keypair::Keypair, std::slice};
 extern crate test;
 
 use {
-    agave_syscalls::create_program_runtime_environment_v1,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_account::AccountSharedData,
     solana_client_traits::SyncClient,
@@ -38,6 +37,7 @@ use {
     solana_sdk_ids::{bpf_loader, native_loader},
     solana_signer::Signer,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_syscalls::create_program_runtime_environment_v1,
     solana_transaction_context::instruction_accounts::InstructionAccount,
     std::{mem, sync::Arc},
     test::Bencher,

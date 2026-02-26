@@ -7,7 +7,6 @@ use {
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
-    agave_syscalls::create_program_runtime_environment_v1,
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::Receiver,
     log::*,
@@ -67,6 +66,7 @@ use {
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
+    solana_syscalls::create_program_runtime_environment_v1,
     solana_transaction::{Transaction, TransactionError},
     solana_validator_exit::Exit,
     std::{

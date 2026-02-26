@@ -24,7 +24,6 @@ agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
-agave-syscalls = { workspace = true }
 bs58 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 clap = { workspace = true }
@@ -84,6 +83,7 @@ solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }

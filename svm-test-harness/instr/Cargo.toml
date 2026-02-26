@@ -25,7 +25,6 @@ fuzz = [
 [dependencies]
 agave-feature-set = { workspace = true, optional = true }
 agave-precompiles = { workspace = true, optional = true }
-agave-syscalls = { workspace = true }
 bincode = { workspace = true }
 env_logger = { workspace = true }
 prost = { workspace = true, optional = true }
@@ -51,6 +50,7 @@ solana-svm-log-collector = { workspace = true }
 solana-svm-test-harness-fixture = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-syscalls = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 

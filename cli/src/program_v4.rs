@@ -735,7 +735,7 @@ pub async fn process_deploy_program(
                 }
             });
     }
-    let program_runtime_environment = agave_syscalls::create_program_runtime_environment_v1(
+    let program_runtime_environment = solana_syscalls::create_program_runtime_environment_v1(
         &feature_set.runtime_features(),
         &SVMTransactionExecutionBudget::new_with_defaults(
             feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),

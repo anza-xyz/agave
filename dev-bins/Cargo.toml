@@ -48,7 +48,6 @@ agave-feature-set = { path = "../feature-set", version = "=4.0.0-alpha.0", featu
 agave-logger = { path = "../logger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "../snapshots", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-syscalls = { path = "../syscalls", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 ahash = "0.8.11"
 assert_cmd = "2.0"
 assert_matches = "1.5.0"
@@ -140,6 +139,7 @@ solana-svm-callback = { path = "../svm-callback", version = "=4.0.0-alpha.0", fe
 solana-svm-feature-set = { path = "../svm-feature-set", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-log-collector = { path = "../svm-log-collector", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "../svm-type-overrides", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-syscalls = { path = "../syscalls", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-interface = "3.0"
 solana-system-transaction = "3.0.0"
 solana-test-validator = { path = "../test-validator", version = "=4.0.0-alpha.0" }

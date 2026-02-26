@@ -1,7 +1,7 @@
 [package]
-name = "agave-syscalls"
-description = "Agave implementation of the Solana syscalls."
-documentation = "https://docs.rs/agave-syscalls"
+name = "solana-syscalls"
+description = "Solana syscalls."
+documentation = "https://docs.rs/solana-syscalls"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
