@@ -1309,6 +1309,10 @@ pub mod validator_admission_ticket {
     solana_pubkey::declare_id!("VATtb1DepUwdPh5bFVasdtkbeDNsftZSRzr2aKpKWJA");
 }
 
+pub mod integer_inflation_rewards {
+    solana_pubkey::declare_id!("iiiiizJfxinmojuyTqKwoHp61ti6RGTkreBhU7SuNGb");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2336,6 +2340,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             validator_admission_ticket::id(),
             "SIMD-0357: Alpenglow VAT implementation",
+        ),
+        (
+            integer_inflation_rewards::id(),
+            "use integer math for inflation reward calculations",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

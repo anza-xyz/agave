@@ -47,7 +47,9 @@ use {
             BLSPubkeyToRankMap, DeserializableVersionedEpochStakes, NodeVoteAccounts,
             VersionedEpochStakes,
         },
-        inflation_rewards::points::InflationPointCalculationEvent,
+        inflation_rewards::{
+            integer_inflation::IntegerInflation, points::InflationPointCalculationEvent,
+        },
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollector,
         reward_info::RewardInfo,
@@ -2496,9 +2498,24 @@ impl Bank {
             )
         };
 
-        let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
-        let validator_rewards_lamports =
-            (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64;
+        let validator_rewards_lamports = if self
+            .feature_set
+            .is_active(&feature_set::integer_inflation_rewards::id())
+        {
+            let inflation = self.inflation.read().unwrap();
+            let integer_inflation = IntegerInflation::from(&*inflation);
+            let num_slots = self.get_inflation_num_slots();
+            let slots_in_epoch = self.epoch_schedule().get_slots_in_epoch(epoch);
+
+            integer_inflation.calculate_validator_rewards_lamports(
+                num_slots,
+                slots_in_epoch,
+                capitalization,
+            )
+        } else {
+            let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
+            (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64
+        };
 
         EpochInflationRewards {
             validator_rewards_lamports,
