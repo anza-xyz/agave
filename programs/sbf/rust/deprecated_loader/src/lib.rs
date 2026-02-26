@@ -27,7 +27,7 @@ fn return_sstruct() -> SStruct {
     SStruct { x: 1, y: 2, z: 3 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 fn custom_panic(info: &core::panic::PanicInfo<'_>) {
     // Full panic reporting
     msg!(&format!("{info}"));

@@ -6,7 +6,7 @@ use {
     solana_program_entrypoint::{SUCCESS, custom_heap_default, custom_panic_default},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("Call same package");
     assert_eq!(crate::helper::many_args(1, 2, 3, 4, 5, 6, 7, 8, 9), 45);
