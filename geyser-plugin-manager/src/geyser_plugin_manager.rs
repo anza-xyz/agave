@@ -490,12 +490,9 @@ mod tests {
         agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
         arc_swap::ArcSwap,
         libloading::Library,
-        std::{
-            sync::{
-                Arc, RwLock,
-                atomic::{AtomicBool, Ordering},
-            },
-            time::Duration,
+        std::sync::{
+            Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
         },
     };
 
