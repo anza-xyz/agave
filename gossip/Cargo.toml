@@ -59,7 +59,6 @@ solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
@@ -79,7 +78,6 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
-solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-serde-varint = { workspace = true }
@@ -89,7 +87,6 @@ solana-signature = { workspace = true, default-features = false }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
