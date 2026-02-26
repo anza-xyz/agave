@@ -1,12 +1,15 @@
 use {
-    crate::bank::{Bank, EpochInflationRewards},
-    solana_account::AccountSharedData,
-    solana_clock::{Epoch, Slot},
+    crate::bank::Bank,
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_system_interface::program as system_program,
     std::sync::LazyLock,
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite},
 };
+#[cfg(test)]
+use {crate::bank::EpochInflationRewards, solana_clock::Epoch};
 
 /// The account address for the off curve account used to store metadata for calculating and
 /// paying voting rewards.
@@ -20,7 +23,7 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
 
 /// The state stored in the off curve account used to store metadata for calculating and paying
 /// voting rewards.
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub(crate) struct VoteRewardAccountState {
     /// The rewards (in lamports) that would be paid to a validator whose stake is equal to the
     /// capitalization and it voted in every slot in the epoch.  This is also the epoch inflation.
@@ -44,20 +47,17 @@ impl VoteRewardAccountState {
             Some(acct) => {
                 // unwrap should be safe as the data being deserialized was serialized by us in
                 // [`Self::set_state`].
-                acct.deserialize_data().unwrap()
+                wincode::deserialize(acct.data()).unwrap()
             }
         }
     }
 
     /// Serializes and updates [`Self`] into the accounts in the [`Bank`].
     fn set_state(&self, bank: &Bank) {
-        // TODO: use wincode instead.
-        let account_size = bincode::serialized_size(&self).unwrap();
-        let lamports = bank
-            .rent_collector()
-            .rent
-            .minimum_balance(account_size as usize);
-        let account = AccountSharedData::new_data(lamports, &self, &system_program::ID).unwrap();
+        let data = wincode::serialize(&self).unwrap();
+        let lamports = bank.rent_collector().rent.minimum_balance(data.len());
+        let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);
+        account.set_data_from_slice(&data);
         bank.store_account_and_update_capitalization(&VOTE_REWARD_ACCOUNT_ADDR, &account);
     }
 
@@ -70,6 +70,7 @@ impl VoteRewardAccountState {
     /// such this function is called with [`additional_validator_rewards`] which should be the
     /// total rewards that will be paid by PER and we use the capitalization from the previous
     /// epoch plus this value to compute the vote rewards.
+    #[cfg(test)]
     pub(crate) fn new_epoch_update_account(
         bank: &Bank,
         prev_epoch: Epoch,
@@ -78,7 +79,6 @@ impl VoteRewardAccountState {
     ) {
         let EpochInflationRewards {
             validator_rewards_lamports,
-            epoch_duration_in_years: _,
             validator_rate: _,
             foundation_rate: _,
         } = bank.calculate_epoch_inflation_rewards(
@@ -89,18 +89,6 @@ impl VoteRewardAccountState {
             epoch_validator_rewards_lamports: validator_rewards_lamports,
         };
         state.set_state(bank);
-    }
-
-    /// Returns the amount of lamports needed to store this account.
-    #[cfg(test)]
-    pub(crate) fn rent_needed_for_account(bank: &Bank) -> u64 {
-        let state = Self {
-            epoch_validator_rewards_lamports: 0,
-        };
-        let account_size = bincode::serialized_size(&state).unwrap();
-        bank.rent_collector()
-            .rent
-            .minimum_balance(account_size as usize)
     }
 }
 
