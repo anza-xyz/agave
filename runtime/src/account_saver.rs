@@ -1,6 +1,6 @@
 use {
     core::borrow::Borrow,
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_svm::{
         rollback_accounts::RollbackAccounts,
@@ -113,11 +113,23 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
             continue;
         }
 
-        // Accounts that are invoked and also not passed as an instruction
-        // account to a program don't need to be stored because it's assumed
-        // to be impossible for a committable transaction to modify an
-        // invoked account if said account isn't passed to some program.
-        if transaction.is_invoked(i) && !transaction.is_instruction_account(i) {
+        // Only store accounts that could have been modified by this transaction.
+        // An account can be modified only if:
+        // 1. It is the fee payer or
+        // 2. It is writable by one of the invoked programs
+        let is_fee_payer = *address == *transaction.fee_payer();
+
+        // Instruction account indices are u8; indices >= 256 cannot be instruction accounts.
+        let writable_by_program = match u8::try_from(i) {
+            Ok(key_index_u8) => transaction
+                .program_instructions_iter()
+                .any(|(program_id, ix)| {
+                    ix.accounts.contains(&key_index_u8) && account.owner() == program_id
+                }),
+            Err(_) => false,
+        };
+
+        if !is_fee_payer && !writable_by_program {
             continue;
         }
 
@@ -616,5 +628,105 @@ mod tests {
                 assert!(transactions.is_none());
             }
         }
+    }
+
+    /// Tests the successful-tx collection logic: we only store accounts that could
+    /// have been modified (fee payer, or writable instruction accounts owned by
+    /// the invoked program).
+    #[test]
+    fn test_collect_accounts_for_successful_tx_only_modifiable() {
+        let fee_payer = Keypair::new();
+        let program_id = Pubkey::new_unique();
+        // Account keys: [0] fee payer, [1] owned by program (in ix), [2] program,
+        // [3] other owner (in ix), [4] writable but not in any instruction.
+        let account_owned_by_program = Pubkey::new_unique();
+        let account_other_owner = Pubkey::new_unique();
+        let account_not_in_instruction = Pubkey::new_unique();
+
+        let keys = vec![
+            fee_payer.pubkey(),
+            account_owned_by_program,
+            program_id,
+            account_other_owner,
+            account_not_in_instruction,
+        ];
+        // 1 sig, 0 readonly signed, 1 readonly unsigned (index 4).
+        // So indices 0,1,2,3 writable; 4 readonly.
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![1, 3])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            1,
+            keys.clone(),
+            Hash::default(),
+            instructions,
+        );
+
+        // [0] fee payer, [1] owned by program_id, [2] program, [3] owned by system, [4] any
+        let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
+        let owned_by_program_account = AccountSharedData::new(10, 0, &program_id);
+        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let other_owner_account = AccountSharedData::new(20, 0, &system_program::id());
+        let not_in_ix_account = AccountSharedData::new(30, 0, &Pubkey::default());
+
+        let transaction_accounts = vec![
+            (keys[0], fee_payer_account),
+            (keys[1], owned_by_program_account),
+            (keys[2], program_account),
+            (keys[3], other_owner_account),
+            (keys[4], not_in_ix_account),
+        ];
+
+        let tx = new_sanitized_tx(&[&fee_payer], message, Hash::default());
+        let loaded = LoadedTransaction {
+            accounts: transaction_accounts,
+            program_indices: vec![],
+            fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::default(),
+            compute_budget: SVMTransactionExecutionBudget::default(),
+            loaded_accounts_data_size: 0,
+        };
+
+        let txs = vec![tx];
+        let processing_results = vec![new_executed_processing_result(Ok(()), loaded)];
+
+        let (collected_accounts, _) = collect_accounts_to_store(
+            &txs,
+            &None::<Vec<&SanitizedTransaction>>,
+            &processing_results,
+        );
+
+        // Should collect: fee payer (0) and account owned by program (1).
+        // Should NOT collect: program itself (2), other-owner instruction account (3),
+        // or writable-but-not-in-ix account (4).
+        assert_eq!(
+            collected_accounts.len(),
+            2,
+            "expected fee payer and one program-owned account"
+        );
+        assert!(
+            collected_accounts
+                .iter()
+                .any(|(pk, _)| *pk == &fee_payer.pubkey()),
+            "fee payer must be collected"
+        );
+        assert!(
+            collected_accounts
+                .iter()
+                .any(|(pk, _)| *pk == &account_owned_by_program),
+            "instruction account owned by invoked program must be collected"
+        );
+        assert!(
+            !collected_accounts
+                .iter()
+                .any(|(pk, _)| *pk == &account_other_owner),
+            "instruction account not owned by program must not be collected"
+        );
+        assert!(
+            !collected_accounts
+                .iter()
+                .any(|(pk, _)| *pk == &account_not_in_instruction),
+            "writable account not passed to any instruction must not be collected"
+        );
     }
 }
