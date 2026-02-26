@@ -1,4 +1,5 @@
 use {
+    crate::geyser_plugin_service::ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION,
     agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
     arc_swap::ArcSwap,
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
@@ -8,6 +9,7 @@ use {
         ops::{Deref, DerefMut},
         path::Path,
         sync::Arc,
+        thread,
     },
     tokio::sync::oneshot::Sender as OneShotSender,
 };
@@ -292,17 +294,18 @@ impl GeyserPluginManager {
     /// to the plugin before allowing it to be dropped and unloaded. This ensures
     /// that once this function returns, the plugin is fully unloaded.
     pub(crate) fn unload_plugin_blocking(mut plugin_ref: Arc<LoadedGeyserPlugin>, idx: usize) {
-        let mut current_plugin = Arc::get_mut(&mut plugin_ref);
-        // Poll every 5ms and try to obtain a mutable ref to the plugin.
-        // This allows us to ensure that we hold the last reference to the plugin.
-        while current_plugin.is_none() {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            current_plugin = Arc::get_mut(&mut plugin_ref);
+        loop {
+            match Arc::try_unwrap(plugin_ref) {
+                Ok(mut current_plugin) => {
+                    let name = current_plugin.name().to_string();
+                    current_plugin.plugin.on_unload();
+                    info!("Unloaded plugin {name} at idx {idx}");
+                    return;
+                }
+                Err(plugin_reference) => plugin_ref = plugin_reference,
+            }
+            thread::sleep(ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION);
         }
-        let current_plugin = current_plugin.unwrap();
-        let name = current_plugin.name().to_string();
-        current_plugin.plugin.on_unload();
-        info!("Unloaded plugin {name} at idx {idx}");
     }
 }
 
@@ -478,15 +481,21 @@ pub(crate) fn load_plugin_from_config(
 #[cfg(test)]
 mod tests {
     use {
-        crate::geyser_plugin_manager::{
-            GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN_CONFIG, TESTPLUGIN2_CONFIG,
+        crate::{
+            geyser_plugin_manager::{
+                GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN_CONFIG, TESTPLUGIN2_CONFIG,
+            },
+            geyser_plugin_service::ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION,
         },
         agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
         arc_swap::ArcSwap,
         libloading::Library,
-        std::sync::{
-            Arc, RwLock,
-            atomic::{AtomicBool, Ordering},
+        std::{
+            sync::{
+                Arc, RwLock,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::Duration,
         },
     };
 
@@ -677,14 +686,18 @@ mod tests {
             plugins: Vec::new(),
         };
         let mut geyser_plugin_manager_ref = plugin_manager.swap(Arc::new(empty_plugin_manager));
-        let mut geyser_plugin_manager = Arc::get_mut(&mut geyser_plugin_manager_ref);
-        // Poll every 5ms to obtain a mutable ref to the plugin manager.
-        while geyser_plugin_manager.is_none() {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            geyser_plugin_manager = Arc::get_mut(&mut geyser_plugin_manager_ref);
+        loop {
+            match Arc::try_unwrap(geyser_plugin_manager_ref) {
+                Ok(mut geyser_plugin_manager) => {
+                    geyser_plugin_manager.unload();
+                    break;
+                }
+                Err(geyser_plugin_manager_reference) => {
+                    geyser_plugin_manager_ref = geyser_plugin_manager_reference
+                }
+            }
+            std::thread::sleep(ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION);
         }
-        let geyser_plugin_manager = geyser_plugin_manager.unwrap();
-        geyser_plugin_manager.unload();
         assert!(!test_plugin_loaded.load(Ordering::Relaxed));
     }
 }

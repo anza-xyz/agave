@@ -31,6 +31,9 @@ use {
     thiserror::Error,
 };
 
+// How long to sleep between Arc::try_unwrap attempts
+pub(crate) const ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION: Duration = Duration::from_millis(5);
+
 /// The service managing the Geyser plugin workflow.
 pub struct GeyserPluginService {
     slot_status_observer: Option<SlotStatusObserver>,
@@ -207,14 +210,18 @@ impl GeyserPluginService {
         };
         let mut geyser_plugin_manager_ref =
             self.plugin_manager.swap(Arc::new(empty_plugin_manager));
-        let mut geyser_plugin_manager = Arc::get_mut(&mut geyser_plugin_manager_ref);
-        // Poll every 5ms to obtain a mutable ref to the plugin manager.
-        while geyser_plugin_manager.is_none() {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            geyser_plugin_manager = Arc::get_mut(&mut geyser_plugin_manager_ref);
+        loop {
+            match Arc::try_unwrap(geyser_plugin_manager_ref) {
+                Ok(mut geyser_plugin_manager) => {
+                    geyser_plugin_manager.unload();
+                    break;
+                }
+                Err(geyser_plugin_manager_reference) => {
+                    geyser_plugin_manager_ref = geyser_plugin_manager_reference
+                }
+            }
+            thread::sleep(ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION);
         }
-        let geyser_plugin_manager = geyser_plugin_manager.unwrap();
-        geyser_plugin_manager.unload();
 
         Ok(())
     }
