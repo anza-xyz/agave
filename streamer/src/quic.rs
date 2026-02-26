@@ -6,6 +6,7 @@ use {
             simple_qos::{SimpleQos, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
+        quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
     crossbeam_channel::Sender,
@@ -20,7 +21,6 @@ use {
     solana_perf::packet::PacketBatch,
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate, tls_server_config_builder},
     std::{
-        net::UdpSocket,
         num::NonZeroUsize,
         sync::{
             Arc, Mutex, RwLock,
@@ -610,7 +610,7 @@ fn spawn_runtime_and_server<Q, C>(
     thread_name: &'static str,
     metrics_name: &'static str,
     stats: Arc<StreamerStats>,
-    sockets: impl IntoIterator<Item = UdpSocket>,
+    sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
@@ -658,7 +658,7 @@ where
 pub fn spawn_stake_wighted_qos_server(
     thread_name: &'static str,
     metrics_name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
+    sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -690,7 +690,7 @@ pub fn spawn_stake_wighted_qos_server(
 pub fn spawn_simple_qos_server(
     thread_name: &'static str,
     metrics_name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
+    sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -763,7 +763,7 @@ mod test {
         } = spawn_simple_qos_server(
             "solQuicTest",
             "quic_streamer_test",
-            [s],
+            [s.into()],
             &keypair,
             sender,
             staked_nodes,
@@ -796,7 +796,7 @@ mod test {
         } = spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
-            [s],
+            [s.into()],
             &keypair,
             sender,
             staked_nodes,
@@ -852,7 +852,7 @@ mod test {
         } = spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
-            [s],
+            [s.into()],
             &keypair,
             sender,
             staked_nodes,
@@ -944,7 +944,7 @@ mod test {
         } = spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
-            [s],
+            [s.into()],
             &keypair,
             sender,
             staked_nodes,
