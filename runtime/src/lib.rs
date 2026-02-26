@@ -8,6 +8,7 @@ pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
 pub mod bank_utils;
+pub mod block_component_processor;
 pub mod commitment;
 pub mod dependency_tracker;
 pub mod epoch_stakes;
