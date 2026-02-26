@@ -3,9 +3,9 @@
 mod test_vectors;
 
 use {
-    agave_bls12_381::*,
     bytemuck::pod_read_unaligned,
     criterion::{BenchmarkId, Criterion, criterion_group, criterion_main},
+    solana_bls12_381::*,
     test_vectors::*,
 };
 
