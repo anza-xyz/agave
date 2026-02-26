@@ -26,6 +26,8 @@ pub struct BlockstoreInsertionMetrics {
     pub index_meta_time_us: u64,
     pub num_shreds: usize,
     pub num_inserted: u64,
+    pub num_duplicate_shreds: u64,
+    pub duplicate_shred_handing_us: u64,
     pub num_repair: u64,
     pub num_recovered: usize,
     pub num_recovered_blockstore_error: usize,
@@ -75,6 +77,16 @@ impl BlockstoreInsertionMetrics {
                 i64
             ),
             ("num_inserted", self.num_inserted as i64, i64),
+            (
+                "num_duplicate_shreds",
+                self.num_duplicate_shreds as i64,
+                i64
+            ),
+            (
+                "duplicate_shred_handing_us",
+                self.duplicate_shred_handing_us as i64,
+                i64
+            ),
             ("num_repair", self.num_repair as i64, i64),
             ("num_recovered", self.num_recovered as i64, i64),
             (
