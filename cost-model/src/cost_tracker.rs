@@ -312,7 +312,7 @@ impl CostTracker {
     ) -> Result<(), CostTrackerError> {
         let cost: u64 = tx_cost.sum();
 
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             // if vote transaction, check if it exceeds vote_transaction_limit
             if self.vote_cost.saturating_add(cost) > self.vote_cost_limit {
                 return Err(CostTrackerError::WouldExceedVoteMaxLimit);
@@ -396,7 +396,7 @@ impl CostTracker {
             costliest_account_cost = costliest_account_cost.max(*account_cost);
         }
         self.block_cost.fetch_add(adjustment);
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_add(adjustment);
         }
 
@@ -417,7 +417,7 @@ impl CostTracker {
             *account_cost = account_cost.saturating_sub(adjustment);
         }
         self.block_cost.fetch_sub(adjustment);
-        if tx_cost.is_simple_vote() {
+        if tx_cost.should_track_as_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_sub(adjustment);
         }
     }
