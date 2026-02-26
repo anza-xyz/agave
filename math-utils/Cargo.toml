@@ -1,0 +1,22 @@
+[package]
+name = "agave-math-utils"
+description = { workspace = true }
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+num-traits = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+test-case = { workspace = true }
+
+[lints]
+workspace = true
