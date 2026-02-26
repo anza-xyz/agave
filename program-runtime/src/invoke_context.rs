@@ -1260,7 +1260,6 @@ mod tests {
             2,
         );
 
-        // To be uncommented when we reorder the trace
         transaction_context
             .configure_instruction_at_index(
                 0,
