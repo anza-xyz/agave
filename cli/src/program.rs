@@ -3343,14 +3343,8 @@ async fn send_deploy_messages(
                 }
             }
 
-            let connection_cache = {
-                #[cfg(feature = "dev-context-only-utils")]
-                let cache =
-                    ConnectionCache::new_quic_for_tests("connection_cache_cli_program_quic", 1);
-                #[cfg(not(feature = "dev-context-only-utils"))]
-                let cache = ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
-                cache
-            };
+            let connection_cache =
+                ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
             let transaction_errors = match connection_cache {
                 ConnectionCache::Udp(cache) => {
                     solana_tpu_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
