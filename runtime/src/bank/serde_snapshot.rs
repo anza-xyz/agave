@@ -122,8 +122,8 @@ mod tests {
                 &bank2.get_snapshot_storages(None),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
-                    obsolete_incremental_snapshot_persistence: None,
-                    obsolete_epoch_accounts_hash: None,
+                    unused_incremental_snapshot_persistence: None,
+                    unused_epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                 },
@@ -316,7 +316,7 @@ mod tests {
     mod test_bank_serialize {
         use {
             super::*,
-            crate::{bank::BankHashStats, serde_snapshot::ObsoleteIncrementalSnapshotPersistence},
+            crate::{bank::BankHashStats, serde_snapshot::UnusedIncrementalSnapshotPersistence},
             solana_accounts_db::accounts_hash::AccountsLtHash,
             solana_frozen_abi::abi_example::AbiExample,
             solana_hash::Hash,
@@ -345,7 +345,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "EEwojKqUDSpYNeutW56K9bsJmsjCMZn8i4n3qgvJYRxf")
+            frozen_abi(digest = "FCDuswxZnGvvJURSkrQPshX45a25CR6UAmPgzGeUfMFv")
         )]
         #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
@@ -362,7 +362,7 @@ mod tests {
             // ensure there is at least one snapshot storage example for ABI digesting
             assert!(!snapshot_storages.is_empty());
 
-            let incremental_snapshot_persistence = ObsoleteIncrementalSnapshotPersistence {
+            let incremental_snapshot_persistence = UnusedIncrementalSnapshotPersistence {
                 full_slot: u64::default(),
                 full_hash: [1; 32],
                 full_capitalization: u64::default(),
@@ -379,10 +379,8 @@ mod tests {
                 &snapshot_storages,
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
-                    obsolete_incremental_snapshot_persistence: Some(
-                        incremental_snapshot_persistence,
-                    ),
-                    obsolete_epoch_accounts_hash: Some(Hash::new_unique()),
+                    unused_incremental_snapshot_persistence: Some(incremental_snapshot_persistence),
+                    unused_epoch_accounts_hash: Some(Hash::new_unique()),
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },
