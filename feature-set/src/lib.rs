@@ -1286,7 +1286,7 @@ pub mod set_lamports_per_byte_to_696 {
 }
 
 pub mod stop_use_static_simple_vote_tx_cost {
-    solana_pubkey::declare_id!("NSVt1s8oP1A9NjEc6UNcj2voeCcfzHaq4jZTiUL2Mf5");
+    solana_pubkey::declare_id!("2GCrNXbzmt4xrwdcKS2RdsLzsgu4V5zHAemW57pcHT6a");
 }
 
 pub mod limit_instruction_accounts {
