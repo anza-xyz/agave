@@ -1676,10 +1676,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             enable_bpf_loader_extend_program_ix::id(),
             "enable bpf upgradeable loader ExtendProgram instruction #25234",
         ),
-        (
-            skip_rent_rewrites::id(),
-            "skip rewriting rent exempt accounts during rent collection #26491",
-        ),
+        (skip_rent_rewrites::id(), "SIMD-0183: Skip rent rewrites"),
         (
             enable_early_verification_of_account_modifications::id(),
             "enable early verification of account modifications #25899",
@@ -1947,7 +1944,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             disable_rent_fees_collection::id(),
-            "Disable rent fees collection #33945",
+            "SIMD-0084: Disable rent fees collection",
         ),
         (
             enable_zk_transfer_with_fee::id(),
@@ -2017,7 +2014,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             reward_full_priority_fee::id(),
-            "Reward full priority fee to validators #34731",
+            "SIMD-0096: Reward full priority fee to validators",
         ),
         (
             abort_on_invalid_curve::id(),
@@ -2025,24 +2022,24 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             get_sysvar_syscall_enabled::id(),
-            "Enable syscall for fetching Sysvar bytes #615",
+            "SIMD-0127: Enable syscall for fetching Sysvar bytes",
         ),
         (
             migrate_feature_gate_program_to_core_bpf::id(),
-            "Migrate Feature Gate program to Core BPF (programify) #1003",
+            "SIMD-0089: Migrate Feature Gate program to Core BPF (programify)",
         ),
         (vote_only_full_fec_sets::id(), "vote only full fec sets"),
         (
             migrate_config_program_to_core_bpf::id(),
-            "Migrate Config program to Core BPF #1378",
+            "SIMD-0140: Migrate Config program to Core BPF",
         ),
         (
             enable_get_epoch_stake_syscall::id(),
-            "Enable syscall: sol_get_epoch_stake #884",
+            "SIMD-0133: Enable syscall: sol_get_epoch_stake",
         ),
         (
             migrate_address_lookup_table_program_to_core_bpf::id(),
-            "Migrate Address Lookup Table program to Core BPF #1651",
+            "SIMD-0128: Migrate Address Lookup Table program to Core BPF",
         ),
         (
             zk_elgamal_proof_program_enabled::id(),
