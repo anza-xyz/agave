@@ -2,6 +2,7 @@
 
 pub mod dir_remover;
 pub mod file_creator;
+pub mod file_writer;
 pub mod memory;
 pub mod sequential_file_reader;
 pub(crate) mod sqpoll;

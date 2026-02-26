@@ -255,3 +255,9 @@ impl IoBufferChunk {
         unsafe { ring.register_buffers(&iovecs) }
     }
 }
+
+impl AsMut<[u8]> for IoBufferChunk {
+    fn as_mut(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.ptr, self.size as usize) }
+    }
+}

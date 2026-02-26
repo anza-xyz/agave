@@ -57,7 +57,8 @@ const MAX_OPEN_FILES: usize = 512;
 // (on open, since in accounts-db most files land in a single dir).
 const DEFAULT_MAX_IOWQ_WORKERS: u32 = 4;
 
-const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::from_millis(10));
+pub(crate) const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> =
+    Some(Duration::from_millis(10));
 
 /// Utility for building [`IoUringFileCreator`] with specified tuning options.
 pub struct IoUringFileCreatorBuilder<'sp> {
