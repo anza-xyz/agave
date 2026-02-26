@@ -2749,7 +2749,7 @@ impl AccountsDb {
         time.stop();
 
         self.stats
-            .dropped_stores
+            .dropped_stores_count
             .fetch_add(dead_storages_len as u64, Ordering::Relaxed);
         stats
             .drop_storage_entries_elapsed
@@ -2972,15 +2972,15 @@ impl AccountsDb {
             Ordering::Relaxed,
         );
         shrink_stats.store_accounts_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.store_accounts_elapsed,
+            stats_sub.store_accounts_timing.store_accounts_us,
             Ordering::Relaxed,
         );
         shrink_stats.update_index_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.update_index_elapsed,
+            stats_sub.store_accounts_timing.update_index_us,
             Ordering::Relaxed,
         );
         shrink_stats.handle_reclaims_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.handle_reclaims_elapsed,
+            stats_sub.store_accounts_timing.handle_reclaims_us,
             Ordering::Relaxed,
         );
         shrink_stats
@@ -4083,7 +4083,7 @@ impl AccountsDb {
         }
 
         purge_stats
-            .remove_cache_elapsed
+            .remove_cache_us
             .fetch_add(remove_cache_elapsed_across_slots, Ordering::Relaxed);
         purge_stats
             .num_cached_slots_removed
@@ -4114,7 +4114,7 @@ impl AccountsDb {
         );
         safety_checks_elapsed.stop();
         purge_stats
-            .safety_checks_elapsed
+            .safety_checks_us
             .fetch_add(safety_checks_elapsed.as_us(), Ordering::Relaxed);
 
         let mut total_removed_stored_bytes = 0;
@@ -4138,22 +4138,22 @@ impl AccountsDb {
         drop_storage_entries_elapsed.stop();
 
         purge_stats
-            .remove_storage_entries_elapsed
+            .remove_storage_entries_us
             .fetch_add(remove_storage_entries_elapsed.as_us(), Ordering::Relaxed);
         purge_stats
-            .drop_storage_entries_elapsed
+            .drop_storage_entries_us
             .fetch_add(drop_storage_entries_elapsed.as_us(), Ordering::Relaxed);
         purge_stats
             .num_stored_slots_removed
             .fetch_add(num_stored_slots_removed, Ordering::Relaxed);
         purge_stats
-            .total_removed_storage_entries
+            .total_num_stored_slots_removed
             .fetch_add(num_stored_slots_removed, Ordering::Relaxed);
         purge_stats
             .total_removed_stored_bytes
             .fetch_add(total_removed_stored_bytes, Ordering::Relaxed);
         self.stats
-            .dropped_stores
+            .dropped_stores_count
             .fetch_add(num_stored_slots_removed as u64, Ordering::Relaxed);
     }
 
@@ -4207,7 +4207,7 @@ impl AccountsDb {
         }
         scan_storages_elapsed.stop();
         purge_stats
-            .scan_storages_elapsed
+            .scan_storages_us
             .fetch_add(scan_storages_elapsed.as_us(), Ordering::Relaxed);
 
         let mut purge_accounts_index_elapsed = Measure::start("purge_accounts_index_elapsed");
@@ -4215,7 +4215,7 @@ impl AccountsDb {
         let (reclaims, pubkeys_removed_from_accounts_index) = self.purge_keys_exact(stored_keys);
         purge_accounts_index_elapsed.stop();
         purge_stats
-            .purge_accounts_index_elapsed
+            .purge_accounts_index_us
             .fetch_add(purge_accounts_index_elapsed.as_us(), Ordering::Relaxed);
 
         // `handle_reclaims()` should remove all the account index entries and
@@ -4235,7 +4235,7 @@ impl AccountsDb {
         }
         handle_reclaims_elapsed.stop();
         purge_stats
-            .handle_reclaims_elapsed
+            .handle_reclaims_us
             .fetch_add(handle_reclaims_elapsed.as_us(), Ordering::Relaxed);
         // After handling the reclaimed entries, this slot's
         // storage entries should be purged from self.storage
@@ -4261,7 +4261,7 @@ impl AccountsDb {
             .filter(|slot| !self.accounts_index.is_alive_root(**slot));
         safety_checks_elapsed.stop();
         self.external_purge_slots_stats
-            .safety_checks_elapsed
+            .safety_checks_us
             .fetch_add(safety_checks_elapsed.as_us(), Ordering::Relaxed);
         self.purge_slots_from_cache_and_store(non_roots, &self.external_purge_slots_stats);
         self.external_purge_slots_stats
@@ -4489,14 +4489,14 @@ impl AccountsDb {
                 ),
                 ("num_accounts_saved", flush_stats.num_accounts_purged.0, i64),
                 (
-                    "account_bytes_flushed",
+                    "num_bytes_flushed",
                     flush_stats.num_bytes_flushed.0,
                     i64
                 ),
                 ("account_bytes_saved", flush_stats.num_bytes_purged.0, i64),
-                ("total_cache_size", self.accounts_cache.size(), i64),
+                ("total_cache_size_bytes", self.accounts_cache.size(), i64),
                 ("total_frozen_slots", excess_slot_count, i64),
-                ("total_slots", self.accounts_cache.num_slots(), i64),
+                ("total_num_slots", self.accounts_cache.num_slots(), i64),
             );
         }
 
@@ -4512,9 +4512,9 @@ impl AccountsDb {
                 unflushable_unrooted_slot_count,
                 i64
             ),
-            ("flush_roots_elapsed", flush_roots_elapsed.as_us(), i64),
+            ("flush_roots_us", flush_roots_elapsed.as_us(), i64),
             (
-                "account_bytes_flushed",
+                "num_bytes_flushed",
                 flush_stats.num_bytes_flushed.0,
                 i64
             ),
@@ -4532,17 +4532,17 @@ impl AccountsDb {
             ),
             (
                 "update_index_us",
-                flush_stats.store_accounts_timing.update_index_elapsed,
+                flush_stats.store_accounts_timing.update_index_us,
                 i64
             ),
             (
-                "store_accounts_elapsed_us",
-                flush_stats.store_accounts_timing.store_accounts_elapsed,
+                "store_accounts_us",
+                flush_stats.store_accounts_timing.store_accounts_us,
                 i64
             ),
             (
-                "handle_reclaims_elapsed_us",
-                flush_stats.store_accounts_timing.handle_reclaims_elapsed,
+                "handle_reclaims_us",
+                flush_stats.store_accounts_timing.handle_reclaims_us,
                 i64
             ),
         );
@@ -4835,7 +4835,7 @@ impl AccountsDb {
 
         datapoint_info!(
             "accounts_db-stores",
-            ("total_count", total_count, i64),
+            ("total_stores", total_count, i64),
             ("total_bytes", total_bytes, i64),
             ("total_alive_bytes", total_alive_bytes, i64),
             ("total_alive_ratio", total_alive_ratio, f64),
@@ -5473,7 +5473,7 @@ impl AccountsDb {
         });
 
         self.stats
-            .store_total_data
+            .store_data_total_bytes
             .fetch_add(total_data as u64, Ordering::Relaxed);
 
         // Store the accounts in the write cache
@@ -5492,7 +5492,7 @@ impl AccountsDb {
 
         update_index_time.stop();
         self.stats
-            .store_update_index
+            .store_update_index_us
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
         self.stats.num_store_accounts_to_cache.fetch_add(
             cache_account_store_stats.num_accounts_stored,
@@ -5580,7 +5580,7 @@ impl AccountsDb {
 
         update_index_time.stop();
         self.stats
-            .store_update_index
+            .store_update_index_us
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
         self.stats
             .num_store_accounts_to_storage
@@ -5588,7 +5588,7 @@ impl AccountsDb {
 
         // If there are any reclaims then they should be handled. Reclaims affect
         // all storages, and may result in the removal of dead storages.
-        let mut handle_reclaims_elapsed = 0;
+        let mut handle_reclaims_elapsed_us = 0;
 
         // since reclaims only contains non-empty SlotList<AccountInfo>, we
         // should skip handle_reclaims only when reclaims is empty. No need to
@@ -5608,7 +5608,7 @@ impl AccountsDb {
                 MarkAccountsObsolete::Yes(slot),
             );
             handle_reclaims_time.stop();
-            handle_reclaims_elapsed = handle_reclaims_time.as_us();
+            handle_reclaims_elapsed_us = handle_reclaims_time.as_us();
             self.stats.num_obsolete_slots_removed.fetch_add(
                 purge_stats.num_stored_slots_removed.load(Ordering::Relaxed),
                 Ordering::Relaxed,
@@ -5620,14 +5620,14 @@ impl AccountsDb {
                 Ordering::Relaxed,
             );
             self.stats
-                .store_handle_reclaims
-                .fetch_add(handle_reclaims_elapsed, Ordering::Relaxed);
+                .store_handle_reclaims_us
+                .fetch_add(handle_reclaims_elapsed_us, Ordering::Relaxed);
         }
 
         StoreAccountsTiming {
-            store_accounts_elapsed: store_accounts_time.as_us(),
-            update_index_elapsed: update_index_time.as_us(),
-            handle_reclaims_elapsed,
+            store_accounts_us: store_accounts_time.as_us(),
+            update_index_us: update_index_time.as_us(),
+            handle_reclaims_us: handle_reclaims_elapsed_us,
         }
     }
 
@@ -5739,7 +5739,7 @@ impl AccountsDb {
         }
 
         self.stats
-            .store_append_accounts
+            .store_append_accounts_us
             .fetch_add(total_append_accounts_us, Ordering::Relaxed);
 
         infos
@@ -5809,18 +5809,22 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "update_index",
-                    self.stats.store_update_index.swap(0, Ordering::Relaxed),
+                    "store_update_index_us",
+                    self.stats.store_update_index_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "handle_reclaims",
-                    self.stats.store_handle_reclaims.swap(0, Ordering::Relaxed),
+                    "store_handle_reclaims_us",
+                    self.stats
+                        .store_handle_reclaims_us
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "append_accounts",
-                    self.stats.store_append_accounts.swap(0, Ordering::Relaxed),
+                    "store_append_accounts_us",
+                    self.stats
+                        .store_append_accounts_us
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -5845,8 +5849,8 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "total_data",
-                    self.stats.store_total_data.swap(0, Ordering::Relaxed),
+                    "store_data_total_bytes",
+                    self.stats.store_data_total_bytes.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -5974,8 +5978,8 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "dropped_stores",
-                    self.stats.dropped_stores.swap(0, Ordering::Relaxed),
+                    "dropped_stores_count",
+                    self.stats.dropped_stores_count.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -6557,8 +6561,9 @@ impl AccountsDb {
                 }
                 ObsoleteAccountsStats {
                     accounts_marked_obsolete: reclaims.len() as u64,
-                    slots_removed: stats.total_removed_storage_entries.load(Ordering::Relaxed)
-                        as u64,
+                    slots_removed: stats
+                        .total_num_stored_slots_removed
+                        .load(Ordering::Relaxed) as u64,
                 }
             })
             .sum();
