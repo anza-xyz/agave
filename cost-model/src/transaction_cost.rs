@@ -55,9 +55,7 @@ impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
     pub fn is_simple_vote(&self) -> bool {
         match self {
             Self::SimpleVote { .. } => true,
-            Self::Transaction(usage_details) => {
-                usage_details.transaction.is_simple_vote_transaction()
-            }
+            Self::Transaction(_) => false,
         }
     }
 
