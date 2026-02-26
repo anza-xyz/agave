@@ -122,7 +122,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     };
 
     let result = {
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
             .get_recent_blockhashes()
             .ok()

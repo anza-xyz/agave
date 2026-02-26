@@ -371,10 +371,13 @@ impl ProgramCacheEntry {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         #[cfg(feature = "metrics")]
         let load_elf_time = Measure::start("load_elf_time");
-        // The following unused_mut exception is needed for architectures that do not
-        // support JIT compilation.
-        #[allow(unused_mut)]
+
+        #[cfg_attr(
+            not(all(not(target_os = "windows"), target_arch = "x86_64")),
+            expect(unused_mut)
+        )]
         let mut executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
+
         #[cfg(feature = "metrics")]
         {
             metrics.load_elf_us = load_elf_time.end_as_us();
@@ -1301,7 +1304,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             let mut rng = rng();
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
-            #[allow(deprecated)]
+            #[expect(deprecated)]
             let index = rng.gen_range(0..candidates.len());
             let usage_counter = candidates
                 .get(index)

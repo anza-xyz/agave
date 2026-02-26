@@ -344,7 +344,7 @@ impl WaitReason {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum SchedulerStatus {
     /// Unified scheduler is disabled or installed scheduler is consumed by

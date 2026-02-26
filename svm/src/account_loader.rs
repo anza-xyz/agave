@@ -163,7 +163,7 @@ pub struct FeesOnlyTransaction {
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     loaded_accounts: AHashMap<Pubkey, (AccountSharedData, Slot)>,
     callbacks: &'a CB,
-    #[allow(unused)]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
 

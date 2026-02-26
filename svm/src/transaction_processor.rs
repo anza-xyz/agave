@@ -917,7 +917,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Execute a transaction using the provided loaded accounts and update
     /// the executors cache if the transaction was successful.
-    #[allow(clippy::too_many_arguments)]
     fn execute_loaded_transaction<CB: TransactionProcessingCallback>(
         &self,
         callback: &CB,

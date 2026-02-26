@@ -1177,7 +1177,7 @@ impl Bank {
         bank
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new_from_genesis(
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
@@ -1185,10 +1185,15 @@ impl Bank {
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_db_config: AccountsDbConfig,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
-        #[allow(unused)] leader_id_for_tests: Option<Pubkey>,
+        #[cfg_attr(not(feature = "dev-context-only-utils"), expect(unused))]
+        leader_id_for_tests: Option<Pubkey>,
         exit: Arc<AtomicBool>,
-        #[allow(unused)] genesis_hash: Option<Hash>,
-        #[allow(unused)] feature_set: Option<FeatureSet>,
+        #[cfg_attr(not(feature = "dev-context-only-utils"), expect(unused))] genesis_hash: Option<
+            Hash,
+        >,
+        #[cfg_attr(not(feature = "dev-context-only-utils"), expect(unused))] feature_set: Option<
+            FeatureSet,
+        >,
     ) -> Self {
         let accounts_db =
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
@@ -2102,7 +2107,7 @@ impl Bank {
         }
 
         let mut ancestors: Vec<_> = roots.into_iter().collect();
-        #[allow(clippy::stable_sort_primitive)]
+        #[expect(clippy::stable_sort_primitive)]
         ancestors.sort();
         ancestors
     }
@@ -2575,7 +2580,7 @@ impl Bank {
     }
 
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         self.update_sysvar_account(&sysvar::recent_blockhashes::id(), |account| {
             let recent_blockhash_iter = locked_blockhash_queue.get_recent_blockhashes();
             recent_blockhashes_account::create_account_with_data_and_fields(

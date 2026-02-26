@@ -200,7 +200,6 @@ pub struct SnapshotRootPaths {
 /// Helper type to bundle up the results from `unarchive_snapshot()`
 #[derive(Debug)]
 pub struct UnarchivedSnapshot {
-    #[allow(dead_code)]
     unpack_dir: TempDir,
     pub storage: AccountStorageMap,
     pub bank_fields: BankFieldsToDeserialize,
@@ -225,7 +224,7 @@ pub struct UnarchivedSnapshots {
 
 /// Guard type that keeps the unpack directories of snapshots alive.
 /// Once dropped, the unpack directories are removed.
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug)]
 pub struct UnarchivedSnapshotsGuard {
     full_unpack_dir: TempDir,
@@ -1446,7 +1445,7 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
 
     let snapshot_file_path = snapshot_info.snapshot_path();
     let snapshot_version_path = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let (file_receiver, stream_files_handle) = spawn_streaming_snapshot_dir_files(
         snapshot_file_path,
         snapshot_version_path,

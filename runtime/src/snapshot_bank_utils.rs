@@ -131,7 +131,7 @@ fn bank_fields_from_snapshots(
 
 /// Rebuild bank from snapshot archives.  Handles either just a full snapshot, or both a full
 /// snapshot and an incremental snapshot.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn bank_from_snapshot_archives(
     account_paths: &[PathBuf],
     bank_snapshots_dir: impl AsRef<Path>,
@@ -274,7 +274,7 @@ pub fn bank_from_snapshot_archives(
 ///
 /// This function searches `full_snapshot_archives_dir` and `incremental_snapshot_archives_dir` for
 /// the highest full snapshot and highest corresponding incremental snapshot, then rebuilds the bank.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn bank_from_latest_snapshot_archives(
     bank_snapshots_dir: impl AsRef<Path>,
     full_snapshot_archives_dir: impl AsRef<Path>,
@@ -330,7 +330,7 @@ pub fn bank_from_latest_snapshot_archives(
 }
 
 /// Build bank from a snapshot (a snapshot directory, not a snapshot archive)
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn bank_from_snapshot_dir(
     account_paths: &[PathBuf],
     bank_snapshot: &BankSnapshotInfo,

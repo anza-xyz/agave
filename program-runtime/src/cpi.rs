@@ -606,9 +606,9 @@ pub fn translate_instruction_rust(
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(account_metas.len());
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for account_index in 0..account_metas.len() {
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let account_meta = &account_metas[account_index];
         if unsafe {
             std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
@@ -738,9 +738,9 @@ pub fn translate_instruction_c(
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for account_index in 0..ix_c.accounts_len as usize {
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let account_meta = &account_metas[account_index];
         if unsafe {
             std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
@@ -1018,9 +1018,9 @@ where
     }
 
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for account_index in 0..account_infos_len as usize {
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let account_info = &account_infos[account_index];
         account_info_keys.push(translate_type::<Pubkey>(
             memory_mapping,
@@ -1086,7 +1086,7 @@ where
             .transaction_context
             .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
 
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         if callee_account.is_executable() {
             // Use the known account
             consume_compute_meter(
@@ -1114,7 +1114,7 @@ where
             if caller_account_index >= account_infos.len() {
                 return Err(Box::new(CpiError::InvalidLength));
             }
-            #[allow(clippy::indexing_slicing)]
+            #[expect(clippy::indexing_slicing)]
             let caller_account =
                 do_translate(
                     invoke_context,

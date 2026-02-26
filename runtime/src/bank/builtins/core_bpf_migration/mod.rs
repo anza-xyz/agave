@@ -320,7 +320,7 @@ impl Bank {
     ///     );
     /// }
     /// ```
-    #[allow(dead_code)] // Only used when an upgrade is configured.
+    // #[expect(dead_code)] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_core_bpf_program(
         &mut self,
         core_bpf_program_address: &Pubkey,
@@ -398,7 +398,7 @@ impl Bank {
     /// ```
     /// The `source_buffer_address` must point to a Loader v3 buffer account
     /// (state equal to [`UpgradeableLoaderState::Buffer`]).
-    #[allow(dead_code)] // Only used when an upgrade is configured.
+    // #[expect(dead_code)] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
         &mut self,
         loader_v2_bpf_program_address: &Pubkey,

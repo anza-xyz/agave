@@ -43,7 +43,7 @@ pub enum BlockFinalizationCertError {
 /// - `Finalize`: Slow finalization with both a Finalize certificate and a Notarize certificate
 /// - `FastFinalize`: Fast finalization with a single FinalizeFast certificate
 #[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum ValidatedBlockFinalizationCertKind {
     /// Slow finalization: requires both a Finalize cert and a Notarize cert for the same slot
     Finalize {

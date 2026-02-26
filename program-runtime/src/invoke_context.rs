@@ -209,7 +209,6 @@ pub struct InvokeContext<'a, 'ix_data> {
 }
 
 impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transaction_context: &'a mut TransactionContext<'ix_data>,
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
@@ -907,7 +906,7 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
     G: FnMut(&mut InvokeContext),
