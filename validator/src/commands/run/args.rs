@@ -861,8 +861,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("CPU_CORE_INDEX")
             .validator(|s| {
                 let core_index = usize::from_str(&s).map_err(|e| e.to_string())?;
-                let max_index = core_affinity::get_core_ids()
-                    .map(|cids| cids.len() - 1)
+                let max_index = agave_cpu_utils::cpu_count()
+                    .map(|count| count.saturating_sub(1))
                     .unwrap_or(0);
                 if core_index > max_index {
                     return Err(format!("core index must be in the range [0, {max_index}]"));

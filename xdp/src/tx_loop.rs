@@ -10,10 +10,10 @@ use {
             write_ip_header_for_udp, write_udp_header,
         },
         route::NextHop,
-        set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
+    agave_cpu_utils::set_cpu_affinity,
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
