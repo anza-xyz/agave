@@ -8,12 +8,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.0](#edge-channel)
-* [beta - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
-* [stable - v3.0](https://github.com/anza-xyz/agave/blob/v3.0/CHANGELOG.md)
+* [edge - v4.1](#edge-channel)
+* [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
+* [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.0.0-Unreleased
+## 4.1.0-Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+#### Changes
+
+## 4.0.0
 ### RPC
 #### Breaking
 * `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
