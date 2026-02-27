@@ -808,13 +808,13 @@ dependencies = [
  "env_logger",
  "log",
  "tokio",
- "xtask 0.1.0 (git+https://github.com/anza-xyz/xtask?rev=d189441)",
+ "xtask 0.1.0 (git+https://github.com/anza-xyz/xtask?rev=refs%2Fpull%2F23%2Fhead)",
 ]
 
 [[package]]
 name = "xtask"
 version = "0.1.0"
-source = "git+https://github.com/anza-xyz/xtask?rev=d189441#d189441c1bc86aa1741e1a079572fea00ea9b007"
+source = "git+https://github.com/anza-xyz/xtask?rev=refs%2Fpull%2F23%2Fhead#f1309a12b1cfbfb7a5f0254ee6bc2f8ac3a548f6"
 dependencies = [
  "anyhow",
  "cargo_metadata",
