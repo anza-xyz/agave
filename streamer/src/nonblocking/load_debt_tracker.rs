@@ -153,7 +153,15 @@ impl LoadDebtTracker {
     pub fn report_saturation_stats(&self, elapsed: Duration) {
         let to_sat = self.take_transitions_to_saturated();
         let to_unsat = self.take_transitions_to_unsaturated();
-        let sat_nanos = self.take_saturated_nanos();
+        let mut sat_nanos = self.take_saturated_nanos();
+        // If still saturated, account for time since the last entry.
+        if self.was_saturated.load(Ordering::Relaxed) {
+            let entered = self.saturated_since_nanos.load(Ordering::Relaxed);
+            let now = self.nanos_since_epoch();
+            if now > entered {
+                sat_nanos += now - entered;
+            }
+        }
         let elapsed_nanos = elapsed.as_nanos() as u64;
         let duty_pct = if elapsed_nanos > 0 {
             sat_nanos as f64 / elapsed_nanos as f64 * 100.0
