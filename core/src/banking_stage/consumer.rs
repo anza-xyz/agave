@@ -509,13 +509,16 @@ impl Consumer {
                 .compute_budget_instruction_details()
                 .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)?,
         );
-        let fee = solana_fee::calculate_fee(
-            transaction,
-            bank.get_lamports_per_signature() == 0,
-            bank.fee_structure().lamports_per_signature,
-            fee_budget_limits.prioritization_fee,
-            FeeFeatures::from(bank.feature_set.as_ref()),
-        );
+        let fee = if bank.get_lamports_per_signature() == 0 {
+            0
+        } else {
+            solana_fee::calculate_fee(
+                transaction,
+                bank.fee_structure().lamports_per_signature,
+                fee_budget_limits.prioritization_fee,
+                FeeFeatures::from(bank.feature_set.as_ref()),
+            )
+        };
         let (mut fee_payer_account, _slot) = bank
             .rc
             .accounts

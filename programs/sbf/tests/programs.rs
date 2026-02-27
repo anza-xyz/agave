@@ -4056,13 +4056,16 @@ fn test_program_fees() {
         )
         .unwrap_or_default(),
     );
-    let expected_normal_fee = solana_fee::calculate_fee(
-        &sanitized_message,
-        congestion_multiplier == 0,
-        fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
-        bank.feature_set.as_ref().into(),
-    );
+    let expected_normal_fee = if congestion_multiplier == 0 {
+        0
+    } else {
+        solana_fee::calculate_fee(
+            &sanitized_message,
+            fee_structure.lamports_per_signature,
+            fee_budget_limits.prioritization_fee,
+            bank.feature_set.as_ref().into(),
+        )
+    };
     bank_client
         .send_and_confirm_message(&[&mint_keypair], message)
         .unwrap();
@@ -4089,13 +4092,16 @@ fn test_program_fees() {
         )
         .unwrap_or_default(),
     );
-    let expected_prioritized_fee = solana_fee::calculate_fee(
-        &sanitized_message,
-        congestion_multiplier == 0,
-        fee_structure.lamports_per_signature,
-        fee_budget_limits.prioritization_fee,
-        bank.feature_set.as_ref().into(),
-    );
+    let expected_prioritized_fee = if congestion_multiplier == 0 {
+        0
+    } else {
+        solana_fee::calculate_fee(
+            &sanitized_message,
+            fee_structure.lamports_per_signature,
+            fee_budget_limits.prioritization_fee,
+            bank.feature_set.as_ref().into(),
+        )
+    };
     assert!(expected_normal_fee < expected_prioritized_fee);
 
     bank_client

@@ -2920,6 +2920,9 @@ impl Bank {
         message: &impl SVMMessage,
         lamports_per_signature: u64,
     ) -> u64 {
+        if lamports_per_signature == 0 {
+            return 0;
+        }
         let fee_budget_limits = FeeBudgetLimits::from(
             process_compute_budget_instructions(
                 message.program_instructions_iter(),
@@ -2929,7 +2932,6 @@ impl Bank {
         );
         solana_fee::calculate_fee(
             message,
-            lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),

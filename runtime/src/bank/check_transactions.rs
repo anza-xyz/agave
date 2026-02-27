@@ -112,7 +112,6 @@ impl Bank {
                             let fee_budget = FeeBudgetLimits::from(limit);
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
-                                false,
                                 self.fee_structure.lamports_per_signature,
                                 fee_budget.prioritization_fee,
                                 fee_features,
@@ -150,13 +149,11 @@ impl Bank {
             .collect()
     }
 
-    fn checked_transactions_details_with_test_override(
+    fn checked_transactions_details(
         nonce_address: Option<Pubkey>,
         lamports_per_signature: u64,
         mut compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> CheckedTransactionDetails {
-        // This is done to support legacy tests. The tests should be updated, and check
-        // for 0 lamports_per_signature should be removed from the code.
         if lamports_per_signature == 0 {
             compute_budget_and_limits.fee_details = FeeDetails::default();
         }
@@ -175,7 +172,7 @@ impl Bank {
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(Self::checked_transactions_details_with_test_override(
+            Ok(Self::checked_transactions_details(
                 None,
                 hash_info.lamports_per_signature(),
                 compute_budget,
@@ -183,7 +180,7 @@ impl Bank {
         } else if let Some((nonce_address, previous_lamports_per_signature)) =
             self.check_nonce_transaction_validity(tx, next_durable_nonce)
         {
-            Ok(Self::checked_transactions_details_with_test_override(
+            Ok(Self::checked_transactions_details(
                 Some(nonce_address),
                 previous_lamports_per_signature,
                 compute_budget,

@@ -9493,6 +9493,9 @@ fn calculate_test_fee(
     lamports_per_signature: u64,
     fee_structure: &FeeStructure,
 ) -> u64 {
+    if lamports_per_signature == 0 {
+        return 0;
+    }
     let fee_budget_limits = FeeBudgetLimits::from(
         process_compute_budget_instructions(
             message.program_instructions_iter(),
@@ -9502,7 +9505,6 @@ fn calculate_test_fee(
     );
     solana_fee::calculate_fee(
         message,
-        lamports_per_signature == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
         FeeFeatures {
@@ -11644,6 +11646,9 @@ fn test_failed_simulation_load_error() {
 
     bank.freeze();
     let mint_balance = bank.get_account(&mint_keypair.pubkey()).unwrap().lamports();
+    let expected_fee = bank
+        .get_fee_for_message(&new_sanitized_message(transaction.message.clone()))
+        .unwrap();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(
@@ -11656,9 +11661,9 @@ fn test_failed_simulation_load_error() {
             loaded_accounts_data_size: 0,
             return_data: None,
             inner_instructions: None,
-            fee: Some(0),
+            fee: Some(expected_fee),
             pre_balances: Some(vec![mint_balance, 0]),
-            post_balances: Some(vec![mint_balance, 0]),
+            post_balances: Some(vec![mint_balance.saturating_sub(expected_fee), 0]),
             pre_token_balances: Some(vec![]),
             post_token_balances: Some(vec![]),
         }
