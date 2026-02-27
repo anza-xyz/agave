@@ -108,6 +108,34 @@ impl<const N: usize> Signable for Ping<N> {
     }
 }
 
+#[cfg(feature = "frozen-abi")]
+impl<const N: usize> solana_frozen_abi::rand::distr::Distribution<Ping<N>>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Ping<N> {
+        let mut token = [0u8; N];
+        rng.fill(&mut token[..]);
+        Ping {
+            from: Pubkey::new_from_array(rng.random()),
+            token,
+            signature: Signature::from(rng.random::<[u8; 64]>()),
+        }
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<Pong>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Pong {
+        Pong {
+            from: Pubkey::new_from_array(rng.random()),
+            hash: Hash::new_from_array(rng.random()),
+            signature: Signature::from(rng.random::<[u8; 64]>()),
+        }
+    }
+}
+
 impl Pong {
     pub fn new<const N: usize>(ping: &Ping<N>, keypair: &Keypair) -> Self {
         let hash = hash_ping_token(&ping.token);
