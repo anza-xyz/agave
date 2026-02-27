@@ -2,7 +2,7 @@
 name = "agave-scheduling-utils"
 description = "Common utilities for building Agave scheduler implementations"
 documentation = "https://docs.rs/agave-scheduling-utils"
-version = { workspace = true }
+version = "3.1.9"
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }

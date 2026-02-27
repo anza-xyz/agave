@@ -190,6 +190,7 @@ Inflector = "0.11.4"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-bls12-381 = { path = "bls12-381", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
+agave-bridge = { git = "https://github.com/OliverNChalk/agave-scheduler" }
 agave-feature-set = { path = "feature-set", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.1.0-alpha.0" }
@@ -198,8 +199,10 @@ agave-logger = { path = "logger", version = "=4.1.0-alpha.0", features = ["agave
 agave-precompiles = { path = "precompiles", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-random = { path = "random", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-agave-scheduling-utils = { path = "scheduling-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
+agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.9", features = ["agave-unstable-api"] }
+agave-scheduler-greedy-throughput = { git = "https://github.com/OliverNChalk/agave-scheduler" }
+agave-schedulers = { git = "https://github.com/OliverNChalk/agave-scheduler" }
+agave-scheduling-utils = { path = "scheduling-utils", version = "=3.1.9", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-syscalls = { path = "syscalls", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 agave-transaction-view = { path = "transaction-view", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -661,3 +664,4 @@ codegen-units = 1
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
+agave-scheduling-utils = { path = "./scheduling-utils" }

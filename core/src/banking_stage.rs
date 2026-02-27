@@ -408,6 +408,15 @@ impl BankingStage {
             prioritization_fee_cache,
         );
 
+        let initial_args = match cfg!(unix) {
+            true => BankingControlMsg::ExternalAsThread,
+            false => BankingControlMsg::Internal {
+                block_production_method,
+                num_workers,
+                config: scheduler_config,
+            },
+        };
+
         // Setup the manager thread state.
         let banking_shutdown_signal = CancellationToken::new();
         let manager = BankingStage {
@@ -433,11 +442,7 @@ impl BankingStage {
                     .enable_all()
                     .build()
                     .unwrap();
-                rt.block_on(manager.run(BankingControlMsg::Internal {
-                    block_production_method,
-                    num_workers,
-                    config: scheduler_config,
-                }))
+                rt.block_on(manager.run(initial_args))
             })
             .unwrap();
 
@@ -499,6 +504,11 @@ impl BankingStage {
     async fn cycle_threads_fallback(&mut self) -> Result<(), ()> {
         error!("Spawning the default block production method as a fallback...");
 
+        #[cfg(unix)]
+        return self
+            .cycle_threads(BankingControlMsg::ExternalAsThread)
+            .await;
+        #[cfg(not(unix))]
         self.cycle_threads(BankingControlMsg::Internal {
             block_production_method: BlockProductionMethod::default(),
             num_workers: BankingStage::default_num_workers(),
@@ -524,6 +534,8 @@ impl BankingStage {
             },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
+            #[cfg(unix)]
+            BankingControlMsg::ExternalAsThread => self.spawn_external_as_thread(),
         })?;
 
         self.threads.extend(threads.into_iter().map(|handle| {
@@ -732,7 +744,14 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
+        agave_bridge::SchedulerBindings,
+        agave_scheduler_greedy_throughput::{GreedyThroughputArgs, GreedyThroughputScheduler},
+        agave_schedulers::shared::PriorityId,
+        agave_scheduling_utils::handshake::{
+            ClientLogon, client,
+            server::{AgaveSession, AgaveWorkerSession, Server},
+        },
+        std::os::fd::IntoRawFd,
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -827,6 +846,65 @@ mod external {
 
             Ok(threads)
         }
+
+        pub(super) fn spawn_external_as_thread(&self) -> Result<Vec<JoinHandle<()>>, ()> {
+            const WORKER_COUNT: usize = 5;
+
+            info!("Spawning external scheduler as thread");
+
+            let logon = ClientLogon {
+                worker_count: WORKER_COUNT,
+                allocator_size: 512 * 1024 * 1024,
+                allocator_handles: 1,
+                tpu_to_pack_capacity: 128,
+                progress_tracker_capacity: 128,
+                pack_to_worker_capacity: 128,
+                worker_to_pack_capacity: 128,
+                flags: 0,
+            };
+
+            // Agave-side session.
+            let (agave_session, files) = Server::setup_session(logon).map_err(|err| {
+                error!("Failed to setup in-process session; err={err}");
+            })?;
+
+            // Sscheduler-side session.
+            let fds: Vec<_> = files.into_iter().map(|file| file.into_raw_fd()).collect();
+            let client_session = client::setup_session(&logon, fds).map_err(|err| {
+                error!("Failed to setup client session; err={err}");
+            })?;
+
+            // Spawn Agave-side workers.
+            let mut threads = self.spawn_external(agave_session)?;
+
+            // Spawn the scheduler thread with the external greedy scheduler.
+            let worker_exit = self.worker_exit_signal.clone();
+            threads.push(
+                Builder::new()
+                    .name("solExtSched".to_string())
+                    .spawn(move || {
+                        let mut bridge = SchedulerBindings::<PriorityId>::new(client_session);
+                        let mut scheduler = GreedyThroughputScheduler::new(
+                            None,
+                            GreedyThroughputArgs {
+                                // TODO: Do we let the operator set this or remove
+                                // num_workers from CLI?
+                                workers: WORKER_COUNT,
+                                unchecked_capacity: 2usize.pow(16),
+                                checked_capacity: 2usize.pow(16),
+                            },
+                        );
+
+                        // Run until banking manager tells us to exit.
+                        while !worker_exit.load(Ordering::Relaxed) {
+                            scheduler.poll(&mut bridge);
+                        }
+                    })
+                    .unwrap(),
+            );
+
+            Ok(threads)
+        }
     }
 }
 
@@ -852,6 +930,8 @@ pub enum BankingControlMsg {
     External {
         session: agave_scheduling_utils::handshake::server::AgaveSession,
     },
+    #[cfg(unix)]
+    ExternalAsThread,
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
