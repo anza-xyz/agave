@@ -188,7 +188,7 @@ used_underscore_binding = "deny"
 [workspace.dependencies]
 Inflector = "0.11.4"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-agave-bls-cert-verify = { path = "bls-cert-verify", features = ["agave-unstable-api"] }
+agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-bls12-381 = { path = "bls12-381", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-feature-set = { path = "feature-set", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
