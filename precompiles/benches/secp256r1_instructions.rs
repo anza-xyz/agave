@@ -9,7 +9,7 @@ use {
         ec::{EcGroup, EcKey},
         nid::Nid,
     },
-    rand0_7::{Rng, thread_rng},
+    rand::Rng,
     solana_instruction::Instruction,
     solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
     test::Bencher,
@@ -20,12 +20,14 @@ const TX_COUNT: u16 = 5120;
 
 // prepare a bunch of unique ixs
 fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
+    let mut rng = rand::rng();
     (0..TX_COUNT)
         .map(|_| {
-            let mut rng = thread_rng();
             let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
             let secp_privkey = EcKey::generate(&group).unwrap();
-            let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0, 255)).collect();
+            let message: Vec<u8> = (0..message_length)
+                .map(|_| rng.random_range(0..255))
+                .collect();
             let signature =
                 sign_message(&message, &secp_privkey.private_key_to_der().unwrap()).unwrap();
             let mut ctx = BigNumContext::new().unwrap();
