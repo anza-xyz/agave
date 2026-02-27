@@ -160,23 +160,25 @@ impl LoadDebtTracker {
     }
 
     /// Return and reset cumulative nanos spent in saturated state.
+    /// If currently saturated, flushes the pending interval and resets
+    /// the start timestamp so the next reporting period starts fresh.
     pub fn take_saturated_nanos(&self) -> u64 {
-        self.saturated_nanos.swap(0, Ordering::Relaxed)
+        let mut nanos = self.saturated_nanos.swap(0, Ordering::Relaxed);
+        if self.was_saturated.load(Ordering::Relaxed) {
+            let now = self.nanos_since_epoch();
+            let entered = self.saturated_since_nanos.swap(now, Ordering::Relaxed);
+            if now > entered {
+                nanos += now - entered;
+            }
+        }
+        nanos
     }
 
     /// Log saturation statistics and reset counters.
     pub fn report_saturation_stats(&self, elapsed: Duration) {
         let to_sat = self.take_transitions_to_saturated();
         let to_unsat = self.take_transitions_to_unsaturated();
-        let mut sat_nanos = self.take_saturated_nanos();
-        // If still saturated, account for time since the last entry.
-        if self.was_saturated.load(Ordering::Relaxed) {
-            let entered = self.saturated_since_nanos.load(Ordering::Relaxed);
-            let now = self.nanos_since_epoch();
-            if now > entered {
-                sat_nanos += now - entered;
-            }
-        }
+        let sat_nanos = self.take_saturated_nanos();
         let elapsed_nanos = elapsed.as_nanos() as u64;
         let duty_pct = if elapsed_nanos > 0 {
             sat_nanos as f64 / elapsed_nanos as f64 * 100.0
