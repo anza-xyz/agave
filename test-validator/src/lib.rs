@@ -819,8 +819,7 @@ impl TestValidator {
         let test_validator = TestValidatorGenesis::default()
             .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
-                lamports_per_byte_year: 1,
-                exemption_threshold: 1.0,
+                lamports_per_byte: 1,
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)
@@ -848,8 +847,7 @@ impl TestValidator {
         TestValidatorGenesis::default()
             .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
-                lamports_per_byte_year: 1,
-                exemption_threshold: 1.0,
+                lamports_per_byte: 1,
                 ..Rent::default()
             })
             .faucet_addr(faucet_addr)

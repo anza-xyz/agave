@@ -385,7 +385,7 @@ smallvec = { version = "1.15.1", default-features = false, features = ["union"] 
 smpl_jwt = "0.7.1"
 socket2 = "0.6.2"
 soketto = "0.8"
-solana-account = "3.4.0"
+solana-account = "4.1.0"
 solana-account-decoder = { path = "account-decoder", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.0"
@@ -413,7 +413,7 @@ solana-cli = { path = "cli", version = "=4.1.0-alpha.0", default-features = fals
 solana-cli-config = { path = "cli-config", version = "=4.1.0-alpha.0" }
 solana-cli-output = { path = "cli-output", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-client = { path = "client", version = "=4.1.0-alpha.0" }
-solana-client-traits = "3.0.0"
+solana-client-traits = "4.0.0"
 solana-clock = "3.0.1"
 solana-cluster-type = "3.0.0"
 solana-commitment-config = "3.1.1"
@@ -439,7 +439,7 @@ solana-epoch-schedule = "3.0.0"
 solana-example-mocks = "3.0.0"
 solana-faucet = { path = "faucet", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-faucet-cli = { path = "faucet-cli", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-feature-gate-interface = "3.1.0"
+solana-feature-gate-interface = "4.0.0"
 solana-fee = { path = "fee", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-fee-calculator = "3.1.0"
 solana-fee-structure = "3.0.0"
@@ -447,7 +447,7 @@ solana-file-download = "3.1.0"
 solana-frozen-abi = "3.1.2"
 solana-frozen-abi-macro = "3.2.1"
 solana-genesis = { path = "genesis", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-genesis-config = "3.0.0"
+solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -470,14 +470,14 @@ solana-loader-v4-program = { path = "programs/loader-v4", version = "=4.1.0-alph
 solana-local-cluster = { path = "local-cluster", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-measure = { path = "measure", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-message = "3.1.0"
+solana-message = "4.0.0"
 solana-metrics = { path = "metrics", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-msg = "3.0.0"
 solana-native-token = "3.0.0"
 solana-net-utils = { path = "net-utils", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = "3.0.0"
-solana-nonce-account = "3.0.0"
+solana-nonce-account = "4.0.0"
 solana-notifier = { path = "notifier", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-offchain-message = "3.0.0"
 solana-packet = "4.0.0"
@@ -487,7 +487,7 @@ solana-poh-config = "3.0.0"
 solana-poseidon = "4.0.0"
 solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
-solana-program = { version = "3.0.0", default-features = false }
+solana-program = { version = "4.0.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.0"
@@ -501,7 +501,7 @@ solana-pubsub-client = { path = "pubsub-client", version = "=4.1.0-alpha.0" }
 solana-quic-client = { path = "quic-client", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-remote-wallet = { path = "remote-wallet", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
-solana-rent = "3.0.0"
+solana-rent = "4.1.0"
 solana-reward-info = "5.0.0"
 solana-rpc = { path = "rpc", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rpc-client = { path = "rpc-client", version = "=4.1.0-alpha.0", default-features = false }
@@ -531,7 +531,7 @@ solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.0.1"
 solana-slot-history = "3.0.0"
 solana-stable-layout = "3.0.0"
-solana-stake-interface = "2.0.2"
+solana-stake-interface = "3.0.0"
 solana-storage-bigtable = { path = "storage-bigtable", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-storage-proto = { path = "storage-proto", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "streamer", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
@@ -546,10 +546,10 @@ solana-svm-test-harness-instr = { path = "svm-test-harness/instr", version = "=4
 solana-svm-timings = { path = "svm-timings", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-system-interface = { version = "3.0", features = ["alloc","bincode","serde"] }
+solana-system-interface = { version = "3.1", features = ["alloc","bincode","serde","wincode"] }
 solana-system-program = { path = "programs/system", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-system-transaction = "3.0.0"
-solana-sysvar = "3.1.1"
+solana-system-transaction = "4.0.0"
+solana-sysvar = "4.0.0"
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "test-validator", version = "=4.1.0-alpha.0" }
 solana-time-utils = "3.0.0"
@@ -557,7 +557,7 @@ solana-tls-utils = { path = "tls-utils", version = "=4.1.0-alpha.0", features = 
 solana-tps-client = { path = "tps-client", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
 solana-tpu-client = { path = "tpu-client", version = "=4.1.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }
-solana-transaction = "3.1.0"
+solana-transaction = "4.0.0"
 solana-transaction-context = { path = "transaction-context", version = "=4.1.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-error = "3.0.0"
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=4.1.0-alpha.0", features = ["agave-unstable-api"] }

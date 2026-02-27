@@ -819,9 +819,6 @@ impl ReadableAccount for LoadedAccount<'_> {
             LoadedAccount::Cached(cached_account) => cached_account.account.rent_epoch(),
         }
     }
-    fn to_account_shared_data(&self) -> AccountSharedData {
-        self.take_account()
-    }
 }
 
 #[derive(Default)]

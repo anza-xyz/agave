@@ -35,7 +35,7 @@ solana-message = { workspace = true, features = ["serde"] }
 solana-signature = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
-solana-transaction = { workspace = true, features = ["bincode"] }
+solana-transaction = { workspace = true, features = ["wincode"] }
 
 [[bench]]
 name = "bytes"

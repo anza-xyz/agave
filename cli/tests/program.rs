@@ -52,8 +52,7 @@ fn test_validator_genesis(mint_keypair: &Keypair) -> TestValidatorGenesis {
     genesis
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
+            lamports_per_byte: 1,
             ..Rent::default()
         })
         .faucet_addr(Some(run_local_faucet_with_unique_port_for_tests(
@@ -3053,8 +3052,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     let test_validator = TestValidatorGenesis::default()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
+            lamports_per_byte: 1,
             ..Rent::default()
         })
         .rpc_config(JsonRpcConfig {

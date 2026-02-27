@@ -227,16 +227,6 @@ impl WritableAccount for TransactionAccountViewMut<'_> {
     fn set_rent_epoch(&mut self, epoch: u64) {
         self.private_fields.rent_epoch = epoch;
     }
-
-    fn create(
-        _lamports: u64,
-        _data: Vec<u8>,
-        _owner: Pubkey,
-        _executable: bool,
-        _rent_epoch: u64,
-    ) -> Self {
-        panic!("It is not possible to create a TransactionAccountMutView");
-    }
 }
 
 /// An account key and the matching account

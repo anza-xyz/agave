@@ -83,7 +83,7 @@ use {
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
     },
     solana_pubkey::Pubkey,
-    solana_rent::Rent,
+    solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
     solana_reward_info::RewardType,
     solana_sdk_ids::{
         bpf_loader, bpf_loader_upgradeable, ed25519_program, incinerator, native_loader,
@@ -274,6 +274,7 @@ fn test_bank_unix_timestamp_from_genesis() {
     assert!(bank.unix_timestamp_from_genesis() - genesis_config.creation_time >= 1);
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_bank_new() {
     let dummy_leader_pubkey = solana_pubkey::new_rand();
@@ -291,9 +292,9 @@ fn test_bank_new() {
     );
 
     genesis_config.rent = Rent {
-        lamports_per_byte_year: 5,
-        exemption_threshold: 1.2,
-        burn_percent: 5,
+        lamports_per_byte: 5,
+        exemption_threshold: 2.0f64.to_le_bytes(),
+        ..Rent::default()
     };
 
     let bank = Bank::new_for_tests(&genesis_config);
@@ -307,9 +308,8 @@ fn test_bank_new() {
     let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
     let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
 
-    assert_eq!(rent.burn_percent, 5);
-    assert_eq!(rent.exemption_threshold, 1.0);
-    assert_eq!(rent.lamports_per_byte_year, 6);
+    assert_eq!(rent.lamports_per_byte, 10);
+    assert_eq!(rent.exemption_threshold, 1.0f64.to_le_bytes());
 }
 
 pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {
@@ -1370,7 +1370,7 @@ fn test_bank_withdraw() {
 #[test]
 fn test_bank_withdraw_from_nonce_account() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-    genesis_config.rent.lamports_per_byte_year = 42;
+    genesis_config.rent.lamports_per_byte = 42;
     let bank = Bank::new_for_tests(&genesis_config);
 
     let min_balance = bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size());
@@ -4018,7 +4018,7 @@ where
     F: FnMut(&mut GenesisConfig),
 {
     let (mut genesis_config, mint_keypair) = create_genesis_config(supply_lamports);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     genesis_cfg_fn(&mut genesis_config);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(feature_set);
@@ -4571,7 +4571,7 @@ fn test_nonce_payer_tx_wide_cap() {
 #[test]
 fn test_nonce_fee_calculator_updates() {
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
     let (mut bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4635,7 +4635,7 @@ fn test_nonce_fee_calculator_updates() {
 #[test]
 fn test_nonce_fee_calculator_updates_tx_wide_cap() {
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
     let (mut bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -5358,10 +5358,11 @@ fn test_fuzz_instructions() {
 // new feature that affects the bank hash, you should update this test to use a
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
+#[allow(deprecated)]
 #[test_case(false ; "legacy")]
 #[test_case(true ; "deprecate rent exemption threshold")]
 fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
-    let genesis_config = GenesisConfig {
+    let mut genesis_config = GenesisConfig {
         // Override the creation time to ensure bank hash consistency
         creation_time: 0,
         accounts: BTreeMap::from([(
@@ -5371,6 +5372,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
         cluster_type: ClusterType::MainnetBeta,
         ..GenesisConfig::default()
     };
+
+    genesis_config.rent.lamports_per_byte = DEFAULT_LAMPORTS_PER_BYTE / 2;
+    genesis_config.rent.exemption_threshold = 2.0f64.to_le_bytes();
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
@@ -5414,7 +5418,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
                     "HvCfM9MQCvCDH4zW39G7UqKDB4PLR5GaqVSf9Jfe5XnS"
                 } else {
                     "6h1KzSuTW6MwkgjtEbrv6AyUZ2NHtSxCQi8epjHDFYh8"
-                }
+                },
             );
         }
         if bank.slot == 128 {
@@ -5425,7 +5429,7 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
                     "GS2G4uVus4U97woniYLW1f2BWqoZFGFrpSQXto7PnjTT"
                 } else {
                     "4GX3883TVK7SQfbPUHem4HXcqdHU2DZVAB6yEXspn2qe"
-                }
+                },
             );
             break;
         }
@@ -7122,7 +7126,7 @@ fn test_block_limits() {
 #[test]
 fn test_simd_0437_rent_feature_gates_epoch_transition() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let rent_feature_gates = [
@@ -7150,7 +7154,7 @@ fn test_simd_0437_rent_feature_gates_epoch_transition() {
     let feature_account_balance =
         std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
 
-    for (feature_id, expected_lamports_per_byte_year) in rent_feature_gates {
+    for (feature_id, expected_lamports_per_byte) in rent_feature_gates {
         assert!(
             !bank.feature_set.is_active(&feature_id),
             "feature should be inactive before activation"
@@ -7169,14 +7173,14 @@ fn test_simd_0437_rent_feature_gates_epoch_transition() {
             "feature should be active after epoch transition"
         );
         assert_eq!(
-            bank.rent_collector.rent.lamports_per_byte_year, expected_lamports_per_byte_year,
+            bank.rent_collector.rent.lamports_per_byte, expected_lamports_per_byte,
             "rent collector should reflect the active gate"
         );
 
         let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
         let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
         assert_eq!(
-            rent.lamports_per_byte_year, expected_lamports_per_byte_year,
+            rent.lamports_per_byte, expected_lamports_per_byte,
             "rent sysvar should be updated after activation"
         );
     }
@@ -7185,7 +7189,7 @@ fn test_simd_0437_rent_feature_gates_epoch_transition() {
 #[test]
 fn test_simd_0437_rent_feature_gate_activation_ordering() {
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    genesis_config.rent.lamports_per_byte_year = 0;
+    genesis_config.rent.lamports_per_byte = 0;
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let feature_account_balance =
@@ -7219,7 +7223,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
             .is_active(&feature_set::set_lamports_per_byte_to_2575::id())
     );
     assert_eq!(
-        bank.rent_collector.rent.lamports_per_byte_year,
+        bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_2575::LAMPORTS_PER_BYTE,
         "lowest activated value should win when multiple activate in one epoch"
     );
@@ -7236,7 +7240,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
             .is_active(&feature_set::set_lamports_per_byte_to_1322::id())
     );
     assert_eq!(
-        bank.rent_collector.rent.lamports_per_byte_year,
+        bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_1322::LAMPORTS_PER_BYTE,
         "first activation should be applied after its epoch boundary"
     );
@@ -7252,7 +7256,7 @@ fn test_simd_0437_rent_feature_gate_activation_ordering() {
             .is_active(&feature_set::set_lamports_per_byte_to_5080::id())
     );
     assert_eq!(
-        bank.rent_collector.rent.lamports_per_byte_year,
+        bank.rent_collector.rent.lamports_per_byte,
         feature_set::set_lamports_per_byte_to_5080::LAMPORTS_PER_BYTE,
         "most recent activation should win even when out of order"
     );
@@ -12434,7 +12438,6 @@ fn test_genesis_deprecate_rent_exemption_enabled() {
 
     assert_eq!(accounts_db_rent, tx_processor_rent);
     assert_eq!(accounts_db_rent, rent_collector_rent);
-    assert!(accounts_db_rent.exemption_threshold == 1.0);
 }
 
 #[test]
@@ -12455,7 +12458,6 @@ fn test_genesis_deprecate_rent_exemption_disabled() {
 
     assert_eq!(accounts_db_rent, tx_processor_rent);
     assert_eq!(accounts_db_rent, rent_collector_rent);
-    assert!(accounts_db_rent.exemption_threshold == 2.0);
 }
 
 #[test]

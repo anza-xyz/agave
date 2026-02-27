@@ -230,8 +230,7 @@ mod tests {
         // 2 unlocks
 
         let rent = Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
+            lamports_per_byte: 1,
             ..Rent::default()
         };
 

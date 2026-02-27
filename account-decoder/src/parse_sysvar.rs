@@ -161,17 +161,13 @@ impl From<Fees> for UiFees {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UiRent {
-    pub lamports_per_byte_year: StringAmount,
-    pub exemption_threshold: f64,
-    pub burn_percent: u8,
+    pub lamports_per_byte: StringAmount,
 }
 
 impl From<Rent> for UiRent {
     fn from(rent: Rent) -> Self {
         Self {
-            lamports_per_byte_year: rent.lamports_per_byte_year.to_string(),
-            exemption_threshold: rent.exemption_threshold,
-            burn_percent: rent.burn_percent,
+            lamports_per_byte: rent.lamports_per_byte.to_string(),
         }
     }
 }
@@ -322,9 +318,8 @@ mod test {
         }
 
         let rent = Rent {
-            lamports_per_byte_year: 10,
-            exemption_threshold: 2.0,
-            burn_percent: 5,
+            lamports_per_byte: 10,
+            ..Default::default()
         };
         let rent_sysvar = create_account_for_test(&rent);
         assert_eq!(

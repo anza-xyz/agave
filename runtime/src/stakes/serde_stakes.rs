@@ -287,7 +287,7 @@ mod tests {
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
             for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
-                let rent = Rent::with_slots_per_epoch(rng.random());
+                let rent = Rent::free();
                 let stake_account = stake_utils::create_stake_account(
                     &stake_pubkey, // authorized
                     &vote_pubkey,

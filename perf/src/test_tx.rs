@@ -42,7 +42,7 @@ pub fn test_multisig_tx() -> Transaction {
 
     let instructions = vec![CompiledInstruction::new(
         0,
-        &transfer_instruction,
+        &bincode::serialize(&transfer_instruction).unwrap(),
         vec![0, 1],
     )];
 
