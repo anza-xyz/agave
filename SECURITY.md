@@ -152,6 +152,11 @@ Alpenglow logic from a feature fork to agave master is currently underway. As
 such there are many paritially migrated changes isolated to a few areas. These
 are disqualified from reports and bounties. Bugs in integration logic that impact
 the no-Alpenglow code path remain in scope
+* For the RPC DoS category, the following classes of issue are out of scope
+  * Those requiring a call rate greater than once per 200ms
+  * Those requiring calls from multiple clients
+  * Those impacting getProgramAccounts, et. al without secondary indexes enabled and/or
+    unfiltered requests, which are known to be slow on clusters with large accounts sets
 
 ### Eligibility:
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
